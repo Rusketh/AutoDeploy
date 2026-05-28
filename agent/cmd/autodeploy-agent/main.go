@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,12 +31,13 @@ import (
 )
 
 type agentFlags struct {
-	server      string
-	imageID     int64
-	uuid        string
-	insecureTLS bool
-	workDir     string
-	dryRun      bool
+	server          string
+	imageID         int64
+	uuid            string
+	insecureTLS     bool
+	workDir         string
+	dryRun          bool
+	checkInInterval time.Duration
 }
 
 func main() {
@@ -46,6 +48,7 @@ func main() {
 	flag.BoolVar(&f.insecureTLS, "insecure-tls", false, "Skip TLS verification (dev only)")
 	flag.StringVar(&f.workDir, "work", defaultWorkDir(), "Scratch directory for downloaded payloads")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log steps without executing them")
+	flag.DurationVar(&f.checkInInterval, "check-in", 0, "Resident-mode check-in interval, e.g. 5m. Zero = one-shot.")
 	flag.Parse()
 
 	log := logging.New(os.Stdout, "agent")
@@ -251,6 +254,12 @@ func main() {
 	}
 
 	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
+
+	// Resident check-in mode (Phase 13). Run forever, polling for queued
+	// bulk jobs and executing them.
+	if f.checkInInterval > 0 {
+		runCheckInLoop(ctx, log, c, f, identityBody)
+	}
 	_ = time.Now // placeholder for resident-mode timing in Phase 13
 }
 
@@ -314,6 +323,145 @@ func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client
 		slog.String("target", "C:"),
 		slog.String("note", "recovery key escrowed; value not logged"),
 	)
+}
+
+// runCheckInLoop is the Phase 13 resident-mode loop. The agent
+// periodically calls /api/v1/agent/checkin, claims any queued bulk
+// jobs, executes them, and posts results. Loops forever.
+func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any) {
+	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+	type bulkJob struct {
+		ID      int64  `json:"id"`
+		Action  string `json:"action"`
+		Payload string `json:"payload"`
+	}
+	type checkinResp struct {
+		MachineID int64     `json:"machine_id"`
+		Jobs      []bulkJob `json:"jobs"`
+	}
+
+	tick := time.NewTicker(f.checkInInterval)
+	defer tick.Stop()
+	for {
+		var resp checkinResp
+		if err := c.PostJSON(ctx, "/api/v1/agent/checkin",
+			map[string]any{"identity": identityBody}, &resp); err != nil {
+			log.Warn("checkin.fetch", slog.String("error", err.Error()))
+		} else {
+			for _, j := range resp.Jobs {
+				status, result := executeBulkJob(ctx, log, runner, j.Action, j.Payload)
+				_ = c.PostJSON(ctx,
+					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
+					map[string]any{"status": status, "result_json": result}, nil)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// executeBulkJob dispatches on action and returns (status, result JSON).
+// Result JSON is bounded so the server can store it.
+func executeBulkJob(ctx context.Context, log *slog.Logger, runner steps.Runner, action, payload string) (string, string) {
+	log.Info("bulk.start", slog.String("action", action))
+	switch action {
+	case "script":
+		// Payload: {"shell":"cmd"|"powershell","body":"..."}
+		var p struct {
+			Shell string `json:"shell"`
+			Body  string `json:"body"`
+		}
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			return "failed", `{"error":"invalid payload"}`
+		}
+		var code int
+		var rerr error
+		switch p.Shell {
+		case "cmd":
+			code, rerr = runner.Run(ctx, "cmd", []string{"/C", p.Body}, "")
+		case "powershell":
+			code, rerr = runner.Run(ctx, "powershell",
+				[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"},
+				p.Body)
+		default:
+			return "failed", `{"error":"unknown shell"}`
+		}
+		if rerr != nil || code != 0 {
+			return "failed", fmt.Sprintf(`{"exit_code":%d,"error":%q}`, code, errString(rerr))
+		}
+		return "ok", fmt.Sprintf(`{"exit_code":%d}`, code)
+
+	case "rename":
+		// Payload: {"new_name":"LAB-02"}. Real Windows rename uses
+		// Rename-Computer; we wrap in PowerShell. AD coordination is
+		// done server-side via the Domain Integration Service when the
+		// operator creates the bulk operation (Phase 10 + 13).
+		var p struct {
+			NewName string `json:"new_name"`
+		}
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			return "failed", `{"error":"invalid payload"}`
+		}
+		body := fmt.Sprintf(`Rename-Computer -NewName '%s' -Force -Restart`,
+			ps1Escape(p.NewName))
+		code, err := runner.Run(ctx, "powershell",
+			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body},
+			"")
+		if err != nil || code != 0 {
+			return "failed", fmt.Sprintf(`{"exit_code":%d,"error":%q}`, code, errString(err))
+		}
+		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, p.NewName)
+
+	case "software_push":
+		// Payload: a full swspec.InstallStep object or list to execute
+		// in order. We accept a JSON array for symmetry with Phase 6.
+		var list []swspec.InstallStep
+		if err := json.Unmarshal([]byte(payload), &list); err != nil {
+			// Maybe a single step:
+			var single swspec.InstallStep
+			if err2 := json.Unmarshal([]byte(payload), &single); err2 == nil {
+				list = []swspec.InstallStep{single}
+			} else {
+				return "failed", `{"error":"invalid payload"}`
+			}
+		}
+		results := steps.Execute(ctx, list, runner)
+		ok := true
+		for _, r := range results {
+			if r.Aborted {
+				ok = false
+				break
+			}
+		}
+		out, _ := json.Marshal(results)
+		if !ok {
+			return "failed", string(out)
+		}
+		return "ok", string(out)
+	}
+	return "failed", `{"error":"unknown action"}`
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func ps1Escape(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\'' {
+			out = append(out, '\'', '\'')
+			continue
+		}
+		out = append(out, s[i])
+	}
+	return string(out)
 }
 
 // rewriteSteps replaces the literal token "{payload}" in source/MSI/APPX/EXE

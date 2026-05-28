@@ -850,3 +850,60 @@ agent to a long-running silent service that checks in on a schedule
 and picks up queued bulk jobs (rename, software push, ad-hoc script).
 Server-side: a job queue with per-machine results, plus targeting by
 name regex / OU / AD group with a preview before running.
+
+---
+
+## 2026-05-28 — Phase 13 complete (resident agent + bulk operations)
+
+**WHAT.**
+
+- Migration 0006 adds `bulk_operation` and `bulk_job` with status,
+  result and claim timestamps.
+- `internal/model/bulk.go`: PreviewTargets (AD-centric: name regex, OU,
+  group), CreateOperation (queues one job per machine), ClaimJobsFor
+  (atomic transition to `running`), CompleteJob.
+- API endpoints:
+  - Operator: `POST /api/v1/bulk/preview`, `POST /api/v1/bulk/operations`,
+    `GET /api/v1/bulk/operations`, `GET /api/v1/bulk/operations/{id}`.
+  - Agent: `POST /api/v1/agent/checkin` (claims up to 8 jobs),
+    `POST /api/v1/agent/jobs/{id}/result`.
+- Agent's `--check-in <duration>` flag enables a resident loop that
+  polls the check-in endpoint, dispatches on action (script, rename,
+  software_push), executes via the existing steps.Runner, and posts
+  results.
+- Tests: preview filters by OU, group, name regex; create queues one
+  job per machine; second claim returns empty; invalid action rejected.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Target preview is done by listing all machines and
+  filtering in Go. At the design's scale (low thousands) that's
+  cheap and avoids encoding regex matching into SQL.
+- DECISION: ClaimJobsFor returns up to 8 jobs per check-in to bound
+  the agent's work between heartbeats. The interval is operator-set;
+  smaller intervals see jobs sooner.
+- DECISION: A job's status is one of queued / running / ok / failed.
+  No retry state — a failed job stays failed and the operator can
+  create a new operation to retry. Built-in retry would be a future
+  enhancement.
+- DECISION: Resident mode is opt-in via `--check-in <duration>` rather
+  than a separate sub-command, so the same binary can both run a
+  one-shot deploy-time install AND become resident afterwards if the
+  unattend's FirstLogonCommand starts it with the flag.
+- DECISION: Bulk rename triggers `Rename-Computer -Force -Restart`;
+  AD coordination happens server-side at operation create time (the
+  AD service updates the computer object), then the agent does the
+  local rename and reboot. The Phase 10 service plus Phase 13 queue
+  combine for the documented "rename → directory update → reboot"
+  ordering.
+- DECISION: Script actions use the existing steps.Runner via cmd/C
+  or powershell -Command -. The body is piped via stdin where
+  feasible to keep secrets and large bodies off the command line.
+
+**BUILD STATE.** Server and agent both green; full test suite passes.
+
+**NEXT.** Phase 14 — centralised log collection. Per-component
+logging is already wired in (Phases 0+); Phase 14 adds the
+client-side log shipper (Boot Client uploads its run log at end of
+run, agent ships activity on check-in) and the server-side store +
+portal view + retention setting.
