@@ -7,10 +7,22 @@ internals. For the design, see `docs/design/`.
 The guide grows alongside the software: features appear here as they appear in
 the product, and never before.
 
+## Start here
+
+**If you are setting AutoDeploy up for the first time, read this:**
+
+→ **[Getting started](getting-started.md)** — zero to your first
+deployed machine in 30–60 minutes. Step-by-step: download the
+release, install the server, configure DHCP/PXE, upload an ISO,
+build an image, image a test machine.
+
+Everything below is reference documentation. Skim **Concepts** for
+orientation, then dip in as needed.
+
 ## Contents
 
 1. [Concepts](concepts.md) — what AutoDeploy is, and the objects you'll work with.
-2. [Installation](installation.md) — getting the server, Boot Client and agent built and running.
+2. [Installation](installation.md) — env vars, on-disk layout, alternative install paths.
 3. [Configuring the server](configuration.md) — environment variables and on-disk layout.
 4. [API quick-start](api-quickstart.md) — `curl` recipes against the JSON API.
 5. [Payload uploads and delivery](payloads.md) — uploading ISOs and packages, HTTPS, the manifest endpoint.

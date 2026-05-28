@@ -86,11 +86,14 @@ jobs:
         run: |
           mkdir -p out
           tar -czf out/autodeploy-extras.tar.gz \
+            scripts/install-linux.sh \
             scripts/initramfs/ \
             scripts/fetch-ipxe.sh \
             scripts/backup.sh \
             scripts/check-secrets.sh \
-            docs/user-guide/
+            scripts/systemd/ \
+            docs/user-guide/ \
+            README.md
           sha256sum out/autodeploy-extras.tar.gz > out/autodeploy-extras.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
@@ -124,24 +127,41 @@ jobs:
           {
             echo "## AutoDeploy ${tag}"
             echo
-            echo "Pre-built binaries for each component and platform are attached. Verify with the matching \`.sha256\`."
+            echo "### Quick start (Linux server)"
             echo
-            echo "### Components"
+            echo '```sh'
+            echo "TAG=${tag}"
+            echo 'URL=https://github.com/Rusketh/AutoDeploy/releases/download/$TAG'
+            echo 'curl -LO $URL/autodeploy-server-linux-amd64'
+            echo 'curl -LO $URL/autodeploy-extras.tar.gz'
+            echo 'tar xzf autodeploy-extras.tar.gz'
+            echo 'sudo ./scripts/install-linux.sh'
+            echo 'sudo systemctl enable --now autodeploy'
+            echo 'sudo cat /var/lib/autodeploy/admin-bootstrap.txt   # one-time password'
+            echo '```'
             echo
-            echo "- **autodeploy-server** — management portal + JSON API + Deployment Service + Domain Integration Service."
-            echo "- **autodeploy-boot** — Linux Boot Client (place in your initramfs; see \`autodeploy-extras.tar.gz → scripts/initramfs/build-initramfs.sh\`)."
-            echo "- **autodeploy-agent** — Windows / Linux Deployment Client."
+            echo "Full tutorial: \`docs/user-guide/getting-started.md\` inside \`autodeploy-extras.tar.gz\`."
             echo
-            echo "### Operator extras"
+            echo "### Downloads"
             echo
-            echo "\`autodeploy-extras.tar.gz\` bundles:"
+            echo "Verify each file with the matching \`.sha256\`."
+            echo
+            echo "**autodeploy-server** — management portal + JSON API + payload service + Domain Integration Service + (optional) TFTP."
+            echo "Linux amd64/arm64, Windows amd64, macOS amd64/arm64."
+            echo
+            echo "**autodeploy-boot** — Linux Boot Client (Linux amd64/arm64). Goes into the initramfs."
+            echo
+            echo "**autodeploy-agent** — Deployment Client (Windows amd64/arm64, Linux amd64). Bundled into deployed Windows images via the unattend."
+            echo
+            echo "**autodeploy-extras.tar.gz** — operator helpers and docs:"
+            echo "- \`scripts/install-linux.sh\` — one-shot Linux installer (binary, system user, systemd unit, iPXE)."
             echo "- \`scripts/initramfs/build-initramfs.sh\` — assemble the Boot Client initramfs."
-            echo "- \`scripts/fetch-ipxe.sh\` — fetch the iPXE bootstrap binaries (\`undionly.kpxe\`, \`ipxe.efi\`, …) for serving over TFTP."
-            echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store + secrets key + TLS material."
+            echo "- \`scripts/fetch-ipxe.sh\` — fetch iPXE bootstrap binaries (\`undionly.kpxe\`, \`ipxe.efi\`, …)."
+            echo "- \`scripts/systemd/\` — production systemd unit and example env file."
+            echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store, secrets key, TLS material."
             echo "- \`scripts/check-secrets.sh\` — CI tripwire for cleartext-secret patterns."
-            echo "- \`docs/user-guide/\` — the full operator guide for this release."
-            echo
-            echo "See \`docs/user-guide/README.md\` for the operator entry points."
+            echo "- \`docs/user-guide/\` — full operator guide for this release."
+            echo "- \`README.md\` — repository orientation."
           } > release-notes.md
           cat release-notes.md
       - name: Create / update GitHub Release

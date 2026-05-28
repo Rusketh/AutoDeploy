@@ -1,22 +1,33 @@
 # Installation
 
-> **Status.** This is the Phase 0 development build. Only the foundational
-> skeleton exists; the portal, API and imaging flow are not yet present. This
-> page describes how to build and run what is currently shipped so a developer
-> can verify the toolchain works end to end.
+> **First-time install? Read [getting-started.md](getting-started.md)
+> instead** — it walks through downloading the release, installing the
+> server, configuring DHCP, and deploying a first test machine.
+>
+> This page is the reference for alternative install paths (build from
+> source, Windows / macOS, manual layout) plus the full env-var list.
 
-## Prerequisites
+## The easy path (Linux, from GitHub release)
 
-- Go 1.22 or newer.
-- GNU `make`.
-- For real imaging (later phases): an iPXE-capable target machine or VM, a
-  PostgreSQL server, and a Linux server to host the AutoDeploy server.
+```sh
+TAG=v0.1.0
+URL=https://github.com/Rusketh/AutoDeploy/releases/download/$TAG
+curl -LO $URL/autodeploy-server-linux-amd64
+curl -LO $URL/autodeploy-extras.tar.gz
+tar xzf autodeploy-extras.tar.gz
+sudo ./scripts/install-linux.sh
+sudo systemctl enable --now autodeploy
+```
 
-## Building
+The full walkthrough is [getting-started.md](getting-started.md).
 
-Each component is a separate Go module under `server/`, `boot-client/` and
-`agent/`. Each has a `Makefile` with `build`, `test`, `vet` and `clean`
-targets.
+## Building from source
+
+Each component is a separate Go module under `server/`, `boot-client/`
+and `agent/`. Each has a `Makefile` with `build`, `test`, `vet` and
+`clean` targets.
+
+Prerequisites: Go 1.22 or newer, GNU `make`.
 
 ```sh
 # Server (host OS, by default).
