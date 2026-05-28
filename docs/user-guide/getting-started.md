@@ -95,13 +95,28 @@ What the installer did:
 - Downloaded the iPXE bootstrap binaries to
   `/var/lib/autodeploy/ipxe/` so the built-in TFTP can serve them.
 
-### Installing on Windows or macOS
+### Installing on Windows
 
-Same idea, no script. Place the matching binary somewhere on `$PATH`
-(`C:\Program Files\AutoDeploy\autodeploy-server.exe` on Windows,
-`/usr/local/bin/autodeploy-server` on macOS), create a data directory,
-and configure either an NSSM service (Windows) or a launchd plist
-(macOS). See [installation.md](installation.md) for the env-var list.
+Use the bundled installer instead of the Linux script. Open an
+elevated PowerShell prompt and run:
+
+```powershell
+.\scripts\windows\install-windows.ps1
+```
+
+It places the binary in `C:\Program Files\AutoDeploy\`, creates
+`C:\ProgramData\AutoDeploy\` for state, registers a native Windows
+Service called **autodeploy**, opens the Firewall for HTTPS/TFTP and
+starts the service. Full walkthrough in
+[install-windows.md](install-windows.md).
+
+### Installing on macOS
+
+Place the matching binary somewhere on `$PATH`
+(`/usr/local/bin/autodeploy-server`), create a data directory, and
+configure a launchd plist that sets the same env vars
+`install-linux.sh` writes to `/etc/default/autodeploy`. See
+[installation.md](installation.md) for the env-var list.
 
 ## Step 3 — Configure the server
 

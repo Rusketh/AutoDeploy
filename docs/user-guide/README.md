@@ -23,6 +23,7 @@ orientation, then dip in as needed.
 
 1. [Concepts](concepts.md) — what AutoDeploy is, and the objects you'll work with.
 2. [Installation](installation.md) — env vars, on-disk layout, alternative install paths.
+2b. [Windows installation](install-windows.md) — running the server as a native Windows Service.
 3. [Configuring the server](configuration.md) — environment variables and on-disk layout.
 4. [API quick-start](api-quickstart.md) — `curl` recipes against the JSON API.
 5. [Payload uploads and delivery](payloads.md) — uploading ISOs and packages, HTTPS, the manifest endpoint.

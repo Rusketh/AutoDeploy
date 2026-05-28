@@ -92,6 +92,7 @@ jobs:
             scripts/backup.sh \
             scripts/check-secrets.sh \
             scripts/systemd/ \
+            scripts/windows/ \
             docs/user-guide/ \
             README.md
           sha256sum out/autodeploy-extras.tar.gz > out/autodeploy-extras.tar.gz.sha256
@@ -140,7 +141,20 @@ jobs:
             echo 'sudo cat /var/lib/autodeploy/admin-bootstrap.txt   # one-time password'
             echo '```'
             echo
-            echo "Full tutorial: \`docs/user-guide/getting-started.md\` inside \`autodeploy-extras.tar.gz\`."
+            echo "### Quick start (Windows server)"
+            echo
+            echo '```powershell'
+            echo "\$TAG = '${tag}'"
+            echo '$URL = "https://github.com/Rusketh/AutoDeploy/releases/download/$TAG"'
+            echo 'Invoke-WebRequest "$URL/autodeploy-server-windows-amd64.exe" -OutFile autodeploy-server-windows-amd64.exe'
+            echo 'Invoke-WebRequest "$URL/autodeploy-extras.tar.gz"             -OutFile autodeploy-extras.tar.gz'
+            echo 'tar -xzf autodeploy-extras.tar.gz'
+            echo '# elevated PowerShell:'
+            echo '.\scripts\windows\install-windows.ps1'
+            echo 'Get-Content C:\ProgramData\AutoDeploy\admin-bootstrap.txt   # one-time password'
+            echo '```'
+            echo
+            echo "Full tutorial: \`docs/user-guide/getting-started.md\` (Linux) and \`docs/user-guide/install-windows.md\` (Windows) inside \`autodeploy-extras.tar.gz\`."
             echo
             echo "### Downloads"
             echo
@@ -158,6 +172,7 @@ jobs:
             echo "- \`scripts/initramfs/build-initramfs.sh\` — assemble the Boot Client initramfs."
             echo "- \`scripts/fetch-ipxe.sh\` — fetch iPXE bootstrap binaries (\`undionly.kpxe\`, \`ipxe.efi\`, …)."
             echo "- \`scripts/systemd/\` — production systemd unit and example env file."
+            echo "- \`scripts/windows/\` — Windows installer + uninstaller + backup (PowerShell) and env-file template."
             echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store, secrets key, TLS material."
             echo "- \`scripts/check-secrets.sh\` — CI tripwire for cleartext-secret patterns."
             echo "- \`docs/user-guide/\` — full operator guide for this release."

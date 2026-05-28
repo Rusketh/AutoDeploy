@@ -98,11 +98,20 @@ AutoDeploy host; use the portal for day-to-day operation.
 
 ## Backup and recovery
 
-A reference script lives at `scripts/backup.sh`:
+A reference script lives at `scripts/backup.sh` (Linux/macOS) and
+`scripts/windows/backup.ps1` (Windows):
 
 ```sh
+# Linux
 AUTODEPLOY_DATA_DIR=/var/lib/autodeploy ./scripts/backup.sh /var/backups/autodeploy
 # writes /var/backups/autodeploy/autodeploy-<timestamp>.tar.gz (mode 0600)
+```
+
+```powershell
+# Windows
+.\scripts\windows\backup.ps1
+# writes C:\ProgramData\AutoDeploy\backups\autodeploy-<timestamp>.zip
+# (ACL restricted to Administrators + SYSTEM because secrets-key.bin is inside)
 ```
 
 The archive contains a consistent SQLite snapshot, the at-rest

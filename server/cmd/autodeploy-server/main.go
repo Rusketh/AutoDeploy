@@ -10,10 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sync"
-	"syscall"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
@@ -38,20 +36,21 @@ var base64URL = base64URLpkg.RawURLEncoding
 
 func main() {
 	logger := logging.New(os.Stdout, "server")
-	if err := run(logger); err != nil {
+	if err := runPlatform(logger); err != nil {
 		logger.Error("server.fatal", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+// run is the actual server lifecycle, parameterised by a context the
+// caller cancels to trigger shutdown. The console entrypoint
+// (runConsole) wires it to SIGINT/SIGTERM; the Windows service
+// entrypoint (service_windows.go) wires it to the SCM stop control.
+func run(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return err

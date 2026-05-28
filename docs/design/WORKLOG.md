@@ -1552,3 +1552,119 @@ gives you — the specialize pass and SetupComplete.cmd.
 specialize and SetupComplete tests); `scripts/check-secrets.sh`
 green. Legacy admin_user/admin_password JSON migrates cleanly into
 the new LocalAccounts model without losing the password.
+
+## 2026-05-28 — Native Windows Service support + PowerShell installer
+
+**WHAT.** The server cross-compiled to Windows cleanly already, but
+the install experience was "drop the .exe somewhere, wrap with NSSM,
+good luck." Operators on Windows now get the same one-shot install
+the Linux side has — a native Windows Service registration, env-file
+configuration, firewall rules, backup script, and a walkthrough that
+mirrors `getting-started.md`.
+
+**Code (`server/cmd/autodeploy-server`).**
+
+- `main.go` refactored: `run()` now takes a `context.Context`; the
+  signal-handling wrapper moved into `runConsole()` so the Windows
+  service entrypoint can cancel the same context via SCM Stop
+  instead of via SIGINT/SIGTERM.
+
+- `service_windows.go` (build tag `windows`) checks
+  `svc.IsWindowsService()`. When launched by the SCM, it runs
+  `svc.Run` with a handler that reports StartPending → Running,
+  watches the SCM control channel for Stop / Shutdown / Interrogate,
+  and cancels the context cleanly. Interactive launch (a Run-as-
+  Admin PowerShell on the install host for troubleshooting) falls
+  through to `runConsole`.
+
+- `service_other.go` is a one-line shim that aliases `runPlatform`
+  to `runConsole` on non-Windows platforms.
+
+- `golang.org/x/sys` was promoted from indirect to direct so the
+  service import is explicit in go.mod.
+
+**Scripts (`scripts/windows/`).**
+
+- `install-windows.ps1` — idempotent installer. Copies the binary
+  to `C:\Program Files\AutoDeploy`, creates `C:\ProgramData\AutoDeploy`,
+  registers the service via `sc.exe` (start=auto, obj=LocalSystem by
+  default), reads `autodeploy.env` and writes the KEY=VALUE lines
+  into `HKLM\SYSTEM\CurrentControlSet\Services\autodeploy\Environment`
+  as REG_MULTI_SZ (which the SCM merges into the service's
+  environment block at start), creates inbound firewall rules for
+  443/TCP, 80/TCP and 69/UDP scoped to the binary, then starts.
+  `-ApplyEnv` re-reads the env file and restarts, no binary touch.
+  `-Update` is implicit: re-running just upgrades.
+
+- `uninstall-windows.ps1` — removes the service, the firewall rules
+  and the install dir. Preserves the data dir unless `-PurgeData`.
+
+- `backup.ps1` — produces a single zip with the SQLite snapshot
+  (via `sqlite3.exe` if present, else a WAL-aware file copy),
+  `secrets-key.bin`, TLS material, and the bootstrap-admin file.
+  Tightens the zip's ACL to Administrators + SYSTEM because the
+  secrets key is inside.
+
+- `autodeploy.env.example` — Windows-flavoured copy of the Linux
+  env example (paths in `C:\ProgramData\AutoDeploy`, PowerShell
+  one-liner for key generation).
+
+**Docs.**
+
+- `docs/user-guide/install-windows.md` — full walkthrough mirroring
+  `getting-started.md`'s Linux section: download, run installer,
+  configure env, place TLS material, iPXE assets, day-to-day
+  operation, upgrade, backup, uninstall, caveats.
+
+- `docs/user-guide/getting-started.md` — Windows section now points
+  at the new installer instead of waving at NSSM.
+
+- `docs/user-guide/operations.md` — backup section shows both
+  `scripts/backup.sh` and `scripts/windows/backup.ps1`.
+
+- `docs/user-guide/README.md` — Windows install added to the index.
+
+**CI (`.github/workflows/release.yml`).** `autodeploy-extras.tar.gz`
+now bundles `scripts/windows/`, and the generated release notes
+include a Windows quick-start block alongside the Linux one.
+
+**WHY (decisions).**
+
+- DECISION: Native Windows Service support in the binary, not a
+  wrapper. `golang.org/x/sys/windows/svc` is ~30 lines of glue and
+  avoids dragging in NSSM/WinSW/srvany. The binary detects whether
+  the SCM started it (`svc.IsWindowsService()`); interactive
+  PowerShell runs still behave like a normal console program for
+  troubleshooting.
+
+- DECISION: Env file at `C:\Program Files\AutoDeploy\autodeploy.env`
+  rather than `C:\ProgramData\AutoDeploy\autodeploy.env`. The env
+  file is operator-edited and should travel with the install, not
+  the data. The installer writes the values into the service's
+  registry environment block so the SCM does the merge at start
+  time — same mechanism Microsoft uses for services like wuauserv.
+
+- DECISION: LocalSystem by default. Binding TFTP UDP 69 and HTTPS
+  TCP 443 are privileged operations on Windows just as on Linux;
+  NetworkService cannot bind them without extra ACL juggling. The
+  attack surface is small (the binary reads from a fixed data dir
+  and never executes operator-supplied code) so LocalSystem is the
+  pragmatic default. The installer accepts `-ServiceAccount` to
+  override for hardened setups.
+
+- DECISION: Firewall rules are program-scoped, not just port-scoped.
+  `New-NetFirewallRule -Program <binary>` means another process
+  cannot reuse the rule even if it binds the same port. Defence in
+  depth.
+
+- DECISION: Restart=on-failure equivalent via `sc.exe failure ...
+  actions= restart/5000/restart/5000/""`. Two restart attempts at 5s
+  apart, then give up — same shape as the systemd unit's
+  `Restart=on-failure RestartSec=5`.
+
+**BUILD STATE.** `go vet ./...` clean for both `GOOS=linux` and
+`GOOS=windows GOARCH=amd64`; `go test ./...` green on Linux;
+cross-compiled `autodeploy-server.exe` is 19 MB (CGO disabled);
+`scripts/check-secrets.sh` green; smoke test against the Linux
+binary confirmed the refactored `run(ctx, logger)` boots through the
+full lifecycle.
