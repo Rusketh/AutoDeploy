@@ -1,0 +1,347 @@
+================================================================================
+AUTODEPLOY - PROJECT CONTEXT FOR AN LLM
+================================================================================
+
+PURPOSE OF THIS FILE
+  This is a self-contained primer on the AutoDeploy project. It exists so that a
+  language model (or a person) can read this one file and understand what the
+  project is, how it is designed, what has been decided, and - importantly - what
+  has been decided AGAINST, without needing to read anything else first.
+
+  It is a companion to two other documents in the design folder:
+    - the Software Design Document (the authoritative full specification), and
+    - the Development Roadmap (the dependency-ordered build sequence).
+  Where this primer and the design document disagree, the design document wins.
+
+HOW TO USE THIS FILE
+  Read it in full before reasoning about the project. The "Decisions and
+  Rationale" and "Constraints and Anti-Goals" sections are the most important:
+  they capture choices that are easy to second-guess and explain why the obvious
+  alternative was not taken. If you are tempted to suggest something, check those
+  sections first - it may already have been considered and ruled out.
+
+
+--------------------------------------------------------------------------------
+1. WHAT AUTODEPLOY IS
+--------------------------------------------------------------------------------
+
+AutoDeploy is a remote operating-system deployment and configuration platform for
+Windows machines. It is a single system intended to replace the combination of
+four existing tools:
+
+  - WDS  (Windows Deployment Services) - PXE boot and image transport.
+  - MDT  (Microsoft Deployment Toolkit) - task sequences, unattend files, drivers.
+  - SCCM (System Center Configuration Manager) - software, detection, inventory.
+  - FOG  (open-source imaging) - PXE imaging and disk capture/apply.
+
+The defining idea is that everything is delivered over HTTP(S) and managed from a
+web portal. An administrator uploads an OS ISO and defines how machines should be
+imaged and configured; target machines network-boot, identify themselves, pull
+what they need over HTTP, image themselves, and then configure themselves.
+
+The product name is AutoDeploy. (An earlier working name, "Phoenix", has been
+dropped; if you encounter it anywhere it refers to this same project.)
+
+
+--------------------------------------------------------------------------------
+2. THE DEPLOYMENT FLOW IN ONE PASS
+--------------------------------------------------------------------------------
+
+This is the end-to-end lifecycle. Most of the system exists to support it.
+
+  1.  A target machine network-boots and chainloads the Boot Client over HTTP
+      via iPXE.
+  2.  The Boot Client reads hardware identity from firmware (SMBIOS/DMI):
+      manufacturer, model, serial, UUID, plus BIOS and baseboard details.
+  3.  If the optional global access PIN is enabled, the client prompts for it and
+      submits each attempt to the server. Three wrong attempts -> the machine
+      boots normally (fail safe).
+  4.  The client asks the server for a menu. The server returns the deployable
+      image configurations; if the machine is recognised in inventory, it also
+      offers a "re-image this machine" option.
+  5.  An operator selects a configuration. The client submits the selection plus
+      the hardware identity.
+  6.  The server RESOLVES the effective configuration: which ISO, which unattend,
+      which drivers, which software (see Decisions for the resolution rules).
+  7.  The client pulls the payloads over HTTP: the WIM/ESD from the ISO, the
+      matched driver packages, and the generated unattend file.
+  8.  The client partitions the disk, applies the image with wimlib, injects the
+      matched drivers, and writes the unattend into the applied image.
+  9.  If the configuration uses Active Directory, the server-side Domain
+      Integration Service prepares the computer object so the machine can join.
+  10. The machine reboots into Windows, runs unattended setup from the answer
+      file, and installs the Deployment Client (the agent).
+  11. The agent installs the assigned software (in order, idempotently), manages
+      BitLocker if applicable, and reports inventory back.
+  12. The server records or updates the machine's binding and writes a dated
+      deployment record.
+
+After deployment the agent stays resident and silent, checking in periodically to
+run any queued bulk jobs (rename, software push, scripts).
+
+
+--------------------------------------------------------------------------------
+3. COMPONENTS
+--------------------------------------------------------------------------------
+
+Server side:
+  - Management Portal - the web UI where everything is defined and managed.
+  - HTTP API - the single point of authority. Clients report facts and act on
+    instructions; all decisions are made here.
+  - Deployment Service - stores and serves payloads over HTTP and resolves a
+    machine's effective configuration.
+  - Domain Integration Service - performs all Active Directory operations
+    server-side using a service account.
+
+Target side:
+  - Boot Client - a minimal Linux environment (kernel + initramfs) chainloaded
+    via iPXE, running pre-OS. Reads firmware identity, applies the image, injects
+    drivers, places the unattend.
+  - Deployment Client (Agent) - a resident, silent in-OS agent. Installs
+    software at deploy time, then stays running to manage BitLocker, execute
+    queued bulk jobs, and report inventory.
+
+
+--------------------------------------------------------------------------------
+4. THE DATA MODEL
+--------------------------------------------------------------------------------
+
+The system is built around standalone, reusable artifact objects that are
+composed by reference into images.
+
+Standalone artifacts (created and managed independently, linked by many images):
+  - ISO - uploaded OS media with an OS type. On upload, contents are extracted so
+    the WIM/ESD and supporting files can be served individually over HTTP.
+  - Unattend - a configuration object from which a complete unattend.xml is
+    generated. Operators configure settings; they do not hand-edit XML.
+  - DriverPackage - driver payload ingested from an SCCM package, carrying one or
+    more filters expressed over SMBIOS attributes.
+  - SoftwarePackage - an installer payload with detection rules and an ordered
+    list of typed install steps. Models software the way SCCM does.
+  - SoftwareLoadout - a named, ordered, inheritable collection of software
+    packages.
+
+Composition object:
+  - Image - links an ISO, an unattend, and software (a loadout and/or individual
+    packages) by reference. Has an optional parent image, forming arbitrary-depth
+    inheritance chains.
+
+Records:
+  - MachineRecord - a known machine in inventory: its identity, its binding, its
+    deployment history, its detected state, and (if encrypted) its BitLocker PIN
+    and recovery-key history.
+
+SoftwarePackage detail:
+  - Detection rules (make deployment idempotent and feed inventory): file
+    presence/version, registry key/value, MSI product code, or custom script.
+  - Install steps (ordered, each with success codes and continue/abort-on-failure):
+    copy files, run MSI, install APPX/MSIX, run CMD, run PowerShell, run an
+    executable with arguments. A package is effectively a small task sequence.
+
+
+--------------------------------------------------------------------------------
+5. DECISIONS AND RATIONALE
+--------------------------------------------------------------------------------
+
+These are deliberate choices. The rationale matters because the alternative often
+looks more natural at first glance. Do not silently reverse these.
+
+RESOLUTION RULES (how an image's effective configuration is computed by walking
+its inheritance chain):
+  - ISO: nearest-wins. The closest linked ISO up the chain is used. A machine
+    needs exactly one.
+  - Unattend: nearest-wins, used in full (NOT merged with ancestors). Therefore
+    every unattend object must be complete on its own. A "base" unattend is a
+    template you clone and customise, not a fragment that merges in.
+  - Drivers: ALL matching packages apply, independent of the image chain. Every
+    driver package whose SMBIOS filters match the hardware is injected. Driver
+    selection is by hardware fit, not by image inheritance.
+  - Software: additive. The effective set is the linked loadout (resolved up its
+    own chain) UNION any directly linked packages, de-duplicated by package.
+  Note the deliberate asymmetry: ISO and unattend are nearest-wins (one each);
+  drivers are global-match (hardware-driven); software accumulates (loadouts are
+  designed to layer). This is intentional, not an inconsistency.
+
+LOADOUT INHERITANCE is additive: a child loadout = parent's packages plus its
+own. A child may opt out of an inherited package. Ordering is by an explicit
+per-package value, not by chain depth, so install order is deterministic.
+
+RE-IMAGING resolves the bound configuration against the LATEST definitions, not a
+frozen historical snapshot. A re-imaged machine comes back to the current standard
+for its assigned configuration while keeping its identity (name, OU, groups,
+software assignment). There is no replay of old artifact versions in the core
+flow. The binding (machine -> assigned config + identity) is what persists;
+deployment history is a dated audit log, not a replayable manifest.
+
+ACTIVE DIRECTORY computer-object lifecycle is DELETE-AND-REPLACE: if an object
+exists at the target name, it is deleted and recreated at the correct OU with the
+binding's name and group memberships. This is server-side via a service account.
+  - Accepted consequence: the replacement gets a new SID and GUID, so anything
+    bound to the old object's identity is reset (e.g. LAPS credentials on the
+    object, group memberships - the latter re-applied from the binding). This was
+    explicitly accepted.
+  - Important interaction: BitLocker recovery is NOT lost by this, because
+    AutoDeploy escrows recovery keys in its own inventory keyed on hardware
+    identity, not on the AD object. Keys survive the object's deletion.
+
+BITLOCKER is opt-in per machine and applies to the OS volume (C:) using TPM+PIN.
+The control point is the inventory record:
+  - If the record defines a BitLocker PIN, the agent enables encryption with it.
+  - If no PIN is defined, the machine is left UNENCRYPTED. Absence of a PIN means
+    "do not encrypt" - this is a meaningful state, not a missing setting.
+  - The PIN is PRESERVED across re-imaging. The recovery key is NOT (and cannot
+    be) - see the gotcha in section 8. Recovery keys are escrowed to inventory and
+    kept as an append-only history so none is ever lost.
+
+PORTAL AUTHENTICATION is local username/password, with account management
+(create, disable, delete, reset password) inside AutoDeploy. There is NO graded
+permission model: every authenticated user has full access. Authentication is the
+access boundary; accountability for sensitive actions rests on the audit trail.
+This is a deliberate simplification; roles may come later.
+
+ACCESS PIN (the deployment gate) is a single optional GLOBAL system setting (not
+per-image). When enabled it gates the whole boot menu, is validated server-side,
+rate-limited by machine identity, and fails safe to a normal boot after three
+attempts.
+
+LOGGING is system-wide and built in from the start. Every component logs in
+detail; every event captures WHO, WHAT, WHERE, WHEN. Logs are collected centrally
+and viewable in the portal (including Boot Client and agent runs). Secrets are
+NEVER logged - only the fact and actor of secret access. This rule is absolute.
+
+BRANDING is system-wide (one organisational identity), applied to the portal, the
+boot screen, and the deployed machine (OEM info, optionally lock screen/wallpaper).
+Not per-image, not multi-tenant.
+
+IMAGING METHOD is file-based: apply a WIM/ESD with wimlib. NOT block-level disk
+cloning. A Linux Boot Client is used (not WinPE) because it can read firmware
+identity natively and apply images with open tooling, with no WinPE licensing or
+footprint.
+
+
+--------------------------------------------------------------------------------
+6. CONSTRAINTS AND ANTI-GOALS
+--------------------------------------------------------------------------------
+
+Things that are deliberately NOT in scope, or deliberately decided against. If you
+find yourself proposing one of these, stop - it was a choice.
+
+  - NOT a general-purpose patching or compliance suite. AutoDeploy does ongoing
+    management (bulk rename, software push, scripts) via the resident agent, but
+    it is not a substitute for a full patch-management product.
+  - NOT block-level disk cloning (that is FOG's model). File-based WIM/ESD only.
+  - NOT macOS or Linux TARGET imaging in the initial release. The architecture
+    should not preclude it, but it is out of scope now.
+  - NOT a software-authoring tool. It deploys installers that already exist; it
+    does not build them.
+  - NO graded portal permissions in the initial release (see Decisions).
+  - NO per-image or multi-tenant branding (system-wide only).
+  - NO merging of unattend objects up the chain (nearest-wins, used whole).
+  - NO reliance on TFTP or layer-2 PXE. HTTP(S) only.
+  - NO WMIC or WinPE in the boot environment. Identity comes from SMBIOS/DMI in a
+    Linux pre-boot environment.
+  - NO storage of frozen historical images for routine re-imaging (re-imaging is
+    always to the latest definition of the bound configuration).
+
+
+--------------------------------------------------------------------------------
+7. BULK OPERATIONS (POST-DEPLOYMENT MANAGEMENT)
+--------------------------------------------------------------------------------
+
+The resident agent enables managing already-deployed machines in bulk.
+
+  - Targeting is Active-Directory-centric and combinable: name regex, OU, and AD
+    group. The resolved set is previewable before an operation runs.
+  - A bulk operation produces one job per targeted machine; jobs are queued
+    server-side and picked up by agents on check-in (so offline machines catch up
+    later). Results are reported per machine and retained.
+  - Actions:
+      * Bulk rename - coordinated with AD (update the computer object) and a
+        reboot; the order is rename -> directory update -> reboot.
+      * Bulk software deployment - reuses detection + ordered steps, so it is
+        idempotent; already-compliant machines are skipped.
+      * Bulk run command/script - ad-hoc CMD or PowerShell. This is the
+        highest-risk capability; it requires an authenticated session and is fully
+        audited.
+
+
+--------------------------------------------------------------------------------
+8. GOTCHAS AND COMMON MISUNDERSTANDINGS
+--------------------------------------------------------------------------------
+
+These are points that are easy to get wrong. They are spelled out because a
+plausible-sounding wrong answer is likely otherwise.
+
+  - SMBIOS, not WMIC. Hardware identity is read in the PRE-BOOT environment from
+    SMBIOS/DMI tables. WMIC is a Windows tool and does not exist there. The
+    relevant structures are Type 1 (System: manufacturer, product, serial, UUID),
+    Type 0 (BIOS), and Type 2 (Baseboard).
+
+  - The BitLocker PIN is not the recovery key, and "key" in this project usually
+    means the PIN. The PIN is a user-chosen pre-boot credential and CAN be carried
+    across a re-image. The recovery key is cryptographic material tied to the
+    actual volume encryption; when a disk is wiped during re-imaging, the old
+    encryption keys are gone and a NEW recovery key is necessarily generated. So:
+    PIN is preserved (same value reapplied); recovery key is new each time and
+    escrowed with full history. "Re-encrypt with the same key" is impossible for
+    the recovery key and is not what is intended - the PIN is the continuity.
+
+  - Re-imaging is "latest", not "as it was". It rebuilds to the current definition
+    of the bound configuration. Do not design for replaying a byte-for-byte
+    historical build in the normal flow.
+
+  - The server is authoritative. The Boot Client and agent never make security or
+    resolution decisions themselves; they report facts (identity, entered PIN) and
+    execute what the server returns. Never move authorisation or resolution to the
+    client.
+
+  - Driver matching is global, not scoped by the image. An over-broad SMBIOS
+    filter will inject drivers into machines it was not meant for. Filters should
+    be as specific as the driver requires.
+
+  - "No PIN defined" is an intentional state meaning "do not encrypt", not an
+    oversight to be filled in with a default.
+
+  - Fail safe means: when in doubt or when access is denied, the machine boots
+    normally. Imaging is destructive and must never be the default-on outcome of a
+    failure.
+
+
+--------------------------------------------------------------------------------
+9. GLOSSARY
+--------------------------------------------------------------------------------
+
+  PXE         Preboot Execution Environment - network boot before any local OS.
+  iPXE        Open network boot firmware supporting HTTP(S) chainloading.
+  SMBIOS/DMI  Firmware tables exposing hardware identity.
+  WIM / ESD   Microsoft file-based Windows image formats, applied with wimlib.
+  wimlib      Open-source tool for applying WIM/ESD images (used by the Boot
+              Client instead of Windows setup.exe).
+  Unattend    An answer file (unattend.xml) driving unattended Windows setup.
+  Loadout     A named, ordered, inheritable collection of software packages.
+  Binding     The persisted association of a machine to its assigned image
+              configuration, name, OU, groups and software.
+  Agent       The resident, silent in-OS Deployment Client.
+  Resolution  The server-side computation of a machine's effective configuration
+              from a selected image and its hardware identity.
+  Escrow      Storing a BitLocker recovery key (and PIN) in AutoDeploy inventory.
+
+
+--------------------------------------------------------------------------------
+10. CURRENT OPEN QUESTIONS
+--------------------------------------------------------------------------------
+
+Unresolved as of this writing; do not assume an answer.
+
+  - Server technology stack (language, framework, datastore) - undecided.
+  - Server topology: single server vs distributed site servers for multi-site.
+  - Exact SCCM package format accepted for driver ingest - to be confirmed.
+  - Whether large rollouts need bandwidth optimisation beyond unicast HTTP.
+  - Whether to add graded portal roles in a later revision.
+  - Point-in-time forensic restore as a possible future addition (built on
+    deployment history).
+  - Non-Windows target imaging (out of scope now; not precluded later).
+
+================================================================================
+END OF PROJECT CONTEXT
+================================================================================

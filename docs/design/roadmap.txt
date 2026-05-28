@@ -1,0 +1,617 @@
+================================================================================
+AUTODEPLOY
+Development Roadmap
+================================================================================
+
+A unified replacement for WDS, MDT, SCCM and FOG.
+
+This roadmap sequences the work required to build AutoDeploy. It is organised
+into phases ordered by dependency: each phase builds on the capabilities
+delivered by the phases before it. The ordering reflects what must exist before
+the next piece of work can begin, not a calendar. No dates or effort estimates
+are given by design; the phases are a sequence, and work within a phase can
+proceed in parallel where dependencies allow.
+
+The companion Software Design Document is the authoritative description of the
+system. This roadmap refers to its concepts but does not restate them in full.
+
+
+--------------------------------------------------------------------------------
+GUIDING PRINCIPLES
+--------------------------------------------------------------------------------
+
+These hold across every phase and should inform decisions throughout.
+
+  - HTTP everywhere. All client-server communication and all payload delivery
+    is over HTTP(S). No reliance on TFTP or layer-2 adjacency.
+
+  - The server decides; the client executes. All resolution and authorisation
+    happens server-side. Clients report facts and act on instructions.
+
+  - Artifacts are standalone and reusable. ISOs, unattends, driver packages and
+    software packages are first-class objects composed by reference.
+
+  - Identity comes from firmware. Hardware identity is read from SMBIOS/DMI in
+    the pre-boot environment.
+
+  - Fail safe. When access is denied or a machine should not be imaged, the safe
+    outcome is a normal boot, never unauthorised imaging.
+
+  - Secrets are never logged. PINs, recovery keys and passwords never appear in
+    any log. Access to a secret is logged; the secret value is not.
+
+  - Detailed logging is built in from the start, not retrofitted. Every
+    component logs who, what, where and when.
+
+
+--------------------------------------------------------------------------------
+ROADMAP AT A GLANCE
+--------------------------------------------------------------------------------
+
+  Phase 0   Foundations and project setup
+  Phase 1   Core data model and management portal (artifacts)
+  Phase 2   HTTP API and payload delivery
+  Phase 3   Boot Client and basic imaging
+  Phase 4   Driver matching
+  Phase 5   Unattend generation and first end-to-end deployment
+  Phase 6   Deployment Client and software deployment
+  Phase 7   Software loadouts and inheritance
+  Phase 8   Inventory and bindings
+  Phase 9   Re-imaging
+  Phase 10  Active Directory integration
+  Phase 11  Security: access PIN and authentication
+  Phase 12  BitLocker management
+  Phase 13  Resident agent and bulk operations
+  Phase 14  Logging, auditing and centralised collection
+  Phase 15  Branding
+  Phase 16  Hardening, scale and release readiness
+
+The early phases establish the spine of the system: a place to define
+configuration, a way to serve it, and a client that can boot and image a
+machine. The middle phases complete the deployment story (software, inventory,
+re-imaging). The later phases add the management, security and operational
+capabilities that turn a deployment tool into a platform.
+
+
+================================================================================
+PHASE 0 - FOUNDATIONS AND PROJECT SETUP
+================================================================================
+
+Purpose
+  Establish the technical groundwork everything else depends on.
+
+Depends on
+  Nothing.
+
+Scope
+  - Decide the server technology stack (language, framework, datastore) for the
+    management application and API. (Open question in the design document.)
+  - Decide the server deployment topology: single server to begin with, with the
+    architecture kept open to distributed site servers later.
+  - Stand up source control, build pipeline and a development environment.
+  - Establish the project structure for the server, the Boot Client and the
+    agent as separate buildable components.
+  - Define coding standards, the logging approach and the secret-handling rules
+    so they are followed from the first line of code.
+  - Set up a test harness, including a way to PXE boot and image test machines
+    or virtual machines.
+
+Exit criteria
+  - A developer can build and run the empty server, Boot Client and agent.
+  - A test machine can be made to network boot in the lab.
+  - Logging and secret-handling conventions are documented and enforced.
+
+
+================================================================================
+PHASE 1 - CORE DATA MODEL AND MANAGEMENT PORTAL (ARTIFACTS)
+================================================================================
+
+Purpose
+  Build the place where everything is defined. Without the data model and a
+  portal to manage it, there is nothing to deploy.
+
+Depends on
+  Phase 0.
+
+Scope
+  - Implement the standalone artifact objects as data entities:
+      * ISO (with OS type, name, description; payload upload and extraction).
+      * Unattend (configuration object; generation comes in Phase 5).
+      * DriverPackage (with SMBIOS filters; matching comes in Phase 4).
+      * SoftwarePackage (detection rules and ordered install steps; execution
+        comes in Phase 6).
+  - Implement the Image object as a composition plus an optional parent pointer.
+  - Implement arbitrary-depth inheritance with cycle prevention at save time.
+  - Implement the management portal UI to create, edit and delete all of the
+    above.
+  - Surface reference counts: show how many images use a shared object before it
+    is edited or deleted, and warn on or block deletion of referenced objects.
+  - Provide a view of an image's resolved configuration so operators can see what
+    would be deployed.
+
+Exit criteria
+  - All artifact types and images can be created and managed in the portal.
+  - Inheritance chains can be built and are protected against cycles.
+  - ISO uploads are stored with their contents extracted for later HTTP serving.
+
+
+================================================================================
+PHASE 2 - HTTP API AND PAYLOAD DELIVERY
+================================================================================
+
+Purpose
+  Expose the data model and the stored payloads to clients over HTTP. This is
+  the contract the Boot Client and agent will speak.
+
+Depends on
+  Phase 1.
+
+Scope
+  - Implement the HTTP API as the single point of authority for client
+    decisions.
+  - Implement payload delivery: serve extracted ISO contents (including the
+    WIM/ESD), driver packages and generated unattends over HTTP(S).
+  - Implement the resolution logic that produces a machine's effective
+    configuration from a selected image:
+      * ISO   - nearest-wins up the chain.
+      * Unattend - nearest-wins, used in full.
+      * Drivers  - all matching filters apply (matching itself in Phase 4).
+      * Software - additive union (loadouts in Phase 7).
+  - Establish HTTPS for all traffic.
+
+Exit criteria
+  - A client can request a configuration and receive a resolved manifest.
+  - Payloads can be downloaded over HTTP.
+  - Resolution rules behave correctly across multi-level inheritance chains.
+
+
+================================================================================
+PHASE 3 - BOOT CLIENT AND BASIC IMAGING
+================================================================================
+
+Purpose
+  Get a machine to network boot, talk to the API, and lay down an image. This is
+  the first time hardware is actually touched.
+
+Depends on
+  Phase 2.
+
+Scope
+  - Build the Linux-based Boot Client: a minimal kernel and initramfs running the
+    client agent, chainloaded over HTTP via iPXE.
+  - Read hardware identity from SMBIOS/DMI (system, BIOS and baseboard
+    structures) and report it to the API.
+  - Request and render a deployment menu from the API; allow selection of a
+    configuration.
+  - Partition the target disk and apply a WIM/ESD with wimlib.
+  - Reboot the machine into the freshly applied OS.
+
+Exit criteria
+  - A machine can PXE boot the client, report its identity, select an image and
+    have a Windows image applied and boot into it.
+  - This is the first vertical slice: a machine can be imaged, without yet being
+    driver-matched, answer-filed or configured.
+
+
+================================================================================
+PHASE 4 - DRIVER MATCHING
+================================================================================
+
+Purpose
+  Ensure imaged machines get the drivers they need, selected automatically by
+  hardware.
+
+Depends on
+  Phase 3.
+
+Scope
+  - Implement ingest of SCCM driver packages: extract the driver payload and the
+    metadata needed for matching. (The exact SCCM package format is an open
+    question to be confirmed.)
+  - Implement filter definition over SMBIOS attributes in the portal, with a
+    preview of which known machines a filter would match.
+  - Implement server-side evaluation of all driver-package filters against
+    reported hardware, returning every match.
+  - Have the Boot Client inject all matched driver packages into the applied
+    image.
+
+Exit criteria
+  - Driver packages can be created from SCCM packages and given filters.
+  - A machine receives exactly the driver packages whose filters match its
+    hardware, injected into the applied image.
+
+
+================================================================================
+PHASE 5 - UNATTEND GENERATION AND FIRST END-TO-END DEPLOYMENT
+================================================================================
+
+Purpose
+  Make deployments unattended and complete the first fully automated image.
+
+Depends on
+  Phase 4.
+
+Scope
+  - Implement unattend configuration in the portal: locale, language, keyboard,
+    time zone, disk layout, edition and product key, local administrator,
+    computer-naming strategy, OOBE skips, and first-logon commands.
+  - Generate a complete unattend.xml from the configuration.
+  - Have the Boot Client place the generated unattend into the applied image.
+  - Run unattended Windows setup driven by the answer file through to the
+    desktop.
+
+Exit criteria
+  - A machine can be imaged end to end with no manual interaction: PXE boot,
+    identity, selection, image apply, driver injection, unattended setup, first
+    boot.
+  - This completes the core deployment spine described in the design document
+    (minus the agent, which follows).
+
+
+================================================================================
+PHASE 6 - DEPLOYMENT CLIENT AND SOFTWARE DEPLOYMENT
+================================================================================
+
+Purpose
+  Configure the machine after imaging by installing software.
+
+Depends on
+  Phase 5.
+
+Scope
+  - Build the Deployment Client (agent), launched by the unattend's first-logon
+    command.
+  - Implement detection rule evaluation: file presence/version, registry
+    key/value, MSI product code, and custom script.
+  - Implement the ordered, typed install steps: copy files, run MSI, install
+    APPX/MSIX, run CMD, run PowerShell, run an executable with arguments, each
+    with success codes and continue/abort-on-failure handling.
+  - Have the agent retrieve its effective software set from the API, skip
+    already-detected packages, execute steps in order, and confirm via detection.
+
+Exit criteria
+  - Software packages defined in the portal install correctly on a freshly imaged
+    machine, in order, idempotently.
+  - A machine comes out of deployment both imaged and configured with software.
+
+
+================================================================================
+PHASE 7 - SOFTWARE LOADOUTS AND INHERITANCE
+================================================================================
+
+Purpose
+  Make software assignment scalable and reusable rather than per-image lists.
+
+Depends on
+  Phase 6.
+
+Scope
+  - Implement SoftwareLoadout as an ordered, inheritable collection of software
+    packages.
+  - Implement additive inheritance up the loadout chain, with explicit per-package
+    ordering and the ability to opt out of an inherited package.
+  - Allow images to link a loadout and/or individual packages.
+  - Implement the union-and-dedup rule: effective software is the loadout
+    (resolved up its chain) plus directly linked packages, de-duplicated by
+    package, with direct links overriding loadout ordering.
+
+Exit criteria
+  - Loadouts can be built, inherited and assigned to images.
+  - A machine's effective software set resolves correctly from a combination of
+    loadout inheritance and direct package links.
+
+
+================================================================================
+PHASE 8 - INVENTORY AND BINDINGS
+================================================================================
+
+Purpose
+  Remember every deployed machine and what it is assigned to. This is the
+  foundation for re-imaging and ongoing management.
+
+Depends on
+  Phase 6 (a machine that deploys and reports), Phase 7 (so the binding can carry
+  a software assignment).
+
+Scope
+  - Implement the machine record, keyed on hardware identity (SMBIOS UUID, with
+    serial as a secondary key).
+  - Implement the binding: assigned image configuration, machine name, target OU,
+    group memberships and software assignment.
+  - Implement the deployment history: a dated record per deployment of the
+    configuration used, packages and outcomes.
+  - Capture detected state reported by the agent for drift and compliance
+    reporting.
+  - Surface inventory in the portal: known machines, their bindings and their
+    history.
+
+Exit criteria
+  - Every deployment creates or updates a machine record with a binding and a
+    history entry.
+  - Inventory is viewable and searchable in the portal.
+
+
+================================================================================
+PHASE 9 - RE-IMAGING
+================================================================================
+
+Purpose
+  Allow a known machine to be rebuilt to the current standard for its
+  configuration while keeping its identity.
+
+Depends on
+  Phase 8.
+
+Scope
+  - Make the Boot Client menu identity-aware: a machine recognised in inventory
+    is offered a re-image option, resolved against the latest definitions of its
+    bound configuration.
+  - Re-imaging redeploys the bound named configuration using current ISO,
+    unattend, matching drivers and current software, preserving the machine's
+    name and assignment.
+  - Ensure re-imaging updates the deployment history.
+
+Exit criteria
+  - A recognised machine can be re-imaged from the boot menu and comes back with
+    the latest version of its assigned configuration and its preserved identity.
+
+
+================================================================================
+PHASE 10 - ACTIVE DIRECTORY INTEGRATION
+================================================================================
+
+Purpose
+  Join machines to the domain and manage their computer objects.
+
+Depends on
+  Phase 9 (bindings carry name, OU and groups that AD operations act on).
+
+Scope
+  - Build the Domain Integration Service, operating server-side with a service
+    account holding only the rights it needs.
+  - Drive domain join from the unattend for configurations that use AD.
+  - Implement computer-object lifecycle: on deployment, if an object exists at
+    the target name, delete it and create a replacement at the correct OU with
+    name and group memberships from the binding.
+  - Reconcile group memberships from the binding on each deployment.
+
+Exit criteria
+  - Machines using an AD-enabled configuration join the domain automatically.
+  - Computer objects are created, placed, named and grouped according to the
+    binding, following the delete-and-replace behaviour.
+
+
+================================================================================
+PHASE 11 - SECURITY: ACCESS PIN AND AUTHENTICATION
+================================================================================
+
+Purpose
+  Stop unauthorised imaging, and require authentication to manage the system.
+
+Depends on
+  Phase 3 (the Boot Client and its menu, which the PIN gates), Phase 1 (the
+  portal, which authentication gates). Can begin once those exist; placed here so
+  the deployment flow is complete enough to be worth protecting.
+
+Scope
+  - Implement the optional global access PIN as a system setting.
+  - Have the Boot Client prompt for the PIN before the menu and submit each
+    attempt to the API for server-side validation.
+  - Implement the three-attempt fail-safe: after three failures the client boots
+    the machine normally.
+  - Implement server-side rate limiting and lockout keyed on machine identity.
+  - Implement local-account authentication for the portal: username and password,
+    with account management (create, disable, delete, reset password).
+  - Confirm there is no graded permission model: all authenticated users have
+    full access (accountability is via the audit trail).
+
+Exit criteria
+  - When enabled, the access PIN gates the boot menu and fails safe after three
+    attempts; brute force is rate-limited server-side.
+  - The portal requires login; local accounts can be managed.
+
+
+================================================================================
+PHASE 12 - BITLOCKER MANAGEMENT
+================================================================================
+
+Purpose
+  Optionally encrypt the OS volume, preserving the user's pre-boot PIN across
+  re-imaging and never losing a recovery key.
+
+Depends on
+  Phase 8 (inventory stores the PIN and recovery-key history), Phase 11 (the
+  secret store and its protections).
+
+Scope
+  - Add the BitLocker PIN and recovery-key history to the machine record.
+  - Have the agent enable BitLocker on the OS volume (C:) with TPM+PIN when, and
+    only when, the inventory record defines a PIN. No PIN means the machine is
+    left unencrypted.
+  - On re-image, reapply the stored PIN so the user's pre-boot experience is
+    unchanged, while accepting that encryption keys and the recovery key are
+    necessarily new.
+  - Escrow each new recovery key to inventory; retain recovery keys as an
+    append-only history so none is ever lost.
+  - Store PIN and recovery keys encrypted at rest with audited retrieval.
+
+Exit criteria
+  - A machine with a defined PIN comes out of deployment encrypted on C: with
+    that PIN; a machine with no PIN is left unencrypted.
+  - The PIN is preserved across re-imaging; recovery keys are escrowed and never
+    overwritten.
+
+
+================================================================================
+PHASE 13 - RESIDENT AGENT AND BULK OPERATIONS
+================================================================================
+
+Purpose
+  Turn the agent into a persistent manager and enable management of
+  already-deployed machines in bulk.
+
+Depends on
+  Phase 6 (the agent and its step/detection machinery), Phase 8 (inventory to
+  target against), Phase 10 (AD, for targeting and for coordinated rename).
+
+Scope
+  - Promote the Deployment Client to a resident, silent agent with no end-user
+    interface, checking in with the API on a schedule.
+  - Implement a server-side job queue: bulk operations produce one job per
+    targeted machine, delivered to agents on check-in.
+  - Implement targeting by Active-Directory-centric criteria, combinable: name
+    regex, OU, and AD group. Provide a preview of the resolved set before an
+    operation runs.
+  - Implement bulk actions:
+      * Bulk rename - coordinated with the Domain Integration Service to update
+        the computer object, followed by a reboot (rename, then directory
+        update, then reboot).
+      * Bulk software deployment - reusing detection and ordered install steps so
+        the push is idempotent.
+      * Bulk run command/script - ad-hoc CMD or PowerShell; the highest-risk
+        action, requiring an authenticated session and full auditing.
+  - Report per-machine results back, retained against both the operation and the
+    machine record.
+
+Exit criteria
+  - The agent runs persistently and silently, picking up queued jobs on check-in.
+  - Operators can select machines by name regex, OU and group and push renames,
+    software and scripts in bulk, with results reported and audited.
+
+
+================================================================================
+PHASE 14 - LOGGING, AUDITING AND CENTRALISED COLLECTION
+================================================================================
+
+Purpose
+  Bring all component logging together into a complete, searchable, centralised
+  record. (Per-component logging is built in from Phase 0; this phase completes
+  the cross-cutting collection, search and auditing capability.)
+
+Depends on
+  All components that produce logs (portal, API, Boot Client, agent, Domain
+  Integration Service) - so it completes after they exist, even though logging
+  discipline is present throughout.
+
+Scope
+  - Ensure every component emits detailed events capturing who, what, where and
+    when.
+  - Ship component logs back to the server, including Boot Client run logs
+    (uploaded at end of run) and agent activity (reported on check-in).
+  - Provide central viewing and searching of logs in the portal, including
+    client-side deployment activity.
+  - Enforce the absolute rule that no secret value is ever logged; log only the
+    fact and actor of secret access.
+  - Implement configurable log retention.
+
+Exit criteria
+  - A failed deployment can be diagnosed centrally from the portal, including the
+    Boot Client and agent activity for that machine.
+  - Sensitive actions are attributable; no secrets appear in any log.
+  - Retention is configurable.
+
+
+================================================================================
+PHASE 15 - BRANDING
+================================================================================
+
+Purpose
+  Apply a consistent organisational identity across the system.
+
+Depends on
+  The surfaces being branded: the portal (Phase 1), the boot screen (Phase 3),
+  and the deployed machine (Phase 5/6). Can be done once those exist.
+
+Scope
+  - Implement system-wide branding configured once in system settings.
+  - Apply branding to the management portal (logo, colour scheme, product name).
+  - Apply branding to the Boot Client screen (logo and organisation name on the
+    menu and the access-PIN prompt).
+  - Apply branding to the deployed machine: OEM information in Windows
+    (manufacturer, logo, support URL) and optionally lock-screen and wallpaper
+    assets.
+
+Exit criteria
+  - A single brand configuration is reflected consistently across the portal, the
+    boot screen and provisioned machines.
+
+
+================================================================================
+PHASE 16 - HARDENING, SCALE AND RELEASE READINESS
+================================================================================
+
+Purpose
+  Take the feature-complete system to a state fit for production use.
+
+Depends on
+  All preceding phases.
+
+Scope
+  - Performance and scale testing of HTTP payload delivery under concurrent
+    deployments; assess whether large rollouts need a bandwidth-optimisation
+    strategy over pure unicast HTTP (open question).
+  - Evaluate distributed/site-server topology if multi-site locality is required.
+  - Security review of the whole system, with particular attention to the secret
+    store, the access PIN, bulk script execution and the AD service account.
+  - Resilience: behaviour of offline agents, interrupted deployments and retries.
+  - Documentation: operator guide, deployment guide and administration guide.
+  - Backup and recovery for the server datastore, including inventory and the
+    secret store.
+
+Exit criteria
+  - The system performs acceptably under realistic concurrent load.
+  - A security review has been completed and findings addressed.
+  - Operational documentation and backup/recovery procedures exist.
+
+
+================================================================================
+DEPENDENCY NOTES
+================================================================================
+
+The critical path through the early phases is strict: data model (1) before API
+(2) before Boot Client (3) before the first end-to-end deployment (5). Driver
+matching (4) slots in before the first end-to-end deployment so that first
+complete image is properly driver-matched.
+
+Several later capabilities share common prerequisites and can be developed in
+parallel once those prerequisites exist:
+
+  - Inventory (8) unlocks re-imaging (9), AD integration (10), BitLocker (12) and
+    bulk operations (13). These four are largely independent of one another and
+    can proceed in parallel after their shared dependencies are met, with the
+    noted exception that bulk rename (13) depends on AD (10).
+
+  - Security (11) has light dependencies and can begin as soon as the boot menu
+    and portal exist; it is sequenced after the deployment flow is complete
+    enough to be worth protecting.
+
+  - Logging discipline (the per-component half of 14) is present from Phase 0;
+    only the centralised collection, search and auditing layer is gated to the
+    end, once all log-producing components exist.
+
+  - Branding (15) touches several surfaces and can be applied incrementally as
+    each surface is built, rather than waiting for a single dedicated phase.
+
+
+================================================================================
+OPEN QUESTIONS CARRIED FROM THE DESIGN DOCUMENT
+================================================================================
+
+These are unresolved and should be decided at or before the phase that needs
+them.
+
+  - Server technology stack (needed at Phase 0).
+  - Server deployment topology: single vs distributed site servers (Phase 0,
+    revisited at Phase 16).
+  - Exact SCCM package format accepted for driver ingest (Phase 4).
+  - Whether large rollouts need a bandwidth-optimisation strategy beyond unicast
+    HTTP (Phase 16).
+  - Whether to introduce graded portal roles in a later revision (post-release).
+  - Point-in-time forensic restore as a possible future addition built on
+    deployment history (post-release).
+  - Non-Windows target imaging (out of scope now; architecture should not
+    preclude it).
+
+================================================================================
+END OF ROADMAP
+================================================================================
