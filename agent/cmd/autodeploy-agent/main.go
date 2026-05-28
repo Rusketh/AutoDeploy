@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rusketh/autodeploy/agent/internal/bitlocker"
 	"github.com/rusketh/autodeploy/agent/internal/detect"
 	"github.com/rusketh/autodeploy/agent/internal/httpc"
 	"github.com/rusketh/autodeploy/agent/internal/logging"
@@ -224,6 +226,11 @@ func main() {
 		}
 	}
 
+	// BitLocker (Phase 12): if the server has a PIN configured for this
+	// machine, enable encryption and escrow the recovery key. Off-Windows
+	// or on a host without TPM/PowerShell, the agent logs and skips.
+	maybeEnableBitLocker(ctx, log, c, f, identityBody)
+
 	// Final report: mark the deployment ok/failed and ship per-package
 	// detection state.
 	outcome := "ok"
@@ -245,6 +252,68 @@ func main() {
 
 	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
 	_ = time.Now // placeholder for resident-mode timing in Phase 13
+}
+
+// maybeEnableBitLocker fetches the assigned PIN (if any) and enables
+// BitLocker on C:. If no PIN is configured the machine is left
+// unencrypted (the design's "absence of a PIN means do not encrypt"
+// rule). The recovery key is escrowed back to the server; only the FACT
+// of encryption is logged.
+func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any) {
+	type cfgResp struct {
+		PINSet bool   `json:"pin_set"`
+		PIN    string `json:"pin,omitempty"`
+	}
+	var cfg cfgResp
+	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/config",
+		map[string]any{"identity": identityBody}, &cfg); err != nil {
+		log.Warn("bitlocker.config.fetch", slog.String("error", err.Error()))
+		return
+	}
+	if !cfg.PINSet {
+		log.Info("bitlocker.skip",
+			slog.String("actor", f.uuid),
+			slog.String("reason", "no PIN configured for this machine"))
+		return
+	}
+	if f.dryRun {
+		log.Info("bitlocker.skip",
+			slog.String("actor", f.uuid),
+			slog.String("reason", "--dry-run"))
+		return
+	}
+	d := &bitlocker.Driver{}
+	key, err := d.Enable(ctx, cfg.PIN)
+	if err != nil {
+		if errors.Is(err, bitlocker.ErrUnsupported) {
+			log.Warn("bitlocker.unsupported",
+				slog.String("actor", f.uuid),
+				slog.String("os", runtime.GOOS),
+				slog.String("note", "agent built for non-Windows host; BitLocker is Windows-only"))
+			return
+		}
+		log.Error("bitlocker.enable.fail",
+			slog.String("actor", f.uuid),
+			slog.String("error", err.Error()))
+		return
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/escrow",
+		map[string]any{
+			"identity":     identityBody,
+			"recovery_key": key,
+			"note":         "deploy",
+		}, nil); err != nil {
+		log.Error("bitlocker.escrow.fail",
+			slog.String("actor", f.uuid),
+			slog.String("error", err.Error()))
+		return
+	}
+	// LOG ONLY THE FACT — the recovery key never appears in any log line.
+	log.Info("bitlocker.enabled",
+		slog.String("actor", f.uuid),
+		slog.String("target", "C:"),
+		slog.String("note", "recovery key escrowed; value not logged"),
+	)
 }
 
 // rewriteSteps replaces the literal token "{payload}" in source/MSI/APPX/EXE

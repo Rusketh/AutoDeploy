@@ -784,3 +784,69 @@ re-imaging re-applies the same PIN to the new volume (with a fresh
 recovery key necessarily). Secrets here include the BitLocker PIN
 itself and the recovery keys; both stored encrypted at rest, neither
 ever logged.
+
+---
+
+## 2026-05-28 — Phase 12 complete (BitLocker management)
+
+**WHAT.**
+
+- Migration 0005 adds `bitlocker_pin` (one row per machine) and
+  `bitlocker_recovery_key` (append-only history) — both store values
+  encrypted at rest.
+- `internal/secrets`: AES-256-GCM Box with key sourced from
+  `AUTODEPLOY_SECRETS_KEY` (hex) or auto-generated 0600 key file under
+  `$AUTODEPLOY_DATA_DIR/secrets-key.bin`. Round-trip and tampering
+  tests included.
+- `internal/model/bitlocker.go`: SetPIN (clear-able), PINStatus (does
+  NOT return value), RetrievePIN (audited), EscrowRecoveryKey
+  (append-only), ListRecoveryKeys (no values), RetrieveRecoveryKey
+  (audited).
+- API:
+  - Operator: `PUT/GET /api/v1/machines/{id}/bitlocker/pin`,
+    `GET /api/v1/machines/{id}/bitlocker`,
+    `GET /api/v1/machines/{id}/bitlocker/recovery-keys`,
+    `GET /api/v1/recovery-keys/{id}` (last two audited).
+  - Agent: `POST /api/v1/agent/bitlocker/config` returns the PIN if
+    set; `POST /api/v1/agent/bitlocker/escrow` accepts a recovery key.
+- Agent: `internal/bitlocker` package with build-tag split — Windows
+  shells out to `powershell -Command Enable-BitLocker` with the PIN
+  piped over stdin (not on the command line); non-Windows returns
+  `ErrUnsupported`. The agent's deploy-time loop calls the BitLocker
+  config endpoint, enables encryption if a PIN is set, escrows the
+  recovery key, and logs only the FACT.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: The PIN is fed to PowerShell over stdin so it never
+  appears on the process command line or in any process listing.
+- DECISION: Off-Windows hosts return `ErrUnsupported` rather than
+  silently pretending to encrypt — the agent must NOT report success
+  for an operation it did not perform.
+- DECISION: At-rest encryption uses AES-256-GCM with a dedicated key
+  outside the database. Losing the database without the key leaks
+  nothing; losing the key without the database leaks nothing; losing
+  both is the worst case (and is the operator's backup problem to
+  solve correctly).
+- DECISION: `bitlocker_pin` is a single row per machine; clearing it
+  deletes the row. Recovery-key history is append-only — every
+  successful encryption emits a new key, and old keys remain
+  available to unlock historical drives or images. The design is
+  explicit that this safety net must never be discarded.
+- DECISION: Secret values returned to a client (the agent's PIN
+  fetch, the portal's PIN/recovery-key retrieval) emit a structured
+  `secret.access` log line capturing actor + target, never the value.
+- DECISION: PIN preservation across re-image is automatic: the
+  inventory record is keyed on SMBIOS UUID and persists across
+  re-image (Phase 9). The recovery key is necessarily new because
+  the volume was wiped.
+
+**BUILD STATE.** Server and agent build green for Linux and Windows.
+secrets, model and storage tests pass; the agent's bitlocker code
+compiles under both build tags.
+
+**NEXT.** Phase 13 — resident agent and bulk operations. Promote the
+agent to a long-running silent service that checks in on a schedule
+and picks up queued bulk jobs (rename, software push, ad-hoc script).
+Server-side: a job queue with per-machine results, plus targeting by
+name regex / OU / AD group with a preview before running.

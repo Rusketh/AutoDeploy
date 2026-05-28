@@ -33,6 +33,11 @@ type Config struct {
 	ADBindPassword   string
 	ADSearchBase     string
 	ADSkipTLSVerify  bool
+
+	// Secrets-at-rest encryption key (Phase 12). Hex-encoded 32 bytes.
+	// Empty causes the server to load (or generate) a key file under
+	// AUTODEPLOY_DATA_DIR/secrets-key.bin with 0600 perms.
+	SecretsKeyHex string
 }
 
 // Load reads configuration from the environment.
@@ -58,6 +63,7 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AUTODEPLOY_AD_SKIP_TLS_VERIFY must be a boolean")
 	}
 	c.ADSkipTLSVerify = skip
+	c.SecretsKeyHex = getenv("AUTODEPLOY_SECRETS_KEY", "")
 	return c, nil
 }
 

@@ -23,11 +23,12 @@ the product, and never before.
 12. [Re-imaging](reimaging.md) — what re-imaging does, what's preserved, what isn't.
 13. [Active Directory integration](active-directory.md) — service-account config, delete-and-replace lifecycle.
 14. [Security](security.md) — portal accounts, sessions, the access PIN, rate-limiting.
+15. [BitLocker](bitlocker.md) — opt-in PIN, escrowed recovery-key history, at-rest encryption.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 11)
+## Current product surface (Phase 12)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -57,6 +58,5 @@ section you expect is missing, the feature it documents has not yet shipped.
   the outcome. Cross-compiles to Windows. (Resident check-in mode and
   bulk operations arrive in Phase 13.)
 
-Still to come (sequenced by `docs/design/roadmap.txt`): BitLocker
-(Phase 12), bulk operations (Phase 13), centralised logging
-(Phase 14), branding (Phase 15).
+Still to come (sequenced by `docs/design/roadmap.txt`): bulk operations
+(Phase 13), centralised logging (Phase 14), branding (Phase 15).

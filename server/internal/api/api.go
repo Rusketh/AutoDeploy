@@ -28,6 +28,8 @@ type Repos struct {
 	// Phase 11.
 	Users    *auth.Repo
 	Settings *auth.SettingsRepo
+	// Phase 12.
+	BitLocker *model.BitLockerRepo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -36,6 +38,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterAgent(mux, r)
 	RegisterInventory(mux, r)
 	RegisterAuth(mux, r)
+	RegisterBitLocker(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

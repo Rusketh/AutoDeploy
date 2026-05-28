@@ -19,6 +19,8 @@ func TestOpenAndMigrate(t *testing.T) {
 		"software_loadout", "software_loadout_package",
 		"machine_record", "machine_binding", "deployment_history",
 		"machine_detected_state",
+		"system_setting", "user_account", "user_session", "pin_attempt",
+		"bitlocker_pin", "bitlocker_recovery_key",
 		"schema_migration",
 	} {
 		var name string

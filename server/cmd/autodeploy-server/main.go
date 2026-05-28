@@ -25,6 +25,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
@@ -62,7 +63,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	r := repos(db)
+	// Open the at-rest secrets box (Phase 12).
+	bx, err := secrets.Open(cfg.SecretsKeyHex, filepath.Join(cfg.DataDir, "secrets-key.bin"))
+	if err != nil {
+		return err
+	}
+
+	r := repos(db, bx)
 
 	// Bootstrap a default admin account if no users exist yet, so an
 	// operator can log in on first boot. The password is logged ONCE at
@@ -80,6 +87,7 @@ func run(logger *slog.Logger) error {
 		Images: r.Images, Inventory: r.Inventory,
 		Resolver: r.Resolver,
 		Users:    r.Users, Settings: r.Settings,
+		BitLocker: r.BitLocker,
 	})
 
 	pl := &payload.Service{
@@ -182,9 +190,10 @@ type appRepos struct {
 	Resolver  *resolve.Resolver
 	Users     *auth.Repo
 	Settings  *auth.SettingsRepo
+	BitLocker *model.BitLockerRepo
 }
 
-func repos(db *storage.DB) appRepos {
+func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	isos := model.NewISORepo(db)
 	unattend := model.NewUnattendRepo(db)
 	drivers := model.NewDriverPackageRepo(db)
@@ -194,6 +203,7 @@ func repos(db *storage.DB) appRepos {
 	inventory := model.NewInventoryRepo(db)
 	users := auth.New(db)
 	settings := auth.MustNewSettingsRepo(users)
+	bitlocker := model.NewBitLockerRepo(db, bx)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -201,6 +211,7 @@ func repos(db *storage.DB) appRepos {
 		Resolver: resolve.New(images, isos, unattend).
 			WithDrivers(drivers).WithLoadouts(loadouts),
 		Users: users, Settings: settings,
+		BitLocker: bitlocker,
 	}
 }
 
