@@ -1,0 +1,32 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Images</h2>
+  <div class="right"><a class="btn" href="/portal/images/new">New image</a></div>
+</div>
+{{if .Data.Images}}
+<table>
+  <thead><tr><th>Name</th><th>Parent</th><th>ISO</th><th>Unattend</th><th>Loadout</th><th>Direct sw</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Images}}
+    <tr>
+      <td><a href="/portal/images/{{int64 .ID}}/edit">{{.Name}}</a><br><span class="small muted">{{.Description}}</span></td>
+      <td>{{if .ParentID}}{{index $.Data.ImageNames (derefIDtoID .ParentID)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .ISOID}}{{index $.Data.ISONames (derefIDtoID .ISOID)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .UnattendID}}{{index $.Data.UnattendNames (derefIDtoID .UnattendID)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .LoadoutID}}{{index $.Data.LoadoutNames (derefIDtoID .LoadoutID)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num">{{len .SoftwareLinks}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/images/{{int64 .ID}}/resolved">Resolved</a>
+        <a class="btn secondary" href="/portal/images/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/images/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this image?')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No images yet. <a href="/portal/images/new">Add one</a>.</p>
+{{end}}
+{{end}}

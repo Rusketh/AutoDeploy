@@ -1,0 +1,209 @@
+package portal
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/rusketh/autodeploy/server/internal/model"
+)
+
+func init() {
+	registerImageRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
+		get("/portal/images", imageList(r))
+		get("/portal/images/new", imageFormNew(r))
+		post("/portal/images", imageCreate(r))
+		get("/portal/images/{id}/edit", imageEdit(r))
+		post("/portal/images/{id}", imageUpdate(r))
+		post("/portal/images/{id}/delete", imageDelete(r))
+		get("/portal/images/{id}/resolved", imageResolved(r))
+	}
+}
+
+func imageList(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		images, err := r.Images.List(req.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Build a name map for ISO / Unattend / Loadout / parent image so
+		// the list shows names instead of bare IDs.
+		isoNames := map[model.ID]string{}
+		if isos, _ := r.ISOs.List(req.Context()); isos != nil {
+			for _, i := range isos {
+				isoNames[i.ID] = i.Name
+			}
+		}
+		uaNames := map[model.ID]string{}
+		for _, u := range mustListUnattend(r, req) {
+			uaNames[u.ID] = u.Name
+		}
+		ldNames := map[model.ID]string{}
+		for _, l := range mustListLoadout(r, req) {
+			ldNames[l.ID] = l.Name
+		}
+		imgNames := map[model.ID]string{}
+		for _, im := range images {
+			imgNames[im.ID] = im.Name
+		}
+		render(w, req, r, "image_list.html", "Images", map[string]any{
+			"Images":   images,
+			"ISONames": isoNames, "UnattendNames": uaNames,
+			"LoadoutNames": ldNames, "ImageNames": imgNames,
+		})
+	}
+}
+
+func mustListUnattend(r Repos, req *http.Request) []model.Unattend {
+	v, _ := r.Unattend.List(req.Context())
+	return v
+}
+func mustListLoadout(r Repos, req *http.Request) []model.SoftwareLoadout {
+	v, _ := r.Loadouts.List(req.Context())
+	return v
+}
+
+func imageFormNew(r Repos) http.HandlerFunc {
+	return imageFormFor(r, model.Image{}, true)
+}
+
+func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		isos, _ := r.ISOs.List(req.Context())
+		unattends, _ := r.Unattend.List(req.Context())
+		loadouts, _ := r.Loadouts.List(req.Context())
+		images, _ := r.Images.List(req.Context())
+		packages, _ := r.Software.List(req.Context())
+		title := "New image"
+		if !isNew {
+			title = "Edit image: " + im.Name
+		}
+		render(w, req, r, "image_form.html", title, map[string]any{
+			"Im": im, "IsNew": isNew,
+			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
+			"Images": images, "Packages": packages,
+		})
+	}
+}
+
+func imageEdit(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		im, err := r.Images.Get(req.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		imageFormFor(r, im, false)(w, req)
+	}
+}
+
+func buildImageFromForm(req *http.Request) (model.Image, error) {
+	if err := req.ParseForm(); err != nil {
+		return model.Image{}, err
+	}
+	im := model.Image{
+		Name:        strings.TrimSpace(req.FormValue("name")),
+		Description: strings.TrimSpace(req.FormValue("description")),
+	}
+	setIDPtr := func(field string, dst **model.ID) {
+		v := strings.TrimSpace(req.FormValue(field))
+		if v == "" || v == "0" {
+			*dst = nil
+			return
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err == nil {
+			id := model.ID(n)
+			*dst = &id
+		}
+	}
+	setIDPtr("parent_id", &im.ParentID)
+	setIDPtr("iso_id", &im.ISOID)
+	setIDPtr("unattend_id", &im.UnattendID)
+	setIDPtr("loadout_id", &im.LoadoutID)
+	ids := req.Form["sw_id[]"]
+	orders := req.Form["sw_order[]"]
+	for i, raw := range ids {
+		pid, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil || pid == 0 {
+			continue
+		}
+		ord := int64(100)
+		if i < len(orders) {
+			if n, err := strconv.ParseInt(strings.TrimSpace(orders[i]), 10, 64); err == nil {
+				ord = n
+			}
+		}
+		im.SoftwareLinks = append(im.SoftwareLinks, model.ImageSoftwareLink{
+			PackageID: model.ID(pid), OrderValue: ord,
+		})
+	}
+	return im, nil
+}
+
+func imageCreate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		im, err := buildImageFromForm(req)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/images/new", http.StatusFound)
+			return
+		}
+		out, err := r.Images.Create(req.Context(), im)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/images/new", http.StatusFound)
+			return
+		}
+		flash(w, "ok", "Image created.")
+		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
+	}
+}
+
+func imageUpdate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		im, err := buildImageFromForm(req)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
+			return
+		}
+		im.ID = id
+		if err := r.Images.Update(req.Context(), im); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Saved.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
+	}
+}
+
+func imageDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if err := r.Images.Delete(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Deleted.")
+		}
+		http.Redirect(w, req, "/portal/images", http.StatusFound)
+	}
+}
+
+func imageResolved(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		res, err := r.Resolver.Resolve(req.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		render(w, req, r, "image_resolved.html", "Resolved configuration", map[string]any{
+			"R": res,
+		})
+	}
+}

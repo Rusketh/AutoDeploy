@@ -1,0 +1,15 @@
+{{define "body"}}
+<div class="login">
+  <h2>Sign in to {{.Brand.ProductName}}</h2>
+  {{with .Data.Error}}<p class="err">{{.}}</p>{{end}}
+  <form method="POST" action="/portal/login">
+    {{with .Data.Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
+    <label>Username<input type="text" name="username" autocomplete="username" required autofocus></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="hint">First-time setup: read the password from
+  <code>$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt</code>, log in, then
+  change it.</p>
+</div>
+{{end}}

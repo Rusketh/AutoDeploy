@@ -1,0 +1,30 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>ISOs</h2>
+  <div class="right"><a class="btn" href="/portal/isos/new">New ISO</a></div>
+</div>
+{{if .Data.ISOs}}
+<table>
+  <thead><tr><th>Name</th><th>OS type</th><th>Size</th><th>Storage path</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.ISOs}}
+    <tr>
+      <td><a href="/portal/isos/{{int64 .ID}}/edit">{{.Name}}</a><br><span class="small muted">{{.Description}}</span></td>
+      <td>{{.OSType}}</td>
+      <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .StoragePath}}<code>{{.StoragePath}}</code>{{else}}<span class="muted">not uploaded</span>{{end}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/isos/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/isos/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this ISO? Will fail if images still link it.')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No ISOs yet. <a href="/portal/isos/new">Add one</a>.</p>
+{{end}}
+{{end}}

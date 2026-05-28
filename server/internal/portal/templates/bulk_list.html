@@ -1,0 +1,25 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Bulk operations</h2>
+  <div class="right"><a class="btn" href="/portal/bulk/new">New bulk operation</a></div>
+</div>
+{{if .Data.Ops}}
+<table>
+  <thead><tr><th>ID</th><th>Action</th><th>Target</th><th>Created by</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Ops}}
+    <tr>
+      <td>#{{int64 .ID}}</td>
+      <td><span class="badge">{{.Action}}</span></td>
+      <td class="small">{{if .Target.NameRegex}}name={{.Target.NameRegex}} {{end}}{{if .Target.OU}}ou={{.Target.OU}} {{end}}{{if .Target.Group}}group={{.Target.Group}}{{end}}</td>
+      <td>{{.CreatedBy}}</td>
+      <td class="small">{{formatTime .CreatedAt}}</td>
+      <td class="actions"><a class="btn secondary" href="/portal/bulk/{{int64 .ID}}">Open</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No bulk operations yet. <a href="/portal/bulk/new">Queue one</a>.</p>
+{{end}}
+{{end}}

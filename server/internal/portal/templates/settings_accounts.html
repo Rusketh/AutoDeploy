@@ -1,0 +1,41 @@
+{{define "body"}}
+<h2>Local accounts</h2>
+<table>
+  <thead><tr><th>Username</th><th>Status</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Users}}
+    <tr>
+      <td>{{.Username}} {{if eq .ID $.Data.Me.ID}}<span class="badge">you</span>{{end}}</td>
+      <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok">active</span>{{end}}</td>
+      <td class="small">{{formatTime .CreatedAt}}</td>
+      <td class="actions">
+        {{if .Disabled}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/enable"><button class="secondary">Enable</button></form>
+        {{else}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/disable"><button class="secondary">Disable</button></form>
+        {{end}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline">
+          <input type="password" name="password" placeholder="new password" required style="width:auto">
+          <button>Set password</button>
+        </form>
+        {{if ne .ID $.Data.Me.ID}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Username}}?')">
+          <button class="danger">Delete</button>
+        </form>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+
+<h3>Add account</h3>
+<form class="std" method="POST" action="/portal/settings/accounts">
+  <div class="row">
+    <label><span class="lbl">Username</span><input type="text" name="username" required></label>
+    <label><span class="lbl">Password</span><input type="password" name="password" required autocomplete="new-password"></label>
+  </div>
+  <div class="actions"><button type="submit">Create</button></div>
+</form>
+<p class="muted small">There is no graded permission model: every active account has full portal/API access. Accountability rests on the audit trail.</p>
+{{end}}

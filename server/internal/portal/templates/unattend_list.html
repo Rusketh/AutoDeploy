@@ -1,0 +1,30 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Unattends</h2>
+  <div class="right"><a class="btn" href="/portal/unattends/new">New unattend</a></div>
+</div>
+{{if .Data.Unattends}}
+<table>
+  <thead><tr><th>Name</th><th>Description</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Unattends}}
+    <tr>
+      <td><a href="/portal/unattends/{{int64 .ID}}/edit">{{.Name}}</a></td>
+      <td>{{.Description}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/unattends/{{int64 .ID}}/preview">View XML</a>
+        <a class="btn secondary" href="/portal/unattends/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/unattends/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this unattend? Will fail if images still link it.')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No unattends yet. <a href="/portal/unattends/new">Add one</a>.</p>
+{{end}}
+<p class="muted small">Resolution is nearest-wins, used in full — every unattend is a complete answer file on its own. The agent bootstrap is always appended automatically by the generator.</p>
+{{end}}

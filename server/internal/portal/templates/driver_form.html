@@ -1,0 +1,140 @@
+{{define "body"}}
+{{$p := .Data.Driver}}
+{{$new := .Data.IsNew}}
+<h2>{{if $new}}New driver package{{else}}Edit driver package: {{$p.Name}}{{end}}</h2>
+
+<form class="std" method="POST" action="{{if $new}}/portal/drivers{{else}}/portal/drivers/{{int64 $p.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$p.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$p.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>SMBIOS filters</legend>
+    <p class="hint">A package applies when <strong>any</strong> filter matches. A filter matches when <strong>all</strong> its constraints match. Empty filter never matches (safety).</p>
+    <div id="filters">
+      {{range $i, $f := .Data.Filters}}
+      <div class="filter-block">
+        <input type="hidden" name="filter_index[]" value="{{$i}}">
+        <div class="rep-list">
+          {{range $f.Pairs}}
+          <div class="rep">
+            <select name="filter_keys_{{$i}}[]">
+              {{$cur := .Key}}
+              {{range $.Data.AllowedKeys}}<option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>{{end}}
+            </select>
+            <input type="text" name="filter_vals_{{$i}}[]" value="{{.Value}}" placeholder="value or *">
+            <button type="button" class="rem" onclick="this.parentNode.remove()">−</button>
+          </div>
+          {{end}}
+        </div>
+        <button type="button" class="secondary" onclick="addConstraint(this.previousElementSibling, '{{$i}}')">Add constraint</button>
+        <button type="button" class="danger" onclick="this.parentNode.remove()">Remove filter</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addFilter()">Add filter</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/drivers">Cancel</a>
+    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+{{if not $new}}
+<h3>Upload payload</h3>
+<form class="std" method="POST" action="/portal/drivers/{{int64 $p.ID}}/upload" enctype="multipart/form-data">
+  <label><span class="lbl">Driver package (.zip / .cab / .exe)</span>
+    <input type="file" name="file" required>
+  </label>
+  <div class="actions"><button type="submit">Upload</button></div>
+</form>
+<p class="small muted">Current: {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code> ({{$p.SizeBytes}} bytes){{else}}<em>nothing uploaded</em>{{end}}</p>
+
+<h3>Filter preview</h3>
+<form class="std" method="POST" action="/portal/drivers/{{int64 $p.ID}}/preview">
+  <p class="hint">Type a hypothetical machine identity. The portal evaluates every filter against it and tells you whether the package would apply.</p>
+  {{$prev := .Data.Preview}}
+  {{$id := dict "p_system_manufacturer" "" "p_system_product" "" "p_system_serial" "" "p_system_uuid" "" "p_bios_vendor" "" "p_bios_version" "" "p_board_manufacturer" "" "p_board_product" "" "p_board_serial" ""}}
+  <div class="row">
+    <label><span class="lbl">system_manufacturer</span><input type="text" name="p_system_manufacturer" value="{{if $prev}}{{$prev.Identity.SystemManufacturer}}{{end}}"></label>
+    <label><span class="lbl">system_product</span><input type="text" name="p_system_product" value="{{if $prev}}{{$prev.Identity.SystemProduct}}{{end}}"></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">system_serial</span><input type="text" name="p_system_serial" value="{{if $prev}}{{$prev.Identity.SystemSerial}}{{end}}"></label>
+    <label><span class="lbl">system_uuid</span><input type="text" name="p_system_uuid" value="{{if $prev}}{{$prev.Identity.SystemUUID}}{{end}}"></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">board_manufacturer</span><input type="text" name="p_board_manufacturer" value="{{if $prev}}{{$prev.Identity.BoardManufacturer}}{{end}}"></label>
+    <label><span class="lbl">board_product</span><input type="text" name="p_board_product" value="{{if $prev}}{{$prev.Identity.BoardProduct}}{{end}}"></label>
+  </div>
+  <div class="actions"><button type="submit">Evaluate</button></div>
+</form>
+
+{{if .Data.Preview}}
+<h3>Preview result</h3>
+<p>Package matches: <span class="badge {{if .Data.Preview.PackageMatches}}ok{{else}}bad{{end}}">{{.Data.Preview.PackageMatches}}</span></p>
+<table>
+  <thead><tr><th>Filter</th><th>Matches</th><th>Error</th></tr></thead>
+  <tbody>
+    {{range .Data.Preview.Results}}
+    <tr>
+      <td><code>{{.JSON}}</code></td>
+      <td><span class="badge {{if .Matches}}ok{{else}}bad{{end}}">{{.Matches}}</span></td>
+      <td class="err">{{.Err}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}
+
+<script>
+var allowedKeys = [{{range $i, $k := .Data.AllowedKeys}}{{if $i}},{{end}}"{{$k}}"{{end}}];
+function buildConstraintRow(idx, k, v) {
+  var d = document.createElement('div');
+  d.className = 'rep';
+  var sel = document.createElement('select');
+  sel.name = 'filter_keys_' + idx + '[]';
+  for (var i = 0; i < allowedKeys.length; i++) {
+    var o = document.createElement('option');
+    o.value = allowedKeys[i]; o.textContent = allowedKeys[i];
+    if (k === allowedKeys[i]) o.selected = true;
+    sel.appendChild(o);
+  }
+  var inp = document.createElement('input');
+  inp.type='text'; inp.name='filter_vals_'+idx+'[]'; inp.value=v||''; inp.placeholder='value or *';
+  var rm = document.createElement('button');
+  rm.type='button'; rm.className='rem'; rm.textContent='−';
+  rm.onclick=function(){ d.remove(); };
+  d.appendChild(sel); d.appendChild(inp); d.appendChild(rm);
+  return d;
+}
+function addConstraint(list, idx) {
+  list.appendChild(buildConstraintRow(idx, '', ''));
+}
+var nextFilter = {{len .Data.Filters}};
+function addFilter() {
+  var idx = String(nextFilter++);
+  var fb = document.createElement('div');
+  fb.className = 'filter-block';
+  var hidden = document.createElement('input');
+  hidden.type='hidden'; hidden.name='filter_index[]'; hidden.value=idx;
+  var list = document.createElement('div'); list.className='rep-list';
+  list.appendChild(buildConstraintRow(idx, 'system_manufacturer', ''));
+  var addBtn = document.createElement('button');
+  addBtn.type='button'; addBtn.className='secondary'; addBtn.textContent='Add constraint';
+  addBtn.onclick = function(){ addConstraint(list, idx); };
+  var rmBtn = document.createElement('button');
+  rmBtn.type='button'; rmBtn.className='danger'; rmBtn.textContent='Remove filter';
+  rmBtn.onclick = function(){ fb.remove(); };
+  fb.appendChild(hidden); fb.appendChild(list); fb.appendChild(addBtn); fb.appendChild(rmBtn);
+  document.getElementById('filters').appendChild(fb);
+}
+</script>
+<style>
+.filter-block { border:1px solid var(--border); border-radius:4px; padding:0.5rem 0.7rem; margin:0.5rem 0; background:#fafbfc; }
+.rep-list { margin-bottom: 0.4rem; }
+.filter-block > button { margin-right: 0.4rem; }
+</style>
+{{end}}

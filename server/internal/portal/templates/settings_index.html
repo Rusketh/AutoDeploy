@@ -1,0 +1,9 @@
+{{define "body"}}
+<h2>Settings</h2>
+<div class="grid stats">
+  <a class="stat" href="/portal/settings/access-pin"><span class="num">PIN</span><span class="lbl">Access PIN (boot gate)</span></a>
+  <a class="stat" href="/portal/settings/branding"><span class="num">★</span><span class="lbl">Branding</span></a>
+  <a class="stat" href="/portal/settings/accounts"><span class="num">U</span><span class="lbl">Local accounts</span></a>
+</div>
+<p class="muted small">Active Directory connection, secrets-at-rest key, log retention and TLS are configured via environment variables on the server. See the operations guide.</p>
+{{end}}

@@ -1,0 +1,103 @@
+{{define "body"}}
+{{$m := .Data.M}}
+{{$b := .Data.Binding}}
+<h2>Machine — <code>{{$m.SystemUUID}}</code></h2>
+<dl class="kv">
+  <dt>Make</dt><dd>{{$m.SystemManufacturer}}</dd>
+  <dt>Model</dt><dd>{{$m.SystemProduct}}</dd>
+  <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
+  <dt>BIOS</dt><dd>{{$m.BIOSVendor}} {{$m.BIOSVersion}}</dd>
+  <dt>Board</dt><dd>{{$m.BoardManufacturer}} {{$m.BoardProduct}} ({{$m.BoardSerial}})</dd>
+  <dt>First seen</dt><dd>{{formatTime $m.FirstSeen}}</dd>
+  <dt>Last seen</dt><dd>{{formatTime $m.LastSeen}}</dd>
+</dl>
+
+<h3>Binding</h3>
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding">
+  <label><span class="lbl">Machine name (used in AD object + unattend)</span>
+    <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="LAB-01">
+  </label>
+  <label><span class="lbl">Bound image (re-image will rebuild to the current definition of this)</span>
+    <select name="image_id">
+      <option value="">(none)</option>
+      {{range .Data.Images}}<option value="{{int64 .ID}}" {{if idEq $b.ImageID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label><span class="lbl">Target OU (DN)</span>
+    <input type="text" name="target_ou" value="{{$b.TargetOU}}" placeholder="OU=Lab,DC=corp,DC=example">
+  </label>
+  <label><span class="lbl">AD group memberships (one per line)</span>
+    <textarea name="groups" rows="3">{{range $i, $g := $b.GroupMemberships}}{{if $i}}
+{{end}}{{$g}}{{end}}</textarea>
+  </label>
+  <div class="actions"><button type="submit">Save binding</button></div>
+</form>
+
+<h3>BitLocker</h3>
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
+  <label><span class="lbl">Pre-boot PIN</span>
+    <input type="password" name="pin" autocomplete="new-password" placeholder="{{if .Data.BL.PINSet}}(set; type a new one to replace, or leave blank and submit to clear){{else}}(unset — leave blank to keep machine unencrypted){{end}}">
+    <span class="hint">No PIN = machine is left unencrypted. Stored AES-256-GCM at rest; reapplied on re-image; never logged.</span>
+  </label>
+  <div class="actions">
+    <button type="submit">Save PIN</button>
+    <button type="submit" name="pin" value="" class="danger" onclick="return confirm('Clear the BitLocker PIN? Future deploys will leave the volume unencrypted.')">Clear PIN</button>
+  </div>
+</form>
+
+{{if .Data.Recovery}}
+<h4>Recovery-key history (append-only)</h4>
+<table>
+  <thead><tr><th>Escrowed</th><th>Note</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Recovery}}
+    <tr><td>{{formatTime .EscrowedAt}}</td><td>{{.Note}}</td>
+        <td class="actions"><a class="btn secondary" href="/api/v1/recovery-keys/{{int64 .ID}}">Retrieve key (JSON)</a></td></tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="small muted">Retrieving a recovery key emits a <code>secret.access</code> audit event recording who, when, and which row — never the value.</p>
+{{end}}
+
+<h3>Deployment history</h3>
+{{if .Data.History}}
+<table>
+  <thead><tr><th>Started</th><th>Completed</th><th>Image</th><th>Outcome</th><th>Notes</th></tr></thead>
+  <tbody>
+    {{range .Data.History}}
+    <tr>
+      <td class="small">{{formatTime .StartedAt}}</td>
+      <td class="small">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="muted">in progress</span>{{end}}</td>
+      <td>{{derefID .ImageID}}</td>
+      <td><span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span></td>
+      <td class="small">{{.Notes}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No deployments recorded yet.</p>
+{{end}}
+
+<h3>Detected software state</h3>
+{{if .Data.Detected}}
+<table>
+  <thead><tr><th>Package</th><th>Detected</th><th>Last evaluated</th></tr></thead>
+  <tbody>
+    {{$pkgs := .Data.Packages}}
+    {{range .Data.Detected}}
+    {{$pid := .SoftwarePackageID}}
+    <tr>
+      <td>{{range $pkgs}}{{if eq .ID $pid}}{{.Name}}{{end}}{{end}} <span class="small muted">#{{int64 $pid}}</span></td>
+      <td>{{if .Detected}}<span class="badge ok">present</span>{{else}}<span class="badge bad">absent</span>{{end}}</td>
+      <td class="small">{{formatTime .LastEvaluatedAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No detection state reported yet.</p>
+{{end}}
+
+<p><a class="btn secondary" href="/portal/machines">← back to machines</a></p>
+{{end}}

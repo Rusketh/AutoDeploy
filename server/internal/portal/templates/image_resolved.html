@@ -1,0 +1,36 @@
+{{define "body"}}
+{{$r := .Data.R}}
+<h2>Resolved configuration — image {{$r.ImageID}}</h2>
+<p><strong>Inheritance chain:</strong>
+{{range $i, $n := $r.ChainNames}}{{if $i}} → {{end}}{{$n}}{{end}}</p>
+
+<h3>ISO (nearest-wins)</h3>
+{{if $r.ISO}}
+<dl class="kv">
+  <dt>Name</dt><dd>{{$r.ISO.Name}}</dd>
+  <dt>OS type</dt><dd>{{$r.ISO.OSType}}</dd>
+  <dt>Storage path</dt><dd><code>{{$r.ISO.StoragePath}}</code></dd>
+</dl>
+{{else}}<p class="warn">No ISO resolved.</p>{{end}}
+
+<h3>Unattend (nearest-wins, used in full)</h3>
+{{if $r.Unattend}}
+<dl class="kv">
+  <dt>Name</dt><dd>{{$r.Unattend.Name}}</dd>
+  <dt>Description</dt><dd>{{$r.Unattend.Description}}</dd>
+</dl>
+<p><a class="btn secondary" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview">View generated XML</a></p>
+{{else}}<p class="warn">No unattend resolved.</p>{{end}}
+
+<h3>Software (loadout-resolved ∪ direct links)</h3>
+{{if $r.Software}}
+<ol>{{range $r.Software}}<li>package {{int64 .PackageID}} (order {{.OrderValue}})</li>{{end}}</ol>
+{{else}}<p class="muted">No software resolved.</p>{{end}}
+
+{{if $r.Diagnostics}}
+<h3>Warnings</h3>
+<ul class="warn">{{range $r.Diagnostics}}<li>{{.}}</li>{{end}}</ul>
+{{end}}
+
+<p><a class="btn secondary" href="/portal/images">← back to images</a></p>
+{{end}}

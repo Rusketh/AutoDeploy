@@ -2,26 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{{.Title}} — AutoDeploy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — {{.Brand.ProductName}}</title>
 <link rel="stylesheet" href="/portal/assets/style.css">
+<style>:root{--accent:{{.Brand.PrimaryColor}};}</style>
 </head>
 <body>
+{{if .User.ID}}
 <header>
-  <h1><a href="/portal/">AutoDeploy</a></h1>
+  <h1><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo">{{end}}{{.Brand.ProductName}}</a></h1>
   <nav>
-    <a href="/portal/images">Images</a>
-    <a href="/portal/isos">ISOs</a>
-    <a href="/portal/unattends">Unattends</a>
-    <a href="/portal/drivers">Driver packages</a>
-    <a href="/portal/software">Software packages</a>
+    <a href="/portal/images" class="{{if eq .Path "/portal/images"}}on{{end}}">Images</a>
+    <a href="/portal/isos" class="{{if eq .Path "/portal/isos"}}on{{end}}">ISOs</a>
+    <a href="/portal/unattends" class="{{if eq .Path "/portal/unattends"}}on{{end}}">Unattends</a>
+    <a href="/portal/drivers" class="{{if eq .Path "/portal/drivers"}}on{{end}}">Drivers</a>
+    <a href="/portal/software" class="{{if eq .Path "/portal/software"}}on{{end}}">Software</a>
+    <a href="/portal/loadouts" class="{{if eq .Path "/portal/loadouts"}}on{{end}}">Loadouts</a>
+    <a href="/portal/machines" class="{{if eq .Path "/portal/machines"}}on{{end}}">Machines</a>
+    <a href="/portal/bulk" class="{{if eq .Path "/portal/bulk"}}on{{end}}">Bulk</a>
+    <a href="/portal/logs" class="{{if eq .Path "/portal/logs"}}on{{end}}">Logs</a>
+    <a href="/portal/settings" class="{{if eq .Path "/portal/settings"}}on{{end}}">Settings</a>
   </nav>
+  <div class="user">
+    <span>{{.User.Username}}</span>
+    <form method="POST" action="/portal/logout" class="inline"><button type="submit" class="link">Sign out</button></form>
+  </div>
 </header>
+{{end}}
+{{if .FlashMsg}}
+<div class="flash flash-{{.FlashKind}}">{{.FlashMsg}}</div>
+{{end}}
 <main>
 {{template "body" .}}
 </main>
+{{if .User.ID}}
 <footer>
-  <p>Phase 1 development build · see <code>docs/user-guide/</code></p>
+  <p>{{if .Brand.OrganisationName}}{{.Brand.OrganisationName}} · {{end}}AutoDeploy {{.Brand.ProductName}}</p>
 </footer>
+{{end}}
 </body>
 </html>
 {{end}}

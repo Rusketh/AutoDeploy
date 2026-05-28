@@ -1,0 +1,65 @@
+{{define "body"}}
+{{$t := .Data.Target}}
+<h2>New bulk operation</h2>
+
+<form class="std" method="POST" action="/portal/bulk/preview">
+  <fieldset><legend>Target selection (combinable)</legend>
+    <label><span class="lbl">Name regex</span><input type="text" name="name_regex" value="{{$t.NameRegex}}" placeholder="^LAB-"></label>
+    <label><span class="lbl">OU (DN)</span><input type="text" name="ou" value="{{$t.OU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
+    <label><span class="lbl">AD group</span><input type="text" name="group" value="{{$t.Group}}" placeholder="Lab-Computers"></label>
+    <div class="actions"><button type="submit">Preview targets</button></div>
+  </fieldset>
+</form>
+
+{{if .Data.Preview}}
+<h3>Target preview ({{len .Data.Preview}} machine{{if ne (len .Data.Preview) 1}}s{{end}})</h3>
+{{if .Data.Preview}}
+<ul class="small">
+  {{range .Data.Preview}}<li><code>{{.SystemUUID}}</code> — {{.SystemManufacturer}} {{.SystemProduct}}</li>{{end}}
+</ul>
+{{end}}
+
+<form class="std" method="POST" action="/portal/bulk">
+  <input type="hidden" name="name_regex" value="{{$t.NameRegex}}">
+  <input type="hidden" name="ou" value="{{$t.OU}}">
+  <input type="hidden" name="group" value="{{$t.Group}}">
+  <fieldset><legend>Action</legend>
+    <label><span class="lbl">Action type</span>
+      <select name="action" id="action" onchange="actionChanged(this)">
+        <option value="rename" {{if eq .Data.Action "rename"}}selected{{end}}>Rename machine</option>
+        <option value="script" {{if eq .Data.Action "script"}}selected{{end}}>Run a script (cmd / powershell)</option>
+        <option value="software_push" {{if eq .Data.Action "software_push"}}selected{{end}}>Push a software step (advanced JSON)</option>
+      </select>
+    </label>
+    <div id="act-rename" {{if ne .Data.Action "rename"}}style="display:none"{{end}}>
+      <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
+      <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens via the Domain Integration Service.</p>
+    </div>
+    <div id="act-script" {{if ne .Data.Action "script"}}style="display:none"{{end}}>
+      <label><span class="lbl">Shell</span>
+        <select name="script_shell"><option value="powershell">powershell</option><option value="cmd">cmd</option></select>
+      </label>
+      <label><span class="lbl">Body</span><textarea name="script_body" rows="6" placeholder="Get-Service"></textarea></label>
+      <p class="small muted">Highest-risk action; every script run is fully audited.</p>
+    </div>
+    <div id="act-software_push" {{if ne .Data.Action "software_push"}}style="display:none"{{end}}>
+      <label><span class="lbl">InstallStep JSON (array or single step)</span>
+        <textarea name="payload_raw" rows="8" placeholder='[{"type":"msi","msi_path":"C:\\install.msi","success_codes":[0,3010]}]'></textarea>
+      </label>
+    </div>
+  </fieldset>
+  <div class="actions">
+    <a class="btn secondary" href="/portal/bulk">Cancel</a>
+    <button type="submit" onclick="return confirm('Queue this operation against {{len .Data.Preview}} machines?')">Queue operation</button>
+  </div>
+</form>
+
+<script>
+function actionChanged(sel){
+  ['rename','script','software_push'].forEach(function(a){
+    document.getElementById('act-'+a).style.display = (sel.value===a)?'block':'none';
+  });
+}
+</script>
+{{end}}
+{{end}}

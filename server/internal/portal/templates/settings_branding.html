@@ -1,0 +1,33 @@
+{{define "body"}}
+{{$b := .Data.B}}
+<h2>Branding</h2>
+<form class="std" method="POST" action="/portal/settings/branding">
+  <fieldset><legend>Names and contact</legend>
+    <label><span class="lbl">Product name</span><input type="text" name="product_name" value="{{$b.ProductName}}" required></label>
+    <label><span class="lbl">Organisation name</span><input type="text" name="organisation_name" value="{{$b.OrganisationName}}"></label>
+    <div class="row">
+      <label><span class="lbl">Support URL</span><input type="url" name="support_url" value="{{$b.SupportURL}}"></label>
+      <label><span class="lbl">Support phone</span><input type="text" name="support_phone" value="{{$b.SupportPhone}}"></label>
+    </div>
+    <label><span class="lbl">OEM Manufacturer (written to HKLM\…\OEMInformation\Manufacturer)</span>
+      <input type="text" name="oem_manufacturer" value="{{$b.OEMManufacturer}}">
+    </label>
+  </fieldset>
+  <fieldset><legend>Appearance</legend>
+    <label><span class="lbl">Primary colour</span><input type="text" name="primary_color" value="{{$b.PrimaryColor}}" placeholder="#0b65c2"></label>
+    <label><span class="lbl">Logo (data URL)</span>
+      <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…">
+      <span class="hint">Or use this helper: <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" style="display:inline;width:auto"></span>
+    </label>
+  </fieldset>
+  <div class="actions"><button type="submit">Save</button></div>
+</form>
+<script>
+function fileToDataURL(input){
+  var f = input.files[0]; if(!f) return;
+  var rd = new FileReader();
+  rd.onload = function(){ document.querySelector('input[name=logo_data_url]').value = rd.result; };
+  rd.readAsDataURL(f);
+}
+</script>
+{{end}}

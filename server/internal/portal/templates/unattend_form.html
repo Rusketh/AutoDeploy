@@ -1,0 +1,125 @@
+{{define "body"}}
+{{$ua := .Data.Unattend}}
+{{$s := .Data.S}}
+{{$new := .Data.IsNew}}
+<h2>{{if $new}}New unattend{{else}}Edit unattend: {{$ua.Name}}{{end}}</h2>
+
+<form class="std" method="POST" action="{{if $new}}/portal/unattends{{else}}/portal/unattends/{{int64 $ua.ID}}{{end}}">
+
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span>
+      <input type="text" name="name" value="{{$ua.Name}}" required maxlength="128">
+    </label>
+    <label><span class="lbl">Description</span>
+      <input type="text" name="description" value="{{$ua.Description}}" maxlength="200">
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Regional</legend>
+    <div class="row">
+      <label><span class="lbl">Locale</span>
+        <input type="text" name="locale" value="{{$s.Locale}}" placeholder="en-US">
+      </label>
+      <label><span class="lbl">UI language</span>
+        <input type="text" name="ui_language" value="{{$s.UILanguage}}" placeholder="en-US">
+      </label>
+    </div>
+    <div class="row">
+      <label><span class="lbl">Keyboard / input locale</span>
+        <input type="text" name="keyboard" value="{{$s.Keyboard}}" placeholder="0409:00000409">
+      </label>
+      <label><span class="lbl">Time zone</span>
+        <input type="text" name="time_zone" value="{{$s.TimeZone}}" placeholder="GMT Standard Time">
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>Edition</legend>
+    <label><span class="lbl">Edition</span>
+      <input type="text" name="edition" value="{{$s.Edition}}" placeholder="Windows 11 Pro">
+    </label>
+    <label><span class="lbl">Product key (optional; leave blank for KMS / volume licensed)</span>
+      <input type="text" name="product_key" value="{{$s.ProductKey}}">
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Local administrator</legend>
+    <label><span class="lbl">Admin username</span>
+      <input type="text" name="admin_user" value="{{$s.AdminUser}}" placeholder="Administrator">
+    </label>
+    <label><span class="lbl">Admin password</span>
+      <input type="password" name="admin_password" value="{{$s.AdminPassword}}" autocomplete="new-password">
+      <span class="hint">Stored in the unattend settings and emitted into the generated XML (Windows needs it). NEVER appears in logs.</span>
+    </label>
+    <label><input type="checkbox" name="hide_admin" value="1" {{if $s.HideAdmin}}checked{{end}}> Hide OOBE local-account creation (AD-only configurations)</label>
+  </fieldset>
+
+  <fieldset><legend>Computer naming</legend>
+    <label><span class="lbl">Strategy</span>
+      <select name="name_strategy">
+        <option value="random"  {{if eq $s.NameStrategy "random"}}selected{{end}}>random (WIN-XXXXXXX)</option>
+        <option value="literal" {{if eq $s.NameStrategy "literal"}}selected{{end}}>literal (use the field below)</option>
+        <option value="prefix"  {{if eq $s.NameStrategy "prefix"}}selected{{end}}>prefix + Windows random</option>
+      </select>
+    </label>
+    <label><span class="lbl">Computer name / prefix</span>
+      <input type="text" name="computer_name" value="{{$s.ComputerName}}" placeholder="LAB-01">
+      <span class="hint">Used by literal and prefix strategies.</span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>OOBE</legend>
+    <label><input type="checkbox" name="skip_machine_oobe" value="1" {{if $s.SkipMachineOOBE}}checked{{end}}> Skip machine OOBE</label>
+    <label><input type="checkbox" name="skip_user_oobe" value="1" {{if $s.SkipUserOOBE}}checked{{end}}> Skip user OOBE</label>
+    <label><input type="checkbox" name="hide_eula" value="1" {{if $s.HideEULA}}checked{{end}}> Hide EULA</label>
+    <label><input type="checkbox" name="hide_oem_registration" value="1" {{if $s.HideOEMRegistration}}checked{{end}}> Hide OEM registration</label>
+    <label><input type="checkbox" name="hide_online_account_screens" value="1" {{if $s.HideOnlineAccountScreens}}checked{{end}}> Hide online-account screens</label>
+    <label><input type="checkbox" name="hide_wireless_setup" value="1" {{if $s.HideWirelessSetup}}checked{{end}}> Hide wireless setup</label>
+    <label><span class="lbl">ProtectYourPC</span>
+      <select name="protect_your_pc">
+        <option value="1" {{if eq $s.ProtectYourPC 1}}selected{{end}}>1 (express settings)</option>
+        <option value="3" {{if eq $s.ProtectYourPC 3}}selected{{end}}>3 (skip — operator decides later)</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Active Directory domain join</legend>
+    {{$dj := $s.DomainJoin}}
+    <label><input type="checkbox" name="domain_join_enabled" value="1" {{if $dj}}checked{{end}} onclick="document.getElementById('dj').style.display=this.checked?'block':'none'"> Join a domain</label>
+    <div id="dj" style="{{if not $dj}}display:none{{end}}">
+      <label><span class="lbl">Domain (FQDN)</span><input type="text" name="domain" value="{{if $dj}}{{$dj.Domain}}{{end}}" placeholder="corp.example"></label>
+      <label><span class="lbl">Target OU (DN)</span><input type="text" name="ou" value="{{if $dj}}{{$dj.OU}}{{end}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
+      <div class="row">
+        <label><span class="lbl">Join account (UPN or DOMAIN\user)</span><input type="text" name="join_user" value="{{if $dj}}{{$dj.JoinUser}}{{end}}" placeholder="joiner@corp.example"></label>
+        <label><span class="lbl">Join account password</span><input type="password" name="join_password" value="{{if $dj}}{{$dj.JoinPassword}}{{end}}" autocomplete="new-password"></label>
+      </div>
+      <p class="hint">When Active Directory integration is configured server-side (Phase 10), the server prepares the computer object via delete-and-replace before this unattend runs.</p>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>First-logon commands</legend>
+    <p class="hint">Run synchronously on first boot, in order. The AutoDeploy agent bootstrap is appended automatically.</p>
+    <div id="flcs">
+      {{range $i, $c := $s.FirstLogonCommands}}
+      <div class="rep">
+        <input type="number" name="flc_order[]" value="{{$c.Order}}" style="max-width:6rem">
+        <input type="text" name="flc_desc[]" value="{{$c.Description}}" placeholder="Description">
+        <input type="text" name="flc_line[]" value="{{$c.CommandLine}}" placeholder="cmd /c …">
+        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="
+      var d=document.createElement('div');d.className='rep';
+      d.innerHTML='<input type=\'number\' name=\'flc_order[]\' value=\'10\' style=\'max-width:6rem\'><input type=\'text\' name=\'flc_desc[]\' placeholder=\'Description\'><input type=\'text\' name=\'flc_line[]\' placeholder=\'cmd /c …\'><button type=\'button\' class=\'rem\' onclick=\'this.parentNode.remove()\'>Remove</button>';
+      document.getElementById('flcs').appendChild(d);
+    ">Add command</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/unattends">Cancel</a>
+    {{if not $new}}<a class="btn secondary" href="/portal/unattends/{{int64 $ua.ID}}/preview">Preview XML</a>{{end}}
+    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+{{end}}

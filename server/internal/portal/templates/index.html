@@ -1,14 +1,23 @@
 {{define "body"}}
-<h2>Welcome</h2>
-<p>This is the AutoDeploy management portal (Phase 1). Use the navigation
-above to browse and manage the standalone artifact objects (ISO, Unattend,
-Driver package, Software package) and compose them into images.</p>
+<h2>Dashboard</h2>
+<div class="grid stats">
+  <a class="stat" href="/portal/images"><span class="num">{{.Data.Counts.Images}}</span><span class="lbl">Images</span></a>
+  <a class="stat" href="/portal/isos"><span class="num">{{.Data.Counts.ISOs}}</span><span class="lbl">ISOs</span></a>
+  <a class="stat" href="/portal/unattends"><span class="num">{{.Data.Counts.Unattends}}</span><span class="lbl">Unattends</span></a>
+  <a class="stat" href="/portal/drivers"><span class="num">{{.Data.Counts.Drivers}}</span><span class="lbl">Driver packages</span></a>
+  <a class="stat" href="/portal/software"><span class="num">{{.Data.Counts.Software}}</span><span class="lbl">Software packages</span></a>
+  <a class="stat" href="/portal/loadouts"><span class="num">{{.Data.Counts.Loadouts}}</span><span class="lbl">Loadouts</span></a>
+  <a class="stat" href="/portal/machines"><span class="num">{{.Data.Counts.Machines}}</span><span class="lbl">Machines</span></a>
+</div>
 
-<p>For each shared object you will see how many images reference it before
-you edit or delete it. Each image shows its resolved configuration so you
-can verify what would actually be deployed.</p>
-
-<p>Phase 1 CRUD is exposed via the JSON API at <code>/api/v1/…</code>;
-<code>curl</code> recipes are in
-<code>docs/user-guide/api-quickstart.md</code>.</p>
+<h3>What now?</h3>
+<ol>
+  <li>Upload an <a href="/portal/isos/new">ISO</a> and extract it.</li>
+  <li>Create an <a href="/portal/unattends/new">Unattend</a> (locale, admin, OOBE, optional domain join).</li>
+  <li>Add <a href="/portal/drivers/new">driver packages</a> with SMBIOS filters for the hardware in scope.</li>
+  <li>Define <a href="/portal/software/new">software packages</a> with detection rules and install steps.</li>
+  <li>(Optional) Group packages into <a href="/portal/loadouts/new">loadouts</a>.</li>
+  <li>Compose an <a href="/portal/images/new">Image</a> that links them.</li>
+  <li>PXE-boot a target machine. After deploy, bind it via <a href="/portal/machines">Machines</a>.</li>
+</ol>
 {{end}}

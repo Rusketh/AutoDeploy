@@ -1,0 +1,29 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Software packages</h2>
+  <div class="right"><a class="btn" href="/portal/software/new">New software package</a></div>
+</div>
+{{if .Data.Packages}}
+<table>
+  <thead><tr><th>Name</th><th>Description</th><th>Size</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Packages}}
+    <tr>
+      <td><a href="/portal/software/{{int64 .ID}}/edit">{{.Name}}</a></td>
+      <td>{{.Description}}</td>
+      <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/software/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/software/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this software package?')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No software packages yet. <a href="/portal/software/new">Add one</a>.</p>
+{{end}}
+{{end}}

@@ -1,0 +1,24 @@
+{{define "body"}}
+<h2>Machines</h2>
+{{if .Data.Rows}}
+<table>
+  <thead><tr><th>SMBIOS UUID</th><th>Make / Model</th><th>Serial</th><th>Bound name</th><th>Bound image</th><th>BitLocker</th><th>Last seen</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Rows}}
+    <tr>
+      <td><a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{.Machine.SystemUUID}}</code></a></td>
+      <td>{{.Machine.SystemManufacturer}} / {{.Machine.SystemProduct}}</td>
+      <td>{{.Machine.SystemSerial}}</td>
+      <td>{{if .BindingName}}{{.BindingName}}{{else}}<span class="muted">unbound</span>{{end}}</td>
+      <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .BLSet}}<span class="badge ok">PIN set</span>{{else}}<span class="badge">no PIN</span>{{end}}</td>
+      <td class="small muted">{{formatTime .Machine.LastSeen}}</td>
+      <td class="actions"><a class="btn secondary" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No machines yet. They appear here after the first time they boot the AutoDeploy client.</p>
+{{end}}
+{{end}}

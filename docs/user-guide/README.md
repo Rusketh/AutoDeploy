@@ -32,6 +32,32 @@ the product, and never before.
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
+## Using the portal
+
+Everything an operator needs to do is exposed as a structured form in the
+web portal at `/portal/`. You should **never** need to craft JSON or
+edit XML by hand. The JSON API at `/api/v1/` is the same authoritative
+surface and remains available for scripts and CI tooling, but the portal
+is the day-to-day interface.
+
+Browser flow:
+
+1. Visit `https://your-server/portal/`. You'll be redirected to the
+   login screen.
+2. First time only: the password is in
+   `$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt` (mode 0600). Log in,
+   then change the password via **Settings → Local accounts**, then
+   delete the file.
+3. The portal home dashboard shows counters and a quick-start list.
+   Every entity has list / new / edit / delete with reference-count
+   guards (you can't delete an ISO that an image still links to, for
+   example).
+4. ISO upload, driver-package upload and software-installer upload
+   are file inputs on each entity's edit page.
+5. Unattends, software detection rules, install steps and SMBIOS
+   filters are all structured form fields — the portal generates the
+   JSON / XML for you.
+
 ## Current product surface (Phase 16 — feature-complete)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.

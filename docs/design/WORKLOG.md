@@ -1044,3 +1044,98 @@ Future work tracked in the open-questions list:
 These are deliberate, named extensions — none of them is implied by
 the design and none would change the existing schema or APIs in
 ways that would block backward compatibility.
+
+---
+
+## 2026-05-28 — Portal CRUD UI (post-Phase 16 rebuild)
+
+**WHAT.** Built out the management portal so an operator never has to
+craft JSON or XML. The portal is now the primary interface; the JSON
+API remains as the authoritative same-surface for tooling.
+
+- Session middleware (`requireSession`) gates every `/portal/*` page
+  except the login form and static assets. Login page in the portal
+  itself with redirect-after-post and a `next` parameter so deep
+  links survive sign-in.
+- Dashboard with live counters and a quick-start list pointing at
+  the entity-create paths.
+- ISO: list with reference counts, new/edit forms with file upload
+  and a one-click Extract trigger.
+- Unattend: structured form fields for every Settings entry — locale,
+  language, keyboard, time zone, edition, product key, local admin
+  (with secret password field), computer-naming strategy, OOBE skip
+  flags, optional domain join (toggle reveals the section), and a
+  repeating first-logon-commands editor. Preview page renders the
+  generated XML inline.
+- Driver package: structured filter editor with dropdowns of allowed
+  SMBIOS keys, value inputs and a per-filter add/remove. A separate
+  "Filter preview" form on the same page evaluates the filters
+  against a hypothetical machine identity and shows per-filter
+  matches + overall verdict.
+- Software package: type-aware detection-rule editor (file / registry
+  / msi / script with per-type fields revealed dynamically) and
+  install-step editor (copy / msi / appx / cmd / powershell / exe)
+  with success-codes and continue-on-failure controls.
+- Software loadout: parent selector + reorderable package list with
+  per-row order value and opt-out checkbox.
+- Image: parent / ISO / unattend / loadout dropdowns plus direct
+  software-link rows.
+- Machines: list with bound name + image + BitLocker status; detail
+  page with binding form (name, OU, group memberships, image
+  dropdown), BitLocker PIN editor (set / clear), recovery-key
+  history (each row links to an audited retrieval endpoint),
+  deployment history table and per-package detection state.
+- Bulk operations: target builder (name regex, OU, group) with
+  preview, action picker (rename / script / software push) with
+  per-action fields, confirm-before-queue.
+- Logs: searchable view with component / actor / action / since /
+  limit filters.
+- Settings: index page → access-PIN setter, branding form (with
+  inline file-to-data-URL helper for the logo), accounts list with
+  create / disable / enable / set-password / delete.
+- Flash messages via short-lived cookie (`ok` / `err` / `warn`).
+- Layout shows the active brand colour, logo, product name and the
+  current user with a Sign-out button.
+- The portal renders directly via repositories (same call graph the
+  JSON API uses); no internal HTTP round-trips.
+
+**WHY (decisions).**
+
+- DECISION: Built on plain Go `html/template` + sprinkles of vanilla
+  JS for the dynamic bits (per-type field reveal, add/remove rows,
+  file→data-URL). No SPA framework; the portal is a single static
+  binary download and works offline. Each page parses its layout and
+  body templates per request from the embedded FS so adding a page
+  is one file.
+- DECISION: The same `auth.Repo` powers both the JSON API sessions
+  (Phase 11) and the portal — one cookie, same code path. Portal
+  login sets the cookie that `/api/v1` already trusts.
+- DECISION: Forms use `application/x-www-form-urlencoded` (and
+  `multipart/form-data` for uploads). Repeating groups (filter
+  constraints, install steps, first-logon commands, loadout
+  packages) use `key[]` PHP-style notation with a parallel
+  `index[]` array that names each block so per-row fields can be
+  scoped without ambiguity.
+- DECISION: The unattend secret fields (admin password, AD join
+  password) are rendered as `<input type="password">` and are
+  carried only through the form POST. They land in the unattend
+  row's `settings_json` (which is where Windows needs them) and
+  never appear in any log line.
+- DECISION: ISO and other large uploads stream through
+  `MultipartReader().NextPart()` rather than `ParseMultipartForm`,
+  so a 5 GB ISO never sits in RAM.
+
+**BUILD STATE.** All packages compile; all existing tests pass. Full
+portal smoke test exercised: create one of each artifact through the
+form, dashboard counters update correctly, image resolved view shows
+the linked ISO and Unattend by name. No secrets in any log.
+
+**NEXT.** Portal feature set matches the JSON API. Remaining
+follow-ups (none are blockers):
+- Software-push bulk action gets a structured step composer rather
+  than the raw-JSON textarea it has today.
+- AD configuration is read-only env-driven; a portal page for it
+  would be helpful if operators want to test the LDAP bind without
+  restarting the server.
+- Pagination on the machines and logs lists once a real fleet's
+  worth of rows arrive.

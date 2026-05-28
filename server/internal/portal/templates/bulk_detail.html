@@ -1,0 +1,28 @@
+{{define "body"}}
+{{$op := .Data.Op}}
+<h2>Bulk operation #{{int64 $op.ID}}</h2>
+<dl class="kv">
+  <dt>Action</dt><dd><span class="badge">{{$op.Action}}</span></dd>
+  <dt>Target</dt><dd>{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code>{{end}}</dd>
+  <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
+  <dt>Created</dt><dd>{{formatTime $op.CreatedAt}}</dd>
+  <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>
+</dl>
+
+<h3>Jobs ({{len .Data.Jobs}})</h3>
+<table>
+  <thead><tr><th>Job</th><th>Machine</th><th>Status</th><th>Claimed</th><th>Completed</th><th>Result</th></tr></thead>
+  <tbody>
+    {{range .Data.Jobs}}
+    <tr>
+      <td>#{{int64 .ID}}</td>
+      <td><a href="/portal/machines/{{int64 .MachineID}}">{{int64 .MachineID}}</a></td>
+      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{end}}">{{.Status}}</span></td>
+      <td class="small">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{end}}</td>
+      <td class="small">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{end}}</td>
+      <td class="small"><code>{{.ResultJSON}}</code></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

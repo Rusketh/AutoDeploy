@@ -141,7 +141,14 @@ func run(logger *slog.Logger) error {
 
 	if err := portal.Register(mux, portal.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
-		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
+		Software: r.Software, Loadouts: r.Loadouts,
+		Images: r.Images, Inventory: r.Inventory,
+		BitLocker: r.BitLocker, Bulk: r.Bulk, Logs: r.Logs,
+		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
+		Resolver:   r.Resolver,
+		Blobs:      blobs,
+		AD:         adSvc,
+		SecretsBox: bx,
 	}); err != nil {
 		return err
 	}

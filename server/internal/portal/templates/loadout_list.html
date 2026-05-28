@@ -1,0 +1,30 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Software loadouts</h2>
+  <div class="right"><a class="btn" href="/portal/loadouts/new">New loadout</a></div>
+</div>
+{{if .Data.Loadouts}}
+<table>
+  <thead><tr><th>Name</th><th>Description</th><th>Parent</th><th>Packages</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Loadouts}}
+    <tr>
+      <td><a href="/portal/loadouts/{{int64 .ID}}/edit">{{.Name}}</a></td>
+      <td>{{.Description}}</td>
+      <td>{{if .ParentID}}{{derefID .ParentID}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num">{{len .Packages}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/loadouts/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/loadouts/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this loadout?')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No loadouts yet. <a href="/portal/loadouts/new">Add one</a>.</p>
+{{end}}
+{{end}}

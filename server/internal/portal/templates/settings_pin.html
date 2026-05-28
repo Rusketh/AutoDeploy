@@ -1,0 +1,13 @@
+{{define "body"}}
+<h2>Access PIN (boot gate)</h2>
+<p>Current state: <span class="badge {{if .Data.On}}ok{{end}}">{{if .Data.On}}enabled{{else}}disabled{{end}}</span></p>
+<form class="std" method="POST" action="/portal/settings/access-pin">
+  <label><span class="lbl">New PIN</span>
+    <input type="password" name="pin" autocomplete="new-password" placeholder="leave blank to disable">
+    <span class="hint">Hashed at rest with bcrypt. Server-side rate-limit: 5 failures in 15 min per machine UUID → 429.</span>
+  </label>
+  <div class="actions">
+    <button type="submit">Save</button>
+  </div>
+</form>
+{{end}}
