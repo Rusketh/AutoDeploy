@@ -1,7 +1,10 @@
 {{define "body"}}
 {{$im := .Data.Im}}
 {{$new := .Data.IsNew}}
-<h2>{{if $new}}New image{{else}}Edit image: {{$im.Name}}{{end}}</h2>
+<div class="toolbar">
+  <h2>{{if $new}}New image{{else}}Edit image: {{$im.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/images"><svg><use href="#i-arrow-left"/></svg>Back to images</a></div>
+</div>
 
 <form class="std" method="POST" action="{{if $new}}/portal/images{{else}}/portal/images/{{int64 $im.ID}}{{end}}">
   <fieldset><legend>Identity</legend>
@@ -50,17 +53,17 @@
           {{range $.Data.Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) (int64 $cur)}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
         <input type="number" name="sw_order[]" value="{{.OrderValue}}" style="max-width:6rem">
-        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+        <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
       </div>
       {{end}}
     </div>
-    <button type="button" class="secondary" onclick="addSw()">Add package</button>
+    <button type="button" class="secondary sm" onclick="addSw()"><svg><use href="#i-plus"/></svg>Add package</button>
   </fieldset>
 
   <div class="actions">
     <a class="btn secondary" href="/portal/images">Cancel</a>
-    {{if not $new}}<a class="btn secondary" href="/portal/images/{{int64 $im.ID}}/resolved">View resolved</a>{{end}}
-    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+    {{if not $new}}<a class="btn ghost" href="/portal/images/{{int64 $im.ID}}/resolved"><svg><use href="#i-eye"/></svg>Resolved</a>{{end}}
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
   </div>
 </form>
 
@@ -71,7 +74,7 @@ function addSw(){
   var sel=document.createElement('select'); sel.name='sw_id[]';
   availSw.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);});
   var ord=document.createElement('input'); ord.type='number'; ord.name='sw_order[]'; ord.value=100; ord.style.maxWidth='6rem';
-  var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.onclick=function(){d.remove();};
+  var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.setAttribute('aria-label','Remove row'); rm.onclick=function(){d.remove();};
   d.appendChild(sel); d.appendChild(ord); d.appendChild(rm);
   document.getElementById('pkgs').appendChild(d);
 }

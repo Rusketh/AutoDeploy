@@ -135,6 +135,20 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Skip link — appears for keyboard users when focused. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--accent);
+  color: var(--accent-text);
+  padding: 0.5rem 1rem;
+  z-index: 1000;
+  border-radius: 0 0 var(--r) 0;
+  font-weight: 500;
+}
+.skip-link:focus { left: 0; text-decoration: none; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
 hr { border: none; border-top: 1px solid var(--border); margin: var(--sp-5) 0; }
 
@@ -297,6 +311,12 @@ th {
   color: var(--fg-muted);
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+/* Sticky headers only when the parent explicitly opts in via
+   .tablewrap.sticky -- otherwise short tables get the sticky offset
+   anyway (overflow:hidden makes .tablewrap a containing block for
+   sticky) and the thead pushes below the body. */
+.tablewrap.sticky thead th {
   position: sticky;
   top: 56px;
   z-index: 1;
@@ -743,6 +763,35 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------- Pagination ---------- */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) 0;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.pager-links { display: flex; align-items: center; gap: var(--sp-2); }
+.pager-links .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- Bulk-select on lists ---------- */
+.tablewrap input[type="checkbox"].row-check { accent-color: var(--accent); cursor: pointer; }
+.bulk-bar {
+  display: none;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+}
+.bulk-bar.on { display: flex; }
+.bulk-bar .count { font-weight: 600; }
 
 /* ---------- Logs page tail ---------- */
 .logs-tail {

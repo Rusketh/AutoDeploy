@@ -1,25 +1,37 @@
 {{define "body"}}
 {{$t := .Data.Target}}
-<h2>New bulk operation</h2>
+<div class="toolbar">
+  <h2>New bulk operation</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
+</div>
 
 <form class="std" method="POST" action="/portal/bulk/preview">
   <fieldset><legend>Target selection (combinable)</legend>
     <label><span class="lbl">Name regex</span><input type="text" name="name_regex" value="{{$t.NameRegex}}" placeholder="^LAB-"></label>
     <label><span class="lbl">OU (DN)</span><input type="text" name="ou" value="{{$t.OU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
     <label><span class="lbl">AD group</span><input type="text" name="group" value="{{$t.Group}}" placeholder="Lab-Computers"></label>
-    <div class="actions"><button type="submit">Preview targets</button></div>
+    <div class="actions"><button type="submit"><svg><use href="#i-eye"/></svg>Preview targets</button></div>
   </fieldset>
 </form>
 
 {{if .Data.Preview}}
-<h3>Target preview ({{len .Data.Preview}} machine{{if ne (len .Data.Preview) 1}}s{{end}})</h3>
-{{if .Data.Preview}}
-<ul class="small">
-  {{range .Data.Preview}}<li><code>{{.SystemUUID}}</code> — {{.SystemManufacturer}} {{.SystemProduct}}</li>{{end}}
-</ul>
-{{end}}
+<div class="section-head"><h3>Target preview ({{len .Data.Preview}} machine{{if ne (len .Data.Preview) 1}}s{{end}})</h3><div class="line"></div></div>
 
-<form class="std" method="POST" action="/portal/bulk">
+<div class="tablewrap" style="max-height: 320px; overflow-y: auto;">
+<table>
+  <thead><tr><th>UUID</th><th>Make / model</th></tr></thead>
+  <tbody>
+    {{range .Data.Preview}}
+    <tr>
+      <td><code>{{.SystemUUID}}</code></td>
+      <td><strong>{{.SystemManufacturer}}</strong> <span class="muted">{{.SystemProduct}}</span></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+
+<form class="std" method="POST" action="/portal/bulk" data-confirm="Queue this operation against {{len .Data.Preview}} machines?" style="margin-top: var(--sp-4);">
   <input type="hidden" name="name_regex" value="{{$t.NameRegex}}">
   <input type="hidden" name="ou" value="{{$t.OU}}">
   <input type="hidden" name="group" value="{{$t.Group}}">
@@ -33,7 +45,7 @@
     </label>
     <div id="act-rename" {{if ne .Data.Action "rename"}}style="display:none"{{end}}>
       <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
-      <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens via the Domain Integration Service.</p>
+      <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens server-side via the Domain Integration Service before the local rename job is queued for the agent.</p>
     </div>
     <div id="act-script" {{if ne .Data.Action "script"}}style="display:none"{{end}}>
       <label><span class="lbl">Shell</span>
@@ -50,7 +62,7 @@
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/bulk">Cancel</a>
-    <button type="submit" onclick="return confirm('Queue this operation against {{len .Data.Preview}} machines?')">Queue operation</button>
+    <button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue operation</button>
   </div>
 </form>
 

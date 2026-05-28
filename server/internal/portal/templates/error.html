@@ -1,0 +1,17 @@
+{{define "body"}}
+<div class="empty" style="margin: 4rem auto; max-width: 540px;">
+  <svg class="empty-icon"><use href="#i-{{if eq .Data.Code 404}}info{{else}}alert{{end}}"/></svg>
+  <h3>{{.Data.Heading}}</h3>
+  <p>{{.Data.Message}}</p>
+  <div class="flex" style="justify-content: center; margin-top: var(--sp-4);">
+    <a class="btn secondary" href="javascript:history.back()"><svg><use href="#i-arrow-left"/></svg>Go back</a>
+    <a class="btn" href="/portal/"><svg><use href="#i-image"/></svg>Dashboard</a>
+  </div>
+  {{if .Data.Detail}}
+  <details style="margin-top: var(--sp-5); text-align: left;">
+    <summary class="small muted" style="cursor:pointer;">Technical detail</summary>
+    <pre style="margin-top: var(--sp-2);">{{.Data.Detail}}</pre>
+  </details>
+  {{end}}
+</div>
+{{end}}

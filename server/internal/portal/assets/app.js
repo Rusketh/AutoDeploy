@@ -152,22 +152,33 @@
 
   // ---- Confirm-via-dialog -------------------------------------------
   // Forms with data-confirm="msg" open a styled <dialog> instead of the
-  // native confirm prompt. Native confirm() still works if <dialog> is
-  // unsupported.
+  // native confirm prompt; individual <button data-confirm="msg"> get a
+  // per-button prompt (useful for forms that have a benign Save and a
+  // destructive Delete in the same actions row).
   let pendingForm = null;
+  let pendingSubmitter = null;
+  // Capture the submitter for a form before submit fires so we can read
+  // its data-confirm.
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('button[type="submit"], input[type="submit"]');
+    if (btn && btn.form) btn.form._adSubmitter = btn;
+  }, true);
   document.addEventListener('submit', function (e) {
     const form = e.target;
     if (!(form instanceof HTMLFormElement)) return;
-    const msg = form.getAttribute('data-confirm');
-    if (!msg || form.dataset.confirmed === '1') return;
+    if (form.dataset.confirmed === '1') { delete form._adSubmitter; return; }
+    const btn = (e.submitter || form._adSubmitter) || null;
+    const msg = (btn && btn.getAttribute('data-confirm')) || form.getAttribute('data-confirm') || '';
+    if (!msg) { delete form._adSubmitter; return; }
     e.preventDefault();
     if (typeof HTMLDialogElement !== 'function') {
-      if (confirm(msg)) { form.dataset.confirmed = '1'; form.submit(); }
+      if (confirm(msg)) { form.dataset.confirmed = '1'; if (btn) { btn.click(); } else { form.submit(); } }
       return;
     }
     const dlg = ensureConfirmDialog();
     dlg.querySelector('[data-msg]').textContent = msg;
     pendingForm = form;
+    pendingSubmitter = btn;
     dlg.showModal();
   });
   function ensureConfirmDialog() {
@@ -184,13 +195,96 @@
       '</div>';
     document.body.appendChild(dlg);
     dlg.querySelector('[data-cancel]').addEventListener('click', function () {
-      pendingForm = null; dlg.close();
+      pendingForm = null; pendingSubmitter = null; dlg.close();
     });
     dlg.querySelector('[data-ok]').addEventListener('click', function () {
-      const f = pendingForm; pendingForm = null; dlg.close();
-      if (f) { f.dataset.confirmed = '1'; f.submit(); }
+      const f = pendingForm; const btn = pendingSubmitter;
+      pendingForm = null; pendingSubmitter = null; dlg.close();
+      if (f) {
+        f.dataset.confirmed = '1';
+        if (btn) { btn.click(); } else { f.submit(); }
+      }
     });
     return dlg;
+  }
+
+  // ---- Bulk-select on lists -----------------------------------------
+  // <table data-bulk-target="/portal/foo/{id}/delete"> opts in. A
+  // header checkbox toggles all body rows; a sticky bar appears with
+  // the selection count and a "Delete selected" button that submits
+  // one POST per checked row's data-id.
+  document.querySelectorAll('table[data-bulk-target]').forEach(function (table) {
+    const target = table.getAttribute('data-bulk-target');
+    if (!target) return;
+    const headerCb = table.querySelector('thead .row-check');
+    const rowCbs = function () { return Array.from(table.querySelectorAll('tbody .row-check')); };
+    const bar = ensureBulkBar(table);
+    function refresh() {
+      const checked = rowCbs().filter(function (c) { return c.checked; });
+      bar.querySelector('.count').textContent = checked.length + ' selected';
+      bar.classList.toggle('on', checked.length > 0);
+    }
+    if (headerCb) {
+      headerCb.addEventListener('change', function () {
+        rowCbs().forEach(function (c) { c.checked = headerCb.checked; });
+        refresh();
+      });
+    }
+    table.addEventListener('change', function (e) {
+      if (e.target && e.target.classList.contains('row-check')) refresh();
+    });
+    bar.querySelector('[data-bulk-delete]').addEventListener('click', function () {
+      const ids = rowCbs().filter(function (c) { return c.checked; })
+                          .map(function (c) { return c.getAttribute('data-id'); });
+      if (!ids.length) return;
+      if (typeof HTMLDialogElement !== 'function') {
+        if (!confirm('Delete ' + ids.length + ' row(s)? This cannot be undone.')) return;
+        submitBulkDelete(ids, target);
+        return;
+      }
+      const dlg = ensureConfirmDialog();
+      dlg.querySelector('[data-msg]').textContent = 'Delete ' + ids.length + ' row(s)? This cannot be undone.';
+      pendingForm = null;
+      // Custom OK handler for the bulk delete -- reuses the dialog
+      // but bypasses the form-submit wiring.
+      const ok = dlg.querySelector('[data-ok]');
+      const handler = function () {
+        ok.removeEventListener('click', handler);
+        dlg.close();
+        submitBulkDelete(ids, target);
+      };
+      ok.addEventListener('click', handler, { once: true });
+      dlg.showModal();
+    });
+  });
+  function ensureBulkBar(table) {
+    let bar = table.closest('.tablewrap')?.previousElementSibling;
+    if (bar && bar.classList.contains('bulk-bar')) return bar;
+    bar = document.createElement('div');
+    bar.className = 'bulk-bar';
+    bar.innerHTML =
+      '<span class="count">0 selected</span>' +
+      '<button type="button" class="danger sm" data-bulk-delete><svg><use href="#i-trash"/></svg>Delete selected</button>';
+    const wrap = table.closest('.tablewrap');
+    if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(bar, wrap);
+    return bar;
+  }
+  function submitBulkDelete(ids, target) {
+    let remaining = ids.length;
+    let failed = 0;
+    ids.forEach(function (id) {
+      const url = target.replace('{id}', encodeURIComponent(id));
+      fetch(url, { method: 'POST', credentials: 'same-origin' })
+        .then(function (r) { if (!r.ok) failed++; })
+        .catch(function () { failed++; })
+        .finally(function () {
+          remaining--;
+          if (remaining === 0) {
+            // Refresh the page to reflect the new server state.
+            window.location.reload();
+          }
+        });
+    });
   }
 
   // ---- Logs tail ----------------------------------------------------

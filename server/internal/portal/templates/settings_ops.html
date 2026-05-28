@@ -1,5 +1,9 @@
 {{define "body"}}
-<h2>Operational settings</h2>
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-gear"/></svg>Operational settings</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
 <form class="std" method="POST" action="/portal/settings/operational">
   <fieldset><legend>Log retention</legend>
     <label><span class="lbl">Keep log events for (days)</span>
@@ -10,12 +14,16 @@
   <fieldset><legend>Payload throttle</legend>
     <label><span class="lbl">Maximum concurrent <code>/payload/*</code> streams</span>
       <input type="number" name="payload_max_in_flight" value="{{.Data.Throttle}}" min="0" max="65535">
-      <span class="hint">Caps concurrent payload (WIM / driver / software) downloads so a thundering herd queues rather than thrashing file descriptors. 0 = unlimited (don't pick this on production). The default is 64; raise for hosts with bigger fd budgets, lower if mirrors are absorbing most of the load. <strong>Takes effect on next server restart.</strong></span>
+      <span class="hint">
+        Caps concurrent payload (WIM / driver / software) downloads so a thundering herd queues rather than thrashing file descriptors.
+        0 = unlimited (don't pick this on production). The default is 64; raise for hosts with bigger fd budgets, lower if mirrors are absorbing most of the load.
+        <strong>Takes effect on next server restart.</strong>
+      </span>
     </label>
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/settings">Cancel</a>
-    <button type="submit">Save</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
   </div>
 </form>
 {{end}}

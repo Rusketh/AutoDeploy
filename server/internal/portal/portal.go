@@ -98,7 +98,21 @@ func Register(mux *http.ServeMux, r Repos) error {
 	mux.HandleFunc("GET /portal", func(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, "/portal/", http.StatusFound)
 	})
-	get("/portal/", dashboardPage(r))
+	// /portal/ is the dashboard for an authenticated session AND the
+	// catch-all for any unknown /portal/* path. ServeMux honours
+	// longest-match for the registered routes; URLs that genuinely fall
+	// through here render the styled 404 instead of Go's default
+	// plain-text "404 page not found".
+	get("/portal/", func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/portal/" {
+			renderPortalError(w, req, r, http.StatusNotFound,
+				"Page not found",
+				"The URL "+req.URL.Path+" doesn't match anything in the portal. Use the navigation above or jump back to the dashboard.",
+				"")
+			return
+		}
+		dashboardPage(r)(w, req)
+	})
 
 	registerISORoutes(get, post, r)
 	registerUnattendRoutes(get, post, r)
@@ -371,6 +385,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return m
 		},
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
 	}
 }
 
@@ -412,6 +428,123 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 	if err := tmpl.ExecuteTemplate(w, "layout", envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// PageInfo is the slice of pagination state a list template needs to
+// render a "page N of M" footer with prev/next links.
+type PageInfo struct {
+	Current  int    // 1-based page number
+	Total    int    // total number of pages (>= 1)
+	Size     int    // page size
+	TotalRow int    // total row count across all pages
+	Offset   int    // 0-based row offset of this page
+	End      int    // exclusive end offset (Offset + len(thisPage))
+	PrevURL  string // empty if no previous page
+	NextURL  string // empty if no next page
+	Path     string // base path so the template can build other links
+}
+
+// paginate computes the slice bounds for the requested page given the
+// total row count and a default page size. ?page=N (1-based) and
+// ?size=N override the defaults; size is clamped to a reasonable range
+// so a single client cannot ask for a million-row payload.
+func paginate(req *http.Request, total, defaultSize int) PageInfo {
+	size := defaultSize
+	if s := req.URL.Query().Get("size"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			size = v
+		}
+	}
+	if size < 10 {
+		size = 10
+	}
+	if size > 500 {
+		size = 500
+	}
+	page := 1
+	if p := req.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	pages := (total + size - 1) / size
+	if pages < 1 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	offset := (page - 1) * size
+	end := offset + size
+	if end > total {
+		end = total
+	}
+	if offset > total {
+		offset = total
+	}
+	q := req.URL.Query()
+	prev := ""
+	if page > 1 {
+		q.Set("page", strconv.Itoa(page-1))
+		prev = req.URL.Path + "?" + q.Encode()
+	}
+	next := ""
+	if page < pages {
+		q.Set("page", strconv.Itoa(page+1))
+		next = req.URL.Path + "?" + q.Encode()
+	}
+	return PageInfo{
+		Current: page, Total: pages, Size: size, TotalRow: total,
+		Offset: offset, End: end,
+		PrevURL: prev, NextURL: next,
+		Path: req.URL.Path,
+	}
+}
+
+// renderPortalError writes a styled portal page for a HTTP error. Use
+// for any 4xx/5xx the operator might see (404 catch-all, 500 from a
+// busted handler, etc.) so the response stays inside the portal shell
+// rather than Go's default plain-text http.Error output.
+//
+// Status code is written via a tiny wrapper that buffers WriteHeader
+// until the first Write, because the underlying render() sets
+// Content-Type before the body; setting WriteHeader first would
+// commit headers and drop the Content-Type change.
+func renderPortalError(w http.ResponseWriter, req *http.Request, r Repos, code int, heading, message, detail string) {
+	sw := &statusWriter{ResponseWriter: w, status: code}
+	render(sw, req, r, "error.html", heading, map[string]any{
+		"Code":    code,
+		"Heading": heading,
+		"Message": message,
+		"Detail":  detail,
+	})
+}
+
+// statusWriter overrides the status code passed to the underlying
+// ResponseWriter's first WriteHeader call. If no WriteHeader is
+// called explicitly before a Write, the first Write commits our
+// chosen status. Existing handlers that write 200 silently get
+// upgraded to the configured status.
+type statusWriter struct {
+	http.ResponseWriter
+	status   int
+	written  bool
+}
+
+func (s *statusWriter) WriteHeader(int) {
+	if s.written {
+		return
+	}
+	s.ResponseWriter.WriteHeader(s.status)
+	s.written = true
+}
+
+func (s *statusWriter) Write(p []byte) (int, error) {
+	if !s.written {
+		s.ResponseWriter.WriteHeader(s.status)
+		s.written = true
+	}
+	return s.ResponseWriter.Write(p)
 }
 
 // pathID parses the {id} segment from req.PathValue.

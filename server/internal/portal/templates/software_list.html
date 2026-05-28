@@ -11,8 +11,9 @@
 </div>
 {{if .Data.Packages}}
 <div class="tablewrap">
-<table id="tbl" data-sortable>
+<table id="tbl" data-sortable data-bulk-target="/portal/software/{id}/delete">
   <thead><tr>
+    <th data-nosort style="width: 32px;"><input type="checkbox" class="row-check" aria-label="Select all rows"></th>
     <th>Name</th>
     <th>Description</th>
     <th class="num" data-sort="num">Size</th>
@@ -22,6 +23,7 @@
   <tbody>
     {{range .Data.Packages}}
     <tr>
+      <td><input type="checkbox" class="row-check" data-id="{{int64 .ID}}" aria-label="Select {{.Name}}"></td>
       <td><a href="/portal/software/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
       <td class="small muted">{{.Description}}</td>
       <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>

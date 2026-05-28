@@ -1,7 +1,10 @@
 {{define "body"}}
 {{$m := .Data.M}}
 {{$new := .Data.IsNew}}
-<h2>{{if $new}}New payload mirror{{else}}Edit mirror: {{$m.Name}}{{end}}</h2>
+<div class="toolbar">
+  <h2>{{if $new}}New payload mirror{{else}}Edit mirror: {{$m.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/mirrors"><svg><use href="#i-arrow-left"/></svg>Back to mirrors</a></div>
+</div>
 
 <form class="std" method="POST" action="{{if $new}}/portal/mirrors{{else}}/portal/mirrors/{{int64 $m.ID}}{{end}}">
   <fieldset><legend>Identity</legend>
@@ -26,12 +29,12 @@
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/mirrors">Cancel</a>
-    <button type="submit">{{if $new}}Add{{else}}Save{{end}}</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Add{{else}}Save{{end}}</button>
   </div>
 </form>
 
 {{if not $new}}
-<h3>Setup checklist</h3>
+<div class="section-head"><h3>Setup checklist</h3><div class="line"></div></div>
 <ol>
   <li>Stand up the mirror host (any HTTP server that serves the path tree below). Suitable options: a nginx / apache reverse proxy in front of an rsync'd copy of <code>$AUTODEPLOY_DATA_DIR</code>, a Squid configured as a pull-through cache, or a second autodeploy-server instance pointed at a synced data dir.</li>
   <li>Make sure the mirror responds to <code>GET /payload/iso/&lt;id&gt;/&lt;path&gt;</code>, <code>GET /payload/drivers/&lt;id&gt;</code> and <code>GET /payload/software/&lt;id&gt;</code> with the same bytes the primary serves.</li>

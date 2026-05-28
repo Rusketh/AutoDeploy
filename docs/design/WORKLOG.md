@@ -1917,3 +1917,106 @@ links to the right Settings page.
 check clean; screenshot smoke test in headless Chromium confirms
 the dashboard, machine list, logs page, settings landing and login
 all render cleanly in light + dark themes at 1366x900.
+
+## 2026-05-28 — Portal polish pass #2: forms, 404, accessibility, bulk-select, pagination, sticky-thead fix
+
+Follow-up to the design-system pass. Brought every form template into
+the same visual language as the lists, added a styled 404, accessibility
+basics, server-side pagination, bulk-select on the list pages where
+"delete a handful of rows" is a real workflow, and fixed a sticky-thead
+bug that was hiding body rows on every table.
+
+**Sticky-thead bug.** The previous pass set
+`th { position: sticky; top: 56px; }` so the column headers stick under
+the app header when an operator scrolls a long table. Combined with
+`.tablewrap { overflow: hidden; }` (which exists to clip the rounded
+corners), the tablewrap becomes a containing block for the sticky
+thead. On short tables the parent is shorter than `top: 56px`, and the
+thead ended up rendering after / on top of the body row, hiding it.
+The fix opt-ins sticky behaviour via a new `.tablewrap.sticky` class
+and leaves the default static. None of the existing tables actually
+needed the sticky behaviour for the current row counts.
+
+**Forms.** All form templates rewritten to use the toolbar + back link
+pattern, fieldset legends rendered as muted uppercase section labels,
+buttons gained icons and the new `sm` size where appropriate, and
+inline confirms migrated from `onsubmit="return confirm(...)"` to
+`data-confirm="..."` so the styled dialog catches them. Per-button
+`data-confirm` now supported too (the AD page's Disable button needs
+a different message than the form's Save).
+
+- `iso_form.html`, `image_form.html`, `driver_form.html`,
+  `loadout_form.html`, `mirror_form.html`, `bulk_form.html`,
+  `bulk_detail.html`, `image_resolved.html`, `machine_detail.html` —
+  all brought up to spec with toolbar headers, section dividers,
+  empty states, copy buttons on identifiers.
+- `settings_ad.html`, `settings_accounts.html`, `settings_ops.html`,
+  `settings_pin.html`, `settings_branding.html` — section icons in
+  the header, polished controls, status badges with dots.
+- `settings_accounts.html` gained a "Change your own password" section
+  (audit recommendation #8) so the logged-in operator has a one-form
+  path to rotate their credential without using the row inline form.
+- `bulk_detail.html` gained sortable headers + empty state.
+- `image_resolved.html` gained empty states per resolved object.
+
+**404 / error page.** New `templates/error.html` renders inside the
+portal shell with a "Go back" + "Dashboard" action pair. The portal's
+catch-all handler (`get("/portal/", ...)`) dispatches to the dashboard
+for the bare path and to the error page for anything that fell
+through. A `renderPortalError` helper writes the configured status
+code via a buffered ResponseWriter wrapper so the Content-Type set by
+the layout template is preserved.
+
+**Favicon.** Inline SVG mark, served from
+`assets/favicon.svg`, referenced from the layout via
+`<link rel="icon" type="image/svg+xml">`.
+
+**Accessibility.** Skip-to-content link in the layout; every icon-only
+button got `aria-label`; nav has `aria-label="Primary"`; bare `<svg>`
+icons inside text content marked `aria-hidden="true"`; `main` is
+`tabindex="-1"` so the skip link can focus it.
+
+**Pagination.** Added `paginate(req, total, defaultSize)` helper that
+reads `?page=N&size=N` from the URL, clamps and returns a `PageInfo`
+the template can render. Wired into the machines list as the
+strongest candidate at scale. A new `{{template "pagination"}}` partial
+inside `machine_list.html` renders the prev/next controls and the
+"showing N-M of T" counter. `add` and `sub` template funcs added so
+the counter can render `Offset+1`.
+
+**Bulk-select.** A `<table data-bulk-target="/portal/foo/{id}/delete">`
+opts in. The header checkbox toggles all body rows; a sticky bar
+(hidden when nothing is selected) appears with the count and a
+"Delete selected" button. Confirms via the same styled dialog the
+single-row deletes use; on confirm, fires one POST per checked ID and
+reloads. Wired into the drivers and software lists.
+
+**WHY (decisions).**
+
+- DECISION: bulk-select uses one POST per row instead of a new
+  bulk-delete endpoint. Existing per-row delete handlers already
+  enforce ref-counts and audit; reusing them keeps the audit
+  semantics intact (one "deleted by op X" event per row) and avoids
+  a new validation surface. Cost: N round-trips instead of one,
+  which doesn't matter for the typical "select 5 stale drivers".
+- DECISION: pagination wired on the machines list first. Logs and
+  some other lists could use it too but the operator's strongest
+  ask is "don't render 10k machine rows when I just want one"; the
+  remaining lists are bounded by definition (you only have so many
+  unattends).
+- DECISION: 404 renders inside the portal shell, but the unknown-
+  route catch-all uses a single `get("/portal/", ...)` that checks
+  the URL path. Adding a generic mux NotFoundHandler would have
+  required restructuring the public/protected route wrapping.
+- DECISION: aria-labels on icon buttons, not visible text. The
+  icons are recognisable enough that adding text labels would
+  bloat the toolbar; aria-label keeps the SR experience accurate
+  without changing the visual design.
+
+**BUILD STATE.** Server builds; `go test ./...` green; secret check
+clean; smoke test confirmed all 26 portal routes return 200 and the
+404 path renders the styled page with the right status code.
+Screenshot test in headless Chromium confirmed sticky-thead bug
+gone, drivers list shows bulk-select column, accounts page renders
+the admin row with the new password section, AD form is consistent
+with the rest of the settings.

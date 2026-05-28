@@ -1,7 +1,10 @@
 {{define "body"}}
 {{$l := .Data.L}}
 {{$new := .Data.IsNew}}
-<h2>{{if $new}}New loadout{{else}}Edit loadout: {{$l.Name}}{{end}}</h2>
+<div class="toolbar">
+  <h2>{{if $new}}New loadout{{else}}Edit loadout: {{$l.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/loadouts"><svg><use href="#i-arrow-left"/></svg>Back to loadouts</a></div>
+</div>
 
 <form class="std" method="POST" action="{{if $new}}/portal/loadouts{{else}}/portal/loadouts/{{int64 $l.ID}}{{end}}">
   <fieldset><legend>Identity</legend>
@@ -27,16 +30,16 @@
         </select>
         <input type="number" name="pkg_order[]" value="{{$p.OrderValue}}" style="max-width:6rem" title="Install order">
         <label class="inline"><input type="checkbox" name="pkg_optout[]" value="1" {{if $p.OptOut}}checked{{end}}> opt-out</label>
-        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+        <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
       </div>
       {{end}}
     </div>
-    <button type="button" class="secondary" onclick="addPkg()">Add package</button>
+    <button type="button" class="secondary sm" onclick="addPkg()"><svg><use href="#i-plus"/></svg>Add package</button>
   </fieldset>
 
   <div class="actions">
     <a class="btn secondary" href="/portal/loadouts">Cancel</a>
-    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
   </div>
 </form>
 

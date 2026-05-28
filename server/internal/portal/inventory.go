@@ -32,8 +32,13 @@ func machineList(r Repos) http.HandlerFunc {
 			ImageName   string
 			BLSet       bool
 		}
-		rows := make([]row, 0, len(v))
-		for _, m := range v {
+		// Pagination. Client-side filtering still works within the
+		// page; pagination is a guard against a multi-thousand-row
+		// payload, not a substitute for search.
+		page := paginate(req, len(v), 50)
+		slice := v[page.Offset:page.End]
+		rows := make([]row, 0, len(slice))
+		for _, m := range slice {
 			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
 			imgName := ""
 			if b.ImageID != nil {
@@ -43,7 +48,9 @@ func machineList(r Repos) http.HandlerFunc {
 			bl, _ := r.BitLocker.PINStatus(req.Context(), m.ID)
 			rows = append(rows, row{Machine: m, BindingName: b.MachineName, ImageName: imgName, BLSet: bl.PINSet})
 		}
-		render(w, req, r, "machine_list.html", "Machines", map[string]any{"Rows": rows})
+		render(w, req, r, "machine_list.html", "Machines", map[string]any{
+			"Rows": rows, "Page": page,
+		})
 	}
 }
 

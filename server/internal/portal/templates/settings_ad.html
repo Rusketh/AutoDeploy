@@ -1,12 +1,16 @@
 {{define "body"}}
 {{$cfg := .Data.Cfg}}
 {{$env := .Data.Env}}
-<h2>Active Directory</h2>
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-globe"/></svg>Active Directory</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
 <p>Current state:
 {{if $cfg.URL}}
-<span class="badge ok">enabled</span> — <code>{{$cfg.URL}}</code>
+<span class="badge ok"><svg><use href="#i-check"/></svg>enabled</span> — <code>{{$cfg.URL}}</code>
 {{else}}
-<span class="badge">disabled</span>
+<span class="badge"><svg><use href="#i-info"/></svg>disabled</span>
 {{end}}
 </p>
 
@@ -32,13 +36,13 @@
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/settings">Cancel</a>
-    <button type="submit" formaction="/portal/settings/active-directory/test" formmethod="POST">Test connection</button>
-    <button type="submit" name="disable" value="1" class="danger" formnovalidate onclick="return confirm('Disable AD integration? Future deploys with domain-join unattends will fail to prepare the computer object.')">Disable AD</button>
-    <button type="submit">Save</button>
+    <button type="submit" class="ghost" formaction="/portal/settings/active-directory/test" formmethod="POST"><svg><use href="#i-bolt"/></svg>Test connection</button>
+    <button type="submit" name="disable" value="1" class="danger" formnovalidate data-confirm="Disable AD integration? Future deploys with domain-join unattends will fail to prepare the computer object."><svg><use href="#i-trash"/></svg>Disable AD</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
   </div>
 </form>
 
-<h3>How AutoDeploy uses these values</h3>
+<div class="section-head"><h3>How AutoDeploy uses these values</h3><div class="line"></div></div>
 <p>When a Boot Client requests a deployment manifest and the resolved
 unattend has a <code>&lt;UnattendedJoin&gt;</code> section, AutoDeploy's
 Domain Integration Service runs the delete-and-replace lifecycle on

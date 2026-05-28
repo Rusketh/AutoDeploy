@@ -1,47 +1,61 @@
 {{define "body"}}
 {{$iso := .Data.ISO}}
 {{$new := .Data.IsNew}}
-<h2>{{if $new}}New ISO{{else}}Edit ISO: {{$iso.Name}}{{end}}</h2>
+<div class="toolbar">
+  <h2>{{if $new}}New ISO{{else}}Edit ISO: {{$iso.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/isos"><svg><use href="#i-arrow-left"/></svg>Back to ISOs</a></div>
+</div>
 
 <form class="std" method="POST" action="{{if $new}}/portal/isos{{else}}/portal/isos/{{int64 $iso.ID}}{{end}}">
-  <label><span class="lbl">Name</span>
-    <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128">
-    <span class="hint">Letters, digits, dots, dashes, underscores, spaces.</span>
-  </label>
-  <label><span class="lbl">OS type</span>
-    <select name="os_type" required>
-      {{$ot := $iso.OSType}}
-      <option value="">(select)</option>
-      {{range $t := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
-        <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{$t}}</option>
-      {{end}}
-    </select>
-  </label>
-  <label><span class="lbl">Description</span>
-    <input type="text" name="description" value="{{$iso.Description}}" maxlength="200">
-  </label>
+  <fieldset>
+    <legend>Identity</legend>
+    <label><span class="lbl">Name</span>
+      <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128">
+      <span class="hint">Letters, digits, dots, dashes, underscores, spaces.</span>
+    </label>
+    <label><span class="lbl">OS type</span>
+      <select name="os_type" required>
+        {{$ot := $iso.OSType}}
+        <option value="">(select)</option>
+        {{range $t := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
+          <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{$t}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label><span class="lbl">Description</span>
+      <input type="text" name="description" value="{{$iso.Description}}" maxlength="200">
+    </label>
+  </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/isos">Cancel</a>
-    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
   </div>
 </form>
 
 {{if not $new}}
-<h3>Payload</h3>
+<div class="section-head"><h3>Payload</h3><div class="line"></div></div>
+
 <form class="std" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data">
   <label><span class="lbl">Upload ISO file</span>
     <input type="file" name="file" accept=".iso" required>
-    <span class="hint">The file is streamed to disk — large ISOs are fine. Click Upload to commit.</span>
+    <span class="hint">Streamed to disk — large ISOs are fine. Click Upload to commit.</span>
   </label>
-  <div class="actions"><button type="submit">Upload</button></div>
+  <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
 </form>
 
-<p class="small muted">Current storage path:
-{{if $iso.StoragePath}}<code>{{$iso.StoragePath}}</code> ({{$iso.SizeBytes}} bytes){{else}}<em>nothing uploaded yet</em>{{end}}</p>
+<p class="small muted" style="margin-top: var(--sp-3);">
+  Current storage path:
+  {{if $iso.StoragePath}}
+    <code>{{$iso.StoragePath}}</code><button class="copy" data-copy="{{$iso.StoragePath}}" aria-label="Copy path"><svg><use href="#i-copy"/></svg></button>
+    <span class="badge">{{$iso.SizeBytes}} bytes</span>
+  {{else}}<em>nothing uploaded yet</em>{{end}}
+</p>
 
-<form method="POST" action="/portal/isos/{{int64 $iso.ID}}/extract" class="inline">
-  <button type="submit" {{if not $iso.StoragePath}}disabled{{end}}>Extract contents</button>
+<form method="POST" action="/portal/isos/{{int64 $iso.ID}}/extract" class="inline" style="margin-top: var(--sp-3);">
+  <button type="submit" class="secondary" {{if not $iso.StoragePath}}disabled{{end}}>
+    <svg><use href="#i-bolt"/></svg>Extract contents
+  </button>
+  <span class="small muted" style="margin-left: var(--sp-2);">Walks the ISO and writes every file under <code>data/iso/{{int64 $iso.ID}}/files/</code>. Records the install.wim or install.esd path so the resolver can serve it.</span>
 </form>
-<span class="small muted">Walks the ISO and writes every file under <code>data/iso/{{int64 $iso.ID}}/files/</code>. Records the install.wim or install.esd path so the resolver can serve it.</span>
 {{end}}
 {{end}}
