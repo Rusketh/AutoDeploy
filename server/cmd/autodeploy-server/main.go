@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
@@ -26,6 +27,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/retention"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -142,6 +144,20 @@ func run(logger *slog.Logger) error {
 		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
 	}); err != nil {
 		return err
+	}
+
+	// Start the retention scheduler (Phase 16). Hourly tick, prunes
+	// log_event rows older than AUTODEPLOY_LOG_RETENTION_DAYS. Zero
+	// disables pruning.
+	if cfg.LogRetentionDays > 0 {
+		sch := &retention.Scheduler{
+			Logs:         r.Logs,
+			LogRetention: time.Duration(cfg.LogRetentionDays) * 24 * time.Hour,
+			Logger:       logger,
+		}
+		go sch.Start(ctx)
+		logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
+			slog.Int("log_retention_days", cfg.LogRetentionDays))
 	}
 
 	logger.LogAttrs(ctx, slog.LevelInfo, "server.start",

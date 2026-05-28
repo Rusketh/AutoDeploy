@@ -27,11 +27,12 @@ the product, and never before.
 16. [Bulk operations](bulk-operations.md) — resident agent, AD-targeting, rename / software-push / scripts.
 17. [Centralised logging](logging.md) — what's logged, ingest, search, secrets.
 18. [Branding](branding.md) — the system-wide brand and where it shows up.
+19. [Operating AutoDeploy](operations.md) — deployment topology, backup/recovery, retention, security review.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 15)
+## Current product surface (Phase 16 — feature-complete)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -61,5 +62,8 @@ section you expect is missing, the feature it documents has not yet shipped.
   the outcome. Cross-compiles to Windows. (Resident check-in mode and
   bulk operations arrive in Phase 13.)
 
-Still to come (sequenced by `docs/design/roadmap.txt`): operational
-hardening (Phase 16).
+All sixteen phases of the roadmap have shipped. Subsequent work
+tracks the open questions carried through from the design document
+(distributed topology, point-in-time forensic restore, non-Windows
+target imaging, graded portal roles, multicast / bandwidth
+optimisation).

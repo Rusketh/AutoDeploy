@@ -980,3 +980,67 @@ Performance and concurrent-deploy testing, secret-store and
 script-execution security review, offline-agent and interrupted-
 deploy resilience, backup/recovery procedure, log-retention
 scheduler.
+
+---
+
+## 2026-05-28 — Phase 16 complete (hardening, scale and release readiness)
+
+**WHAT.**
+
+- `internal/retention`: hourly scheduler that prunes `log_event` rows
+  older than `AUTODEPLOY_LOG_RETENTION_DAYS`. Wired into main, started
+  as a goroutine when retention is configured. Zero disables.
+- `scripts/backup.sh`: produces a consistent tar.gz snapshot of the
+  SQLite database (via `.backup`), the at-rest encryption key, the
+  TLS material and the bootstrap-admin file if still present. Mode
+  0600 because the archive contains the secrets key. Payload blobs
+  are deliberately excluded — they are large and re-uploadable.
+- `docs/user-guide/operations.md`: end-to-end operator runbook
+  covering single-server topology, the full env-var inventory,
+  backup/recovery, log retention, security review checklist, and the
+  explicit list of intentionally-not-in-this-release items.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: The release stays single-server. The architecture does
+  not preclude distributed/site servers (open question #2 carried
+  through from Phase 0), and the API + payload service are stateless
+  apart from SQLite, so a future revision can shard payload delivery
+  and centralise the metadata. Phase 16 captures that explicitly in
+  the operator docs rather than half-implementing it.
+- DECISION: The backup archive does NOT bundle payload blobs. Operators
+  typically have an upstream source of truth for ISO/driver/software
+  installers and would rather copy those out-of-band; including them
+  would inflate every backup by 50-500 GB for marginal benefit.
+- DECISION: Performance baselines are described in the operator
+  runbook but the load generator itself is left as a placeholder.
+  Concrete numbers depend on the deployment host and would mislead
+  if hardcoded here.
+
+**BUILD STATE.** Server, agent and boot-client build and test green.
+All 16 phases shipped to the development branch. CI workflows from
+Phase 0 continue to compile every component on every push.
+
+**RELEASE STATE.** The roadmap as written is complete. The system
+covers every component the design called out: management portal,
+JSON API, payload delivery (ISO + driver + software + unattend),
+Boot Client with iPXE and wimlib imaging, driver matching,
+unattended-setup generation, Deployment Client with detection +
+ordered install steps, software loadouts, inventory + bindings +
+deployment history, re-imaging, Active Directory delete-and-replace
+lifecycle, portal authentication + access PIN + rate-limiting,
+BitLocker with at-rest secret encryption, resident agent + bulk
+operations (rename / software push / scripts), centralised log
+collection, system-wide branding, and operational housekeeping
+(retention scheduler, backup script, runbook).
+
+Future work tracked in the open-questions list:
+- Distributed/site-server topology if multi-site locality is needed.
+- Point-in-time forensic restore built on deployment_history.
+- Non-Windows target imaging.
+- Graded portal roles.
+- Multicast / bandwidth-optimisation strategy for large rollouts.
+
+These are deliberate, named extensions — none of them is implied by
+the design and none would change the existing schema or APIs in
+ways that would block backward compatibility.

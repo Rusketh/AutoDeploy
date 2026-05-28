@@ -38,6 +38,9 @@ type Config struct {
 	// Empty causes the server to load (or generate) a key file under
 	// AUTODEPLOY_DATA_DIR/secrets-key.bin with 0600 perms.
 	SecretsKeyHex string
+
+	// Phase 16. Log retention (days). 0 disables pruning.
+	LogRetentionDays int
 }
 
 // Load reads configuration from the environment.
@@ -64,6 +67,11 @@ func Load() (Config, error) {
 	}
 	c.ADSkipTLSVerify = skip
 	c.SecretsKeyHex = getenv("AUTODEPLOY_SECRETS_KEY", "")
+	days, err := strconv.Atoi(getenv("AUTODEPLOY_LOG_RETENTION_DAYS", "0"))
+	if err != nil {
+		return Config{}, errors.New("AUTODEPLOY_LOG_RETENTION_DAYS must be an integer")
+	}
+	c.LogRetentionDays = days
 	return c, nil
 }
 
