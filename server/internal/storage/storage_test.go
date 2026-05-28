@@ -17,6 +17,8 @@ func TestOpenAndMigrate(t *testing.T) {
 		"iso", "unattend", "driver_package", "driver_filter",
 		"software_package", "image", "image_software_package",
 		"software_loadout", "software_loadout_package",
+		"machine_record", "machine_binding", "deployment_history",
+		"machine_detected_state",
 		"schema_migration",
 	} {
 		var name string

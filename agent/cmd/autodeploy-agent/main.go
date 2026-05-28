@@ -102,6 +102,34 @@ func main() {
 	eval := &detect.Evaluator{Backend: detect.DefaultBackend()}
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 
+	// Report opening so the server can record an in-progress deployment.
+	type pkgReport struct {
+		PackageID int64  `json:"package_id"`
+		Detected  bool   `json:"detected"`
+		Installed bool   `json:"installed"`
+		Skipped   bool   `json:"skipped"`
+		Failed    bool   `json:"failed"`
+		Message   string `json:"message,omitempty"`
+	}
+	var openResp struct {
+		MachineID    int64 `json:"machine_id"`
+		DeploymentID int64 `json:"deployment_id"`
+	}
+	identityBody := map[string]any{
+		"system_uuid": f.uuid,
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
+		"identity": identityBody,
+		"image_id": f.imageID,
+		"outcome":  "in_progress",
+	}, &openResp); err != nil {
+		log.Warn("report.open", slog.String("error", err.Error()))
+	}
+	depID := openResp.DeploymentID
+
+	var packageReports []pkgReport
+	failed := false
+
 	for _, pkg := range resp.Items {
 		// Detection first — skip already-installed.
 		installed, err := eval.EvaluatePackage(ctx, pkg.DetectionRules)
@@ -115,6 +143,9 @@ func main() {
 				slog.String("actor", f.uuid),
 				slog.String("target", pkg.Name),
 				slog.String("reason", "detection rules report already installed"))
+			packageReports = append(packageReports, pkgReport{
+				PackageID: pkg.PackageID, Detected: true, Skipped: true,
+			})
 			continue
 		}
 		if len(pkg.DetectionRules) == 0 {
@@ -178,14 +209,41 @@ func main() {
 			log.Info("package.install.ok",
 				slog.String("actor", f.uuid),
 				slog.String("target", pkg.Name))
+			postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
+			packageReports = append(packageReports, pkgReport{
+				PackageID: pkg.PackageID, Installed: true, Detected: postDetected,
+			})
 		} else {
 			log.Error("package.install.fail",
 				slog.String("actor", f.uuid),
 				slog.String("target", pkg.Name))
+			packageReports = append(packageReports, pkgReport{
+				PackageID: pkg.PackageID, Failed: true,
+			})
+			failed = true
 		}
 	}
 
-	log.Info("agent.done", slog.String("actor", f.uuid))
+	// Final report: mark the deployment ok/failed and ship per-package
+	// detection state.
+	outcome := "ok"
+	if failed {
+		outcome = "failed"
+	}
+	if depID != 0 {
+		var ignore struct{}
+		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
+			"identity":      identityBody,
+			"image_id":      f.imageID,
+			"deployment_id": depID,
+			"outcome":       outcome,
+			"packages":      packageReports,
+		}, &ignore); err != nil {
+			log.Warn("report.close", slog.String("error", err.Error()))
+		}
+	}
+
+	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
 	_ = time.Now // placeholder for resident-mode timing in Phase 13
 }
 

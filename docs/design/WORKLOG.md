@@ -517,3 +517,74 @@ keyed on SMBIOS UUID with serial as secondary; persist the binding
 the dated deployment history. The Boot Client and agent both report
 identity already; Phase 8 wires up the server-side persistence and
 surfaces inventory in the portal.
+
+---
+
+## 2026-05-28 — Phase 8 complete (inventory and bindings)
+
+**WHAT.**
+
+- Migration 0003 adds `machine_record` (keyed on system_uuid, with
+  serial as secondary), `machine_binding` (one-to-one with the record,
+  carries image_id, machine_name, target_ou, group_memberships JSON),
+  `deployment_history` (append-only, dated, with outcome) and
+  `machine_detected_state` (per-package detection results for drift).
+- `InventoryRepo` with `UpsertFromIdentity` (used both by the Boot
+  Client's menu fetch and the agent's report), `Get/GetByUUID/List`,
+  `GetBinding/UpsertBinding`, `RecordDeployment/CompleteDeployment`,
+  `HistoryFor`, and `RecordDetectedState/DetectedStateFor`.
+- Boot Client menu endpoint now upserts the identity it receives, so
+  every machine that ever boots into AutoDeploy is in inventory. When
+  the machine has a binding pointing at an image, the menu returns a
+  `reimage` option referencing the bound image — the foundation
+  re-imaging (Phase 9) builds on.
+- Agent posts `POST /api/v1/agent/report` twice during a deploy: once
+  at the start with `outcome: in_progress` to open a history row, and
+  once at the end with `outcome: ok|failed` plus per-package detection
+  outcomes. The server upserts the machine record and writes the
+  deployment row and detected-state rows.
+- New JSON API at `/api/v1/machines`, `/api/v1/machines/{id}`,
+  `/api/v1/machines/{id}/binding`, `/api/v1/machines/{id}/history`,
+  `/api/v1/machines/{id}/detected`.
+- Tests: identity upsert is idempotent on same UUID; binding round-trips
+  groups via JSON; history is recorded and completed correctly;
+  detected-state is upserted on conflict.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: `machine_record` is keyed on `system_uuid` (UNIQUE). The
+  design names UUID as the stable primary identifier with serial as
+  secondary; SQLite has no native UPSERT against a non-PK unique
+  column, but the modernc driver supports `INSERT ... ON CONFLICT(...)
+  DO UPDATE`, which we use for the bindings and detection rows. The
+  machine UPSERT is done in application code (lookup → update or
+  insert) to keep its read path explicit.
+- DECISION: `machine_binding` is one-to-one with `machine_record`
+  (machine_id is its PK). A machine has exactly one current
+  binding; history of past bindings is implicit in deployment_history.
+- DECISION: Deleting an image leaves bindings with `image_id = NULL`
+  rather than cascading the binding away. The binding is the
+  assignment; the image is the current way that assignment is
+  fulfilled. The portal warns operators about bindings that would
+  break before they delete an image (UI to land in Phase 9).
+- DECISION: Group memberships are stored as a JSON array column for
+  flexibility; Phase 10's AD service will iterate them. Comparing
+  membership state in SQL is not a requirement of the design.
+- DECISION: Agent report endpoint is the **same** for opening and
+  closing a deployment — `in_progress` opens a row, an explicit
+  `deployment_id` plus `ok|failed` closes it. Saves a round-trip and
+  matches the design's "agent reports facts; server records them".
+
+**BUILD STATE.** Server and agent build green; all tests pass. End-to-
+end smoke validated: menu fetch creates record → operator sets
+binding → menu fetch now includes `reimage` → agent report opens and
+closes a history row.
+
+**NEXT.** Phase 9 — re-imaging. The pieces are already in place: the
+binding tells the server what image to use; the manifest endpoint
+already produces a fresh manifest from the latest definitions. Phase 9
+adds the reimage trigger flow (menu choice → deploy that image) and
+ensures the agent updates the existing binding's deployment history
+rather than creating a fresh machine. The Boot Client's existing
+`deploy <image-id>` command already does the right thing — Phase 9 is
+about making the reimage path operationally first-class.

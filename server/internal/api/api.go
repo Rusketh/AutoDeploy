@@ -16,19 +16,21 @@ import (
 // Repos is the bundle of repositories the API depends on. Pass one
 // constructed by the caller so this package owns no state.
 type Repos struct {
-	ISOs     *model.ISORepo
-	Unattend *model.UnattendRepo
-	Drivers  *model.DriverPackageRepo
-	Software *model.SoftwarePackageRepo
-	Loadouts *model.SoftwareLoadoutRepo
-	Images   *model.ImageRepo
-	Resolver *resolve.Resolver
+	ISOs      *model.ISORepo
+	Unattend  *model.UnattendRepo
+	Drivers   *model.DriverPackageRepo
+	Software  *model.SoftwarePackageRepo
+	Loadouts  *model.SoftwareLoadoutRepo
+	Images    *model.ImageRepo
+	Inventory *model.InventoryRepo
+	Resolver  *resolve.Resolver
 }
 
 // Register mounts /api/v1/* routes on mux.
 func Register(mux *http.ServeMux, r Repos) {
 	RegisterBoot(mux, r)
 	RegisterAgent(mux, r)
+	RegisterInventory(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

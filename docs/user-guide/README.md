@@ -19,11 +19,12 @@ the product, and never before.
 8. [Unattend configuration](unattend.md) — settings model, generated XML, secrets handling.
 9. [Software packages](software.md) — detection rules, ordered install steps, the agent flow.
 10. [Software loadouts](loadouts.md) — inheritable collections of packages, opt-outs, precedence.
+11. [Inventory and bindings](inventory.md) — machine records, bindings, deployment history, drift.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 7)
+## Current product surface (Phase 8)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -53,7 +54,7 @@ section you expect is missing, the feature it documents has not yet shipped.
   the outcome. Cross-compiles to Windows. (Resident check-in mode and
   bulk operations arrive in Phase 13.)
 
-Still to come (sequenced by `docs/design/roadmap.txt`): inventory and
-re-imaging (Phase 8–9), AD integration (Phase 10), the access PIN and
-authentication (Phase 11), BitLocker (Phase 12), bulk operations
-(Phase 13), centralised logging (Phase 14), branding (Phase 15).
+Still to come (sequenced by `docs/design/roadmap.txt`): re-imaging
+(Phase 9), AD integration (Phase 10), the access PIN and authentication
+(Phase 11), BitLocker (Phase 12), bulk operations (Phase 13),
+centralised logging (Phase 14), branding (Phase 15).

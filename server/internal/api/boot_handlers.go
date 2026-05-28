@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
 
@@ -45,6 +47,17 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// Upsert the machine record from reported identity so the
+		// inventory tracks every machine that boots into AutoDeploy —
+		// even ones that have no binding yet.
+		if r.Inventory != nil && in.SystemUUID != "" {
+			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), match.Identity{
+				SystemUUID:         in.SystemUUID,
+				SystemManufacturer: in.SystemManufacturer,
+				SystemProduct:      in.SystemProduct,
+				SystemSerial:       in.SystemSerial,
+			})
+		}
 		images, err := r.Images.List(req.Context())
 		if err != nil {
 			writeError(w, err)
@@ -58,8 +71,28 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 				Description: im.Description,
 			})
 		}
-		// Phase 9 fills in resp.Reimage when in.SystemUUID matches an
-		// inventory record.
+		// Re-image option: present when the machine is in inventory AND
+		// has a binding with an image.
+		if r.Inventory != nil && in.SystemUUID != "" {
+			m, err := r.Inventory.GetByUUID(req.Context(), in.SystemUUID)
+			if err == nil {
+				b, err := r.Inventory.GetBinding(req.Context(), m.ID)
+				if err == nil && b.ImageID != nil {
+					im, ierr := r.Images.Get(req.Context(), *b.ImageID)
+					if ierr == nil {
+						resp.Reimage = &BootMenuItem{
+							ImageID:     im.ID,
+							Name:        "Re-image: " + im.Name,
+							Description: "Rebuild this machine to the latest definition of " + im.Name,
+						}
+					}
+				} else if !errors.Is(err, model.ErrNotFound) && err != nil {
+					// Other errors are intentionally swallowed — a menu
+					// without a re-image option is still a useful menu.
+					_ = err
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
