@@ -7,7 +7,14 @@
 
 ## Environment variables
 
-See [Installation → Environment variables](installation.md#environment-variables).
+| Variable                | Default              | Meaning                                                                 |
+|-------------------------|----------------------|-------------------------------------------------------------------------|
+| `AUTODEPLOY_HTTP_ADDR`  | `127.0.0.1:8080`     | Cleartext HTTP bind. Empty disables. In production mode only loopback is permitted. |
+| `AUTODEPLOY_HTTPS_ADDR` | `` (unset)           | HTTPS bind. Empty disables.                                              |
+| `AUTODEPLOY_TLS_CERT`   | `` (unset)           | PEM cert path for HTTPS. In dev mode if both this and the key are empty, a self-signed cert is generated under `AUTODEPLOY_DATA_DIR/tls/`. In production both must be set. |
+| `AUTODEPLOY_TLS_KEY`    | `` (unset)           | PEM key path for HTTPS. See above.                                       |
+| `AUTODEPLOY_DATA_DIR`   | `./data`             | Root for stored payloads and the SQLite database.                        |
+| `AUTODEPLOY_DEV`        | `true`               | When `false`, the server refuses cleartext HTTP on non-loopback addresses and disables dev-cert generation. |
 
 ## On-disk layout
 
@@ -18,10 +25,14 @@ empty.
 
 ```
 $AUTODEPLOY_DATA_DIR/
-  iso/         # extracted ISO contents (Phase 1)
-  drivers/     # ingested driver packages (Phase 4)
-  software/    # uploaded installer payloads (Phase 6)
-  unattend/    # generated answer files cached for delivery (Phase 5)
+  autodeploy.sqlite    # the relational store
+  tls/                 # self-signed dev TLS material (Phase 2; dev mode only)
+  iso/{id}/
+    source.iso         # the uploaded ISO file
+    files/...          # extracted ISO contents (Phase 2)
+  drivers/{id}/payload.bin    # uploaded driver-package blob (Phase 2)
+  software/{id}/payload.bin   # uploaded installer payload (Phase 2)
+  unattend/                   # generated answer files (Phase 5)
 ```
 
 ## HTTPS and production safety

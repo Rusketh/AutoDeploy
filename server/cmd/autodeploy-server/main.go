@@ -1,8 +1,5 @@
 // Command autodeploy-server runs the management portal, HTTP API,
 // Deployment Service and Domain Integration Service in a single process.
-//
-// Phase 1: SQLite-backed artifact and image management. The portal lives
-// under /portal; the JSON API under /api/v1. /healthz reports liveness.
 package main
 
 import (
@@ -13,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/rusketh/autodeploy/server/internal/api"
@@ -20,6 +18,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/httpx"
 	"github.com/rusketh/autodeploy/server/internal/logging"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
@@ -52,16 +51,30 @@ func run(logger *slog.Logger) error {
 	}
 	defer db.Close()
 
-	repos := repos(db)
+	blobs, err := storage.NewBlobStore(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+
+	r := repos(db)
 
 	mux, handler := httpx.New(cfg, logger)
 	api.Register(mux, api.Repos{
-		ISOs: repos.ISOs, Unattend: repos.Unattend, Drivers: repos.Drivers,
-		Software: repos.Software, Images: repos.Images, Resolver: repos.Resolver,
+		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
+		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
 	})
+
+	pl := &payload.Service{
+		Blobs: blobs, ISOs: r.ISOs, Drivers: r.Drivers, Software: r.Software,
+	}
+	pl.Register(mux)
+
+	mh := &payload.ManifestHandler{Resolver: r.Resolver}
+	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
+
 	if err := portal.Register(mux, portal.Repos{
-		ISOs: repos.ISOs, Unattend: repos.Unattend, Drivers: repos.Drivers,
-		Software: repos.Software, Images: repos.Images, Resolver: repos.Resolver,
+		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
+		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
 	}); err != nil {
 		return err
 	}
@@ -69,12 +82,35 @@ func run(logger *slog.Logger) error {
 	logger.LogAttrs(ctx, slog.LevelInfo, "server.start",
 		slog.String("actor", "system"),
 		slog.String("target", cfg.HTTPAddr),
+		slog.String("https_addr", cfg.HTTPSAddr),
 		slog.String("data_dir", cfg.DataDir),
 		slog.String("db_path", dbPath),
 		slog.Bool("dev_mode", cfg.DevMode),
 	)
 
-	if err := httpx.ListenAndServe(ctx, cfg, handler, logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// Run HTTP and HTTPS in parallel if both are configured.
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	if cfg.HTTPAddr != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := httpx.ListenAndServe(ctx, cfg, handler, logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+			}
+		}()
+	}
+	if cfg.HTTPSAddr != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := httpx.ListenAndServeTLS(ctx, cfg, handler, logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(errs) }()
+	if err, ok := <-errs; ok && err != nil {
 		return err
 	}
 	return nil

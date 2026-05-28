@@ -114,3 +114,69 @@ means ISO upload + extraction so the WIM/ESD is served as discrete files,
 driver-package upload, software-installer upload, and an HTTPS strategy.
 The resolver already returns the manifest shape the Boot Client will need;
 Phase 2 fills in the payload-URL plumbing and the file-serving layer.
+
+---
+
+## 2026-05-28 — Phase 2 complete (HTTP API + payload delivery)
+
+**WHAT.**
+
+- BlobStore (`internal/storage`): filesystem-backed payload store rooted
+  at `AUTODEPLOY_DATA_DIR`, with atomic writes (write-to-tmp + rename) and
+  a path resolver that refuses paths escaping the root.
+- Payload service (`internal/payload`): upload endpoints for ISOs, driver
+  packages and software installers; ISO extraction (pure-Go ISO9660 via
+  `github.com/kdomanski/iso9660`, no CGO); range-aware download endpoints
+  at `/payload/iso/{id}/{path}`, `/payload/drivers/{id}`,
+  `/payload/software/{id}`; deployment manifest endpoint at
+  `/api/v1/images/{id}/manifest` that turns the resolved image into a
+  flat list of `{role, url, size_bytes, ...}` items the Boot Client will
+  consume in Phase 3.
+- HTTPS (`internal/httpx/tls.go`): operator can supply cert/key via
+  `AUTODEPLOY_TLS_CERT` / `AUTODEPLOY_TLS_KEY`; in dev mode a P-256
+  self-signed cert is generated under `data/tls/` covering `localhost`,
+  `127.0.0.1` and the configured host. Production refuses to start HTTPS
+  without an explicit cert pair.
+- main wired both HTTP and HTTPS listeners side by side; either can be
+  disabled by leaving its address blank.
+- Tests: ISO build/extract/serve round-trip using a real ISO9660 image,
+  Range request returns `206 Partial Content`, manifest URLs are correct,
+  TLS dev-cert generation has correct perms.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: ISO extraction is a separate step (`POST .../extract`) from
+  upload (`PUT .../upload`). Keeps upload simple and bounded in scope
+  (one HTTP request, one streamed write); extraction can take minutes for
+  a full Windows ISO and benefits from being its own observable
+  operation. The portal will show extraction progress in a later phase.
+- DECISION: Driver-package and software-package payloads are stored as
+  opaque blobs in Phase 2. Phase 4 will parse SCCM driver packages on
+  ingest; Phase 6 will execute software steps from the installer payload.
+  The on-wire format for both is not nailed down until those phases.
+- DECISION: The manifest endpoint is its own URL rather than being baked
+  into the existing `/resolved` view, so the Boot Client has a stable
+  contract that does not change when the portal's resolved-view JSON
+  changes shape.
+- ASSUMPTION: Self-signed cert generation in dev mode is acceptable
+  because clients in dev are not the production fleet. Production
+  deployments MUST provide a real cert; the server refuses to start TLS
+  otherwise.
+- ASSUMPTION: ISO file extraction uses pure-Go ISO9660; this covers
+  Windows install media that ship as ISO9660 (with Joliet/Rock Ridge
+  extensions where present). UDF-only media is not yet supported; the
+  extractor will return a clear error and the operator can fall back to
+  extracting manually and pointing the ISO row at the existing files.
+  Real-media survey will land in Phase 3 lab testing.
+
+**BUILD STATE.** `make build` green; `go test ./...` green across all
+packages (server, storage, model, resolve, api, httpx, payload). Smoke
+test: HTTP and HTTPS listeners both respond to `/healthz`; uploaded ISO
+extracted and `install.wim` served back via the payload route.
+
+**NEXT.** Phase 3 — Boot Client and basic imaging. Build the Linux
+initramfs flow: iPXE chainloads `autodeploy-boot`, it reads SMBIOS,
+calls the API for the menu (Phase 1/2 endpoints are sufficient), pulls
+the manifest, partitions, applies the WIM with `wimlib-imagex`, places
+the (still-empty) unattend, and reboots. The server is already
+fact-complete for Phase 3; the work is on the Boot Client side.

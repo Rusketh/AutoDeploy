@@ -11,22 +11,31 @@ import (
 
 // Config is the resolved server configuration.
 type Config struct {
-	// HTTPAddr is the address the HTTP server binds to (host:port).
+	// HTTPAddr is the address the cleartext HTTP server binds to (host:port).
+	// Empty disables HTTP. In production mode, only loopback is permitted.
 	HTTPAddr string
-	// DataDir is the on-disk root for payload blobs (extracted ISO contents,
-	// driver packages, software installers).
+	// HTTPSAddr is the address the HTTPS server binds to. Empty disables
+	// HTTPS.
+	HTTPSAddr string
+	// TLSCertFile and TLSKeyFile point to a PEM cert/key pair. When empty
+	// and DevMode is true, a self-signed cert is generated under DataDir/tls.
+	TLSCertFile string
+	TLSKeyFile  string
+	// DataDir is the on-disk root for payload blobs.
 	DataDir string
-	// DevMode permits cleartext HTTP on non-loopback addresses. Production
-	// deployments must set this to false.
+	// DevMode permits cleartext HTTP on non-loopback addresses and enables
+	// self-signed-cert generation. Production deployments must set false.
 	DevMode bool
 }
 
-// Load reads configuration from the environment. Missing values use sensible
-// defaults suitable for a development build.
+// Load reads configuration from the environment.
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr: getenv("AUTODEPLOY_HTTP_ADDR", "127.0.0.1:8080"),
-		DataDir:  getenv("AUTODEPLOY_DATA_DIR", "./data"),
+		HTTPAddr:    getenv("AUTODEPLOY_HTTP_ADDR", "127.0.0.1:8080"),
+		HTTPSAddr:   getenv("AUTODEPLOY_HTTPS_ADDR", ""),
+		TLSCertFile: getenv("AUTODEPLOY_TLS_CERT", ""),
+		TLSKeyFile:  getenv("AUTODEPLOY_TLS_KEY", ""),
+		DataDir:     getenv("AUTODEPLOY_DATA_DIR", "./data"),
 	}
 	dev, err := strconv.ParseBool(getenv("AUTODEPLOY_DEV", "true"))
 	if err != nil {
