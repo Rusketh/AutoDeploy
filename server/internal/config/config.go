@@ -46,6 +46,12 @@ type Config struct {
 	// Zero = unlimited (don't pick this on a production node — a
 	// 500-machine PXE burst will exhaust the file-descriptor budget).
 	PayloadMaxInFlight int
+
+	// TFTP listener address (e.g. ":69"). Empty disables the built-in
+	// TFTP server. Serves $AUTODEPLOY_DATA_DIR/ipxe read-only so a
+	// classic PXE setup can fetch the iPXE bootstrap binaries
+	// (undionly.kpxe, ipxe.efi, …) without a separate TFTP daemon.
+	TFTPAddr string
 }
 
 // Load reads configuration from the environment.
@@ -82,6 +88,7 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT must be an integer")
 	}
 	c.PayloadMaxInFlight = maxIF
+	c.TFTPAddr = getenv("AUTODEPLOY_TFTP_ADDR", "")
 	return c, nil
 }
 

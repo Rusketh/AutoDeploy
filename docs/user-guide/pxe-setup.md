@@ -66,8 +66,29 @@ when you update AutoDeploy.
 
 ## Step 2 — Stand up TFTP
 
-AutoDeploy doesn't run TFTP — pick any TFTP daemon and point its root
-at the iPXE directory. Examples:
+AutoDeploy ships an **optional built-in TFTP server**. Enable it by
+setting `AUTODEPLOY_TFTP_ADDR=:69` (or any address) and the server
+serves `$AUTODEPLOY_DATA_DIR/ipxe/` read-only. Honors the modern PXE
+options (`blksize`, `tsize`, `timeout`). No second daemon required.
+
+```sh
+AUTODEPLOY_TFTP_ADDR=:69 \
+AUTODEPLOY_HTTPS_ADDR=:443 \
+AUTODEPLOY_DATA_DIR=/var/lib/autodeploy \
+  ./autodeploy-server
+# Logs:
+#   tftp.listen  addr=:69  root=/var/lib/autodeploy/ipxe
+```
+
+Binding to port 69 needs `CAP_NET_BIND_SERVICE` — typically granted
+by a systemd unit (`AmbientCapabilities=CAP_NET_BIND_SERVICE`) or
+`setcap`. For development, use a high port (`AUTODEPLOY_TFTP_ADDR=:6969`)
+and configure DHCP to point at it.
+
+### Or use any existing TFTP daemon
+
+If you already run TFTP for other reasons, point its root at the same
+iPXE directory and leave `AUTODEPLOY_TFTP_ADDR` empty.
 
 ```sh
 # tftpd-hpa (Debian / Ubuntu)
@@ -266,11 +287,13 @@ flow takes over — menu, manifest, payload download, image apply.
 By deliberate design:
 
 - **No DHCP server.** Use your existing DHCP.
-- **No TFTP server.** Use any TFTP daemon and point its root at the
-  iPXE binaries directory. The bootstrap is one-line in any
-  TFTP implementation.
 - **No multicast.** Payload distribution at scale is solved by
   per-site **payload mirrors** (see [scaling.md](scaling.md)), not
   multicast. Multicast WIM transport is a niche optimisation that
   the design's open question #7 leaves as a future addition if
   unicast + mirrors prove insufficient.
+
+The built-in TFTP server is **optional** — turn it on with
+`AUTODEPLOY_TFTP_ADDR=:69` to serve the iPXE bootstrap binaries
+without a separate daemon, or leave it off and use your existing TFTP
+infrastructure.

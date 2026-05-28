@@ -31,6 +31,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/retention"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/tftp"
 )
 
 var base64URL = base64URLpkg.RawURLEncoding
@@ -186,8 +187,8 @@ func run(logger *slog.Logger) error {
 		slog.Bool("dev_mode", cfg.DevMode),
 	)
 
-	// Run HTTP and HTTPS in parallel if both are configured.
-	errs := make(chan error, 2)
+	// Run HTTP, HTTPS and (optionally) TFTP in parallel.
+	errs := make(chan error, 3)
 	var wg sync.WaitGroup
 	if cfg.HTTPAddr != "" {
 		wg.Add(1)
@@ -203,6 +204,23 @@ func run(logger *slog.Logger) error {
 		go func() {
 			defer wg.Done()
 			if err := httpx.ListenAndServeTLS(ctx, cfg, handler, logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+			}
+		}()
+	}
+	if cfg.TFTPAddr != "" {
+		// Built-in TFTP serves $DATA_DIR/ipxe read-only so a classic
+		// PXE setup can grab undionly.kpxe / ipxe.efi etc. without a
+		// separate TFTP daemon. Port 69 needs CAP_NET_BIND_SERVICE.
+		ts := &tftp.Server{
+			Addr:   cfg.TFTPAddr,
+			Root:   filepath.Join(cfg.DataDir, "ipxe"),
+			Logger: logger,
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := ts.ListenAndServe(ctx); err != nil {
 				errs <- err
 			}
 		}()

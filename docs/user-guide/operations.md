@@ -61,6 +61,8 @@ Place the server on a machine with:
 | `AUTODEPLOY_AD_SKIP_TLS_VERIFY`   | Lab use only.                                    |
 | `AUTODEPLOY_SECRETS_KEY`          | Hex-encoded 32-byte at-rest encryption key.      |
 | `AUTODEPLOY_LOG_RETENTION_DAYS`   | Auto-prune log_event older than N days. 0 = never.|
+| `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT`| Concurrent `/payload/*` streams. Default 64.     |
+| `AUTODEPLOY_TFTP_ADDR`            | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. |
 
 ## Backup and recovery
 

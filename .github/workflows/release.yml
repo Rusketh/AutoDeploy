@@ -1,0 +1,153 @@
+name: Release
+
+# Build cross-platform artifacts and attach them to a GitHub Release.
+#
+# Triggers:
+#   - A pushed tag matching v*  → build and create a release with the tag's name
+#   - A manual workflow_dispatch → build the artifacts but skip the release
+#
+# Each binary is built reproducibly (CGO_ENABLED=0, -trimpath, ldflags
+# stripping the symbol table) and uploaded both as a workflow artifact
+# (for the manual-dispatch path) and as a release asset.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # required to create / update the GitHub Release
+
+jobs:
+  build:
+    name: Build ${{ matrix.component }} ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Server: Linux amd64/arm64, Windows amd64, macOS amd64/arm64.
+          - { component: server,      goos: linux,   goarch: amd64, suffix: "" }
+          - { component: server,      goos: linux,   goarch: arm64, suffix: "" }
+          - { component: server,      goos: windows, goarch: amd64, suffix: ".exe" }
+          - { component: server,      goos: darwin,  goarch: amd64, suffix: "" }
+          - { component: server,      goos: darwin,  goarch: arm64, suffix: "" }
+          # Boot Client: Linux only (it runs in the initramfs).
+          - { component: boot-client, goos: linux,   goarch: amd64, suffix: "" }
+          - { component: boot-client, goos: linux,   goarch: arm64, suffix: "" }
+          # Agent: Windows (primary target) + Linux for dev hosts.
+          - { component: agent,       goos: windows, goarch: amd64, suffix: ".exe" }
+          - { component: agent,       goos: windows, goarch: arm64, suffix: ".exe" }
+          - { component: agent,       goos: linux,   goarch: amd64, suffix: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: ${{ matrix.component }}/go.sum
+      - name: Build
+        working-directory: ${{ matrix.component }}
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # Binary names match the cmd/ entrypoints.
+          case "${{ matrix.component }}" in
+            server)      bin=autodeploy-server ;;
+            boot-client) bin=autodeploy-boot ;;
+            agent)       bin=autodeploy-agent ;;
+          esac
+          out="bin/${bin}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w" -o "$out" "./cmd/${bin}"
+          ls -la "$out"
+          # Compute SHA-256 alongside the binary so operators can
+          # verify downloads.
+          sha256sum "$out" > "$out.sha256"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.component }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            ${{ matrix.component }}/bin/*
+          if-no-files-found: error
+
+  # Bundle the initramfs build script + an example boot.ipxe and the
+  # operator-facing scripts so a downloaded release is self-contained.
+  package-extras:
+    name: Package operator scripts and configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage extras
+        run: |
+          mkdir -p out
+          tar -czf out/autodeploy-extras.tar.gz \
+            scripts/initramfs/ \
+            scripts/fetch-ipxe.sh \
+            scripts/backup.sh \
+            scripts/check-secrets.sh \
+            docs/user-guide/
+          sha256sum out/autodeploy-extras.tar.gz > out/autodeploy-extras.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extras
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [build, package-extras]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Stage release assets
+        run: |
+          mkdir -p release
+          # Flatten the per-matrix subdirectories into a single
+          # release/ directory.
+          find artifacts -type f \( -name 'autodeploy-*' -o -name '*.tar.gz' -o -name '*.sha256' \) \
+            -exec cp -a '{}' release/ \;
+          ls -la release/
+      - name: Generate release notes
+        id: notes
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          {
+            echo "## AutoDeploy ${tag}"
+            echo
+            echo "Pre-built binaries for each component and platform are attached. Verify with the matching \`.sha256\`."
+            echo
+            echo "### Components"
+            echo
+            echo "- **autodeploy-server** — management portal + JSON API + Deployment Service + Domain Integration Service."
+            echo "- **autodeploy-boot** — Linux Boot Client (place in your initramfs; see \`autodeploy-extras.tar.gz → scripts/initramfs/build-initramfs.sh\`)."
+            echo "- **autodeploy-agent** — Windows / Linux Deployment Client."
+            echo
+            echo "### Operator extras"
+            echo
+            echo "\`autodeploy-extras.tar.gz\` bundles:"
+            echo "- \`scripts/initramfs/build-initramfs.sh\` — assemble the Boot Client initramfs."
+            echo "- \`scripts/fetch-ipxe.sh\` — fetch the iPXE bootstrap binaries (\`undionly.kpxe\`, \`ipxe.efi\`, …) for serving over TFTP."
+            echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store + secrets key + TLS material."
+            echo "- \`scripts/check-secrets.sh\` — CI tripwire for cleartext-secret patterns."
+            echo "- \`docs/user-guide/\` — the full operator guide for this release."
+            echo
+            echo "See \`docs/user-guide/README.md\` for the operator entry points."
+          } > release-notes.md
+          cat release-notes.md
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            release/*

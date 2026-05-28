@@ -1230,3 +1230,70 @@ that build on it (none are blockers):
 - An optional "deployment slot" concept that caps concurrent
   imaging operations system-wide and gives a "please retry"
   response to overflow, for sites running near capacity.
+
+---
+
+## 2026-05-28 — Built-in TFTP server + GitHub Release pipeline
+
+**WHAT.**
+
+- `internal/tftp`: read-only TFTP server (RFC 1350 plus the option
+  extensions PXE clients actually want — `blksize` RFC 2348, `tsize`
+  RFC 2349, `timeout` RFC 2349). Each RRQ spawns a goroutine with its
+  own ephemeral UDP socket as RFC 1350 requires; ACK-driven block
+  pacing with retry-on-timeout; path traversal refused; WRQ refused
+  with a clear error packet.
+- Config: `AUTODEPLOY_TFTP_ADDR` (default empty = disabled). When set,
+  the server starts a TFTP listener alongside HTTP/HTTPS, serving
+  `$AUTODEPLOY_DATA_DIR/ipxe` so a classic PXE setup can fetch the
+  iPXE bootstrap binaries without operators needing tftpd-hpa or
+  dnsmasq.
+- Tests cover small file, multi-block file, blksize negotiation,
+  missing file → file-not-found error, refused write, path-traversal
+  refused.
+- `pxe-setup.md` updated: the built-in TFTP is now documented as
+  Option A; "no TFTP daemon" becomes a default not a constraint. The
+  external-TFTP path remains supported for sites already running one.
+
+- `.github/workflows/release.yml`: triggered on `v*` tag push (and
+  `workflow_dispatch` for manual builds). Build matrix:
+    server      — linux amd64/arm64, windows amd64, darwin amd64/arm64
+    boot-client — linux amd64/arm64
+    agent       — windows amd64/arm64, linux amd64
+  Each binary built with `-trimpath -ldflags="-s -w"` and a
+  `.sha256` file alongside for download verification.
+  A `package-extras` job bundles `scripts/initramfs/`,
+  `scripts/fetch-ipxe.sh`, `scripts/backup.sh`,
+  `scripts/check-secrets.sh` and the entire user-guide as
+  `autodeploy-extras.tar.gz`.
+  The `release` job creates / updates the GitHub Release with
+  auto-generated notes (component summary + extras manifest).
+
+**WHY (decisions).**
+
+- DECISION: TFTP is OPT-IN, not always-on. Many environments
+  already run TFTP; turning ours on would just cause a port-69
+  conflict. Empty `AUTODEPLOY_TFTP_ADDR` is the safe default.
+- DECISION: Read-only. AutoDeploy has no use for TFTP uploads, and
+  refusing them with a clear error packet is the right behaviour.
+- DECISION: Single-root layout (`$DATA_DIR/ipxe`). Operators stage
+  the iPXE binaries there via `scripts/fetch-ipxe.sh`; the same
+  directory the iPXE chainload already serves the kernel + initramfs
+  from.
+- DECISION: Built into the same binary, not a separate process.
+  One binary, one config, one systemd unit. UDP + TCP + TFTP all
+  share the goroutine scheduler cleanly.
+- DECISION: No multicast TFTP (RFC 2090). The mass-scale story is
+  HTTP mirrors (see `scaling.md`).
+- DECISION: Release workflow uses tag-push trigger (`v*`). Operators
+  cut a release by tagging; CI does the rest. `workflow_dispatch`
+  gives a manual fall-back for ad-hoc cross-compile builds without
+  cutting a release.
+- DECISION: `.sha256` alongside every binary so operators can
+  verify downloads. The release itself ships from a clean Ubuntu
+  runner with no network access during build (after dependency
+  fetch); reproducibility is per-Go-version, per-source-revision.
+
+**BUILD STATE.** All tests green; server builds and runs with TFTP
+listening on its own port; release workflow YAML parses cleanly and
+will fire on the next `v*` tag push.
