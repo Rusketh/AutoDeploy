@@ -18,6 +18,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
 	"github.com/rusketh/autodeploy/server/internal/auth"
+	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/config"
 	"github.com/rusketh/autodeploy/server/internal/httpx"
 	"github.com/rusketh/autodeploy/server/internal/logging"
@@ -88,7 +89,7 @@ func run(logger *slog.Logger) error {
 		Resolver: r.Resolver,
 		Users:    r.Users, Settings: r.Settings,
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
-		Logs: r.Logs,
+		Logs: r.Logs, Branding: r.Branding,
 	})
 
 	pl := &payload.Service{
@@ -194,6 +195,7 @@ type appRepos struct {
 	BitLocker *model.BitLockerRepo
 	Bulk      *model.BulkRepo
 	Logs      *model.LogRepo
+	Branding  *branding.Repo
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -209,6 +211,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	bitlocker := model.NewBitLockerRepo(db, bx)
 	bulk := model.NewBulkRepo(db, inventory)
 	logs := model.NewLogRepo(db)
+	brandRepo := branding.New(db)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -217,7 +220,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 			WithDrivers(drivers).WithLoadouts(loadouts),
 		Users: users, Settings: settings,
 		BitLocker: bitlocker, Bulk: bulk,
-		Logs: logs,
+		Logs: logs, Branding: brandRepo,
 	}
 }
 

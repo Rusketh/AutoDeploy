@@ -942,3 +942,41 @@ portal view + retention setting.
 
 **NEXT.** Phase 15 — branding. System-wide brand settings applied to
 the portal, the boot screen, and the deployed OEM info.
+
+---
+
+## 2026-05-28 — Phase 15 complete (branding)
+
+**WHAT.**
+
+- `internal/branding`: a typed Brand object (product name, org name,
+  support URL / phone, logo data URL, primary colour, OEM
+  manufacturer string) persisted as a single JSON value in
+  `system_setting`.
+- API: `GET /api/v1/branding` is open (the portal needs it pre-login,
+  the Boot Client needs it for the menu, the agent needs it for OEM
+  info); `PUT /api/v1/branding` is authenticated.
+- Documented portal / boot-screen / OEM-info application in
+  `docs/user-guide/branding.md`.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: One brand, system-wide. The design is unambiguous on
+  this; the API has no concept of per-image or per-tenant brand.
+- DECISION: Logo is carried as a `data:` URI in the JSON so the same
+  endpoint serves portal, Boot Client and agent without requiring a
+  separate static-file dance. SVG and PNG both work.
+- DECISION: The agent writing OEM info on Windows is documented but
+  the actual registry write is not yet implemented; the brand object
+  exists for portal + boot screen today, and the OEM-info writer is
+  one of the "implemented when an operator needs it" items left for
+  Phase 16's release-readiness pass.
+
+**BUILD STATE.** Server builds; tests pass; no migration was needed
+(the brand reuses `system_setting`).
+
+**NEXT.** Phase 16 — hardening, scale and release readiness.
+Performance and concurrent-deploy testing, secret-store and
+script-execution security review, offline-agent and interrupted-
+deploy resilience, backup/recovery procedure, log-retention
+scheduler.

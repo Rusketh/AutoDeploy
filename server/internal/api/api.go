@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/rusketh/autodeploy/server/internal/auth"
+	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 )
@@ -34,6 +35,8 @@ type Repos struct {
 	Bulk *model.BulkRepo
 	// Phase 14.
 	Logs *model.LogRepo
+	// Phase 15.
+	Branding *branding.Repo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -45,6 +48,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterBitLocker(mux, r)
 	RegisterBulk(mux, r)
 	RegisterLogs(mux, r)
+	RegisterBranding(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))
