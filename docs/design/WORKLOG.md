@@ -457,3 +457,63 @@ in the resolver (loadout chain ∪ direct image package links, deduped
 by package id with direct-link ordering taking precedence), opt-out of
 inherited packages, and the portal CRUD. The agent and Boot Client need
 no changes — they already consume whatever `res.Software` returns.
+
+---
+
+## 2026-05-28 — Phase 7 complete (software loadouts)
+
+**WHAT.**
+
+- Schema migration 0002 adds `software_loadout`, the link table
+  `software_loadout_package` with `order_value` and `opt_out`, plus an
+  optional `loadout_id` column on `image`.
+- `SoftwareLoadoutRepo` with CRUD, package-link replacement, cycle
+  detection on parent updates, and a `RefCount` that sums image links
+  and child loadouts.
+- Resolver gained `WithLoadouts(...)` and `resolveLoadout(ctx, id)`:
+  walks the loadout parent chain (eldest-first), accumulates packages
+  with descendant entries replacing ancestor ones and `opt_out`
+  removing the package, sorts the merged set by `(order_value,
+  package_id)` and unions it with the image's direct links —
+  deduped by package id, **direct-link ordering takes precedence**.
+- Image now reads/writes `loadout_id`. SoftwarePackage's `RefCount`
+  also counts loadout memberships so direct deletes are blocked when
+  loadouts still link the package.
+- API CRUD at `/api/v1/loadouts`, mirroring the other artifact routes.
+- Tests cover additive inheritance (child overrides parent order,
+  child opt-out removes ancestor's package, child can add packages),
+  direct-link precedence over loadout ordering, and loadout cycle
+  detection on update.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: An image's **own** loadout link is nearest-wins along the
+  image chain — ancestor images do not also contribute loadouts. This
+  mirrors how ISO and unattend behave and keeps "which loadout
+  applies?" unambiguous. The loadout's *own* inheritance still
+  accumulates (additive across the loadout chain), which is the
+  documented per-design behaviour.
+- DECISION: Sort within the merged loadout set is by
+  `(order_value, package_id)` so install order is deterministic
+  regardless of insertion order or chain depth.
+- DECISION: Direct image package links win over loadout entries for
+  the same package — both presence and `order_value`. This lets an
+  image override a loadout's choice without forking the loadout.
+- DECISION: Reference-count guard on a software package now sums
+  image links AND loadout memberships, matching the operator's
+  expectation that "if any image or loadout uses it, I can't delete
+  it".
+- DECISION: SQLite's `ALTER TABLE` only supports adding columns, so
+  the loadout column on `image` is added via a separate migration
+  rather than altering the original.
+
+**BUILD STATE.** All tests green across modules; server builds. Smoke
+test would expose `/api/v1/loadouts` (same shape as the other
+resources); resolver tests cover the resolution rule end to end.
+
+**NEXT.** Phase 8 — inventory and bindings. Add the `MachineRecord`
+keyed on SMBIOS UUID with serial as secondary; persist the binding
+(assigned image, name, OU, group memberships, software assignment) and
+the dated deployment history. The Boot Client and agent both report
+identity already; Phase 8 wires up the server-side persistence and
+surfaces inventory in the portal.

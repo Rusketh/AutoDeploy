@@ -76,15 +76,39 @@ type SoftwarePackage struct {
 // rules (nearest-wins for ISO and unattend, additive union for software) are
 // applied by the resolver in internal/resolve.
 type Image struct {
-	ID            ID                     `json:"id"`
-	Name          string                 `json:"name"`
-	Description   string                 `json:"description"`
-	ParentID      *ID                    `json:"parent_id,omitempty"`
-	ISOID         *ID                    `json:"iso_id,omitempty"`
-	UnattendID    *ID                    `json:"unattend_id,omitempty"`
-	SoftwareLinks []ImageSoftwareLink    `json:"software_links"`
-	CreatedAt     time.Time              `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
+	ID            ID                  `json:"id"`
+	Name          string              `json:"name"`
+	Description   string              `json:"description"`
+	ParentID      *ID                 `json:"parent_id,omitempty"`
+	ISOID         *ID                 `json:"iso_id,omitempty"`
+	UnattendID    *ID                 `json:"unattend_id,omitempty"`
+	LoadoutID     *ID                 `json:"loadout_id,omitempty"`
+	SoftwareLinks []ImageSoftwareLink `json:"software_links"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+// SoftwareLoadout is a named, ordered, inheritable collection of software
+// packages. A child loadout inherits its parent's packages and may add
+// more, override an inherited package's order, or opt out of an inherited
+// package via Packages[].OptOut.
+type SoftwareLoadout struct {
+	ID          ID                       `json:"id"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	ParentID    *ID                      `json:"parent_id,omitempty"`
+	Packages    []SoftwareLoadoutPackage `json:"packages"`
+	CreatedAt   time.Time                `json:"created_at"`
+	UpdatedAt   time.Time                `json:"updated_at"`
+}
+
+// SoftwareLoadoutPackage is one package membership in a loadout. OptOut
+// removes the package from the resolved set even if a parent loadout
+// included it.
+type SoftwareLoadoutPackage struct {
+	PackageID  ID    `json:"package_id"`
+	OrderValue int64 `json:"order_value"`
+	OptOut     bool  `json:"opt_out,omitempty"`
 }
 
 // ImageSoftwareLink is one direct image -> software package link with an

@@ -116,14 +116,21 @@ func (r *SoftwarePackageRepo) Delete(ctx context.Context, id ID) error {
 	return nil
 }
 
-// RefCount counts direct image -> software package links. Software loadout
-// links land in Phase 7 and add to this number.
+// RefCount counts direct image links and loadout memberships referencing
+// this package.
 func (r *SoftwarePackageRepo) RefCount(ctx context.Context, id ID) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx,
+	var images, loadouts int
+	if err := r.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM image_software_package WHERE software_package_id=?`,
-		id).Scan(&n)
-	return n, err
+		id).Scan(&images); err != nil {
+		return 0, err
+	}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM software_loadout_package WHERE software_package_id=?`,
+		id).Scan(&loadouts); err != nil {
+		return 0, err
+	}
+	return images + loadouts, nil
 }
 
 func validateSoftware(in *SoftwarePackage) error {

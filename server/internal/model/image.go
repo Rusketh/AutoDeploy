@@ -31,10 +31,10 @@ func (r *ImageRepo) Create(ctx context.Context, in Image) (Image, error) {
 	// for a NULL row reference happens via the FK.
 
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO image (name, description, parent_id, iso_id, unattend_id)
-		VALUES (?, ?, ?, ?, ?)`,
+		INSERT INTO image (name, description, parent_id, iso_id, unattend_id, loadout_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
 		in.Name, in.Description,
-		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID))
+		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID), nullID(in.LoadoutID))
 	if err != nil {
 		if isUniqueErr(err) {
 			return Image{}, fmt.Errorf("image %q: %w", in.Name, ErrConflict)
@@ -78,11 +78,11 @@ func (r *ImageRepo) Update(ctx context.Context, in Image) error {
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE image
-		SET name=?, description=?, parent_id=?, iso_id=?, unattend_id=?,
+		SET name=?, description=?, parent_id=?, iso_id=?, unattend_id=?, loadout_id=?,
 		    updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.Name, in.Description,
-		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID),
+		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID), nullID(in.LoadoutID),
 		in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
@@ -107,12 +107,12 @@ func (r *ImageRepo) Update(ctx context.Context, in Image) error {
 // Get returns the image with id, including its software links.
 func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 	var v Image
-	var parent, iso, unattend sql.NullInt64
+	var parent, iso, unattend, loadout sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, name, description, parent_id, iso_id, unattend_id,
+		SELECT id, name, description, parent_id, iso_id, unattend_id, loadout_id,
 		       created_at, updated_at
 		FROM image WHERE id=?`, id).Scan(
-		&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend,
+		&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend, &loadout,
 		&v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Image{}, fmt.Errorf("image %d: %w", id, ErrNotFound)
@@ -123,6 +123,7 @@ func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 	v.ParentID = idPtr(parent)
 	v.ISOID = idPtr(iso)
 	v.UnattendID = idPtr(unattend)
+	v.LoadoutID = idPtr(loadout)
 	links, err := r.linksFor(ctx, id)
 	if err != nil {
 		return Image{}, err
@@ -134,7 +135,7 @@ func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 // List returns all images ordered by name. Software links are populated.
 func (r *ImageRepo) List(ctx context.Context) ([]Image, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, description, parent_id, iso_id, unattend_id,
+		SELECT id, name, description, parent_id, iso_id, unattend_id, loadout_id,
 		       created_at, updated_at
 		FROM image ORDER BY name`)
 	if err != nil {
@@ -144,14 +145,15 @@ func (r *ImageRepo) List(ctx context.Context) ([]Image, error) {
 	var out []Image
 	for rows.Next() {
 		var v Image
-		var parent, iso, unattend sql.NullInt64
-		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend,
+		var parent, iso, unattend, loadout sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend, &loadout,
 			&v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		v.ParentID = idPtr(parent)
 		v.ISOID = idPtr(iso)
 		v.UnattendID = idPtr(unattend)
+		v.LoadoutID = idPtr(loadout)
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {

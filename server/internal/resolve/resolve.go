@@ -47,7 +47,8 @@ type Resolver struct {
 	images   *model.ImageRepo
 	isos     *model.ISORepo
 	unattend *model.UnattendRepo
-	drivers  *model.DriverPackageRepo // nil = driver matching disabled
+	drivers  *model.DriverPackageRepo     // nil = driver matching disabled
+	loadouts *model.SoftwareLoadoutRepo   // nil = loadout resolution disabled
 }
 
 // New constructs a resolver bound to the given repositories. The drivers
@@ -61,6 +62,14 @@ func New(images *model.ImageRepo, isos *model.ISORepo, unattend *model.UnattendR
 // evaluate driver filters. Returns r for chaining.
 func (r *Resolver) WithDrivers(drivers *model.DriverPackageRepo) *Resolver {
 	r.drivers = drivers
+	return r
+}
+
+// WithLoadouts attaches the software-loadout repo so the resolver can
+// expand an image's loadout link into the inherited software set. Returns
+// r for chaining.
+func (r *Resolver) WithLoadouts(loadouts *model.SoftwareLoadoutRepo) *Resolver {
+	r.loadouts = loadouts
 	return r
 }
 
@@ -93,9 +102,8 @@ func (r *Resolver) Resolve(ctx context.Context, id model.ID) (Resolved, error) {
 		}
 	}
 
-	// Software (Phase 1): union direct image software links across the chain,
-	// de-duplicated by package ID. Direct-link ordering takes precedence over
-	// loadout ordering (Phase 7).
+	// Software: direct image links across the chain take precedence, then
+	// loadout-derived packages fill in. Dedupe is first-seen by package ID.
 	seen := map[model.ID]bool{}
 	for _, im := range chain {
 		for _, l := range im.SoftwareLinks {
@@ -104,6 +112,36 @@ func (r *Resolver) Resolve(ctx context.Context, id model.ID) (Resolved, error) {
 			}
 			seen[l.PackageID] = true
 			out.Software = append(out.Software, l)
+		}
+	}
+	// Loadout-derived software (Phase 7). The nearest-wins loadout on the
+	// image chain owns the loadout source; ancestors do not contribute
+	// their own loadouts. That matches the "nearest-wins" pattern used by
+	// ISO and unattend, while the package set inside the loadout is still
+	// additive via the loadout's own parent chain.
+	if r.loadouts != nil {
+		var loadoutID *model.ID
+		for _, im := range chain {
+			if im.LoadoutID != nil {
+				loadoutID = im.LoadoutID
+				break
+			}
+		}
+		if loadoutID != nil {
+			pkgs, err := r.resolveLoadout(ctx, *loadoutID)
+			if err != nil {
+				return Resolved{}, fmt.Errorf("resolve loadout %d: %w", *loadoutID, err)
+			}
+			for _, p := range pkgs {
+				if seen[p.PackageID] {
+					continue
+				}
+				seen[p.PackageID] = true
+				out.Software = append(out.Software, model.ImageSoftwareLink{
+					PackageID:  p.PackageID,
+					OrderValue: p.OrderValue,
+				})
+			}
 		}
 	}
 
@@ -147,6 +185,73 @@ func (r *Resolver) ResolveForMachine(ctx context.Context, id model.ID, identity 
 				len(pkgs)))
 	}
 	return out, nil
+}
+
+// resolveLoadout walks the loadout's parent chain (eldest first) and
+// accumulates packages. Child overrides parent: a same-package entry in a
+// descendant replaces the ancestor's order_value, and OptOut removes the
+// package from the resolved set.
+func (r *Resolver) resolveLoadout(ctx context.Context, id model.ID) ([]model.SoftwareLoadoutPackage, error) {
+	chain, err := r.loadoutChain(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// Walk from eldest ancestor down so a descendant's entry overwrites
+	// an ancestor's.
+	merged := map[model.ID]model.SoftwareLoadoutPackage{}
+	for i := len(chain) - 1; i >= 0; i-- {
+		for _, p := range chain[i].Packages {
+			if p.OptOut {
+				delete(merged, p.PackageID)
+				continue
+			}
+			merged[p.PackageID] = p
+		}
+	}
+	// Deterministic order: by OrderValue, then by PackageID.
+	out := make([]model.SoftwareLoadoutPackage, 0, len(merged))
+	for _, p := range merged {
+		out = append(out, p)
+	}
+	sortLoadoutPackages(out)
+	return out, nil
+}
+
+func (r *Resolver) loadoutChain(ctx context.Context, id model.ID) ([]model.SoftwareLoadout, error) {
+	const maxDepth = 256
+	var out []model.SoftwareLoadout
+	seen := map[model.ID]bool{}
+	cur := id
+	for depth := 0; depth < maxDepth; depth++ {
+		if seen[cur] {
+			return nil, errors.New("loadout inheritance cycle")
+		}
+		seen[cur] = true
+		l, err := r.loadouts.Get(ctx, cur)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+		if l.ParentID == nil {
+			return out, nil
+		}
+		cur = *l.ParentID
+	}
+	return nil, fmt.Errorf("loadout chain depth exceeded %d", maxDepth)
+}
+
+func sortLoadoutPackages(p []model.SoftwareLoadoutPackage) {
+	// Insertion sort — expected N is small.
+	for i := 1; i < len(p); i++ {
+		for j := i; j > 0; j-- {
+			a, b := p[j-1], p[j]
+			if a.OrderValue < b.OrderValue ||
+				(a.OrderValue == b.OrderValue && a.PackageID < b.PackageID) {
+				break
+			}
+			p[j-1], p[j] = b, a
+		}
+	}
 }
 
 func packageMatches(p model.DriverPackage, id match.Identity) bool {

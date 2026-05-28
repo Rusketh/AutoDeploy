@@ -20,6 +20,7 @@ type Repos struct {
 	Unattend *model.UnattendRepo
 	Drivers  *model.DriverPackageRepo
 	Software *model.SoftwarePackageRepo
+	Loadouts *model.SoftwareLoadoutRepo
 	Images   *model.ImageRepo
 	Resolver *resolve.Resolver
 }
@@ -65,6 +66,13 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("PUT /api/v1/images/{id}", handleUpdateImage(r))
 	mux.HandleFunc("DELETE /api/v1/images/{id}", handleDeleteImage(r))
 	mux.HandleFunc("GET /api/v1/images/{id}/resolved", handleResolveImage(r))
+
+	// Software loadouts (Phase 7).
+	mux.HandleFunc("GET /api/v1/loadouts", handleListLoadouts(r))
+	mux.HandleFunc("POST /api/v1/loadouts", handleCreateLoadout(r))
+	mux.HandleFunc("GET /api/v1/loadouts/{id}", handleGetLoadout(r))
+	mux.HandleFunc("PUT /api/v1/loadouts/{id}", handleUpdateLoadout(r))
+	mux.HandleFunc("DELETE /api/v1/loadouts/{id}", handleDeleteLoadout(r))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

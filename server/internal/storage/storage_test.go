@@ -16,6 +16,7 @@ func TestOpenAndMigrate(t *testing.T) {
 	for _, table := range []string{
 		"iso", "unattend", "driver_package", "driver_filter",
 		"software_package", "image", "image_software_package",
+		"software_loadout", "software_loadout_package",
 		"schema_migration",
 	} {
 		var name string

@@ -61,7 +61,8 @@ func run(logger *slog.Logger) error {
 	mux, handler := httpx.New(cfg, logger)
 	api.Register(mux, api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
-		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
+		Software: r.Software, Loadouts: r.Loadouts,
+		Images: r.Images, Resolver: r.Resolver,
 	})
 
 	pl := &payload.Service{
@@ -132,6 +133,7 @@ type appRepos struct {
 	Unattend *model.UnattendRepo
 	Drivers  *model.DriverPackageRepo
 	Software *model.SoftwarePackageRepo
+	Loadouts *model.SoftwareLoadoutRepo
 	Images   *model.ImageRepo
 	Resolver *resolve.Resolver
 }
@@ -141,10 +143,12 @@ func repos(db *storage.DB) appRepos {
 	unattend := model.NewUnattendRepo(db)
 	drivers := model.NewDriverPackageRepo(db)
 	software := model.NewSoftwarePackageRepo(db)
+	loadouts := model.NewSoftwareLoadoutRepo(db)
 	images := model.NewImageRepo(db)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
-		Software: software, Images: images,
-		Resolver: resolve.New(images, isos, unattend).WithDrivers(drivers),
+		Software: software, Loadouts: loadouts, Images: images,
+		Resolver: resolve.New(images, isos, unattend).
+			WithDrivers(drivers).WithLoadouts(loadouts),
 	}
 }
