@@ -384,3 +384,76 @@ that pulls the effective software list from the API, skips already-
 installed packages, executes each package's steps in order and
 re-confirms via detection. The API already serves the resolved software
 set; the agent is where Phase 6 lives.
+
+---
+
+## 2026-05-28 — Phase 6 complete (agent + software step execution)
+
+**WHAT.**
+
+- Spec: `server/internal/swspec` and `agent/internal/swspec` define the
+  shared on-wire types for DetectionRule (file/registry/msi/script) and
+  InstallStep (copy/msi/appx/cmd/powershell/exe) with per-type required
+  field validation. SoftwarePackage create/update now parses the JSON
+  through the spec; unknown rule or step types are rejected at save
+  time.
+- Server endpoint `POST /api/v1/agent/software` resolves the effective
+  ordered software set for an image, materialises each package with
+  its detection rules, install steps and a payload URL, and returns
+  the list. Diagnostics from the resolver flow through as warnings.
+- Agent detect (`agent/internal/detect`): pluggable Backend interface;
+  PortableBackend used off-Windows (returns "not present" for registry
+  and MSI rules so packages re-install, which is the safe default);
+  WindowsBackend (build-tag windows) shells out to `reg`, `powershell`
+  for file version and `(reg query …\Uninstall\<code>)` for MSI. SHA-256
+  file detection works on any host.
+- Agent steps (`agent/internal/steps`): Runner interface; OSRunner runs
+  msiexec, powershell, cmd, exe; Recorder for tests. Per-step success
+  codes (default `[0]`) and continue-on-failure (default `false`) drive
+  abort behaviour.
+- Agent main loop wires it together: fetch software list, for each
+  package evaluate detection (skip if installed), download the payload
+  to a work dir, substitute the `{payload}` token in step paths, run
+  steps in order, log per-step exit code and aborted flag.
+- Tests: detection rule semantics (all rules required, registry
+  equals, file SHA), step executor exit-code handling (success codes
+  accept non-zero, abort on default failure, continue-on-failure keeps
+  going), agent end-to-end dry-run against a real server.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Detection is conservative AND (every rule must report
+  present). A package with zero rules re-installs every time and emits
+  a warning. The other option — empty rules = "always installed" — is
+  unsafe (a misconfigured package would silently never install).
+- DECISION: `{payload}` token in step paths is replaced at run time
+  with the agent's chosen on-disk path for the downloaded installer.
+  This lets package authors write paths without knowing the agent's
+  work directory.
+- DECISION: The non-Windows agent backend reports registry and MSI as
+  "not present". Off-Windows the agent is a development convenience —
+  it cannot actually verify whether Windows-specific state exists, so
+  "not detected" (and therefore "install") is the safer default.
+  Real installs are gated by `--dry-run` for dev hosts anyway.
+- DECISION: PowerShell step bodies are piped to stdin, not put on the
+  command line, so they can be arbitrary length and contain quotes
+  without escaping.
+- DECISION: Spec types are duplicated between server and agent
+  packages rather than introducing a shared Go module. Each component
+  remains independently buildable; the on-wire JSON contract is the
+  single source of truth.
+- ASSUMPTION: msiexec exit code 3010 ("reboot required") should be
+  treated as success by package authors via `success_codes: [0, 3010]`.
+  The agent does not coerce it.
+
+**BUILD STATE.** Server, agent, boot-client all build green;
+`go test ./...` green in each module. End-to-end smoke validated: agent
+fetched the software list, downloaded the installer payload, ran the
+expected msiexec and powershell calls with `{payload}` substituted.
+
+**NEXT.** Phase 7 — SoftwareLoadout. Add the loadout entity (ordered,
+inheritable collection of software packages), the union-and-dedup rule
+in the resolver (loadout chain ∪ direct image package links, deduped
+by package id with direct-link ordering taking precedence), opt-out of
+inherited packages, and the portal CRUD. The agent and Boot Client need
+no changes — they already consume whatever `res.Software` returns.

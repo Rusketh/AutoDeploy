@@ -17,11 +17,12 @@ the product, and never before.
 6. [Boot Client and PXE](boot-client.md) — building the initramfs, the iPXE chainload, the deploy flow.
 7. [Driver matching](driver-matching.md) — SMBIOS filter shapes, preview endpoint, manifest integration.
 8. [Unattend configuration](unattend.md) — settings model, generated XML, secrets handling.
+9. [Software packages](software.md) — detection rules, ordered install steps, the agent flow.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 5)
+## Current product surface (Phase 6)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -44,10 +45,15 @@ section you expect is missing, the feature it documents has not yet shipped.
 - **iPXE** at `/ipxe/boot.ipxe` — chainload script and static asset tree
   for kernel/initrd, with a reference initramfs build script under
   `scripts/initramfs/`.
-- **Agent** — starts and exits (lifecycle arrives in Phase 6).
+- **Agent** — at deploy time, fetches the effective software set from
+  the server, evaluates each package's detection rules, downloads the
+  installer for packages not already installed, runs the typed install
+  steps with success-code and continue-on-failure handling, and reports
+  the outcome. Cross-compiles to Windows. (Resident check-in mode and
+  bulk operations arrive in Phase 13.)
 
 Still to come (sequenced by `docs/design/roadmap.txt`):
-software step execution
+software loadouts
 (Phase 6), software loadouts (Phase 7), inventory and re-imaging
 (Phase 8–9), AD integration (Phase 10), the access PIN and authentication
 (Phase 11), BitLocker (Phase 12), bulk operations (Phase 13), centralised

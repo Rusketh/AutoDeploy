@@ -27,6 +27,7 @@ type Repos struct {
 // Register mounts /api/v1/* routes on mux.
 func Register(mux *http.ServeMux, r Repos) {
 	RegisterBoot(mux, r)
+	RegisterAgent(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

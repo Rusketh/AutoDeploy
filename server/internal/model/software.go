@@ -3,11 +3,11 @@ package model
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swspec"
 )
 
 // SoftwarePackageRepo is the repository for software_package rows.
@@ -136,11 +136,11 @@ func validateSoftware(in *SoftwarePackage) error {
 	if in.StepsJSON == "" {
 		in.StepsJSON = "[]"
 	}
-	if !json.Valid([]byte(in.DetectionJSON)) {
-		return fmt.Errorf("%w: detection_json is not valid JSON", ErrValidation)
+	if _, err := swspec.ParseDetection(in.DetectionJSON); err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	if !json.Valid([]byte(in.StepsJSON)) {
-		return fmt.Errorf("%w: steps_json is not valid JSON", ErrValidation)
+	if _, err := swspec.ParseSteps(in.StepsJSON); err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	return nil
 }
