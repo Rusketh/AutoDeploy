@@ -1,15 +1,22 @@
 {{define "body"}}
 <div class="login">
-  <h2>Sign in to {{.Brand.ProductName}}</h2>
-  {{with .Data.Error}}<p class="err">{{.}}</p>{{end}}
+  <h2>
+    {{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo" style="height: 32px; display: block; margin: 0 auto var(--sp-3);">{{end}}
+    Sign in to {{.Brand.ProductName}}
+  </h2>
+  {{with .Data.Error}}
+  <div class="flash flash-err" style="border-radius: var(--r); margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-3);">
+    <svg><use href="#i-alert"/></svg><span>{{.}}</span>
+  </div>
+  {{end}}
   <form method="POST" action="/portal/login">
     {{with .Data.Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
     <label>Username<input type="text" name="username" autocomplete="username" required autofocus></label>
     <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
+    <button type="submit"><svg><use href="#i-lock"/></svg>Sign in</button>
   </form>
   <p class="hint">First-time setup: read the password from
-  <code>$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt</code>, log in, then
-  change it.</p>
+  <code>$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt</code>, log in, then change
+  it under <strong>Settings → Local accounts</strong> and delete the file.</p>
 </div>
 {{end}}

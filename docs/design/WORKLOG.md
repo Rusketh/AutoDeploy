@@ -1812,3 +1812,108 @@ agent; `scripts/check-secrets.sh` green; cross-compiled binaries
 `TestRenameComputer`, `TestRenameNoSuchObject`,
 `TestRenameDisabledServiceIsNoOp`,
 `TestServeUnattendInjectsBindingIdentity`.
+
+## 2026-05-28 — Portal redesign: design system + interactivity
+
+The portal was functional but visually plain. This change ships a
+proper design system with dark mode, an icon language, polished
+list/form/dashboard styling, plus the interactive bells & whistles
+operators expect from modern admin consoles.
+
+**Design system (`assets/style.css`):**
+
+- CSS custom properties for every colour, type and spacing token.
+- Light + dark themes via `prefers-color-scheme` and an explicit
+  `[data-theme="dark|light"]` override (cycled by a header button,
+  remembered in localStorage, applied inline before first paint to
+  avoid the flash).
+- Modern type stack (Inter / Segoe UI Variable / system sans), a
+  proper monospace stack for code, three sizes of soft shadow,
+  rounded corners scaled per surface.
+- Component classes: `.card`, `.tablewrap`, `.toolbar` + `.filter`,
+  `.section-head` (label with horizontal divider rule), `.empty`
+  (friendly empty state with icon), `.badge`, `.dot`, `.skel`
+  (skeleton loader), `dialog.modal`.
+- A sticky app header that scrolls horizontally on narrow screens
+  rather than wrapping; nav items get icons; theme toggle and help
+  buttons live in the right-hand toolset.
+- Forms: focus ring, accent-coloured checkboxes/colour-picker, group
+  fieldsets, repeating-row treatment for catalog editors.
+
+**Icons (`templates/_icons.html`):**
+
+- Single SVG sprite parsed alongside the layout so every template
+  can `<svg><use href="#i-…"/>`. 22 icons cover the entities (image,
+  disc, file, cpu, box, stack, server), actions (plus, pencil,
+  trash, copy, search, check, eye), status (alert, info, lock,
+  shield), nav (arrow, ext, logout, help, sun/moon/auto for the
+  theme toggle).
+
+**Interactivity (`assets/app.js`):**
+
+- Sortable tables: `<table data-sortable>` + `<th data-sort="num">`
+  for numeric columns; clicking a header toggles asc/desc.
+- Filter-as-you-type: `<input data-filter="#tbl">` hides rows whose
+  text content doesn't contain the (case-insensitive) query;
+  optional `[data-filter-count="<id>"]` displays the matched count.
+- Copy-to-clipboard: any `.copy` or `[data-copy]` button copies the
+  attribute text (or the previous sibling's text) and shows a brief
+  check-mark confirmation.
+- Confirm dialog: forms with `data-confirm="msg"` open a styled
+  `<dialog>` instead of the native `confirm()`; ESC cancels.
+- Live log tail: `#logs-tail` polls `data-url` every
+  `data-interval-ms` (default 4s), prepends new events, caps the
+  list at 200, stops when the tab is hidden.
+- Keyboard shortcuts: `/` focuses the filter input, `g i/m/l/s/u/d/w/o`
+  jump to the main sections, `?` opens a help dialog.
+- Theme toggle button cycles auto → dark → light → auto.
+
+**Dashboard upgrade (`templates/index.html` + `portal.go`).**
+
+The dashboard now shows the count tiles (each with the entity
+icon), a 24-hour deploy outcome rollup (ok / in-progress / failed
+with status dots), a "recently seen machines" list, a recent-
+activity log feed, and a Quick Start ordered list. Every panel
+collapses to a friendly empty state with an icon and one-sentence
+explanation when there's no data yet -- a much better landing for
+a fresh install.
+
+**Lists, forms, settings.** Every list page got: a filter input
+above the table (with the magnifier icon), a copy-to-clipboard
+shortcut for any visible identifier (UUIDs, paths, URLs), an empty
+state with an icon and call-to-action, sortable headers where the
+column has a defensible order. The settings landing page renders
+each section as a card with its icon, a one-line value summary
+(brand product name, user count, AD status dot) and a description.
+The branding form gained a live colour-picker mirror and a logo
+preview.
+
+**Login page.** Centred card with the logo above the title, error
+flash rendered as a styled badge, hint about `admin-bootstrap.txt`
+links to the right Settings page.
+
+**WHY (decisions).**
+
+- DECISION: Vanilla JS, no framework. The portal is a Go server-
+  rendered app; adding React/Vue would mean a build step and a
+  parallel state model for very little payoff. Vanilla event
+  delegation hits everything we need in ~250 lines, ships
+  ungzipped at 13 KB.
+- DECISION: Dark mode follows the OS by default and can be
+  overridden per browser (localStorage). The accent colour stays
+  the operator's brand colour in both themes; only the
+  greys / surfaces / soft-tints switch.
+- DECISION: Icons inline as an SVG sprite. No icon-font request,
+  no external sprite fetch; the sprite is parsed once per page and
+  every `<use>` is just an attribute reference. Adds ~7 KB to each
+  HTML response, gzipped to ~3 KB, well worth the polish.
+- DECISION: Filter and sort run client-side. Pagination is a real
+  need at large fleet sizes but the design's scale (thousands of
+  machines max) lets the simple "render the whole list, filter in
+  the DOM" pattern work, and means the URL still represents the
+  full result set for bookmarking.
+
+**BUILD STATE.** Server builds; `go test ./...` green; secret
+check clean; screenshot smoke test in headless Chromium confirms
+the dashboard, machine list, logs page, settings landing and login
+all render cleanly in light + dark themes at 1366x900.

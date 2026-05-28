@@ -41,7 +41,13 @@ func init() {
 
 func settingsIndex(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		render(w, req, r, "settings_index.html", "Settings", nil)
+		brand, _ := r.Branding.Get(req.Context())
+		users, _ := r.Users.ListUsers(req.Context())
+		render(w, req, r, "settings_index.html", "Settings", map[string]any{
+			"Brand":     brand,
+			"UserCount": len(users),
+			"ADEnabled": r.Runtime != nil && r.Runtime.ADEnabled(),
+		})
 	}
 }
 

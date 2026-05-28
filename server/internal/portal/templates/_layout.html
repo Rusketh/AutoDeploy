@@ -5,40 +5,59 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} — {{.Brand.ProductName}}</title>
 <link rel="stylesheet" href="/portal/assets/style.css">
-<style>:root{--accent:{{.Brand.PrimaryColor}};}</style>
+<style>:root{--accent:{{.Brand.PrimaryColor}};--accent-hover:{{.Brand.PrimaryColor}};}</style>
+<script>
+  /* Apply saved theme before first paint so the page doesn't flash. */
+  (function(){try{var t=localStorage.getItem('ad-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 </head>
 <body>
+{{template "icons" .}}
 {{if .User.ID}}
-<header>
-  <h1><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo">{{end}}{{.Brand.ProductName}}</a></h1>
-  <nav>
-    <a href="/portal/images" class="{{if eq .Path "/portal/images"}}on{{end}}">Images</a>
-    <a href="/portal/isos" class="{{if eq .Path "/portal/isos"}}on{{end}}">ISOs</a>
-    <a href="/portal/unattends" class="{{if eq .Path "/portal/unattends"}}on{{end}}">Unattends</a>
-    <a href="/portal/drivers" class="{{if eq .Path "/portal/drivers"}}on{{end}}">Drivers</a>
-    <a href="/portal/software" class="{{if eq .Path "/portal/software"}}on{{end}}">Software</a>
-    <a href="/portal/loadouts" class="{{if eq .Path "/portal/loadouts"}}on{{end}}">Loadouts</a>
-    <a href="/portal/machines" class="{{if eq .Path "/portal/machines"}}on{{end}}">Machines</a>
-    <a href="/portal/bulk" class="{{if eq .Path "/portal/bulk"}}on{{end}}">Bulk</a>
-    <a href="/portal/mirrors" class="{{if eq .Path "/portal/mirrors"}}on{{end}}">Mirrors</a>
-    <a href="/portal/logs" class="{{if eq .Path "/portal/logs"}}on{{end}}">Logs</a>
-    <a href="/portal/settings" class="{{if eq .Path "/portal/settings"}}on{{end}}">Settings</a>
+<header class="app">
+  <h1 class="brand"><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo">{{end}}{{.Brand.ProductName}}</a></h1>
+  <nav class="main">
+    <a href="/portal/images"    class="{{if eq .Path "/portal/images"}}on{{end}}"   ><svg><use href="#i-image"/></svg>Images</a>
+    <a href="/portal/isos"      class="{{if eq .Path "/portal/isos"}}on{{end}}"     ><svg><use href="#i-disc"/></svg>ISOs</a>
+    <a href="/portal/unattends" class="{{if eq .Path "/portal/unattends"}}on{{end}}"><svg><use href="#i-file"/></svg>Unattends</a>
+    <a href="/portal/drivers"   class="{{if eq .Path "/portal/drivers"}}on{{end}}"  ><svg><use href="#i-cpu"/></svg>Drivers</a>
+    <a href="/portal/software"  class="{{if eq .Path "/portal/software"}}on{{end}}" ><svg><use href="#i-box"/></svg>Software</a>
+    <a href="/portal/loadouts"  class="{{if eq .Path "/portal/loadouts"}}on{{end}}" ><svg><use href="#i-stack"/></svg>Loadouts</a>
+    <a href="/portal/machines"  class="{{if eq .Path "/portal/machines"}}on{{end}}" ><svg><use href="#i-server"/></svg>Machines</a>
+    <a href="/portal/bulk"      class="{{if eq .Path "/portal/bulk"}}on{{end}}"     ><svg><use href="#i-bolt"/></svg>Bulk</a>
+    <a href="/portal/mirrors"   class="{{if eq .Path "/portal/mirrors"}}on{{end}}"  ><svg><use href="#i-globe"/></svg>Mirrors</a>
+    <a href="/portal/logs"      class="{{if eq .Path "/portal/logs"}}on{{end}}"     ><svg><use href="#i-list"/></svg>Logs</a>
+    <a href="/portal/settings"  class="{{if eq .Path "/portal/settings"}}on{{end}}" ><svg><use href="#i-gear"/></svg>Settings</a>
   </nav>
-  <div class="user">
-    <span>{{.User.Username}}</span>
-    <form method="POST" action="/portal/logout" class="inline"><button type="submit" class="link">Sign out</button></form>
+  <div class="toolset">
+    <button type="button" class="iconbtn" data-theme-toggle title="Toggle theme">
+      <svg data-show="auto"><use href="#i-auto"/></svg>
+      <svg data-show="light" style="display:none"><use href="#i-sun"/></svg>
+      <svg data-show="dark"  style="display:none"><use href="#i-moon"/></svg>
+    </button>
+    <button type="button" class="iconbtn" onclick="document.getElementById('ad-help')?document.getElementById('ad-help').showModal():dispatchEvent(new KeyboardEvent('keydown',{key:'?'}))" title="Keyboard shortcuts (?)"><svg><use href="#i-help"/></svg></button>
+    <div class="user">
+      <span>{{.User.Username}}</span>
+      <form method="POST" action="/portal/logout" class="inline" style="margin:0;">
+        <button type="submit" class="iconbtn" title="Sign out"><svg><use href="#i-logout"/></svg></button>
+      </form>
+    </div>
   </div>
 </header>
 {{end}}
 {{if .FlashMsg}}
-<div class="flash flash-{{.FlashKind}}">{{.FlashMsg}}</div>
+<div class="flash flash-{{.FlashKind}}">
+  <svg><use href="#i-{{if eq .FlashKind "ok"}}check{{else if eq .FlashKind "err"}}alert{{else}}info{{end}}"/></svg>
+  <span>{{.FlashMsg}}</span>
+</div>
 {{end}}
 {{if and .User.ID .BootstrapPresent}}
 <div class="flash flash-err">
-  <strong>Bootstrap credentials still on disk.</strong>
+  <svg><use href="#i-alert"/></svg>
+  <span><strong>Bootstrap credentials still on disk.</strong>
   The file <code>admin-bootstrap.txt</code> contains a cleartext password
-  and is meant to be read once then deleted. Remove it from the data
-  directory now that you have an operator account.
+  and is meant to be read once then deleted. Remove it now that you have
+  an operator account.</span>
 </div>
 {{end}}
 <main>
@@ -46,9 +65,10 @@
 </main>
 {{if .User.ID}}
 <footer>
-  <p>{{if .Brand.OrganisationName}}{{.Brand.OrganisationName}} · {{end}}AutoDeploy {{.Brand.ProductName}}</p>
+  <p>{{if .Brand.OrganisationName}}{{.Brand.OrganisationName}} · {{end}}{{.Brand.ProductName}} · <button type="button" class="link" onclick="dispatchEvent(new KeyboardEvent('keydown',{key:'?'}))">keyboard shortcuts</button></p>
 </footer>
 {{end}}
+<script src="/portal/assets/app.js" defer></script>
 </body>
 </html>
 {{end}}

@@ -1,23 +1,207 @@
 {{define "body"}}
-<h2>Dashboard</h2>
-<div class="grid stats">
-  <a class="stat" href="/portal/images"><span class="num">{{.Data.Counts.Images}}</span><span class="lbl">Images</span></a>
-  <a class="stat" href="/portal/isos"><span class="num">{{.Data.Counts.ISOs}}</span><span class="lbl">ISOs</span></a>
-  <a class="stat" href="/portal/unattends"><span class="num">{{.Data.Counts.Unattends}}</span><span class="lbl">Unattends</span></a>
-  <a class="stat" href="/portal/drivers"><span class="num">{{.Data.Counts.Drivers}}</span><span class="lbl">Driver packages</span></a>
-  <a class="stat" href="/portal/software"><span class="num">{{.Data.Counts.Software}}</span><span class="lbl">Software packages</span></a>
-  <a class="stat" href="/portal/loadouts"><span class="num">{{.Data.Counts.Loadouts}}</span><span class="lbl">Loadouts</span></a>
-  <a class="stat" href="/portal/machines"><span class="num">{{.Data.Counts.Machines}}</span><span class="lbl">Machines</span></a>
+{{$c := .Data.Counts}}
+{{$d := .Data.Deploys}}
+
+<div class="toolbar">
+  <h2>Dashboard</h2>
+  <div class="right">
+    <a class="btn secondary sm" href="/portal/images/new"><svg><use href="#i-plus"/></svg>Image</a>
+    <a class="btn secondary sm" href="/portal/isos/new"><svg><use href="#i-plus"/></svg>ISO</a>
+    <a class="btn secondary sm" href="/portal/unattends/new"><svg><use href="#i-plus"/></svg>Unattend</a>
+  </div>
 </div>
 
-<h3>What now?</h3>
-<ol>
-  <li>Upload an <a href="/portal/isos/new">ISO</a> and extract it.</li>
-  <li>Create an <a href="/portal/unattends/new">Unattend</a> (locale, admin, OOBE, optional domain join).</li>
-  <li>Add <a href="/portal/drivers/new">driver packages</a> with SMBIOS filters for the hardware in scope.</li>
-  <li>Define <a href="/portal/software/new">software packages</a> with detection rules and install steps.</li>
-  <li>(Optional) Group packages into <a href="/portal/loadouts/new">loadouts</a>.</li>
-  <li>Compose an <a href="/portal/images/new">Image</a> that links them.</li>
-  <li>PXE-boot a target machine. After deploy, bind it via <a href="/portal/machines">Machines</a>.</li>
-</ol>
+<div class="grid stats">
+  <a class="stat" href="/portal/images">
+    <span class="num">{{$c.Images}}</span>
+    <span class="lbl"><svg><use href="#i-image"/></svg>Images</span>
+  </a>
+  <a class="stat" href="/portal/isos">
+    <span class="num">{{$c.ISOs}}</span>
+    <span class="lbl"><svg><use href="#i-disc"/></svg>ISOs</span>
+  </a>
+  <a class="stat" href="/portal/unattends">
+    <span class="num">{{$c.Unattends}}</span>
+    <span class="lbl"><svg><use href="#i-file"/></svg>Unattends</span>
+  </a>
+  <a class="stat" href="/portal/drivers">
+    <span class="num">{{$c.Drivers}}</span>
+    <span class="lbl"><svg><use href="#i-cpu"/></svg>Driver packages</span>
+  </a>
+  <a class="stat" href="/portal/software">
+    <span class="num">{{$c.Software}}</span>
+    <span class="lbl"><svg><use href="#i-box"/></svg>Software</span>
+  </a>
+  <a class="stat" href="/portal/loadouts">
+    <span class="num">{{$c.Loadouts}}</span>
+    <span class="lbl"><svg><use href="#i-stack"/></svg>Loadouts</span>
+  </a>
+  <a class="stat" href="/portal/machines">
+    <span class="num">{{$c.Machines}}</span>
+    <span class="lbl"><svg><use href="#i-server"/></svg>Machines</span>
+  </a>
+</div>
+
+<div class="dashboard-grid">
+  <section class="card hover">
+    <div class="card-head">
+      <h3>Last 24 hours</h3>
+      <a class="btn ghost sm" href="/portal/logs">Open logs <svg><use href="#i-ext"/></svg></a>
+    </div>
+    <div class="deploy-rollup">
+      <div class="rollup ok">
+        <span class="dot ok"></span>
+        <div>
+          <span class="num">{{index $d "ok"}}</span>
+          <span class="lbl">successful</span>
+        </div>
+      </div>
+      <div class="rollup warn">
+        <span class="dot warn"></span>
+        <div>
+          <span class="num">{{index $d "in_progress"}}</span>
+          <span class="lbl">in progress</span>
+        </div>
+      </div>
+      <div class="rollup bad">
+        <span class="dot bad"></span>
+        <div>
+          <span class="num">{{index $d "failed"}}</span>
+          <span class="lbl">failed</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card hover">
+    <div class="card-head">
+      <h3>Recently seen machines</h3>
+      <a class="btn ghost sm" href="/portal/machines">All <svg><use href="#i-ext"/></svg></a>
+    </div>
+    {{if .Data.TopMachines}}
+    <ul class="machine-list">
+      {{range .Data.TopMachines}}
+      <li>
+        <a href="/portal/machines/{{int64 .ID}}">
+          <span class="machine-name">{{if .SystemProduct}}{{.SystemProduct}}{{else}}<span class="muted">unidentified</span>{{end}}</span>
+          <span class="machine-meta">{{.SystemManufacturer}} · {{.SystemSerial}}</span>
+        </a>
+        <span class="small muted nowrap">{{formatTime .LastSeen}}</span>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <div class="empty">
+      <svg class="empty-icon"><use href="#i-server"/></svg>
+      <h3>No machines yet</h3>
+      <p>They appear here after their first PXE boot.</p>
+    </div>
+    {{end}}
+  </section>
+
+  <section class="card hover full">
+    <div class="card-head">
+      <h3>Recent activity</h3>
+      <a class="btn ghost sm" href="/portal/logs">View all <svg><use href="#i-ext"/></svg></a>
+    </div>
+    {{if .Data.Events}}
+    <table class="activity">
+      <tbody>
+        {{range .Data.Events}}
+        <tr>
+          <td class="small muted nowrap">{{formatTime .OccurredAt}}</td>
+          <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}{{end}}">{{.Level}}</span></td>
+          <td><code>{{.Component}}</code></td>
+          <td><code>{{.Action}}</code></td>
+          <td class="small muted">{{.Target}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">
+      <svg class="empty-icon"><use href="#i-list"/></svg>
+      <h3>Nothing logged yet</h3>
+      <p>Activity from the server, Boot Client and agent will appear here as it happens.</p>
+    </div>
+    {{end}}
+  </section>
+
+  <section class="card hover">
+    <div class="card-head"><h3>Quick start</h3></div>
+    <ol class="quickstart">
+      <li><a href="/portal/isos/new"><strong>Upload an ISO</strong></a> and extract it.</li>
+      <li><a href="/portal/unattends/new"><strong>Create an Unattend</strong></a> (locale, accounts, OOBE, optional domain join).</li>
+      <li><a href="/portal/drivers/new"><strong>Add driver packages</strong></a> with SMBIOS filters for the hardware in scope.</li>
+      <li><a href="/portal/software/new"><strong>Define software packages</strong></a> with detection rules and install steps.</li>
+      <li><a href="/portal/loadouts/new"><strong>Group packages into loadouts</strong></a> (optional).</li>
+      <li><a href="/portal/images/new"><strong>Compose an Image</strong></a> that links them all.</li>
+      <li>PXE-boot a target machine, then <a href="/portal/machines"><strong>bind it</strong></a>.</li>
+    </ol>
+  </section>
+</div>
+
+<style>
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+  align-items: start;
+}
+.dashboard-grid .full { grid-column: 1 / -1; }
+.dashboard-grid .card { display: flex; flex-direction: column; }
+.dashboard-grid .card > :last-child { margin-bottom: 0; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-3);
+}
+.card-head h3 { margin: 0; font-size: var(--fs-lg); }
+
+.deploy-rollup {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-3);
+}
+.rollup {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.rollup .num { display: block; font-size: var(--fs-xl); font-weight: 700; line-height: 1; }
+.rollup .lbl { display: block; font-size: var(--fs-sm); color: var(--fg-muted); margin-top: 2px; }
+
+.machine-list { list-style: none; padding: 0; margin: 0; }
+.machine-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.machine-list li:last-child { border-bottom: none; }
+.machine-list a { color: var(--fg); flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.machine-list a:hover { text-decoration: none; color: var(--accent); }
+.machine-list .machine-name { font-weight: 500; }
+.machine-list .machine-meta { color: var(--fg-muted); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.activity { background: transparent; }
+.activity tr:hover td { background: var(--surface-2); }
+.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
+
+.quickstart {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--fg-muted);
+}
+.quickstart li { margin: 0.4rem 0; }
+.quickstart a { color: var(--accent); }
+</style>
 {{end}}

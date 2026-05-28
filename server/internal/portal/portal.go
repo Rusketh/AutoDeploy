@@ -251,7 +251,9 @@ func readFlash(w http.ResponseWriter, req *http.Request) (kind, msg string) {
 	return parts[0], parts[1]
 }
 
-// dashboardPage renders the index with a few useful counters.
+// dashboardPage renders the index with a few useful counters and a
+// recent-activity feed so the operator lands somewhere informative
+// instead of an empty page.
 func dashboardPage(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		type counts struct {
@@ -276,10 +278,46 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		if l, err := r.Images.List(req.Context()); err == nil {
 			c.Images = len(l)
 		}
-		if l, err := r.Inventory.List(req.Context()); err == nil {
-			c.Machines = len(l)
+		machines, _ := r.Inventory.List(req.Context())
+		c.Machines = len(machines)
+
+		// Recent activity: last 12 log events across all components,
+		// for a quick "what just happened" panel.
+		events, _ := r.Logs.Search(req.Context(), model.LogSearch{Limit: 12})
+
+		// Top 5 most-recently-seen machines for a "live fleet" panel.
+		topMachines := machines
+		if len(topMachines) > 5 {
+			topMachines = topMachines[:5]
 		}
-		render(w, req, r, "index.html", "Dashboard", map[string]any{"Counts": c})
+		// Deploy outcome rollup for the last 24h.
+		var ok, failed, inProgress int
+		for _, m := range machines {
+			hist, _ := r.Inventory.HistoryFor(req.Context(), m.ID)
+			for _, h := range hist {
+				if time.Since(h.StartedAt) > 24*time.Hour {
+					break
+				}
+				switch h.Outcome {
+				case "ok":
+					ok++
+				case "failed":
+					failed++
+				case "in_progress":
+					inProgress++
+				}
+			}
+		}
+		render(w, req, r, "index.html", "Dashboard", map[string]any{
+			"Counts":      c,
+			"Events":      events,
+			"TopMachines": topMachines,
+			"Deploys": map[string]int{
+				"ok":          ok,
+				"failed":      failed,
+				"in_progress": inProgress,
+			},
+		})
 	}
 }
 
@@ -341,7 +379,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 // current user, the brand, and any flash message.
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
-		assetsFS, "templates/_layout.html", "templates/"+page)
+		assetsFS, "templates/_layout.html", "templates/_icons.html", "templates/"+page)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return

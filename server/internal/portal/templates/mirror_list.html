@@ -1,32 +1,56 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Payload mirrors</h2>
-  <div class="right"><a class="btn" href="/portal/mirrors/new">Add mirror</a></div>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/mirrors/new"><svg><use href="#i-plus"/></svg>Add mirror</a>
+  </div>
 </div>
 {{if .Data.Mirrors}}
-<table>
-  <thead><tr><th>Name</th><th>Site</th><th>Base URL</th><th>Priority</th><th>Health</th><th>Last checked</th><th></th></tr></thead>
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Name</th>
+    <th>Site</th>
+    <th>Base URL</th>
+    <th class="num" data-sort="num">Priority</th>
+    <th>Health</th>
+    <th data-sort="num">Last checked</th>
+    <th data-nosort></th>
+  </tr></thead>
   <tbody>
     {{range .Data.Mirrors}}
     <tr>
-      <td><a href="/portal/mirrors/{{int64 .ID}}/edit">{{.Name}}</a><br><span class="small muted">{{.Description}}</span></td>
+      <td>
+        <a href="/portal/mirrors/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a>
+        {{if .Description}}<br><span class="small muted">{{.Description}}</span>{{end}}
+      </td>
       <td>{{if .Site}}<code>{{.Site}}</code>{{else}}<span class="muted">global</span>{{end}}</td>
-      <td><code>{{.BaseURL}}</code></td>
+      <td><code>{{.BaseURL}}</code><button class="copy" data-copy="{{.BaseURL}}" title="Copy"><svg><use href="#i-copy"/></svg></button></td>
       <td class="num">{{.Priority}}</td>
       <td>{{if .Healthy}}<span class="badge ok">healthy</span>{{else}}<span class="badge bad">unhealthy</span>{{end}}</td>
-      <td class="small muted">{{formatTime .LastChecked}}</td>
+      <td class="small muted" data-sort-value="{{.LastChecked.Unix}}">{{formatTime .LastChecked}}</td>
       <td class="actions">
-        <a class="btn secondary" href="/portal/mirrors/{{int64 .ID}}/edit">Edit</a>
-        <form method="POST" action="/portal/mirrors/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this mirror?')">
-          <button class="danger" type="submit">Delete</button>
+        <a class="btn secondary sm" href="/portal/mirrors/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/mirrors/{{int64 .ID}}/delete" data-confirm="Delete this mirror?">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
         </form>
       </td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
+<p class="muted small" style="margin-top: var(--sp-3);">A mirror is any HTTP server that serves the same <code>/payload/...</code> tree the primary serves. When a Boot Client passes the <code>X-AutoDeploy-Site</code> header (or has a remembered site from a previous boot), the manifest rewrites WIM / driver / software URLs to the highest-priority healthy mirror matching that site. Unattend XML stays on the primary.</p>
 {{else}}
-<p>No mirrors yet. <a href="/portal/mirrors/new">Add one</a> to offload payload delivery to a per-site HTTP server.</p>
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-globe"/></svg>
+  <h3>No mirrors yet</h3>
+  <p>Mirrors offload payload delivery to per-site HTTP servers. Add one when a remote site needs LAN-speed image fetches instead of WAN.</p>
+  <a class="btn" href="/portal/mirrors/new"><svg><use href="#i-plus"/></svg>Add mirror</a>
+</div>
 {{end}}
-<p class="muted small">A mirror is any HTTP server that serves the same <code>/payload/...</code> tree the primary serves. When a Boot Client passes the <code>X-AutoDeploy-Site</code> header (or has a remembered site from a previous boot), the manifest rewrites WIM / driver / software URLs to the highest-priority healthy mirror matching that site. Unattend XML stays on the primary.</p>
 {{end}}

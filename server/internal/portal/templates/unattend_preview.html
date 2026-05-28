@@ -1,8 +1,11 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>unattend.xml — {{.Data.Unattend.Name}}</h2>
-  <div class="right"><a class="btn secondary" href="/portal/unattends/{{int64 .Data.Unattend.ID}}/edit">Back to edit</a></div>
+  <div class="right">
+    <button class="btn ghost sm copy" data-copy="{{.Data.XML}}" title="Copy XML"><svg><use href="#i-copy"/></svg>Copy</button>
+    <a class="btn secondary sm" href="/portal/unattends/{{int64 .Data.Unattend.ID}}/edit"><svg><use href="#i-arrow-left"/></svg>Back to edit</a>
+  </div>
 </div>
-<p class="muted small">Generated from the settings. Includes the appended AutoDeploy agent first-logon command.</p>
-<pre>{{.Data.XML}}</pre>
+<p class="muted small">Generated from the catalog settings. Includes the appended AutoDeploy agent first-logon command. Per-machine identity (computer name, target OU) is layered on at deploy time when the binding URL is hit; this preview shows the catalog values.</p>
+<pre style="max-height:75vh;">{{.Data.XML}}</pre>
 {{end}}

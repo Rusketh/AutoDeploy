@@ -1,24 +1,49 @@
 {{define "body"}}
-<h2>Machines</h2>
+<div class="toolbar">
+  <h2>Machines</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right small muted"><span data-filter-count="tbl">{{len .Data.Rows}}</span> machines</div>
+</div>
 {{if .Data.Rows}}
-<table>
-  <thead><tr><th>SMBIOS UUID</th><th>Make / Model</th><th>Serial</th><th>Bound name</th><th>Bound image</th><th>BitLocker</th><th>Last seen</th><th></th></tr></thead>
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>UUID</th>
+    <th>Make / model</th>
+    <th>Serial</th>
+    <th>Binding</th>
+    <th>Image</th>
+    <th>BitLocker</th>
+    <th data-sort="num">Last seen</th>
+    <th data-nosort></th>
+  </tr></thead>
   <tbody>
     {{range .Data.Rows}}
     <tr>
-      <td><a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{.Machine.SystemUUID}}</code></a></td>
-      <td>{{.Machine.SystemManufacturer}} / {{.Machine.SystemProduct}}</td>
-      <td>{{.Machine.SystemSerial}}</td>
-      <td>{{if .BindingName}}{{.BindingName}}{{else}}<span class="muted">unbound</span>{{end}}</td>
+      <td>
+        <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
+        <button class="copy" data-copy="{{.Machine.SystemUUID}}" title="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
+      </td>
+      <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
+      <td class="small">{{.Machine.SystemSerial}}</td>
+      <td>{{if .BindingName}}<span class="badge accent">{{.BindingName}}</span>{{else}}<span class="badge">unbound</span>{{end}}</td>
       <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
-      <td>{{if .BLSet}}<span class="badge ok">PIN set</span>{{else}}<span class="badge">no PIN</span>{{end}}</td>
-      <td class="small muted">{{formatTime .Machine.LastSeen}}</td>
-      <td class="actions"><a class="btn secondary" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
+      <td>{{if .BLSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN set</span>{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{.Machine.LastSeen.Unix}}">{{formatTime .Machine.LastSeen}}</td>
+      <td class="actions"><a class="btn secondary sm" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
 {{else}}
-<p>No machines yet. They appear here after the first time they boot the AutoDeploy client.</p>
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-server"/></svg>
+  <h3>No machines yet</h3>
+  <p>Machines appear here the first time they PXE-boot the AutoDeploy Boot Client. Once they do, bind each one to an image to enable re-imaging.</p>
+</div>
 {{end}}
 {{end}}
