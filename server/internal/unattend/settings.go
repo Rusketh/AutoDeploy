@@ -8,11 +8,10 @@
 // complete on its own; a "base" unattend is a template that is cloned and
 // customised.
 //
-// Security: the local-administrator password is a secret. It is wrapped in
-// logging.Secret throughout the in-memory model so it cannot leak through
-// fmt.Sprintf or slog.String. The generated XML necessarily contains the
-// value (that is the whole point of unattended setup); the server never
-// logs it.
+// Security: every password field (local accounts, auto-logon, domain join)
+// is treated as a secret. Values live in the row's settings_json so the
+// generator can emit them into the XML (Windows needs them) but never
+// appear in any log line. CONVENTIONS.md §4 enforces the rule statically.
 package unattend
 
 import (
@@ -30,75 +29,147 @@ type Settings struct {
 	// Boot/RAM/CPU/Storage). Older Windows generators do not emit those.
 	TargetOS string `json:"target_os"` // "windows-11" | "windows-10" | "windows-server-2022" | …
 
-	// Regional.
-	Locale     string `json:"locale"`         // "en-US"
-	UILanguage string `json:"ui_language"`    // "en-US"
-	Keyboard   string `json:"keyboard"`       // "0409:00000409"
-	TimeZone   string `json:"time_zone"`      // "GMT Standard Time"
+	// --- Regional ---
+	Locale     string `json:"locale"`
+	UILanguage string `json:"ui_language"`
+	Keyboard   string `json:"keyboard"`
+	TimeZone   string `json:"time_zone"`
 
-	// OS edition.
-	Edition    string `json:"edition"`      // "Windows 11 Pro"
-	ProductKey string `json:"product_key"`  // optional; KMS clients omit
+	// --- OS edition ---
+	Edition    string `json:"edition"`
+	ProductKey string `json:"product_key"` // legacy single-edition key
 
-	// Local administrator account.
-	AdminUser     string `json:"admin_user"`             // "Administrator" by default
-	AdminPassword string `json:"admin_password"`         // secret; never logged
-	HideAdmin     bool   `json:"hide_admin"`             // skip OOBE local-account creation if AD-join is used
+	// --- Licensing (new in this catalog expansion) ---
+	// KMSServer activates the OS against a private KMS host instead of
+	// Microsoft Activation Servers. Empty leaves Windows on its default
+	// activation path.
+	KMSServer string `json:"kms_server,omitempty"`
+	KMSPort   int    `json:"kms_port,omitempty"` // default 1688
+	// AVMAKey is the Automatic Virtual Machine Activation key — set this
+	// on Server VMs whose Hyper-V host is properly licensed and AVMA
+	// kicks in transparently.
+	AVMAKey string `json:"avma_key,omitempty"`
+	// SkipAutoActivation suppresses Windows' first-boot activation
+	// attempt. Use when you intend to activate later via slmgr.
+	SkipAutoActivation bool `json:"skip_auto_activation,omitempty"`
 
-	// Computer naming.
-	// "literal":   use ComputerName exactly
-	// "prefix":    ComputerName + last-4 of system serial
-	// "random":    "WIN-" + 7 random alphanumerics (the Windows default)
-	NameStrategy string `json:"name_strategy"`
+	// --- Local accounts ---
+	// LocalAccounts is the list of local accounts to create. Each has a
+	// group (Administrators or Users), name, password (secret), display
+	// name and description. The portal seeds this from the legacy
+	// AdminUser/AdminPassword fields on first edit if it's empty so old
+	// unattend rows keep working.
+	LocalAccounts []LocalAccount `json:"local_accounts,omitempty"`
+
+	// Legacy single-admin fields. New unattends should use LocalAccounts
+	// instead, but these stay for backwards compatibility with existing
+	// rows; the generator collapses them into LocalAccounts at emit time.
+	AdminUser     string `json:"admin_user,omitempty"`
+	AdminPassword string `json:"admin_password,omitempty"`
+	HideAdmin     bool   `json:"hide_admin,omitempty"`
+
+	// --- Auto-logon ---
+	// AutoLogon, if set, logs the named account in automatically for N
+	// boots. Useful for post-imaging setup that needs a user session
+	// before the operator/user takes over.
+	AutoLogon *AutoLogonSetting `json:"auto_logon,omitempty"`
+
+	// --- Naming ---
+	NameStrategy string `json:"name_strategy"` // "literal" | "prefix" | "random"
 	ComputerName string `json:"computer_name"`
 
-	// Disk layout. Boot Client already partitions; this controls the
-	// settings inside the applied image (BCD, ESP letter). Phase 5 keeps
-	// the defaults Windows expects.
-	DiskID int `json:"disk_id"` // 0
+	// --- Disk ---
+	DiskID int `json:"disk_id"`
 
-	// OOBE.
-	SkipMachineOOBE  bool `json:"skip_machine_oobe"`
-	SkipUserOOBE     bool `json:"skip_user_oobe"`
-	HideEULA         bool `json:"hide_eula"`
-	HideOEMRegistration bool `json:"hide_oem_registration"`
+	// --- OOBE ---
+	SkipMachineOOBE          bool `json:"skip_machine_oobe"`
+	SkipUserOOBE             bool `json:"skip_user_oobe"`
+	HideEULA                 bool `json:"hide_eula"`
+	HideOEMRegistration      bool `json:"hide_oem_registration"`
 	HideOnlineAccountScreens bool `json:"hide_online_account_screens"`
-	HideWirelessSetup bool `json:"hide_wireless_setup"`
-	ProtectYourPC    int  `json:"protect_your_pc"` // 1=express settings, 3=skip
+	HideWirelessSetup        bool `json:"hide_wireless_setup"`
+	ProtectYourPC            int  `json:"protect_your_pc"`
 
-	// Windows 11 specifics (ignored for other target OSes).
-	// BypassNRO forces a local-account path through OOBE on Win11 22H2+
-	// where Home and Pro otherwise insist on an online Microsoft account.
-	// AutoDeploy strongly recommends leaving this on for unattended
-	// deployments; the default is true.
-	BypassNRO bool `json:"bypass_nro"`
-	// BypassWin11Reqs sets the LabConfig registry keys that let Windows 11
-	// install on hardware that does not meet the TPM 2.0 / Secure Boot /
-	// RAM / CPU / Storage requirements. Use ONLY for lab / legacy fleet;
-	// production Windows 11 hardware should not need this.
+	// --- Windows 11 specifics ---
+	BypassNRO       bool `json:"bypass_nro"`
 	BypassWin11Reqs bool `json:"bypass_win11_reqs"`
 
-	// Active Directory.
-	DomainJoin    *DomainJoin `json:"domain_join,omitempty"`
+	// --- Windows policies ---
+	// Set the system telemetry level. 0=Security, 1=Basic, 2=Enhanced,
+	// 3=Full. Set via the AllowTelemetry registry policy. -1 leaves the
+	// system default untouched.
+	TelemetryLevel int `json:"telemetry_level,omitempty"`
+	// Windows Update behaviour.
+	DisableWindowsUpdate    bool `json:"disable_windows_update,omitempty"`
+	DeferFeatureUpdatesDays int  `json:"defer_feature_updates_days,omitempty"`
+	DeferQualityUpdatesDays int  `json:"defer_quality_updates_days,omitempty"`
+	// Networking / remote access.
+	EnableRDP   bool `json:"enable_rdp,omitempty"`
+	AllowICMPv4 bool `json:"allow_icmpv4,omitempty"`
+	// Power: set the active power scheme. "high" sets High Performance.
+	// Empty leaves the default ("balanced").
+	PowerScheme string `json:"power_scheme,omitempty"`
 
-	// First-logon commands run as Administrator (or NT AUTHORITY\SYSTEM via
-	// SynchronousCommand) on first boot. The agent installer is appended
-	// automatically by the generator; operator-provided commands run after
-	// it.
+	// --- Active Directory ---
+	DomainJoin *DomainJoin `json:"domain_join,omitempty"`
+
+	// --- Commands ---
+	// FirstLogonCommands run after the first user logs in. They have a
+	// user session so they can interact with the profile.
 	FirstLogonCommands []FirstLogonCommand `json:"first_logon_commands,omitempty"`
+	// SetupCompleteCommands run BEFORE OOBE finishes (writes a script
+	// that Windows executes from %WINDIR%\Setup\Scripts\SetupComplete.cmd).
+	// They have no user session — use them for system-level work that
+	// must complete before the first user logon.
+	SetupCompleteCommands []SetupCompleteCommand `json:"setup_complete_commands,omitempty"`
+	// SpecializeCommands are RunSynchronousCommand entries injected into
+	// the specialize pass — run BEFORE the OOBE pages even render. Use
+	// for environment prep (registry tweaks, driver injection helpers).
+	SpecializeCommands []SpecializeCommand `json:"specialize_commands,omitempty"`
+}
+
+// LocalAccount is a single user account to create on the deployed
+// machine.
+type LocalAccount struct {
+	Name        string `json:"name"`
+	Password    string `json:"password"`
+	Group       string `json:"group"` // "Administrators" or "Users"
+	FullName    string `json:"full_name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// AutoLogonSetting is the unattend's <AutoLogon> block.
+type AutoLogonSetting struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Count    int    `json:"count"` // 1 - 9999; how many logons to auto-fire
 }
 
 // DomainJoin is the AD join section. Credentials are short-lived and high-
 // value; treat them as secrets.
 type DomainJoin struct {
-	Domain      string `json:"domain"`
-	OU          string `json:"ou"`
-	JoinUser    string `json:"join_user"`
-	JoinPassword string `json:"join_password"` // secret; never logged
+	Domain       string `json:"domain"`
+	OU           string `json:"ou"`
+	JoinUser     string `json:"join_user"`
+	JoinPassword string `json:"join_password"`
 }
 
 // FirstLogonCommand is one item in the FirstLogonCommands sequence.
 type FirstLogonCommand struct {
+	Order       int    `json:"order"`
+	Description string `json:"description"`
+	CommandLine string `json:"command_line"`
+}
+
+// SetupCompleteCommand is one line in the generated SetupComplete.cmd.
+type SetupCompleteCommand struct {
+	Order       int    `json:"order"`
+	Description string `json:"description"`
+	CommandLine string `json:"command_line"`
+}
+
+// SpecializeCommand is a RunSynchronousCommand in the specialize pass.
+type SpecializeCommand struct {
 	Order       int    `json:"order"`
 	Description string `json:"description"`
 	CommandLine string `json:"command_line"`
@@ -129,20 +200,38 @@ func Parse(raw string) (Settings, error) {
 	if s.TimeZone == "" {
 		s.TimeZone = "GMT Standard Time"
 	}
-	if s.AdminUser == "" {
-		s.AdminUser = "Administrator"
-	}
 	if s.NameStrategy == "" {
 		s.NameStrategy = "random"
 	}
 	if s.ProtectYourPC == 0 {
-		s.ProtectYourPC = 3 // skip — operators can decide later
+		s.ProtectYourPC = 3
+	}
+	if s.KMSPort == 0 && s.KMSServer != "" {
+		s.KMSPort = 1688
+	}
+	if s.TelemetryLevel == 0 {
+		// Treat 0 as "untouched" UNLESS the operator explicitly stored
+		// the value (the JSON had the key). We can't distinguish here
+		// without a *int; for now, 0 means "do not emit any telemetry
+		// policy" which matches the historical behaviour. -1 in the
+		// portal form represents the same.
+	}
+	// Collapse the legacy admin fields into a LocalAccounts entry so
+	// the generator only has one path. If LocalAccounts already
+	// contains entries, the legacy values are ignored.
+	if len(s.LocalAccounts) == 0 && s.AdminUser != "" {
+		s.LocalAccounts = []LocalAccount{{
+			Name:     s.AdminUser,
+			Password: s.AdminPassword,
+			Group:    "Administrators",
+		}}
 	}
 	return s, nil
 }
 
 // Defaults returns a sensible baseline Settings suitable for a development
-// lab build: en-US, skip OOBE, no domain, install the agent on first boot.
+// lab build: en-US, skip OOBE, no domain, install the agent on first boot,
+// one Administrator account.
 func Defaults() Settings {
 	return Settings{
 		TargetOS:                 "windows-11",
@@ -151,7 +240,6 @@ func Defaults() Settings {
 		Keyboard:                 "0409:00000409",
 		TimeZone:                 "GMT Standard Time",
 		Edition:                  "Windows 11 Pro",
-		AdminUser:                "Administrator",
 		NameStrategy:             "random",
 		SkipMachineOOBE:          true,
 		SkipUserOOBE:             true,
@@ -160,6 +248,11 @@ func Defaults() Settings {
 		HideOnlineAccountScreens: true,
 		HideWirelessSetup:        true,
 		ProtectYourPC:            3,
-		BypassNRO:                true, // safe default; only used on Win11
+		BypassNRO:                true,
+		// LocalAccounts is intentionally empty here. The portal seeds a
+		// default Administrator entry on first edit; Parse migrates
+		// legacy admin_user/admin_password rows. Keeping the default
+		// empty lets that migration distinguish "operator chose nothing"
+		// from "operator inherited the default".
 	}
 }

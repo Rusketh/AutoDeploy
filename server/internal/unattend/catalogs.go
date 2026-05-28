@@ -247,3 +247,28 @@ var TargetOSes = []Option{
 func IsWindows11Family(osType string) bool {
 	return osType == "windows-11"
 }
+
+// AccountGroups are the Windows local groups an operator-created account
+// may be placed in. Limited to the two we actually emit into the unattend.
+var AccountGroups = []Option{
+	{"Administrators", "Administrators (full elevation)"},
+	{"Users", "Users (standard non-admin account)"},
+}
+
+// TelemetryLevels are the Windows AllowTelemetry policy values the
+// portal lets operators pick. "off" means do not emit any policy and
+// leave the Windows default in place. (Level 0 / Security is Enterprise-
+// only and rarely useful; omit it to keep the picker meaningful.)
+var TelemetryLevels = []Option{
+	{"off", "Leave system default (do not emit policy)"},
+	{"1", "1 — Basic / Required diagnostic data"},
+	{"2", "2 — Enhanced"},
+	{"3", "3 — Full / Optional diagnostic data"},
+}
+
+// PowerSchemes are the active power schemes the generator can apply via
+// powercfg /setactive. "" leaves the Windows default (Balanced).
+var PowerSchemes = []Option{
+	{"", "Balanced (Windows default)"},
+	{"high", "High Performance"},
+}

@@ -56,11 +56,14 @@ func unattendForm(r Repos, ua model.Unattend, isNew bool) http.HandlerFunc {
 		}
 		render(w, req, r, "unattend_form.html", title, map[string]any{
 			"Unattend": ua, "S": s, "IsNew": isNew,
-			"TargetOSes": unattend.TargetOSes,
-			"Locales":    unattend.Locales,
-			"Keyboards":  unattend.Keyboards,
-			"TimeZones":  unattend.TimeZones,
-			"Editions":   unattend.EditionsFor(s.TargetOS),
+			"TargetOSes":      unattend.TargetOSes,
+			"Locales":         unattend.Locales,
+			"Keyboards":       unattend.Keyboards,
+			"TimeZones":       unattend.TimeZones,
+			"Editions":        unattend.EditionsFor(s.TargetOS),
+			"AccountGroups":   unattend.AccountGroups,
+			"TelemetryLevels": unattend.TelemetryLevels,
+			"PowerSchemes":    unattend.PowerSchemes,
 		})
 	}
 }
@@ -190,6 +193,71 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 	s.BypassNRO = formBool(req, "bypass_nro")
 	s.BypassWin11Reqs = formBool(req, "bypass_win11_reqs")
 
+	// Licensing.
+	s.KMSServer = formStr(req, "kms_server", "")
+	s.KMSPort = formInt(req, "kms_port", 0)
+	s.AVMAKey = formStr(req, "avma_key", "")
+	s.SkipAutoActivation = formBool(req, "skip_auto_activation")
+
+	// Local accounts: repeating rows (name, password, group, full_name,
+	// description). Empty-name rows are skipped so leftover blanks from
+	// the "add row" button don't pollute the unattend.
+	s.LocalAccounts = nil
+	laNames := req.Form["la_name[]"]
+	laPasswords := req.Form["la_password[]"]
+	laGroups := req.Form["la_group[]"]
+	laFullnames := req.Form["la_fullname[]"]
+	laDescs := req.Form["la_desc[]"]
+	for i, name := range laNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		acct := unattend.LocalAccount{Name: name, Group: "Users"}
+		if i < len(laPasswords) {
+			acct.Password = laPasswords[i]
+		}
+		if i < len(laGroups) && laGroups[i] != "" {
+			acct.Group = laGroups[i]
+		}
+		if i < len(laFullnames) {
+			acct.FullName = strings.TrimSpace(laFullnames[i])
+		}
+		if i < len(laDescs) {
+			acct.Description = strings.TrimSpace(laDescs[i])
+		}
+		s.LocalAccounts = append(s.LocalAccounts, acct)
+	}
+
+	// Auto-logon: present only when toggle is on.
+	if formBool(req, "auto_logon_enabled") {
+		s.AutoLogon = &unattend.AutoLogonSetting{
+			Username: formStr(req, "auto_logon_user", ""),
+			Password: formStr(req, "auto_logon_password", ""),
+			Count:    formInt(req, "auto_logon_count", 1),
+		}
+	} else {
+		s.AutoLogon = nil
+	}
+
+	// Windows policies.
+	switch formStr(req, "telemetry_level", "off") {
+	case "1":
+		s.TelemetryLevel = 1
+	case "2":
+		s.TelemetryLevel = 2
+	case "3":
+		s.TelemetryLevel = 3
+	default:
+		s.TelemetryLevel = 0
+	}
+	s.DisableWindowsUpdate = formBool(req, "disable_windows_update")
+	s.DeferFeatureUpdatesDays = formInt(req, "defer_feature_updates_days", 0)
+	s.DeferQualityUpdatesDays = formInt(req, "defer_quality_updates_days", 0)
+	s.EnableRDP = formBool(req, "enable_rdp")
+	s.AllowICMPv4 = formBool(req, "allow_icmpv4")
+	s.PowerScheme = formStr(req, "power_scheme", "")
+
 	// Domain join: present only when the toggle is on.
 	if formBool(req, "domain_join_enabled") {
 		s.DomainJoin = &unattend.DomainJoin{
@@ -204,6 +272,7 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 
 	// First-logon commands: repeating triples (order, description, command_line)
 	// indexed by an integer suffix the template emits.
+	s.FirstLogonCommands = nil
 	orders := req.Form["flc_order[]"]
 	descs := req.Form["flc_desc[]"]
 	lines := req.Form["flc_line[]"]
@@ -216,6 +285,42 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 		s.FirstLogonCommands = append(s.FirstLogonCommands, unattend.FirstLogonCommand{
 			Order:       ord,
 			Description: strings.TrimSpace(descs[i]),
+			CommandLine: line,
+		})
+	}
+
+	// Specialize commands (run before OOBE pages render).
+	s.SpecializeCommands = nil
+	spOrders := req.Form["sp_order[]"]
+	spDescs := req.Form["sp_desc[]"]
+	spLines := req.Form["sp_line[]"]
+	for i := 0; i < len(spOrders) && i < len(spDescs) && i < len(spLines); i++ {
+		line := strings.TrimSpace(spLines[i])
+		if line == "" {
+			continue
+		}
+		ord, _ := strconv.Atoi(strings.TrimSpace(spOrders[i]))
+		s.SpecializeCommands = append(s.SpecializeCommands, unattend.SpecializeCommand{
+			Order:       ord,
+			Description: strings.TrimSpace(spDescs[i]),
+			CommandLine: line,
+		})
+	}
+
+	// Setup-complete commands (run after specialize, before OOBE finishes).
+	s.SetupCompleteCommands = nil
+	scOrders := req.Form["sc_order[]"]
+	scDescs := req.Form["sc_desc[]"]
+	scLines := req.Form["sc_line[]"]
+	for i := 0; i < len(scOrders) && i < len(scDescs) && i < len(scLines); i++ {
+		line := strings.TrimSpace(scLines[i])
+		if line == "" {
+			continue
+		}
+		ord, _ := strconv.Atoi(strings.TrimSpace(scOrders[i]))
+		s.SetupCompleteCommands = append(s.SetupCompleteCommands, unattend.SetupCompleteCommand{
+			Order:       ord,
+			Description: strings.TrimSpace(scDescs[i]),
 			CommandLine: line,
 		})
 	}

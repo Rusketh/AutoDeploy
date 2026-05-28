@@ -1461,3 +1461,94 @@ shell scripts that don't run in CI. Release pipeline still green.
 smoke validated: AD config saved through portal, password
 ciphertext-only in DB, decrypt round-trip OK, retention + throttle
 saved + read back, no secret in any log line.
+
+## 2026-05-28 — Unattend catalogue expansion (local accounts, licensing, policies, commands)
+
+**WHAT.** The unattend editor was limited to a single Administrator
+plus first-logon commands. Operators standing up real fleets needed
+more: multiple local accounts, an auto-logon for post-imaging
+sessions, KMS / AVMA licensing, the policy knobs they always end up
+scripting by hand (telemetry, Windows Update deferral, RDP,
+ICMPv4, power scheme), and the two extra command channels Windows
+gives you — the specialize pass and SetupComplete.cmd.
+
+**Code (`server/internal/unattend`):**
+
+- `settings.go` grows: `LocalAccounts []LocalAccount`, `AutoLogon
+  *AutoLogonSetting`, KMS/AVMA/SkipAutoActivation, TelemetryLevel,
+  DisableWindowsUpdate, DeferFeatureUpdatesDays,
+  DeferQualityUpdatesDays, EnableRDP, AllowICMPv4, PowerScheme,
+  SpecializeCommands, SetupCompleteCommands. Legacy
+  `admin_user`/`admin_password` fields are still parsed and
+  migrated into LocalAccounts on read so existing rows keep
+  working without any DB touch.
+
+- `generate.go` rewritten around a `buildSpecializeCommands`
+  aggregator: BypassNRO (Win11), then licensing slmgr invocations,
+  then policy registry/netsh/powercfg lines, then the operator's
+  specialize commands, then the SetupComplete writer. The
+  SetupComplete writer base64-encodes the script bytes and emits a
+  single PowerShell one-liner that writes
+  `%WINDIR%\Setup\Scripts\SetupComplete.cmd` — handles arbitrary
+  bytes safely and works on every supported Windows release.
+  `writeUserAccounts` loops over LocalAccounts and additionally
+  fills `<AdministratorPassword>` from the first Administrators-
+  group account so tooling that looks at the built-in Administrator
+  credential still finds a usable value.
+
+- `catalogs.go` gains AccountGroups, TelemetryLevels and
+  PowerSchemes so the portal picker can render labelled options
+  instead of free-text.
+
+**Portal (`server/internal/portal`):**
+
+- `unattend.go` parses repeating `la_*[]`, `sp_*[]`, `sc_*[]`
+  field arrays plus the new licensing/auto-logon/policy fields.
+  Empty-name account rows are skipped so leftover blanks from the
+  "add row" button don't pollute the unattend.
+
+- `templates/unattend_form.html` grew from 10 to 15 sections.
+  Local accounts is now a repeating table; auto-logon and domain
+  join are toggle-revealed blocks; licensing/policies use the new
+  catalogs. Specialize and SetupComplete reuse the same
+  add/remove repeater pattern as first-logon. The TOC sidebar
+  is regenerated.
+
+**WHY (decisions).**
+
+- DECISION: Migrate the legacy single-admin fields silently. We
+  could have forced operators to re-enter the password in the new
+  UI, but the existing rows are in production and the migration
+  is unambiguous.
+
+- DECISION: SetupComplete.cmd via PowerShell + base64, not
+  certutil. certutil's `-decode` flag requires PEM-format input
+  (BEGIN/END markers), which means the payload has to be wrapped;
+  PowerShell's `[Convert]::FromBase64String` accepts the raw
+  encoding and writes arbitrary bytes via
+  `[IO.File]::WriteAllBytes`. PowerShell is on every supported
+  Windows, so there's no compatibility cost.
+
+- DECISION: First Administrators-group account doubles as the
+  built-in Administrator password. Some tooling and recovery
+  paths look at `<AdministratorPassword>` rather than enumerating
+  `<LocalAccounts>`. Filling both costs us nothing and avoids
+  surprise.
+
+- DECISION: TelemetryLevel uses 0 as "off / do not emit". The
+  alternative was -1 or `*int`, but 0 is what the portal sends
+  for unselected and matches the Go zero value cleanly; the only
+  user-visible cost is hiding the rarely-useful Security/0 level
+  from the dropdown (Enterprise only, indistinguishable from "do
+  not emit" on other editions).
+
+- DECISION: Specialize commands run AFTER the system-supplied
+  policy/license commands. Operators can rely on the policy
+  state when their command runs (e.g. an operator-defined firewall
+  rule on top of EnableRDP's open rule will behave deterministically).
+
+**BUILD STATE.** Server builds; `go vet ./...` clean; `go test
+./...` green (including the new licensing, auto-logon, policies,
+specialize and SetupComplete tests); `scripts/check-secrets.sh`
+green. Legacy admin_user/admin_password JSON migrates cleanly into
+the new LocalAccounts model without losing the password.

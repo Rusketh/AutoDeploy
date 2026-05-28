@@ -12,12 +12,17 @@
   <a href="#sec-target">2. Target OS</a>
   <a href="#sec-regional">3. Regional</a>
   <a href="#sec-edition">4. Edition &amp; product key</a>
-  <a href="#sec-admin">5. Local administrator</a>
-  <a href="#sec-name">6. Computer naming</a>
-  <a href="#sec-oobe">7. OOBE</a>
-  <a href="#sec-win11">8. Windows 11 options</a>
-  <a href="#sec-domain">9. Domain join</a>
-  <a href="#sec-flc">10. First-logon commands</a>
+  <a href="#sec-licensing">5. Licensing (KMS / AVMA)</a>
+  <a href="#sec-accounts">6. Local accounts</a>
+  <a href="#sec-autologon">7. Auto-logon</a>
+  <a href="#sec-name">8. Computer naming</a>
+  <a href="#sec-oobe">9. OOBE</a>
+  <a href="#sec-win11">10. Windows 11 options</a>
+  <a href="#sec-policies">11. Windows policies</a>
+  <a href="#sec-domain">12. Domain join</a>
+  <a href="#sec-specialize">13. Specialize commands</a>
+  <a href="#sec-setupcomplete">14. SetupComplete.cmd</a>
+  <a href="#sec-flc">15. First-logon commands</a>
 </nav>
 
 <form class="std" method="POST" action="{{if $new}}/portal/unattends{{else}}/portal/unattends/{{int64 $ua.ID}}{{end}}">
@@ -83,18 +88,64 @@
     </label>
   </fieldset>
 
-  <fieldset id="sec-admin"><legend>5. Local administrator</legend>
-    <label><span class="lbl">Admin username</span>
-      <input type="text" name="admin_user" value="{{$s.AdminUser}}" placeholder="Administrator">
+  <fieldset id="sec-licensing"><legend>5. Licensing (KMS / AVMA)</legend>
+    <p class="hint">Optional. If both are blank Windows uses the product key (above) or its default activation path. KMS activates against your own host; AVMA is for Server VMs on a licensed Hyper-V host.</p>
+    <div class="row">
+      <label><span class="lbl">KMS server (FQDN)</span>
+        <input type="text" name="kms_server" value="{{$s.KMSServer}}" placeholder="kms.corp.example">
+      </label>
+      <label><span class="lbl">KMS port</span>
+        <input type="number" name="kms_port" value="{{if $s.KMSPort}}{{$s.KMSPort}}{{end}}" placeholder="1688" min="1" max="65535" style="max-width:8rem">
+      </label>
+    </div>
+    <label><span class="lbl">AVMA key (Server VMs only)</span>
+      <input type="text" name="avma_key" value="{{$s.AVMAKey}}" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX">
     </label>
-    <label><span class="lbl">Admin password</span>
-      <input type="password" name="admin_password" value="{{$s.AdminPassword}}" autocomplete="new-password">
-      <span class="hint">Stored in the unattend settings and emitted into the generated XML (Windows needs it). Never appears in any log line.</span>
+    <label><input type="checkbox" name="skip_auto_activation" value="1" {{if $s.SkipAutoActivation}}checked{{end}}>
+      Skip first-boot activation attempt (activate later via slmgr)
     </label>
-    <label><input type="checkbox" name="hide_admin" value="1" {{if $s.HideAdmin}}checked{{end}}> Hide OOBE local-account creation (use for AD-only configurations)</label>
   </fieldset>
 
-  <fieldset id="sec-name"><legend>6. Computer naming</legend>
+  <fieldset id="sec-accounts"><legend>6. Local accounts</legend>
+    <p class="hint">Each row creates one local Windows account. The first <strong>Administrators</strong>-group account also fills the legacy built-in Administrator password slot. Leave the table empty and enable Domain join for AD-only configurations.</p>
+    <div id="las">
+      {{range $i, $a := $s.LocalAccounts}}
+      <div class="rep rep-wide">
+        <input type="text" name="la_name[]" value="{{$a.Name}}" placeholder="Name (e.g. Administrator)" required>
+        <input type="password" name="la_password[]" value="{{$a.Password}}" placeholder="Password" autocomplete="new-password">
+        <select name="la_group[]">
+          {{range $g := $.Data.AccountGroups}}<option value="{{$g.Value}}" {{if eq $a.Group $g.Value}}selected{{end}}>{{$g.Label}}</option>{{end}}
+        </select>
+        <input type="text" name="la_fullname[]" value="{{$a.FullName}}" placeholder="Display name (optional)">
+        <input type="text" name="la_desc[]" value="{{$a.Description}}" placeholder="Description (optional)">
+        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addLA()">Add account</button>
+    <input type="hidden" name="hide_admin" value="0">
+  </fieldset>
+
+  <fieldset id="sec-autologon"><legend>7. Auto-logon</legend>
+    {{$al := $s.AutoLogon}}
+    <label><input type="checkbox" name="auto_logon_enabled" value="1" {{if $al}}checked{{end}} onclick="document.getElementById('al').style.display=this.checked?'block':'none'"> Sign the named account in automatically for N boots</label>
+    <div id="al" style="{{if not $al}}display:none{{end}}">
+      <div class="row">
+        <label><span class="lbl">Username</span>
+          <input type="text" name="auto_logon_user" value="{{if $al}}{{$al.Username}}{{end}}" placeholder="Administrator">
+        </label>
+        <label><span class="lbl">Logon count</span>
+          <input type="number" name="auto_logon_count" value="{{if $al}}{{$al.Count}}{{else}}1{{end}}" min="1" max="9999" style="max-width:8rem">
+        </label>
+      </div>
+      <label><span class="lbl">Password</span>
+        <input type="password" name="auto_logon_password" value="{{if $al}}{{$al.Password}}{{end}}" autocomplete="new-password">
+        <span class="hint">Must match the password of an account created above. Stored in the unattend; never logged.</span>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset id="sec-name"><legend>8. Computer naming</legend>
     <label><span class="lbl">Strategy</span>
       <select name="name_strategy">
         <option value="random"  {{if eq $s.NameStrategy "random"}}selected{{end}}>random (Windows default WIN-XXXXXXX)</option>
@@ -108,7 +159,7 @@
     </label>
   </fieldset>
 
-  <fieldset id="sec-oobe"><legend>7. OOBE</legend>
+  <fieldset id="sec-oobe"><legend>9. OOBE</legend>
     <p class="hint">Out-of-box experience. AutoDeploy defaults turn everything off; a fully unattended deploy never sees the OOBE pages.</p>
     <div class="checkgrid">
       <label><input type="checkbox" name="skip_machine_oobe" value="1" {{if $s.SkipMachineOOBE}}checked{{end}}> Skip machine OOBE</label>
@@ -126,7 +177,7 @@
     </label>
   </fieldset>
 
-  <fieldset id="sec-win11"><legend>8. Windows 11 options</legend>
+  <fieldset id="sec-win11"><legend>10. Windows 11 options</legend>
     <p class="hint">These only take effect when Target OS is Windows 11. The generator omits them for other targets.</p>
     <label><input type="checkbox" name="bypass_nro" value="1" {{if $s.BypassNRO}}checked{{end}}>
       <strong>BypassNRO</strong> — silence Windows 11 22H2+ OOBE's mandatory online-Microsoft-Account screen. Strongly recommended for unattended deploys.
@@ -136,7 +187,45 @@
     </label>
   </fieldset>
 
-  <fieldset id="sec-domain"><legend>9. Active Directory domain join</legend>
+  <fieldset id="sec-policies"><legend>11. Windows policies</legend>
+    <p class="hint">Applied in the specialize pass via registry policies and firewall rules. Operators leave these blank to inherit the OS default.</p>
+    <div class="row">
+      <label><span class="lbl">Telemetry / diagnostic data</span>
+        <select name="telemetry_level">
+          {{$tl := $s.TelemetryLevel}}
+          {{range $.Data.TelemetryLevels}}
+            <option value="{{.Value}}"
+              {{if eq .Value "off"}}{{if eq $tl 0}}selected{{end}}{{end}}
+              {{if eq .Value "1"}}{{if eq $tl 1}}selected{{end}}{{end}}
+              {{if eq .Value "2"}}{{if eq $tl 2}}selected{{end}}{{end}}
+              {{if eq .Value "3"}}{{if eq $tl 3}}selected{{end}}{{end}}
+            >{{.Label}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label><span class="lbl">Power scheme</span>
+        <select name="power_scheme">
+          {{$cur := $s.PowerScheme}}
+          {{range $.Data.PowerSchemes}}<option value="{{.Value}}" {{if eq $cur .Value}}selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+      </label>
+    </div>
+    <div class="checkgrid">
+      <label><input type="checkbox" name="disable_windows_update" value="1" {{if $s.DisableWindowsUpdate}}checked{{end}}> Disable Windows Update auto-install (NoAutoUpdate)</label>
+      <label><input type="checkbox" name="enable_rdp" value="1" {{if $s.EnableRDP}}checked{{end}}> Enable Remote Desktop (incl. firewall rule)</label>
+      <label><input type="checkbox" name="allow_icmpv4" value="1" {{if $s.AllowICMPv4}}checked{{end}}> Allow ICMPv4 echo (ping) inbound</label>
+    </div>
+    <div class="row">
+      <label><span class="lbl">Defer feature updates (days, 0 = off)</span>
+        <input type="number" name="defer_feature_updates_days" value="{{$s.DeferFeatureUpdatesDays}}" min="0" max="365" style="max-width:8rem">
+      </label>
+      <label><span class="lbl">Defer quality updates (days, 0 = off)</span>
+        <input type="number" name="defer_quality_updates_days" value="{{$s.DeferQualityUpdatesDays}}" min="0" max="35" style="max-width:8rem">
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset id="sec-domain"><legend>12. Active Directory domain join</legend>
     {{$dj := $s.DomainJoin}}
     <label><input type="checkbox" name="domain_join_enabled" value="1" {{if $dj}}checked{{end}} onclick="document.getElementById('dj').style.display=this.checked?'block':'none'"> Join a domain</label>
     <div id="dj" style="{{if not $dj}}display:none{{end}}">
@@ -158,7 +247,37 @@
     </div>
   </fieldset>
 
-  <fieldset id="sec-flc"><legend>10. First-logon commands</legend>
+  <fieldset id="sec-specialize"><legend>13. Specialize commands</legend>
+    <p class="hint">Run during Windows Setup's <strong>specialize</strong> pass — before any OOBE pages render and before the SetupComplete.cmd file is written. Use for registry tweaks, environment prep, driver-injection helpers. No user session is available.</p>
+    <div id="sps">
+      {{range $i, $c := $s.SpecializeCommands}}
+      <div class="rep">
+        <input type="number" name="sp_order[]" value="{{$c.Order}}" style="max-width:6rem" title="Order">
+        <input type="text" name="sp_desc[]" value="{{$c.Description}}" placeholder="Description">
+        <input type="text" name="sp_line[]" value="{{$c.CommandLine}}" placeholder={{printf "%q" `reg add HKLM\Software\Lab /v X /d 1 /f`}}>
+        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addRep('sps','sp')">Add command</button>
+  </fieldset>
+
+  <fieldset id="sec-setupcomplete"><legend>14. SetupComplete.cmd</legend>
+    <p class="hint">Lines written to <code>%WINDIR%\Setup\Scripts\SetupComplete.cmd</code>. Windows runs that file <strong>after</strong> the specialize pass and <strong>before</strong> OOBE finishes — a no-user-session window ideal for system-level work like enabling BitLocker pre-provisioning or scheduled reboots.</p>
+    <div id="scs">
+      {{range $i, $c := $s.SetupCompleteCommands}}
+      <div class="rep">
+        <input type="number" name="sc_order[]" value="{{$c.Order}}" style="max-width:6rem" title="Order">
+        <input type="text" name="sc_desc[]" value="{{$c.Description}}" placeholder="Description (added as a rem)">
+        <input type="text" name="sc_line[]" value="{{$c.CommandLine}}" placeholder={{printf "%q" `manage-bde -on C: -used`}}>
+        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addRep('scs','sc')">Add line</button>
+  </fieldset>
+
+  <fieldset id="sec-flc"><legend>15. First-logon commands</legend>
     <p class="hint">Run synchronously on first boot, in order. The AutoDeploy agent bootstrap is appended automatically by the generator.</p>
     <div id="flcs">
       {{range $i, $c := $s.FirstLogonCommands}}
@@ -241,13 +360,32 @@ function refreshEditions(os){
 }
 refreshEditions(document.querySelector('select[name=target_os]').value);
 
-function addFLC(){
+function addFLC(){ addRep('flcs','flc'); }
+// addRep appends a generic 3-field repeating row (order/desc/line) used
+// by the FirstLogon, Specialize and SetupComplete sections.
+function addRep(containerId, prefix){
   var d = document.createElement('div'); d.className='rep';
-  d.innerHTML = '<input type="number" name="flc_order[]" value="10" style="max-width:6rem" title="Order">' +
-    '<input type="text" name="flc_desc[]" placeholder="Description">' +
-    '<input type="text" name="flc_line[]" placeholder="cmd /c …">' +
+  d.innerHTML = '<input type="number" name="'+prefix+'_order[]" value="10" style="max-width:6rem" title="Order">' +
+    '<input type="text" name="'+prefix+'_desc[]" placeholder="Description">' +
+    '<input type="text" name="'+prefix+'_line[]" placeholder="command line">' +
     '<button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>';
-  document.getElementById('flcs').appendChild(d);
+  document.getElementById(containerId).appendChild(d);
+}
+// addLA appends a local-account row. Mirrors the server-side fields:
+// name, password, group, full name, description.
+function addLA(){
+  var groupOpts = '';
+  {{range $.Data.AccountGroups}}groupOpts += '<option value="{{.Value}}">{{.Label}}</option>';
+  {{end}}
+  var d = document.createElement('div'); d.className='rep rep-wide';
+  d.innerHTML =
+    '<input type="text" name="la_name[]" placeholder="Name" required>' +
+    '<input type="password" name="la_password[]" placeholder="Password" autocomplete="new-password">' +
+    '<select name="la_group[]">'+groupOpts+'</select>' +
+    '<input type="text" name="la_fullname[]" placeholder="Display name (optional)">' +
+    '<input type="text" name="la_desc[]" placeholder="Description (optional)">' +
+    '<button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>';
+  document.getElementById('las').appendChild(d);
 }
 </script>
 <style>
@@ -262,6 +400,7 @@ function addFLC(){
 .unattend-toc a:hover { background: #eef1f5; color: var(--accent); }
 .unattend-shell form.std { max-width: none; }
 .checkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; }
+.rep-wide { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1.2fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
 fieldset.disabled { opacity: 0.6; }
 fieldset.disabled::after { content: " (does not apply to selected target OS)"; color: var(--muted); font-size: 0.85rem; }
 @media (max-width: 800px) {

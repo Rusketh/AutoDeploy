@@ -2,8 +2,10 @@ package unattend
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"html"
+	"sort"
 	"strings"
 )
 
@@ -12,23 +14,27 @@ import (
 // operator's first-logon list automatically by Generate.
 const AgentInstallCommand = `cmd /c start /b "" \\Windows\\AutoDeploy\\autodeploy-agent.exe --server %AUTODEPLOY_SERVER%`
 
+// PowerSchemeHighPerformance is the well-known Windows GUID for the
+// High Performance scheme.
+const PowerSchemeHighPerformance = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+
 // Generate writes a complete Windows unattend.xml for s.
 //
-// The generated XML covers three passes:
+// Passes:
 //
-//   windowsPE       — language/keyboard/disk/edition. AutoDeploy applies
-//                     WIMs directly so this pass is largely a courtesy
-//                     for operators who reuse the same unattend with
-//                     Windows Setup. For Windows 11 we also emit
-//                     RunSynchronousCommand entries here that set the
-//                     LabConfig registry keys when BypassWin11Reqs is on,
-//                     so an unattended install survives a hardware
-//                     requirements check.
-//   specialize      — computer name, time zone, optional BypassNRO write
-//                     (Win11 22H2+), domain join, agent bootstrap path.
-//   oobeSystem      — OOBE skip flags, local admin, first-logon commands.
-//
-// Branches on s.TargetOS so the right schema goes to the right OS.
+//	windowsPE   — language/keyboard/edition. AutoDeploy applies WIMs
+//	              directly so this is largely a courtesy. For Windows 11
+//	              we also emit the LabConfig hardware-requirements
+//	              bypass here when BypassWin11Reqs is set.
+//	specialize  — computer name, time zone, licensing (KMS / AVMA /
+//	              skip-auto-activation), Windows-policy registry tweaks
+//	              (telemetry, Windows Update, RDP, firewall, power
+//	              scheme), optional BypassNRO (Win11), operator-supplied
+//	              specialize commands, the SetupComplete.cmd writer,
+//	              and the domain-join section if configured.
+//	oobeSystem  — OOBE skip flags, every local account, optional
+//	              auto-logon, first-logon commands (with the agent
+//	              bootstrap always appended).
 func Generate(s Settings) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
@@ -61,37 +67,26 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 	}
 	fmt.Fprint(b, `      </UserData>
 `)
-	// Windows 11 hardware-requirements bypass — only when the operator
-	// explicitly opted in. Writes the LabConfig registry keys Setup
-	// checks during the requirements pass.
 	if IsWindows11Family(s.TargetOS) && s.BypassWin11Reqs {
 		fmt.Fprint(b, `      <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order><Description>Bypass Win11: TPM</Description>
-          <Path>reg add HKLM\System\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>2</Order><Description>Bypass Win11: Secure Boot</Description>
-          <Path>reg add HKLM\System\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>3</Order><Description>Bypass Win11: RAM</Description>
-          <Path>reg add HKLM\System\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>4</Order><Description>Bypass Win11: CPU</Description>
-          <Path>reg add HKLM\System\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>5</Order><Description>Bypass Win11: Storage</Description>
-          <Path>reg add HKLM\System\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Bypass Win11: TPM</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>2</Order><Description>Bypass Win11: Secure Boot</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>3</Order><Description>Bypass Win11: RAM</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>4</Order><Description>Bypass Win11: CPU</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>5</Order><Description>Bypass Win11: Storage</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
       </RunSynchronous>
 `)
 	}
 	fmt.Fprint(b, `    </component>
   </settings>
 `)
+}
+
+// rsCmd is one RunSynchronousCommand row.
+type rsCmd struct {
+	order int
+	desc  string
+	path  string
 }
 
 func writeSpecialize(b *bytes.Buffer, s Settings) {
@@ -102,37 +97,166 @@ func writeSpecialize(b *bytes.Buffer, s Settings) {
 	case "literal":
 		fmt.Fprintf(b, `      <ComputerName>%s</ComputerName>`+"\n", esc(s.ComputerName))
 	case "prefix":
-		// "*" means Windows will use the machine's UUID-based default; we
-		// can't compute the serial here, so the agent renames the machine
-		// authoritatively post-deploy (Phase 13 bulk rename). Use a
-		// prefix-* hint so the initial Windows name is identifiable.
 		fmt.Fprintf(b, `      <ComputerName>%s*</ComputerName>`+"\n", esc(s.ComputerName))
-	default: // "random"
+	default:
 		fmt.Fprint(b, `      <ComputerName>*</ComputerName>`+"\n")
 	}
 	fmt.Fprintf(b, `      <TimeZone>%s</TimeZone>`+"\n", esc(s.TimeZone))
+	if s.SkipAutoActivation {
+		fmt.Fprint(b, `      <SkipAutoActivation>true</SkipAutoActivation>`+"\n")
+	}
 	fmt.Fprint(b, `    </component>
 `)
-	// Windows 11 22H2+ OOBE forces an online Microsoft Account on Home
-	// and Pro unless BypassNRO is set in the registry before the OOBE
-	// network pages run. Setting it from specialize via
-	// RunSynchronousCommand is the documented unattend approach.
-	if IsWindows11Family(s.TargetOS) && s.BypassNRO {
+
+	cmds := buildSpecializeCommands(s)
+	if len(cmds) > 0 {
 		fmt.Fprint(b, `    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order><Description>Windows 11: Bypass OOBE network requirement</Description>
-          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
-        </RunSynchronousCommand>
-      </RunSynchronous>
+`)
+		for _, c := range cmds {
+			fmt.Fprintf(b, `        <RunSynchronousCommand wcm:action="add"><Order>%d</Order><Description>%s</Description><Path>%s</Path></RunSynchronousCommand>`+"\n",
+				c.order, esc(c.desc), esc(c.path))
+		}
+		fmt.Fprint(b, `      </RunSynchronous>
     </component>
 `)
 	}
+
 	if s.DomainJoin != nil {
 		writeDomainJoin(b, s.DomainJoin)
 	}
 	fmt.Fprint(b, `  </settings>
 `)
+}
+
+// buildSpecializeCommands assembles the operator-controlled commands
+// that should run during the specialize pass, in order.
+func buildSpecializeCommands(s Settings) []rsCmd {
+	var cmds []rsCmd
+	order := 1
+	push := func(desc, path string) {
+		cmds = append(cmds, rsCmd{order: order, desc: desc, path: path})
+		order++
+	}
+
+	if IsWindows11Family(s.TargetOS) && s.BypassNRO {
+		push("Windows 11: bypass OOBE network requirement",
+			`reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f`)
+	}
+
+	// Licensing.
+	if s.KMSServer != "" {
+		port := s.KMSPort
+		if port == 0 {
+			port = 1688
+		}
+		push("Licensing: set KMS server",
+			fmt.Sprintf(`cscript //nologo %%SystemRoot%%\System32\slmgr.vbs /skms %s:%d`, s.KMSServer, port))
+	}
+	if s.AVMAKey != "" {
+		push("Licensing: install AVMA key",
+			fmt.Sprintf(`cscript //nologo %%SystemRoot%%\System32\slmgr.vbs /ipk %s`, s.AVMAKey))
+	}
+
+	// Telemetry policy (1-3). 0 / negative leave the system default.
+	if s.TelemetryLevel >= 1 && s.TelemetryLevel <= 3 {
+		push(fmt.Sprintf("Policy: AllowTelemetry = %d", s.TelemetryLevel),
+			fmt.Sprintf(`reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection /v AllowTelemetry /t REG_DWORD /d %d /f`,
+				s.TelemetryLevel))
+	}
+
+	// Windows Update policy.
+	if s.DisableWindowsUpdate {
+		push("Policy: disable Windows Update auto-install",
+			`reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU /v NoAutoUpdate /t REG_DWORD /d 1 /f`)
+	}
+	if s.DeferFeatureUpdatesDays > 0 {
+		push(fmt.Sprintf("Policy: defer feature updates %d days", s.DeferFeatureUpdatesDays),
+			fmt.Sprintf(`reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /v DeferFeatureUpdatesPeriodInDays /t REG_DWORD /d %d /f`,
+				s.DeferFeatureUpdatesDays))
+	}
+	if s.DeferQualityUpdatesDays > 0 {
+		push(fmt.Sprintf("Policy: defer quality updates %d days", s.DeferQualityUpdatesDays),
+			fmt.Sprintf(`reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /v DeferQualityUpdatesPeriodInDays /t REG_DWORD /d %d /f`,
+				s.DeferQualityUpdatesDays))
+	}
+
+	// RDP + firewall.
+	if s.EnableRDP {
+		push("Networking: enable RDP",
+			`reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f`)
+		push("Networking: open firewall for RDP",
+			`netsh advfirewall firewall set rule group="remote desktop" new enable=Yes`)
+	}
+	if s.AllowICMPv4 {
+		push("Networking: allow ICMPv4 echo",
+			`netsh advfirewall firewall add rule name="AutoDeploy: ICMPv4-In" protocol=icmpv4:8,any dir=in action=allow`)
+	}
+
+	// Power scheme.
+	if strings.EqualFold(s.PowerScheme, "high") {
+		push("Power: set High Performance scheme",
+			"powercfg /setactive "+PowerSchemeHighPerformance)
+	}
+
+	// Operator-supplied specialize commands (after the system ones so
+	// operators can rely on the policy state when their command runs).
+	specOps := append([]SpecializeCommand(nil), s.SpecializeCommands...)
+	sort.SliceStable(specOps, func(i, j int) bool { return specOps[i].Order < specOps[j].Order })
+	for _, c := range specOps {
+		if strings.TrimSpace(c.CommandLine) == "" {
+			continue
+		}
+		desc := c.Description
+		if desc == "" {
+			desc = "Operator specialize command"
+		}
+		push(desc, c.CommandLine)
+	}
+
+	// SetupComplete.cmd: write the script file so Windows runs it
+	// before OOBE finishes. We use PowerShell to base64-decode the
+	// script into the file; PowerShell ships on every supported
+	// Windows release, handles any byte safely, and avoids the
+	// quoting headaches of building the script via cmd echo lines.
+	if writer := buildSetupCompleteWriter(s.SetupCompleteCommands); writer != "" {
+		push("SetupComplete: write Scripts\\SetupComplete.cmd", writer)
+	}
+
+	return cmds
+}
+
+// buildSetupCompleteWriter returns a single PowerShell-based command
+// that writes %WINDIR%\Setup\Scripts\SetupComplete.cmd from a
+// base64-encoded payload. Empty input returns "".
+func buildSetupCompleteWriter(cmds []SetupCompleteCommand) string {
+	if len(cmds) == 0 {
+		return ""
+	}
+	sorted := append([]SetupCompleteCommand(nil), cmds...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Order < sorted[j].Order })
+	var buf bytes.Buffer
+	buf.WriteString("@echo off\r\n")
+	buf.WriteString("rem Generated by AutoDeploy\r\n")
+	for _, c := range sorted {
+		line := strings.TrimSpace(c.CommandLine)
+		if line == "" {
+			continue
+		}
+		if c.Description != "" {
+			fmt.Fprintf(&buf, "rem %s\r\n", strings.ReplaceAll(c.Description, "\n", " "))
+		}
+		buf.WriteString(line)
+		buf.WriteString("\r\n")
+	}
+	enc := base64.StdEncoding.EncodeToString(buf.Bytes())
+	// Single-line PowerShell that ensures the Scripts directory exists
+	// then writes the decoded bytes.
+	ps := `$d='` + enc + `'; ` +
+		`$dir=Join-Path $env:WINDIR 'Setup\Scripts'; ` +
+		`if(!(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force | Out-Null}; ` +
+		`[IO.File]::WriteAllBytes((Join-Path $dir 'SetupComplete.cmd'),[Convert]::FromBase64String($d))`
+	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + ps + "\""
 }
 
 func writeDomainJoin(b *bytes.Buffer, d *DomainJoin) {
@@ -171,19 +295,27 @@ func writeOOBE(b *bytes.Buffer, s Settings) {
 	}
 	fmt.Fprint(b, `      </OOBE>
 `)
-	if !s.HideAdmin && s.AdminUser != "" {
-		fmt.Fprintf(b, `      <UserAccounts>
-        <AdministratorPassword>
-          <Value>%s</Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
-      </UserAccounts>
-`, esc(s.AdminPassword))
+
+	// Local accounts. The first Administrators-group account
+	// additionally fills <AdministratorPassword> (the legacy built-in
+	// Administrator) so installs that disable LocalAccounts entirely
+	// still have a usable elevated credential.
+	writeUserAccounts(b, s)
+
+	// AutoLogon.
+	if s.AutoLogon != nil && s.AutoLogon.Username != "" && s.AutoLogon.Count > 0 {
+		fmt.Fprintf(b, `      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>%s</Username>
+        <Password><Value>%s</Value><PlainText>true</PlainText></Password>
+        <LogonCount>%d</LogonCount>
+      </AutoLogon>
+`, esc(s.AutoLogon.Username), esc(s.AutoLogon.Password), s.AutoLogon.Count)
 	}
-	// First-logon: sort operator commands by Order, then append the
-	// AutoDeploy agent bootstrap so it always runs after operator setup.
+
+	// First-logon commands: sort by Order, append the agent bootstrap.
 	cmds := append([]FirstLogonCommand(nil), s.FirstLogonCommands...)
-	sortByOrder(cmds)
+	sort.SliceStable(cmds, func(i, j int) bool { return cmds[i].Order < cmds[j].Order })
 	cmds = append(cmds, FirstLogonCommand{
 		Order:       lastOrder(cmds) + 10,
 		Description: "Start AutoDeploy agent",
@@ -211,6 +343,71 @@ func writeOOBE(b *bytes.Buffer, s Settings) {
 `)
 }
 
+// writeUserAccounts emits the <UserAccounts> block from the unified
+// LocalAccounts list. Falls through to the legacy single-admin
+// behaviour when LocalAccounts is empty.
+func writeUserAccounts(b *bytes.Buffer, s Settings) {
+	accounts := s.LocalAccounts
+	// Compatibility: if the operator used the old admin-user fields
+	// and Parse hasn't already migrated them, do it now.
+	if len(accounts) == 0 && !s.HideAdmin && s.AdminUser != "" {
+		accounts = []LocalAccount{{
+			Name: s.AdminUser, Password: s.AdminPassword, Group: "Administrators",
+		}}
+	}
+	if len(accounts) == 0 && s.HideAdmin {
+		return
+	}
+	if len(accounts) == 0 {
+		return
+	}
+
+	fmt.Fprint(b, `      <UserAccounts>
+`)
+	// The first Administrators-group account also goes into
+	// <AdministratorPassword> so workflows that look at the built-in
+	// Administrator credential still find a usable password. The
+	// account itself is also listed in <LocalAccounts> so it's
+	// visible alongside the others.
+	for _, a := range accounts {
+		if strings.EqualFold(a.Group, "Administrators") && a.Password != "" {
+			fmt.Fprintf(b, `        <AdministratorPassword>
+          <Value>%s</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+`, esc(a.Password))
+			break
+		}
+	}
+	fmt.Fprint(b, `        <LocalAccounts>
+`)
+	for _, a := range accounts {
+		group := a.Group
+		if group == "" {
+			group = "Users"
+		}
+		fmt.Fprintf(b, `          <LocalAccount wcm:action="add">
+            <Name>%s</Name>
+            <Group>%s</Group>
+`, esc(a.Name), esc(group))
+		if a.FullName != "" {
+			fmt.Fprintf(b, `            <DisplayName>%s</DisplayName>`+"\n", esc(a.FullName))
+		}
+		if a.Description != "" {
+			fmt.Fprintf(b, `            <Description>%s</Description>`+"\n", esc(a.Description))
+		}
+		fmt.Fprintf(b, `            <Password>
+              <Value>%s</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+`, esc(a.Password))
+	}
+	fmt.Fprint(b, `        </LocalAccounts>
+      </UserAccounts>
+`)
+}
+
 func esc(s string) string { return html.EscapeString(s) }
 
 func boolStr(b bool) string {
@@ -218,15 +415,6 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-func sortByOrder(cmds []FirstLogonCommand) {
-	// Insertion sort; expected N is small (handful).
-	for i := 1; i < len(cmds); i++ {
-		for j := i; j > 0 && cmds[j-1].Order > cmds[j].Order; j-- {
-			cmds[j-1], cmds[j] = cmds[j], cmds[j-1]
-		}
-	}
 }
 
 func lastOrder(cmds []FirstLogonCommand) int {
