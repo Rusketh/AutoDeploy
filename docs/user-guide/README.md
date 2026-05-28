@@ -10,20 +10,28 @@ the product, and never before.
 ## Contents
 
 1. [Concepts](concepts.md) — what AutoDeploy is, and the objects you'll work with.
-2. [Installation](installation.md) — getting the server, Boot Client and agent built and running. *(in progress)*
-3. [Configuring the server](configuration.md) — environment variables and on-disk layout. *(in progress)*
+2. [Installation](installation.md) — getting the server, Boot Client and agent built and running.
+3. [Configuring the server](configuration.md) — environment variables and on-disk layout.
+4. [API quick-start](api-quickstart.md) — `curl` recipes against the JSON API.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 0)
+## Current product surface (Phase 1)
 
-The current build provides only the foundational skeleton:
+- **Server** — runs the management portal and JSON API. SQLite-backed.
+- **Portal** at `/portal/` — read-only views of every artifact and image,
+  with each image's resolved configuration viewable per row.
+- **JSON API** at `/api/v1/` — full CRUD on ISOs, Unattends, Driver packages,
+  Software packages and Images. Image inheritance with cycle prevention and
+  reference-count guards on shared objects.
+- **Boot Client** — reads SMBIOS identity and exits safely (real imaging
+  arrives in Phase 3).
+- **Agent** — starts and exits (lifecycle arrives in Phase 6).
 
-- A server binary that listens on HTTP and exposes `/healthz`.
-- A Boot Client binary that reads SMBIOS identity and logs it.
-- An agent binary that starts and exits.
-
-There is no portal UI, no API beyond the health endpoint, no boot menu and no
-software deployment yet. These arrive in later phases (see
-`docs/design/roadmap.txt`).
+Still to come (sequenced by `docs/design/roadmap.txt`): payload upload and
+delivery (Phase 2), the actual PXE boot/image-apply flow (Phase 3+), software
+loadouts (Phase 7), inventory and re-imaging (Phase 8–9), AD integration
+(Phase 10), the access PIN and authentication (Phase 11), BitLocker
+(Phase 12), bulk operations (Phase 13), centralised logging (Phase 14),
+branding (Phase 15).

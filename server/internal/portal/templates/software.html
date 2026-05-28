@@ -1,0 +1,20 @@
+{{define "body"}}
+<h2>Software packages</h2>
+{{if .Items}}
+<table>
+  <thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Size</th></tr></thead>
+  <tbody>
+    {{range .Items}}
+    <tr>
+      <td>{{.ID}}</td>
+      <td>{{.Name}}</td>
+      <td>{{.Description}}</td>
+      <td>{{.SizeBytes}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No software packages yet. Create one with <code>POST /api/v1/software</code>.</p>
+{{end}}
+{{end}}

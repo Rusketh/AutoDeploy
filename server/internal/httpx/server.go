@@ -1,6 +1,6 @@
-// Package httpx wires the HTTP surface together. It is intentionally thin in
-// Phase 0: a router, a health endpoint and a request logger. Real API and
-// portal routes are mounted on top as later phases land.
+// Package httpx wires the HTTP surface together. Routing is plain net/http
+// ServeMux with the request-logging middleware below. The api and portal
+// packages register their routes on the mux returned by New.
 package httpx
 
 import (
@@ -15,8 +15,10 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/logging"
 )
 
-// New builds the root http.Handler for the server.
-func New(cfg config.Config, logger *slog.Logger) http.Handler {
+// New builds the root http.ServeMux and returns it together with the wrapped
+// handler (mux + request logger). Callers attach api/portal routes to the
+// returned mux before serving.
+func New(cfg config.Config, logger *slog.Logger) (*http.ServeMux, http.Handler) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -25,12 +27,11 @@ func New(cfg config.Config, logger *slog.Logger) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("AutoDeploy server. See docs/user-guide for usage.\n"))
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/portal/", http.StatusFound)
 	})
 
-	return withLogging(mux, logger)
+	return mux, withLogging(mux, logger)
 }
 
 // ListenAndServe starts the HTTP server. In non-dev mode it refuses to bind

@@ -1,0 +1,27 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}} — AutoDeploy</title>
+<link rel="stylesheet" href="/portal/assets/style.css">
+</head>
+<body>
+<header>
+  <h1><a href="/portal/">AutoDeploy</a></h1>
+  <nav>
+    <a href="/portal/images">Images</a>
+    <a href="/portal/isos">ISOs</a>
+    <a href="/portal/unattends">Unattends</a>
+    <a href="/portal/drivers">Driver packages</a>
+    <a href="/portal/software">Software packages</a>
+  </nav>
+</header>
+<main>
+{{template "body" .}}
+</main>
+<footer>
+  <p>Phase 1 development build · see <code>docs/user-guide/</code></p>
+</footer>
+</body>
+</html>
+{{end}}

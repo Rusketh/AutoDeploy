@@ -1,0 +1,21 @@
+{{define "body"}}
+<h2>ISOs</h2>
+{{if .Items}}
+<table>
+  <thead><tr><th>ID</th><th>Name</th><th>OS type</th><th>Size</th><th>Storage path</th></tr></thead>
+  <tbody>
+    {{range .Items}}
+    <tr>
+      <td>{{.ID}}</td>
+      <td>{{.Name}}</td>
+      <td>{{.OSType}}</td>
+      <td>{{.SizeBytes}}</td>
+      <td><code>{{.StoragePath}}</code></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No ISOs yet. Create one with <code>POST /api/v1/isos</code>.</p>
+{{end}}
+{{end}}

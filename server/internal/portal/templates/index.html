@@ -1,0 +1,14 @@
+{{define "body"}}
+<h2>Welcome</h2>
+<p>This is the AutoDeploy management portal (Phase 1). Use the navigation
+above to browse and manage the standalone artifact objects (ISO, Unattend,
+Driver package, Software package) and compose them into images.</p>
+
+<p>For each shared object you will see how many images reference it before
+you edit or delete it. Each image shows its resolved configuration so you
+can verify what would actually be deployed.</p>
+
+<p>Phase 1 CRUD is exposed via the JSON API at <code>/api/v1/…</code>;
+<code>curl</code> recipes are in
+<code>docs/user-guide/api-quickstart.md</code>.</p>
+{{end}}
