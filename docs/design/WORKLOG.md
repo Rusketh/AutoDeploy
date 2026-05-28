@@ -588,3 +588,60 @@ ensures the agent updates the existing binding's deployment history
 rather than creating a fresh machine. The Boot Client's existing
 `deploy <image-id>` command already does the right thing — Phase 9 is
 about making the reimage path operationally first-class.
+
+---
+
+## 2026-05-28 — Phase 9 complete (re-imaging)
+
+**WHAT.** Re-imaging is operational and tested. Most of the
+infrastructure was already in place from Phases 1–8:
+
+- The Boot Client menu endpoint already surfaces a `reimage` option
+  for any machine with a binding pointing at an image (Phase 8).
+- The manifest endpoint already builds against the current
+  definitions of ISO, unattend, drivers and software (Phase 2 + later).
+- The agent's report endpoint already writes deployment history rows
+  keyed on the machine record, so a re-image appends to the existing
+  machine's history rather than creating a new one.
+
+Phase 9 itself added:
+
+- An integration test that drives the full re-image contract end to
+  end: first boot creates the machine; the operator binds it; the
+  next menu fetch returns the reimage option; mutating the bound
+  image (swapping its ISO) is reflected immediately in the resolved
+  configuration. The "latest, not snapshot" rule is exercised.
+- Operator documentation (`docs/user-guide/reimaging.md`) describing
+  the deliberate "latest" behaviour, what is preserved across a
+  re-image, what is not, and why there is no remote "re-image now"
+  trigger in this release.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: No "re-image on next boot" remote trigger in this release.
+  Re-imaging is destructive; letting a remote operator queue a
+  destructive action that fires on next power-on without a deskside
+  confirm sits uneasily with the design's fail-safe philosophy.
+  Operators with deskside access drive a re-image through the menu;
+  remote operators rely on the power-on workflow. A future revision
+  could add a queued trigger gated on an additional confirmation.
+- DECISION: Re-imaging targets the **latest** definition, not a
+  frozen snapshot of the previous deploy. The resolver does not look
+  at `deployment_history` at resolution time.
+- DECISION: The machine record persists across re-image (matched by
+  SMBIOS UUID), so deployment history accumulates against the same
+  record.
+
+**BUILD STATE.** All tests green; the new reimage integration test
+exercises the Boot-Client → server contract end to end.
+
+**NEXT.** Phase 10 — Active Directory integration. The binding
+already carries `target_ou` and `group_memberships` (Phase 8); the
+unattend already has a `domain_join` section (Phase 5). Phase 10
+adds the server-side Domain Integration Service that performs the
+delete-and-replace computer-object lifecycle via a service account
+and reconciles group memberships from the binding on each deploy.
+LDAP is wrapped behind an interface so a fake provider drives tests
+without a live directory; the real backend uses
+`github.com/go-ldap/ldap/v3` and configures credentials via
+environment variables.
