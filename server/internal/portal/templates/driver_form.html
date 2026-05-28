@@ -14,6 +14,17 @@
 
   <fieldset><legend>SMBIOS filters</legend>
     <p class="hint">A package applies when <strong>any</strong> filter matches. A filter matches when <strong>all</strong> its constraints match. Empty filter never matches (safety).</p>
+    {{if .Data.Machines}}
+    <div class="row" style="background: var(--accent-soft); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); margin: 0 0 var(--sp-3); align-items:center; gap: var(--sp-2);">
+      <label style="flex:1; margin: 0;"><span class="lbl" style="margin-bottom:2px;">Use a known machine as a filter</span>
+        <select id="machine-as-filter">
+          <option value="">Pick a machine…</option>
+          {{range .Data.Machines}}<option value="{{.ID}}" data-manufacturer="{{.Manufacturer}}" data-product="{{.Product}}">{{.Label}}</option>{{end}}
+        </select>
+      </label>
+      <button type="button" class="secondary sm" onclick="useMachineAsFilter()" style="flex: 0 0 auto;"><svg><use href="#i-plus"/></svg>Add as filter</button>
+    </div>
+    {{end}}
     <div id="filters">
       {{range $i, $f := .Data.Filters}}
       <div class="filter-block">
@@ -49,11 +60,57 @@
 <form class="std" method="POST" action="/portal/drivers/{{int64 $p.ID}}/upload" enctype="multipart/form-data">
   <label><span class="lbl">Driver package (.zip recommended)</span>
     <input type="file" name="file" required>
-    <span class="hint">Zip archives are unpacked server-side and .inf files are scanned for metadata. Single-file uploads are accepted but treated as opaque.</span>
+    <span class="hint">Zip archives are unpacked server-side when you click <strong>Extract &amp; scan</strong> below; .inf files are scanned and their <code>[Version]</code> metadata is shown. Single-file uploads are accepted but treated as opaque.</span>
   </label>
   <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
 </form>
-<p class="small muted" style="margin-top: var(--sp-3);">Current: {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge">{{$p.SizeBytes}} bytes</span>{{else}}<em>nothing uploaded</em>{{end}}</p>
+<div class="flex wrap" style="margin-top: var(--sp-3); gap: var(--sp-3);">
+  <span class="small muted">Current:
+    {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge">{{$p.SizeBytes}} bytes</span>{{else}}<em>nothing uploaded</em>{{end}}
+  </span>
+  <span class="right">
+    <form method="POST" action="/portal/drivers/{{int64 $p.ID}}/extract" class="inline">
+      <button type="submit" class="secondary sm" {{if not $p.StoragePath}}disabled title="Upload a zip first"{{end}}>
+        <svg><use href="#i-bolt"/></svg>Extract &amp; scan
+      </button>
+    </form>
+  </span>
+</div>
+
+{{if .Data.Metadata}}
+{{$meta := .Data.Metadata}}
+<div class="section-head">
+  <h3>Discovered drivers</h3>
+  <div class="line"></div>
+  <span class="small muted">{{$meta.INFCount}} .inf · {{$meta.FileCount}} files · {{$meta.Bytes}} bytes</span>
+</div>
+{{if $meta.INFs}}
+<div class="tablewrap">
+<table data-sortable id="inf-tbl">
+  <thead><tr>
+    <th>Path</th>
+    <th>Class</th>
+    <th>Provider</th>
+    <th>Version</th>
+    <th data-sort="num">Date</th>
+  </tr></thead>
+  <tbody>
+    {{range $meta.INFs}}
+    <tr>
+      <td><code>{{.Path}}</code></td>
+      <td>{{if .Class}}<span class="badge">{{.Class}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .Provider}}{{.Provider}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="mono small">{{if .Version}}{{.Version}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small muted">{{.Date}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted small">The zip extracted cleanly but contains no .inf files. The package will still be staged at deploy time, but Windows PnP needs an .inf to register a driver.</p>
+{{end}}
+{{end}}
 
 <div class="section-head"><h3>Filter preview</h3><div class="line"></div></div>
 <form class="std" method="POST" action="/portal/drivers/{{int64 $p.ID}}/preview">
@@ -120,21 +177,50 @@ function addConstraint(list, idx) {
 }
 var nextFilter = {{len .Data.Filters}};
 function addFilter() {
+  return appendFilterBlock([]);
+}
+// appendFilterBlock builds a new filter row from an array of
+// {key, value} constraints. Used by addFilter() (empty default) and
+// useMachineAsFilter() (manufacturer + product seeded from inventory).
+function appendFilterBlock(constraints) {
   var idx = String(nextFilter++);
   var fb = document.createElement('div');
   fb.className = 'filter-block';
   var hidden = document.createElement('input');
   hidden.type='hidden'; hidden.name='filter_index[]'; hidden.value=idx;
   var list = document.createElement('div'); list.className='rep-list';
-  list.appendChild(buildConstraintRow(idx, 'system_manufacturer', ''));
+  if (!constraints.length) {
+    list.appendChild(buildConstraintRow(idx, 'system_manufacturer', ''));
+  } else {
+    constraints.forEach(function(c){
+      list.appendChild(buildConstraintRow(idx, c.key, c.value));
+    });
+  }
   var addBtn = document.createElement('button');
-  addBtn.type='button'; addBtn.className='secondary'; addBtn.textContent='Add constraint';
+  addBtn.type='button'; addBtn.className='secondary sm'; addBtn.textContent='Add constraint';
   addBtn.onclick = function(){ addConstraint(list, idx); };
   var rmBtn = document.createElement('button');
-  rmBtn.type='button'; rmBtn.className='danger'; rmBtn.textContent='Remove filter';
+  rmBtn.type='button'; rmBtn.className='danger sm'; rmBtn.textContent='Remove filter';
   rmBtn.onclick = function(){ fb.remove(); };
   fb.appendChild(hidden); fb.appendChild(list); fb.appendChild(addBtn); fb.appendChild(rmBtn);
   document.getElementById('filters').appendChild(fb);
+  return fb;
+}
+// useMachineAsFilter copies the SMBIOS manufacturer/product of the
+// machine selected in the helper dropdown into a fresh filter block.
+// The operator can edit the values or add more constraints afterward.
+function useMachineAsFilter() {
+  var sel = document.getElementById('machine-as-filter');
+  if (!sel || !sel.value) return;
+  var opt = sel.options[sel.selectedIndex];
+  var manuf = opt.getAttribute('data-manufacturer') || '';
+  var prod  = opt.getAttribute('data-product') || '';
+  if (!manuf && !prod) return;
+  var constraints = [];
+  if (manuf) constraints.push({key:'system_manufacturer', value: manuf});
+  if (prod)  constraints.push({key:'system_product', value: prod});
+  appendFilterBlock(constraints);
+  sel.selectedIndex = 0;
 }
 </script>
 <style>

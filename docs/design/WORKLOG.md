@@ -2020,3 +2020,87 @@ Screenshot test in headless Chromium confirmed sticky-thead bug
 gone, drivers list shows bulk-select column, accounts page renders
 the admin row with the new password section, AD form is consistent
 with the rest of the settings.
+
+## 2026-05-28 — Driver upload polish + Downloads page
+
+Two related operator-visible features. The driver flow now closes the
+loop you would expect from an SCCM-style "upload zip, see what's
+inside, attach filters" UI; the downloads page exists so operators can
+grab the Windows agent (and other distributable binaries) without
+opening a terminal.
+
+**Driver flow.**
+
+- New `payload.ExtractDriverPackage(ctx, drivers, blobs, id)` shared
+  helper that runs the unzip + .inf scan + metadata.json persistence
+  pipeline. Used by both the API endpoint and the new portal handler.
+  Also a `payload.ReadDriverMetadata(blobs, id)` for read-only
+  rendering on edit.
+- New portal route `POST /portal/drivers/{id}/extract`. Triggers the
+  shared extractor and flashes a "Extracted N files (M .inf, K
+  bytes)" success line. Surfaced as a secondary button on the upload
+  section ("Extract & scan"), disabled until a payload is uploaded.
+- The edit page now reads the persisted metadata.json on every
+  render and shows the discovered `.inf` rows in a table (Path /
+  Class / Provider / Version / Date), so the operator sees what is
+  actually inside the zip without re-extracting.
+- New "Use a known machine as a filter" helper above the filter
+  blocks. A dropdown of inventoried machines (filtered to those with
+  a SMBIOS make + model) plus an "Add as filter" button that creates
+  a filter block pre-populated with `system_manufacturer` and
+  `system_product` constraints. Cuts the per-package filter setup
+  from "click dropdown, type Dell Inc., click Add, click dropdown,
+  type Latitude 5520" to one dropdown + one click.
+
+**Downloads page.**
+
+- New `$DATA_DIR/downloads/` convention. The portal lists every
+  file in that directory grouped by filename prefix (deployment
+  agent / Boot Client / server / installer scripts / Other) so
+  operators can drop new binaries in and have them appear in the UI.
+- `GET /portal/downloads` renders the grouped table.
+- `GET /portal/downloads/file/{name}` serves the file with
+  `Content-Disposition: attachment`. Refuses any name containing
+  `/`, `\\`, or `..` and double-checks the resolved path stays
+  inside the downloads directory (defence in depth for the obvious
+  zip-slip / path-traversal vectors).
+- Empty state lists the canonical filenames the portal classifies,
+  so the operator knows what to drop.
+- Settings landing gains a "Downloads" card with the agent/tools
+  summary; dashboard toolbar gains a quick-access ghost link.
+- `scripts/install-linux.sh` and `scripts/windows/install-windows.ps1`
+  create `$DATA_DIR/downloads/` and seed it with any agent / boot
+  client binaries that travelled in the same release bundle, so a
+  fresh install has working downloads without manual file moves.
+
+**WHY (decisions).**
+
+- DECISION: Driver extract is a separate operator-triggered step,
+  not auto-on-upload. Some SCCM zips are 2-4 GB; doing the
+  extraction inside the upload handler would block the form's
+  submit on disk I/O. As a separate POST the operator can also
+  re-extract after the server upgrades the metadata parser.
+- DECISION: Machine-as-filter uses inventory rows that already have
+  manufacturer + product. Machines whose SMBIOS hasn't been
+  populated (a partial register, an old agent version) are filtered
+  out of the dropdown rather than offered as a useless option.
+- DECISION: Downloads served from `$DATA_DIR/downloads/` rather
+  than embedded in the server binary. The agent binaries are
+  released separately from the server and would balloon the server
+  image; this way operators choose which agent version their
+  portal hands out, and re-distribution after an agent rev is a
+  drop-in copy.
+- DECISION: Downloads endpoint is auth-required. The binaries
+  themselves are not secret, but the portal has no public surface
+  by design; gating downloads through the session avoids accidental
+  exposure of, say, a pre-release agent on an internet-reachable
+  portal.
+
+**BUILD STATE.** Server builds; `go test ./...` green; secret check
+clean. End-to-end smoke test created a driver row, uploaded a tiny
+SCCM-style zip containing an Intel Ethernet .inf, triggered extract,
+and confirmed the rendered edit page surfaces the discovered Class /
+Provider / Version / Date. Downloads page rendered with the four
+seeded binaries grouped under their proper section headers; the
+path-traversal probe (`%2F..%2Fetc%2Fpasswd`) returned the styled
+400 page rather than the file. Both screenshots attached above.

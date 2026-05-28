@@ -202,10 +202,35 @@ if ($ApplyEnv) {
 }
 
 Write-Section "Creating directories"
-foreach ($dir in @($InstallDir, $DataDir, (Join-Path $DataDir 'ipxe'))) {
+foreach ($dir in @($InstallDir, $DataDir, (Join-Path $DataDir 'ipxe'), (Join-Path $DataDir 'downloads'))) {
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir | Out-Null
         Write-Host "Created $dir"
+    }
+}
+
+# Seed the downloads directory with any agent / boot client binaries
+# that shipped in the same install bundle, so the portal's Downloads
+# page works out of the box.
+$DownloadsDir = Join-Path $DataDir 'downloads'
+$candidates = @(
+    'autodeploy-agent-windows-amd64.exe',
+    'autodeploy-agent-windows-arm64.exe',
+    'autodeploy-agent-linux-amd64',
+    'autodeploy-boot-linux-amd64',
+    'autodeploy-boot-linux-arm64'
+)
+$BundleRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.PSCommandPath)
+foreach ($name in $candidates) {
+    foreach ($src in @((Join-Path $BundleRoot $name), (Join-Path (Get-Location) $name))) {
+        if (Test-Path -LiteralPath $src) {
+            $dst = Join-Path $DownloadsDir $name
+            if (-not (Test-Path -LiteralPath $dst)) {
+                Copy-Item -LiteralPath $src -Destination $dst -Force
+                Write-Host "    seeded $dst"
+            }
+            break
+        }
     }
 }
 

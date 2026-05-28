@@ -10,6 +10,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/payload"
 )
 
 func init() {
@@ -21,6 +22,7 @@ func init() {
 		post("/portal/drivers/{id}", driverUpdate(r))
 		post("/portal/drivers/{id}/delete", driverDelete(r))
 		post("/portal/drivers/{id}/upload", driverUpload(r))
+		post("/portal/drivers/{id}/extract", driverExtract(r))
 		post("/portal/drivers/{id}/preview", driverPreviewForm(r))
 	}
 }
@@ -43,29 +45,78 @@ type uiFilter struct {
 }
 type uiPair struct{ Key, Value string }
 
+// machineFilterChoice is one entry in the "use machine as filter"
+// dropdown on the driver form. The label is what the operator sees;
+// the manufacturer/product values are what get written into the new
+// filter constraint when the operator picks one.
+type machineFilterChoice struct {
+	ID           int64
+	Label        string
+	Manufacturer string
+	Product      string
+}
+
 func driverForm(r Repos, p model.DriverPackage, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		uf := make([]uiFilter, 0, len(p.Filters))
-		for _, f := range p.Filters {
-			var m map[string]string
-			_ = json.Unmarshal([]byte(f.FilterJSON), &m)
-			u := uiFilter{ID: f.ID}
-			for k, v := range m {
-				u.Pairs = append(u.Pairs, uiPair{Key: k, Value: v})
-			}
-			uf = append(uf, u)
-		}
-		title := "New driver package"
-		if !isNew {
-			title = "Edit driver package: " + p.Name
-		}
-		render(w, req, r, "driver_form.html", title, map[string]any{
-			"Driver":      p,
-			"Filters":     uf,
-			"AllowedKeys": allowedKeysList(),
-			"IsNew":       isNew,
-		})
+		driverFormRender(w, req, r, p, isNew, nil, "")
 	}
+}
+
+// driverFormRender is the shared rendering path for the driver edit
+// page. preview is the optional filter-evaluation result; extractMsg
+// is an optional flash-style line shown next to the metadata table
+// (set by the extract handler).
+func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model.DriverPackage, isNew bool, preview map[string]any, extractMsg string) {
+	uf := make([]uiFilter, 0, len(p.Filters))
+	for _, f := range p.Filters {
+		var m map[string]string
+		_ = json.Unmarshal([]byte(f.FilterJSON), &m)
+		u := uiFilter{ID: f.ID}
+		for k, v := range m {
+			u.Pairs = append(u.Pairs, uiPair{Key: k, Value: v})
+		}
+		uf = append(uf, u)
+	}
+	title := "New driver package"
+	if !isNew {
+		title = "Edit driver package: " + p.Name
+	}
+	// Build the "use machine as filter" dropdown. Only machines whose
+	// SMBIOS makes a meaningful filter (manufacturer + product) are
+	// included; an empty list collapses the helper UI gracefully.
+	var machines []machineFilterChoice
+	if !isNew && r.Inventory != nil {
+		all, _ := r.Inventory.List(req.Context())
+		for _, m := range all {
+			if strings.TrimSpace(m.SystemManufacturer) == "" || strings.TrimSpace(m.SystemProduct) == "" {
+				continue
+			}
+			machines = append(machines, machineFilterChoice{
+				ID:           int64(m.ID),
+				Label:        m.SystemManufacturer + " " + m.SystemProduct,
+				Manufacturer: m.SystemManufacturer,
+				Product:      m.SystemProduct,
+			})
+		}
+	}
+	// Surface previously-extracted INF metadata when the operator
+	// returns to the edit page after Save / cancel / browser back.
+	var metadata *payload.DriverExtractResult
+	if !isNew && r.Blobs != nil {
+		if res, ok, _ := payload.ReadDriverMetadata(r.Blobs, p.ID); ok {
+			metadata = &res
+		}
+	}
+	render(w, req, r, "driver_form.html", title, map[string]any{
+		"Driver":      p,
+		"Filters":     uf,
+		"AllowedKeys": allowedKeysList(),
+		"IsNew":       isNew,
+		"Machines":    machines,
+		"Metadata":    metadata,
+		"ExtractMsg":  extractMsg,
+		"Preview":     preview,
+	})
 }
 
 func allowedKeysList() []string {
@@ -277,26 +328,34 @@ func driverPreviewForm(r Repos) http.HandlerFunc {
 			results = append(results, one)
 		}
 
-		uf := make([]uiFilter, 0, len(pkg.Filters))
-		for _, f := range pkg.Filters {
-			var m map[string]string
-			_ = json.Unmarshal([]byte(f.FilterJSON), &m)
-			u := uiFilter{ID: f.ID}
-			for k, v := range m {
-				u.Pairs = append(u.Pairs, uiPair{Key: k, Value: v})
-			}
-			uf = append(uf, u)
+		driverFormRender(w, req, r, pkg, false, map[string]any{
+			"Identity":       id2,
+			"Results":        results,
+			"PackageMatches": matches,
+		}, "")
+	}
+}
+
+// driverExtract is the POST /portal/drivers/{id}/extract handler.
+// Runs the extraction pipeline (unpacks the zip, scans .inf metadata,
+// persists metadata.json) and re-renders the edit page with the
+// discovered driver list. The actual work lives in payload.ExtractDriverPackage
+// so the same code serves the JSON API endpoint.
+func driverExtract(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if _, err := r.Drivers.Get(req.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
 		}
-		render(w, req, r, "driver_form.html", "Edit driver package: "+pkg.Name, map[string]any{
-			"Driver":      pkg,
-			"Filters":     uf,
-			"AllowedKeys": allowedKeysList(),
-			"IsNew":       false,
-			"Preview": map[string]any{
-				"Identity":       id2,
-				"Results":        results,
-				"PackageMatches": matches,
-			},
-		})
+		res, err := payload.ExtractDriverPackage(req.Context(), r.Drivers, r.Blobs, id)
+		if err != nil {
+			flash(w, "err", "extract: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", id), http.StatusFound)
+			return
+		}
+		flash(w, "ok", fmt.Sprintf("Extracted %d files (%d .inf entries, %d bytes).",
+			res.FileCount, res.INFCount, res.Bytes))
+		http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", id), http.StatusFound)
 	}
 }

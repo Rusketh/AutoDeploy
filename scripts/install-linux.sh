@@ -61,6 +61,23 @@ fi
 echo "== Creating $DATA_DIR =="
 install -d -m 0750 -o autodeploy -g autodeploy "$DATA_DIR"
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/ipxe"
+install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/downloads"
+
+# Seed the downloads directory with any agent / boot client binaries
+# that travelled in the same release tarball, so the portal's
+# Downloads page works out of the box.
+HERE_PARENT="$(cd "$(dirname "$0")/.." && pwd)"
+for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm64.exe \
+                 autodeploy-agent-linux-amd64 \
+                 autodeploy-boot-linux-amd64 autodeploy-boot-linux-arm64; do
+    for src in "$HERE_PARENT/$candidate" "$(pwd)/$candidate"; do
+        if [ -f "$src" ] && [ ! -f "$DATA_DIR/downloads/$candidate" ]; then
+            install -m 0644 -o autodeploy -g autodeploy "$src" "$DATA_DIR/downloads/$candidate"
+            echo "    seeded $DATA_DIR/downloads/$candidate"
+            break
+        fi
+    done
+done
 
 # Install the systemd unit and example env file.
 HERE="$(cd "$(dirname "$0")" && pwd)"

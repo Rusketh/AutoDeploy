@@ -21,6 +21,7 @@ package payload
 import (
 	"archive/zip"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +29,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
 // INFEntry describes one discovered .inf file inside a driver package.
@@ -57,56 +61,81 @@ func (s *Service) extractDriver(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	pkg, err := s.Drivers.Get(r.Context(), id)
+	res, err := ExtractDriverPackage(r.Context(), s.Drivers, s.Blobs, id)
 	if err != nil {
-		writeModelErr(w, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// ExtractDriverPackage runs the extract pipeline for a driver row id:
+// reads the previously uploaded zip from data/drivers/{id}/payload.bin,
+// unpacks it into data/drivers/{id}/files/, scans .inf metadata, and
+// writes data/drivers/{id}/files/metadata.json so subsequent reads
+// don't have to re-walk the tree. Callable from any package that has
+// the repo + blob store.
+func ExtractDriverPackage(ctx context.Context, drivers *model.DriverPackageRepo, blobs *storage.BlobStore, id model.ID) (DriverExtractResult, error) {
+	pkg, err := drivers.Get(ctx, id)
+	if err != nil {
+		return DriverExtractResult{}, err
 	}
 	srcRel := filepath.ToSlash(filepath.Join("drivers", fmt.Sprint(int64(id)), "payload.bin"))
-	srcAbs, err := s.Blobs.Resolve(srcRel)
+	srcAbs, err := blobs.Resolve(srcRel)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return DriverExtractResult{}, err
 	}
 	if _, err := os.Stat(srcAbs); os.IsNotExist(err) {
-		http.Error(w, "driver payload not uploaded; PUT /api/v1/drivers/{id}/upload first", http.StatusBadRequest)
-		return
+		return DriverExtractResult{}, fmt.Errorf("driver payload not uploaded; upload a zip first")
 	}
-	destAbs, err := s.Blobs.EnsureDir(filepath.ToSlash(filepath.Join("drivers", fmt.Sprint(int64(id)), "files")))
+	destAbs, err := blobs.EnsureDir(filepath.ToSlash(filepath.Join("drivers", fmt.Sprint(int64(id)), "files")))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return DriverExtractResult{}, err
 	}
-	// Clear any previous extraction so re-extracting is reproducible.
 	if err := os.RemoveAll(destAbs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return DriverExtractResult{}, err
 	}
 	if err := os.MkdirAll(destAbs, 0o755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return DriverExtractResult{}, err
 	}
 	res, err := extractDriverZip(srcAbs, destAbs)
 	if err != nil {
-		http.Error(w, "extract: "+err.Error(), http.StatusBadRequest)
-		return
+		return DriverExtractResult{}, fmt.Errorf("extract: %w", err)
 	}
-	// Persist the metadata next to the extracted tree so the boot
-	// client and the portal can both consume it later without
-	// re-walking.
 	metaPath := filepath.Join(destAbs, "metadata.json")
-	mf, mferr := os.Create(metaPath)
-	if mferr == nil {
+	if mf, mferr := os.Create(metaPath); mferr == nil {
 		_ = json.NewEncoder(mf).Encode(res)
 		_ = mf.Close()
 	}
-	// Update the package row: storage_path keeps pointing at the
-	// original zip (the Boot Client downloads that and extracts
-	// locally), but we record the extracted byte count so the portal
-	// can show "extracted: N bytes, M drivers" in the list.
 	pkg.SizeBytes = res.Bytes
-	_ = s.Drivers.Update(r.Context(), pkg)
-	respondJSON(w, http.StatusOK, res)
+	_ = drivers.Update(ctx, pkg)
+	return res, nil
+}
+
+// ReadDriverMetadata reads the previously-written metadata.json for
+// a driver package. Returns ok=false (no error) when the file doesn't
+// exist (package not yet extracted, or extraction failed). The portal
+// uses this on the edit form to show what's inside without having to
+// re-extract on every render.
+func ReadDriverMetadata(blobs *storage.BlobStore, id model.ID) (DriverExtractResult, bool, error) {
+	rel := filepath.ToSlash(filepath.Join("drivers", fmt.Sprint(int64(id)), "files", "metadata.json"))
+	abs, err := blobs.Resolve(rel)
+	if err != nil {
+		return DriverExtractResult{}, false, err
+	}
+	f, err := os.Open(abs)
+	if os.IsNotExist(err) {
+		return DriverExtractResult{}, false, nil
+	}
+	if err != nil {
+		return DriverExtractResult{}, false, err
+	}
+	defer f.Close()
+	var res DriverExtractResult
+	if err := json.NewDecoder(f).Decode(&res); err != nil {
+		return DriverExtractResult{}, false, err
+	}
+	return res, true, nil
 }
 
 // extractDriverZip unpacks srcZip into destDir, refusing zip-slip

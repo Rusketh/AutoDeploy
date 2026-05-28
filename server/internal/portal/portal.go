@@ -124,6 +124,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerBulkRoutes(get, post, r)
 	registerLogsRoutes(get, post, r)
 	registerSettingsRoutes(get, post, r)
+	registerDownloadRoutes(get, post, r)
 	mirrorRoutes(get, post, r)
 
 	return nil
