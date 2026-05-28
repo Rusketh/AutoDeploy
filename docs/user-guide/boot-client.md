@@ -41,18 +41,24 @@ falls back to its normal boot device.
 
 ## PXE / iPXE setup
 
-The Boot Client is delivered to target machines via iPXE chainloaded over
-HTTP. AutoDeploy serves an iPXE script that points iPXE at a Linux
-kernel + initramfs:
+The Boot Client is delivered to target machines via iPXE chainloaded
+over HTTP. AutoDeploy serves an iPXE script that points iPXE at a
+Linux kernel + initramfs:
 
 ```
 GET /ipxe/boot.ipxe
 ```
 
-Configure your DHCP server to hand `http://<autodeploy>/ipxe/boot.ipxe` as
-the bootfile URL for iPXE-aware clients. (For non-iPXE BIOS/UEFI PXE
-clients, chain-load iPXE first using your existing PXE arrangement; this is
-outside AutoDeploy's scope but is well documented at https://ipxe.org/.)
+**Yes, this works with regular (classic) PXE.** The standard bootstrap
+is `firmware PXE → TFTP → iPXE → HTTP → AutoDeploy`. iPXE is the
+small bridge between TFTP firmware and AutoDeploy's HTTP-only flow.
+The full walkthrough — DHCP config patterns for ISC dhcpd, Microsoft
+DHCP and Kea, plus UEFI HTTP Boot for modern fleets — is in
+[pxe-setup.md](pxe-setup.md).
+
+For an environment that already has iPXE-aware firmware (or a DHCP
+that already chainloads iPXE), point its bootfile at
+`http://<autodeploy>/ipxe/boot.ipxe` and you're done.
 
 Put your kernel and initramfs in `AUTODEPLOY_DATA_DIR/ipxe/`:
 
