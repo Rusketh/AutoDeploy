@@ -14,11 +14,12 @@ the product, and never before.
 3. [Configuring the server](configuration.md) — environment variables and on-disk layout.
 4. [API quick-start](api-quickstart.md) — `curl` recipes against the JSON API.
 5. [Payload uploads and delivery](payloads.md) — uploading ISOs and packages, HTTPS, the manifest endpoint.
+6. [Boot Client and PXE](boot-client.md) — building the initramfs, the iPXE chainload, the deploy flow.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 2)
+## Current product surface (Phase 3)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -33,14 +34,19 @@ section you expect is missing, the feature it documents has not yet shipped.
   Range support so a Boot Client can resume an interrupted fetch.
 - **HTTPS** — production cert/key via env vars, or auto-generated
   self-signed under `AUTODEPLOY_DATA_DIR/tls/` in dev mode.
-- **Boot Client** — reads SMBIOS identity and exits safely (real imaging
-  arrives in Phase 3).
+- **Boot Client** — reads SMBIOS identity, calls the server for the
+  deployment menu, downloads the manifest's payloads and applies a WIM
+  to the target disk via `wimlib-imagex`. Includes a `--dry-run` mode
+  that logs every destructive step without executing it. Fails safe on
+  any error (boots the existing OS).
+- **iPXE** at `/ipxe/boot.ipxe` — chainload script and static asset tree
+  for kernel/initrd, with a reference initramfs build script under
+  `scripts/initramfs/`.
 - **Agent** — starts and exits (lifecycle arrives in Phase 6).
 
-Still to come (sequenced by `docs/design/roadmap.txt`): the actual PXE
-boot/image-apply flow (Phase 3+), driver matching engine (Phase 4),
-unattend generation (Phase 5), software step execution (Phase 6), software
-loadouts (Phase 7), inventory and re-imaging (Phase 8–9), AD integration
-(Phase 10), the access PIN and authentication (Phase 11), BitLocker
-(Phase 12), bulk operations (Phase 13), centralised logging (Phase 14),
-branding (Phase 15).
+Still to come (sequenced by `docs/design/roadmap.txt`): driver matching
+engine (Phase 4), unattend generation (Phase 5), software step execution
+(Phase 6), software loadouts (Phase 7), inventory and re-imaging
+(Phase 8–9), AD integration (Phase 10), the access PIN and authentication
+(Phase 11), BitLocker (Phase 12), bulk operations (Phase 13), centralised
+logging (Phase 14), branding (Phase 15).

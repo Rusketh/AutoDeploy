@@ -180,3 +180,75 @@ calls the API for the menu (Phase 1/2 endpoints are sufficient), pulls
 the manifest, partitions, applies the WIM with `wimlib-imagex`, places
 the (still-empty) unattend, and reboots. The server is already
 fact-complete for Phase 3; the work is on the Boot Client side.
+
+---
+
+## 2026-05-28 — Phase 3 complete (Boot Client + basic imaging)
+
+**WHAT.**
+
+- Server: added `POST /api/v1/clients/menu` (the Boot Client's menu
+  endpoint) and `GET /ipxe/boot.ipxe` (the iPXE chainload script).
+  Static iPXE assets are served from `AUTODEPLOY_DATA_DIR/ipxe/`.
+- Boot Client: full sub-command suite (`identify`, `menu`, `deploy
+  <image-id>`). HTTP layer (`internal/httpc`) handles JSON request /
+  response and streamed downloads with progress callbacks; supports
+  `--insecure-tls` for dev. Imaging layer (`internal/imaging`) issues
+  the partition / mkfs / wimlib-imagex / driver-inject / unattend-place
+  sequence through a Runner interface, with `OSRunner` for production
+  and `Recorder` for tests. `--dry-run` logs every destructive call
+  without executing it.
+- Initramfs build script (`scripts/initramfs/build-initramfs.sh`):
+  bundles `autodeploy-boot` plus the host tools the imaging plan needs
+  (sgdisk, mkfs.fat, mkfs.ntfs, wimlib-imagex, busybox or coreutils
+  basics), writes a minimal `/init` that parses `autodeploy.server=`
+  from the kernel command line and execs `autodeploy-boot menu`.
+- Tests: end-to-end dry-run drove a real server, fetched the menu,
+  pulled a manifest, downloaded a payload, and emitted the full
+  partition + wimlib step sequence. Imaging recorder asserts the right
+  commands in the right order; first-error-aborts behaviour verified.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: The imaging code calls `sgdisk`, `mkfs.fat`, `mkfs.ntfs`,
+  `mount`, `umount`, `wimlib-imagex` and `cp` via subprocess. Pure-Go
+  reimplementations of these tools exist for some but not all, and
+  reproducing wimlib in particular is a project of its own. Subprocess
+  keeps the Boot Client small and lets the initramfs share well-tested
+  upstream tools. The Runner interface keeps tests independent of any
+  of them being installed.
+- DECISION: Partition layout is GPT, 100 MiB FAT32 ESP + remainder NTFS
+  (single OS volume). This is the modern UEFI Windows layout and
+  matches what Windows setup produces unattended. Legacy BIOS / MBR is
+  out of scope for the initial release — modern Windows installs are
+  UEFI.
+- DECISION: Boot Client treats EVERY failure path as fail-safe and
+  exits 0 without touching the disk — including unreachable server,
+  empty menu, no operator input, manifest missing WIM, hardware
+  identity unreadable. Only `imaging.Apply` is destructive, and only
+  after an explicit operator selection. This matches the design's
+  "imaging is destructive and must never be the default outcome of a
+  failure" rule.
+- DECISION: Operator-cancelled (`0`), no-input, and invalid-choice all
+  log as `menu.cancel` and return without imaging. The operator can
+  always escape to a normal boot.
+- DECISION: iPXE script is rendered server-side and parameterised by
+  the request `Host` header, so any client that reaches the server
+  uses the same hostname to chain-fetch the kernel + initrd. No need
+  for static config of the public URL.
+- ASSUMPTION: NIC and disk drivers for the pre-boot environment come
+  from the kernel the operator supplies. Most distro generic kernels
+  cover common hardware; AutoDeploy does not ship its own kernel.
+  Building one is the operator's choice, documented in
+  `docs/user-guide/boot-client.md`.
+
+**BUILD STATE.** `make build` and `go test ./...` green for all three
+modules. End-to-end dry-run validated against a running server.
+
+**NEXT.** Phase 4 — driver matching. The driver-package model and
+upload endpoint already exist (Phase 1, Phase 2); Phase 4 is the
+matching engine: structured SMBIOS-filter expressions, server-side
+evaluation against reported hardware, and inclusion of the matched
+packages in the manifest the Boot Client already consumes. The Boot
+Client's imaging code already injects whatever driver paths the
+manifest lists, so the wire change is contained in the server.

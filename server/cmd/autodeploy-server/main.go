@@ -72,6 +72,12 @@ func run(logger *slog.Logger) error {
 	mh := &payload.ManifestHandler{Resolver: r.Resolver}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
 
+	api.RegisterIPXE(mux)
+	// Static iPXE asset tree (kernel/initrd) lives under data/ipxe/.
+	staticDir := filepath.Join(cfg.DataDir, "ipxe")
+	_ = os.MkdirAll(staticDir, 0o755)
+	mux.Handle("GET /ipxe/static/", http.StripPrefix("/ipxe/static/", http.FileServer(http.Dir(staticDir))))
+
 	if err := portal.Register(mux, portal.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Images: r.Images, Resolver: r.Resolver,
