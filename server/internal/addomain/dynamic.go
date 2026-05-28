@@ -75,6 +75,14 @@ func (d *DynamicDirectory) SetGroupMemberships(ctx context.Context, computerDN s
 	return inner.SetGroupMemberships(ctx, computerDN, groups)
 }
 
+func (d *DynamicDirectory) RenameComputer(ctx context.Context, dn, newName string) (string, error) {
+	inner, err := d.dir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return inner.RenameComputer(ctx, dn, newName)
+}
+
 func (d *DynamicDirectory) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

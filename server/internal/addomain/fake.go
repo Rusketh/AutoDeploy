@@ -84,4 +84,33 @@ func (f *FakeDirectory) SetGroupMemberships(_ context.Context, computerDN string
 	return nil
 }
 
+func (f *FakeDirectory) RenameComputer(_ context.Context, dn, newName string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.Computers[dn]; !ok {
+		return "", fmt.Errorf("no such computer: %s", dn)
+	}
+	// Preserve the containing OU; only rebuild the CN.
+	ou := dn
+	if i := strings.Index(dn, ","); i >= 0 {
+		ou = dn[i+1:]
+	}
+	newDN := computerDN(newName, ou)
+	if _, exists := f.Computers[newDN]; exists {
+		return "", fmt.Errorf("exists: %s", newDN)
+	}
+	delete(f.Computers, dn)
+	f.Computers[newDN] = newName
+	// Group memberships move with the DN.
+	for g, members := range f.Groups {
+		for i, m := range members {
+			if m == dn {
+				members[i] = newDN
+			}
+		}
+		f.Groups[g] = members
+	}
+	return newDN, nil
+}
+
 func (f *FakeDirectory) Close() error { return nil }

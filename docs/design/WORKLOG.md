@@ -1668,3 +1668,147 @@ cross-compiled `autodeploy-server.exe` is 19 MB (CGO disabled);
 `scripts/check-secrets.sh` green; smoke test against the Linux
 binary confirmed the refactored `run(ctx, logger)` boots through the
 full lifecycle.
+
+## 2026-05-28 — Audit follow-up: closing the design gaps
+
+The recent design audit surfaced several places where the worklog's
+"Phase N complete" markers were ahead of the code. This change closes
+the four High-severity gaps and the High shortfall flagged in the
+report, plus the lower-severity ones a single pass could absorb.
+
+**Per-machine identity in the generated unattend (audit gap #3).**
+The Boot Client now passes its SMBIOS UUID through the unattend URL
+the manifest endpoint hands it. `serveUnattend` reads the binding by
+UUID and overrides `NameStrategy=literal`, `ComputerName=<binding name>`
+and (when domain join is configured) `DomainJoin.OU=<binding OU>`.
+Re-imaging therefore preserves identity (§4.3) and the joined AD
+name matches the object the manifest endpoint just prepared. Pure-
+catalog endpoints (the portal preview link) still work because the
+override is optional -- absent `?uuid=` returns the catalog XML
+unchanged.
+
+**AD coordination for bulk rename (audit gap #2).** Added
+`Directory.RenameComputer` (FakeDirectory + LDAPDirectory +
+DynamicDirectory) and `Service.RenameComputer`. The bulk-create
+handler now walks the just-queued jobs for action=`rename`, looks
+each machine's binding up, asks the Domain Integration Service to
+rename the AD object from the old binding name to the new payload
+name, and updates the binding. Failures are surfaced as
+`ad_warnings` on the response and as audit log lines; the local OS
+rename still runs (some operators have AD-unjoined targets in the
+same selection). LDAP rename also re-writes sAMAccountName so the
+secure channel stays consistent.
+
+**Centralised log shipping from clients (audit gap #1).** New
+`logging.Shipper` in each client wraps the JSON slog handler with a
+bounded in-memory buffer (2048 events, oldest-drop policy). On exit
+the Boot Client and agent POST the drained buffer to
+`/api/v1/logs/ingest`; the Boot Client also flushes before
+`reboot`. The agent's resident-mode check-in loop ships on every
+tick. The server endpoint gained a body-size cap (256 KiB), an
+events-per-request cap (500), and a per-source-IP token-bucket rate
+limit (50 burst, 10/s refill) so a noisy client cannot flood the
+log table.
+
+**Agent SMBIOS UUID on Windows (audit gap #6).** Split
+`readSystemUUID` into platform files. Windows reads via
+`Get-CimInstance Win32_ComputerSystemProduct` (the supported
+modern path), falling back to `wmic csproduct get UUID`. Both
+results are normalised to a 36-char hyphenated lower-case form so
+the server-side identity comparison is deterministic.
+
+**SCCM driver package ingest + proper offline injection (audit
+gap #4).** New endpoint `POST /api/v1/drivers/{id}/extract` unpacks
+the uploaded zip into `data/drivers/{id}/files/`, refuses zip-slip
+paths, caps total bytes, walks for `.inf` files, parses the
+[Version] section (handles UTF-16 LE and ASCII INFs), and writes
+a `metadata.json` summary alongside. The Boot Client's imaging
+`Apply` was restructured: the Windows partition mount now persists
+across `applyWIM` + `injectDrivers` + `placeUnattend` (previously
+the mount was released inside `applyWIM`, silently dropping driver
+and unattend writes). `injectDrivers` extracts each downloaded zip
+into `<mount>\Windows\INF\AutoDeploy\<name>\` so Windows PnP picks
+up the .inf files on first boot, which is the offline-servicing
+equivalent of `dism /Add-Driver /Recurse` for our pipeline. Single-
+file legacy uploads still work via a cp fallback.
+
+**Boot screen + agent OEM branding (audit gap #5).** The Boot Client
+fetches `/api/v1/branding` before rendering the menu and shows
+`<OrganisationName> -- <ProductName>` in the header (Brand defaults
+keep the AutoDeploy header when nothing is configured). The agent
+on Windows writes the brand's `OEMManufacturer`, `SupportURL` and
+`SupportPhone` to `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\
+OEMInformation` via `reg add` so System Properties shows the
+operator's organisation rather than the OEM's.
+
+**Agent BitLocker PIN endpoint authentication (audit shortfall #1).**
+New `machine_deploy_token` table (migration 0009) holds the SHA-256
+hash of a per-machine bearer token. The token is issued by the
+agent report endpoint on the `outcome=in_progress` open path,
+rotated on every new deploy, and expires after 24 hours. The agent
+records it in memory (never to disk, never logged) and sends it as
+`X-AutoDeploy-Deploy-Token` on every request. `POST /api/v1/agent/
+bitlocker/config` now requires a valid token before returning the
+cleartext PIN. Stealing a SMBIOS UUID is no longer sufficient to
+retrieve the PIN -- only the freshly deploying client has the
+token.
+
+**Bootstrap admin file warning (audit shortfall #6).** The portal
+layout now shows a red flash banner when `admin-bootstrap.txt`
+still exists in the data directory after the operator has logged
+in. The check is a single stat per page render; the banner
+disappears the moment the operator deletes the file.
+
+**Built-in TFTP listener formalised (was: non-goal violation).**
+`docs/design/AutoDeploy_Project_Context.txt` was amended: the anti-
+goal "NO reliance on TFTP or layer-2 PXE. HTTP(S) only." is
+clarified to "NO TFTP in the payload path"; a built-in TFTP
+listener serving the iPXE bootstrap binaries only is a sanctioned
+addition. The data path stays HTTP(S); TFTP only carries the
+firmware-to-iPXE handoff for non-HTTPBoot firmware.
+
+**WHY (decisions).**
+
+- DECISION: Identity injection is a layer over the catalog
+  unattend, not a separate per-machine row. The catalog stays the
+  source of truth for everything that isn't identity-bearing
+  (locale, software, policies, ...); only `ComputerName` and
+  `DomainJoin.OU` are overridden when a binding exists. This keeps
+  the operator's mental model intact: one unattend per role, many
+  bindings.
+- DECISION: AD rename runs server-side at bulk-create time, not
+  agent-side. The design (§13.2) names the sequence "rename ->
+  directory update -> reboot"; making the agent call AD would mean
+  the agent needs domain credentials. Keeping AD on the server
+  preserves least-privilege.
+- DECISION: Deploy token is per-machine and rotates per deploy,
+  not a long-lived agent secret. The threat we are closing is "an
+  attacker spoofs the SMBIOS UUID to a known target". The window
+  in which the token is useful matches the window in which the
+  agent legitimately needs the PIN; outside that window an
+  attacker has nothing useful.
+- DECISION: Log shipping is best-effort, not blocking. A failed
+  ship re-queues into the buffer for the next attempt; the deploy
+  itself does not block on the server seeing the events. This
+  matches the design's "logs are facts" framing.
+- DECISION: Driver injection by file-copy into the mounted INF
+  search path, not by `dism /Add-Driver`. wimlib has no direct
+  equivalent of DISM's offline-add semantics; mounting and copying
+  into `%WINDIR%\INF\AutoDeploy\<name>\` lets Windows PnP discover
+  the .inf files on first boot which is functionally equivalent
+  for our needs and avoids requiring DISM-on-Linux tooling in the
+  initramfs.
+- DECISION: Bootstrap admin warning is a per-page-render stat, not
+  a startup-time one-shot. The check is sub-microsecond; the
+  operator-visible signal that the file is still there is the
+  whole point.
+
+**BUILD STATE.** `go vet ./...` clean on linux + windows for all
+three modules; `go test ./...` green across server, boot-client and
+agent; `scripts/check-secrets.sh` green; cross-compiled binaries
+(server.exe 20 MB, agent.exe 9 MB) build clean. New tests added:
+`TestDeployTokenIssueAndValidate`,
+`TestDeployTokenExpiry`,
+`TestRenameComputer`, `TestRenameNoSuchObject`,
+`TestRenameDisabledServiceIsNoOp`,
+`TestServeUnattendInjectsBindingIdentity`.

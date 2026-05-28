@@ -33,6 +33,14 @@
 {{if .FlashMsg}}
 <div class="flash flash-{{.FlashKind}}">{{.FlashMsg}}</div>
 {{end}}
+{{if and .User.ID .BootstrapPresent}}
+<div class="flash flash-err">
+  <strong>Bootstrap credentials still on disk.</strong>
+  The file <code>admin-bootstrap.txt</code> contains a cleartext password
+  and is meant to be read once then deleted. Remove it from the data
+  directory now that you have an operator account.
+</div>
+{{end}}
 <main>
 {{template "body" .}}
 </main>

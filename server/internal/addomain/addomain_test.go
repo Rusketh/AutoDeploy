@@ -85,3 +85,54 @@ func TestPrepareValidates(t *testing.T) {
 		t.Error("expected error for empty OU")
 	}
 }
+
+func TestRenameComputer(t *testing.T) {
+	dir := NewFakeDirectory()
+	_, err := dir.CreateComputer(context.Background(),
+		"OU=Lab,DC=corp,DC=example", "OLDNAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir.Groups["Lab-Computers"] = []string{"CN=OLDNAME,OU=Lab,DC=corp,DC=example"}
+	s := &Service{Dir: dir, Enabled: true}
+	newDN, err := s.RenameComputer(context.Background(), "OLDNAME", "NEWNAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newDN != "CN=NEWNAME,OU=Lab,DC=corp,DC=example" {
+		t.Errorf("newDN = %q", newDN)
+	}
+	if _, exists := dir.Computers[newDN]; !exists {
+		t.Error("new object not present")
+	}
+	for d := range dir.Computers {
+		if strings.Contains(d, "OLDNAME") {
+			t.Errorf("old DN survived: %s", d)
+		}
+	}
+	// Group membership followed the rename.
+	mem := dir.Groups["Lab-Computers"]
+	if len(mem) != 1 || mem[0] != newDN {
+		t.Errorf("group membership not updated: %+v", mem)
+	}
+}
+
+func TestRenameNoSuchObject(t *testing.T) {
+	dir := NewFakeDirectory()
+	s := &Service{Dir: dir, Enabled: true}
+	dn, err := s.RenameComputer(context.Background(), "GHOST", "REAL")
+	if err != nil {
+		t.Fatalf("rename should be a no-op when object not found, got %v", err)
+	}
+	if dn != "" {
+		t.Errorf("expected empty DN, got %q", dn)
+	}
+}
+
+func TestRenameDisabledServiceIsNoOp(t *testing.T) {
+	s := &Service{Dir: NewFakeDirectory(), Enabled: false}
+	dn, err := s.RenameComputer(context.Background(), "X", "Y")
+	if err != nil || dn != "" {
+		t.Errorf("disabled service should no-op cleanly; got dn=%q err=%v", dn, err)
+	}
+}

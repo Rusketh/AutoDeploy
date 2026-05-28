@@ -237,7 +237,14 @@ find yourself proposing one of these, stop - it was a choice.
   - NO graded portal permissions in the initial release (see Decisions).
   - NO per-image or multi-tenant branding (system-wide only).
   - NO merging of unattend objects up the chain (nearest-wins, used whole).
-  - NO reliance on TFTP or layer-2 PXE. HTTP(S) only.
+  - NO TFTP in the payload path. The image/driver/software/unattend
+    download path is HTTP(S) only.
+    (Amendment 2026-05-28: a built-in TFTP listener serving the iPXE
+    bootstrap binaries ONLY -- undionly.kpxe, ipxe.efi, snponly.efi --
+    is a sanctioned addition. Classic PXE firmware cannot HTTP-boot,
+    so a tiny RFC 1350 server inside AutoDeploy lets operators avoid
+    standing up a separate TFTP daemon. The data path remains HTTP(S);
+    TFTP only carries the firmware-to-iPXE handoff.)
   - NO WMIC or WinPE in the boot environment. Identity comes from SMBIOS/DMI in a
     Linux pre-boot environment.
   - NO storage of frozen historical images for routine re-imaging (re-imaging is

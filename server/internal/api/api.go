@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -43,6 +44,9 @@ type Repos struct {
 	// Runtime settings (AD, retention, throttle) — operator-managed
 	// via the portal at runtime.
 	Runtime *runtime.Settings
+	// AD is the Domain Integration Service. Optional; nil disables
+	// server-side AD coordination (the local OS rename still runs).
+	AD *addomain.Service
 }
 
 // Register mounts /api/v1/* routes on mux.

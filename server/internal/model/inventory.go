@@ -2,7 +2,11 @@ package model
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -291,6 +295,63 @@ func (r *InventoryRepo) RecordDetectedState(ctx context.Context, s DetectedState
 		    last_evaluated_at=CURRENT_TIMESTAMP`,
 		s.MachineID, s.SoftwarePackageID, detected)
 	return err
+}
+
+// IssueDeployToken rotates the per-machine deploy token. Returns the
+// cleartext token (caller's responsibility to hand it to the agent
+// and never log it). Only the SHA-256 hash is persisted. ttl is how
+// long the token stays valid; rotate-on-every-deploy means we never
+// need a long-lived token.
+func (r *InventoryRepo) IssueDeployToken(ctx context.Context, machineID ID, ttl time.Duration) (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(raw[:])
+	sum := sha256.Sum256([]byte(token))
+	hashHex := hex.EncodeToString(sum[:])
+	expires := time.Now().Add(ttl).UTC()
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO machine_deploy_token (machine_id, token_hash, expires_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(machine_id) DO UPDATE SET
+		    token_hash=excluded.token_hash,
+		    issued_at=CURRENT_TIMESTAMP,
+		    expires_at=excluded.expires_at`,
+		machineID, hashHex, expires)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// ValidateDeployToken returns true if token matches the stored hash
+// for machineID and hasn't expired. Constant-time compare prevents a
+// timing oracle. An empty token is always invalid.
+func (r *InventoryRepo) ValidateDeployToken(ctx context.Context, machineID ID, token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	var hashHex string
+	var expires time.Time
+	err := r.db.QueryRowContext(ctx, `
+		SELECT token_hash, expires_at FROM machine_deploy_token WHERE machine_id=?`,
+		machineID).Scan(&hashHex, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if time.Now().After(expires) {
+		return false, nil
+	}
+	sum := sha256.Sum256([]byte(token))
+	want := hex.EncodeToString(sum[:])
+	if subtle.ConstantTimeCompare([]byte(hashHex), []byte(want)) != 1 {
+		return false, nil
+	}
+	return true, nil
 }
 
 // DetectedStateFor returns the latest detected state per package for a

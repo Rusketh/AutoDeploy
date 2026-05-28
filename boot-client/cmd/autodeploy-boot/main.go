@@ -67,7 +67,11 @@ func main() {
 		f.site = siteFromKernelCmdline()
 	}
 
-	log := logging.New(os.Stdout, "boot")
+	log, shipper := logging.NewWithShipper(os.Stdout, "boot", 2048)
+	// Best-effort log shipment to the server. Drained from the run's
+	// buffer right before we exit (or just before reboot) so the
+	// portal can see what happened on this client during deploy.
+	defer shipLogs(log, shipper, f.server, f.insecureTLS)
 
 	cmd := flag.Arg(0)
 	if cmd == "" {
@@ -97,7 +101,7 @@ func main() {
 			log.Info("boot.idle", slog.String("reason", "no server configured; fail-safe to normal boot"))
 			return
 		}
-		runMenu(log, f, id)
+		runMenu(log, f, id, shipper)
 	case "deploy":
 		if f.server == "" {
 			log.Error("deploy", slog.String("error", "server URL required"))
@@ -108,7 +112,7 @@ func main() {
 			log.Error("deploy", slog.String("error", "deploy <image-id> required"))
 			os.Exit(0)
 		}
-		runDeploy(log, f, id, imageID)
+		runDeploy(log, f, id, imageID, shipper)
 	default:
 		log.Error("boot.unknown_cmd", slog.String("cmd", cmd))
 		os.Exit(0)
@@ -140,7 +144,7 @@ type manifest struct {
 	Warnings []string       `json:"warnings,omitempty"`
 }
 
-func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
+func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging.Shipper) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
@@ -166,8 +170,12 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
 		log.Info("menu.empty", slog.String("reason", "no deployable images; fail-safe to normal boot"))
 		return
 	}
+	// Fetch branding so the menu shows the operator's product /
+	// organisation name. Failure is silent: the menu still renders
+	// with the AutoDeploy default.
+	brand := fetchBrand(ctx, c, log)
 	fmt.Println()
-	fmt.Println("=== AutoDeploy ===")
+	fmt.Printf("=== %s ===\n", brandTitle(brand))
 	if resp.Reimage != nil {
 		fmt.Printf("  R) Re-image this machine: %s\n", resp.Reimage.Name)
 	}
@@ -190,7 +198,7 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
 			log.Info("menu.cancel", slog.String("reason", "no re-image option"))
 			return
 		}
-		runDeploy(log, f, id, resp.Reimage.ImageID)
+		runDeploy(log, f, id, resp.Reimage.ImageID, shipper)
 		return
 	}
 	n, err := strconv.Atoi(choice)
@@ -198,10 +206,10 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
 		log.Info("menu.cancel", slog.String("reason", "invalid choice"))
 		return
 	}
-	runDeploy(log, f, id, resp.Items[n-1].ImageID)
+	runDeploy(log, f, id, resp.Items[n-1].ImageID, shipper)
 }
 
-func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64) {
+func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64, shipper *logging.Shipper) {
 	ctx := context.Background()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 	var m manifest
@@ -270,6 +278,11 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64)
 		log.Info("deploy.reboot.skip", slog.String("reason", "dry run"))
 		return
 	}
+	// Ship logs BEFORE asking the kernel to reboot -- once reboot is
+	// in flight the network goes down and the buffered events are
+	// lost. The main()'s deferred shipLogs covers the failure paths
+	// above where we exit cleanly without rebooting.
+	shipLogs(log, shipper, f.server, f.insecureTLS)
 	// Reboot into the freshly applied OS.
 	if err := runner.Exec(ctx, "reboot"); err != nil {
 		log.Error("reboot", slog.String("error", err.Error()))
@@ -407,6 +420,61 @@ func bytesFields(b []byte) [][]byte {
 		out = append(out, b[start:])
 	}
 	return out
+}
+
+// brandResp is the subset of /api/v1/branding the boot menu shows.
+type brandResp struct {
+	ProductName      string `json:"product_name"`
+	OrganisationName string `json:"organisation_name"`
+}
+
+// fetchBrand reads the operator's branding from the server so the
+// boot menu can render org-specific text. The endpoint is open (no
+// auth) by design -- the boot screen needs the brand before the
+// access PIN gate runs. Failure is silent: defaults take over.
+func fetchBrand(ctx context.Context, c *httpc.Client, log *slog.Logger) brandResp {
+	var b brandResp
+	if err := c.GetJSON(ctx, "/api/v1/branding", &b); err != nil {
+		log.Info("brand.fetch.skip", slog.String("reason", err.Error()))
+		return brandResp{ProductName: "AutoDeploy"}
+	}
+	if b.ProductName == "" {
+		b.ProductName = "AutoDeploy"
+	}
+	return b
+}
+
+// brandTitle renders the menu header. If the operator has set an
+// organisation name we lead with it; otherwise the product name
+// alone is enough.
+func brandTitle(b brandResp) string {
+	if b.OrganisationName != "" {
+		return b.OrganisationName + " — " + b.ProductName
+	}
+	return b.ProductName
+}
+
+// shipLogs is the defer hook that flushes the buffered slog records
+// to the server. Failures here are themselves logged but cannot then
+// be shipped, so they only appear on local stdout. We give the
+// network a generous timeout so a flaky link doesn't drop the batch
+// silently. Empty server URL skips the ship altogether (e.g. the
+// 'identify' subcommand).
+func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) {
+	if server == "" || shipper == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	n, err := shipper.Ship(ctx, server, insecureTLS)
+	if err != nil {
+		log.Warn("logs.ship.fail",
+			slog.String("error", err.Error()),
+			slog.Int("buffered", n),
+		)
+		return
+	}
+	log.Info("logs.ship.ok", slog.Int("events", n))
 }
 
 // sanitise turns a URL fragment into a filename-safe string.

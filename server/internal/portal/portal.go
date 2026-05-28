@@ -17,6 +17,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +60,9 @@ type Repos struct {
 	// SecretsBox is unused at the portal layer but kept here so the
 	// bundle matches the api one-for-one if we ever want to swap.
 	SecretsBox *secrets.Box
+	// DataDir is the on-disk root used to check for the bootstrap-
+	// admin file so the portal can warn while it still exists.
+	DataDir string
 }
 
 const (
@@ -344,15 +349,27 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 	user, _ := sessionUser(req, r)
 	brand, _ := r.Branding.Get(req.Context())
 	kind, msg := readFlash(w, req)
+	// Bootstrap-admin warning: the file holds a cleartext password
+	// and is meant to be read once then deleted. If it is still
+	// present after an operator has logged in we surface a banner
+	// asking them to remove it. Cheap stat per page render -- the
+	// file disappears the moment they comply.
+	bootstrapPresent := false
+	if r.DataDir != "" {
+		if _, err := os.Stat(filepath.Join(r.DataDir, "admin-bootstrap.txt")); err == nil {
+			bootstrapPresent = true
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	envelope := map[string]any{
-		"Title":      title,
-		"Data":       data,
-		"User":       user,
-		"Brand":      brand,
-		"FlashKind":  kind,
-		"FlashMsg":   msg,
-		"Path":       req.URL.Path,
+		"Title":            title,
+		"Data":             data,
+		"User":             user,
+		"Brand":            brand,
+		"FlashKind":        kind,
+		"FlashMsg":         msg,
+		"Path":             req.URL.Path,
+		"BootstrapPresent": bootstrapPresent,
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

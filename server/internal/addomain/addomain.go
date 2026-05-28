@@ -39,6 +39,10 @@ type Directory interface {
 	// SetGroupMemberships removes the computer from every group it is in
 	// and adds it to exactly the groups listed. Idempotent.
 	SetGroupMemberships(ctx context.Context, computerDN string, groups []string) error
+	// RenameComputer renames the object at dn so its CN becomes newName.
+	// Returns the resulting DN. Implementations should preserve the
+	// containing OU (i.e. a CN-only rename, not a move).
+	RenameComputer(ctx context.Context, dn, newName string) (string, error)
 	// Close releases any underlying connection. No-op for FakeDirectory.
 	Close() error
 }
@@ -114,6 +118,52 @@ func (s *Service) PrepareComputer(ctx context.Context, name, ou string, groups [
 		slog.String("actor", "server"),
 		slog.String("target", newDN),
 		slog.Int("groups", len(groups)),
+	)
+	return newDN, nil
+}
+
+// RenameComputer renames an AD computer object before the local OS
+// rename runs. The design (§13.2 bulk rename) sequences this as
+// rename -> directory update -> reboot, and the Domain Integration
+// Service owns the directory-update step. Returns the new DN, or ""
+// if AD is disabled (in which case the local rename still proceeds).
+//
+// If the object isn't found by oldName the rename is treated as a
+// no-op success: this covers the case where the machine was never
+// joined or was already renamed in AD out-of-band. The agent's local
+// rename then runs unaffected.
+func (s *Service) RenameComputer(ctx context.Context, oldName, newName string) (string, error) {
+	if s == nil || !s.isEnabled() {
+		return "", nil
+	}
+	if strings.TrimSpace(oldName) == "" || strings.TrimSpace(newName) == "" {
+		return "", fmt.Errorf("rename: old and new names required")
+	}
+	s.log().Info("addomain.rename.start",
+		slog.String("actor", "server"),
+		slog.String("target", oldName),
+		slog.String("new_name", newName),
+	)
+	dn, err := s.Dir.FindComputer(ctx, oldName)
+	if err != nil {
+		return "", fmt.Errorf("find %s: %w", oldName, err)
+	}
+	if dn == "" {
+		s.log().Info("addomain.rename.skip",
+			slog.String("actor", "server"),
+			slog.String("target", oldName),
+			slog.String("note", "no AD object found; local rename will still run"),
+		)
+		return "", nil
+	}
+	newDN, err := s.Dir.RenameComputer(ctx, dn, newName)
+	if err != nil {
+		return "", fmt.Errorf("rename %s -> %s: %w", dn, newName, err)
+	}
+	s.log().Info("addomain.rename.ok",
+		slog.String("actor", "server"),
+		slog.String("target", newDN),
+		slog.String("old_dn", dn),
 	)
 	return newDN, nil
 }

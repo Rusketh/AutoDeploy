@@ -16,8 +16,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Runner is the boundary between this package and the host operating system.
@@ -87,6 +89,12 @@ type Plan struct {
 // Apply partitions the disk, applies the WIM, injects drivers and writes
 // the unattend. It does NOT reboot — the caller decides whether to do so
 // based on whether anything failed.
+//
+// The Windows partition mount is held across applyWIM + injectDrivers
+// + placeUnattend so each subsequent step writes onto the same mounted
+// filesystem the WIM was just laid down on. The previous structure
+// (mount/umount inside applyWIM) silently dropped driver + unattend
+// writes because the mount went away before they ran.
 func Apply(ctx context.Context, plan Plan, r Runner) error {
 	if plan.WIMImageIndex == 0 {
 		plan.WIMImageIndex = 1
@@ -94,15 +102,27 @@ func Apply(ctx context.Context, plan Plan, r Runner) error {
 	if err := partition(ctx, plan, r); err != nil {
 		return fmt.Errorf("partition: %w", err)
 	}
-	if err := applyWIM(ctx, plan, r); err != nil {
+	mount := filepath.Join(plan.WorkDir, "win")
+	if err := r.Exec(ctx, "mkdir", "-p", mount); err != nil {
+		return fmt.Errorf("prepare mount point: %w", err)
+	}
+	if err := r.Exec(ctx, "mount", partName(plan.TargetDisk, 2), mount); err != nil {
+		return fmt.Errorf("mount %s: %w", partName(plan.TargetDisk, 2), err)
+	}
+	defer func() { _ = r.Exec(ctx, "umount", mount) }()
+
+	if err := applyWIM(ctx, plan, r, mount); err != nil {
 		return fmt.Errorf("apply wim: %w", err)
 	}
-	if err := injectDrivers(ctx, plan, r); err != nil {
+	if err := injectDrivers(ctx, plan, r, mount); err != nil {
 		return fmt.Errorf("inject drivers: %w", err)
 	}
-	if err := placeUnattend(ctx, plan, r); err != nil {
+	if err := placeUnattend(ctx, plan, r, mount); err != nil {
 		return fmt.Errorf("place unattend: %w", err)
 	}
+	// Best-effort sync so the umount in the deferred cleanup doesn't
+	// race writeback on a freshly applied 8 GB WIM.
+	_ = r.Exec(ctx, "sync")
 	return nil
 }
 
@@ -138,44 +158,70 @@ func partName(disk string, n int) string {
 	return fmt.Sprintf("%s%d", disk, n)
 }
 
-func applyWIM(ctx context.Context, plan Plan, r Runner) error {
-	// Mount the Windows partition under WorkDir/win, apply WIM, unmount.
-	mount := filepath.Join(plan.WorkDir, "win")
-	if err := r.Exec(ctx, "mkdir", "-p", mount); err != nil {
-		return err
-	}
-	if err := r.Exec(ctx, "mount", partName(plan.TargetDisk, 2), mount); err != nil {
-		return err
-	}
-	defer func() { _ = r.Exec(ctx, "umount", mount) }()
+func applyWIM(ctx context.Context, plan Plan, r Runner, mount string) error {
 	return r.Exec(ctx, "wimlib-imagex", "apply",
 		plan.WIMPath, fmt.Sprint(plan.WIMImageIndex), mount)
 }
 
-func injectDrivers(ctx context.Context, plan Plan, r Runner) error {
+// injectDrivers stages every downloaded driver package into
+// <mount>\Windows\INF\AutoDeploy\<basename>\ so Windows PnP finds the
+// .inf files on first boot via its INF search path. Each downloaded
+// blob is expected to be either a zip archive (SCCM-style driver
+// export -- the server validates this on /api/v1/drivers/{id}/extract)
+// or, as a legacy fallback, a single .inf-shaped file dropped through
+// the older single-file upload path.
+//
+// We unzip locally before copying into the mounted filesystem because
+// extracting through wimlib's update --command="add" did not exist
+// pre-mount and because copying into a live mount is the simplest
+// equivalent of dism /Add-Driver /Recurse for an offline image.
+func injectDrivers(ctx context.Context, plan Plan, r Runner, mount string) error {
 	if len(plan.DriverPaths) == 0 {
 		return nil
 	}
-	mount := filepath.Join(plan.WorkDir, "win")
-	// Each driver payload is added with dism --add-driver. The driver
-	// payload format is finalised in Phase 4; here we trust the server's
-	// matching and inject every package we were handed.
 	for _, p := range plan.DriverPaths {
-		if err := r.Exec(ctx, "wimlib-imagex", "update",
-			plan.WIMPath, fmt.Sprint(plan.WIMImageIndex),
-			"--command=add "+p+" /Windows/INF/AutoDeploy/"); err != nil {
+		base := filepath.Base(p)
+		dst := filepath.Join(mount, "Windows", "INF", "AutoDeploy", strings.TrimSuffix(base, filepath.Ext(base)))
+		if err := r.Exec(ctx, "mkdir", "-p", dst); err != nil {
 			return err
 		}
-		_ = mount
+		if isZip(p) {
+			// unzip is present in any reasonable initramfs; ours is
+			// built by scripts/initramfs which pulls it in.
+			if err := r.Exec(ctx, "unzip", "-o", "-q", p, "-d", dst); err != nil {
+				return err
+			}
+		} else {
+			// Legacy: a single opaque file dropped via the old upload
+			// path. Place it inside the package dir and hope Windows
+			// PnP finds it -- the operator should re-upload as a zip.
+			if err := r.Exec(ctx, "cp", p, dst); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-func placeUnattend(ctx context.Context, plan Plan, r Runner) error {
+// isZip is a cheap header sniff: PK\x03\x04 is the local file header
+// magic. Empty file or unreadable -> false.
+func isZip(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var hdr [4]byte
+	if _, err := f.Read(hdr[:]); err != nil {
+		return false
+	}
+	return hdr[0] == 'P' && hdr[1] == 'K' && hdr[2] == 0x03 && hdr[3] == 0x04
+}
+
+func placeUnattend(ctx context.Context, plan Plan, r Runner, mount string) error {
 	if plan.UnattendPath == "" {
 		return nil
 	}
-	mount := filepath.Join(plan.WorkDir, "win")
 	dst := filepath.Join(mount, "Windows", "Panther", "unattend.xml")
 	if err := r.Exec(ctx, "mkdir", "-p", filepath.Dir(dst)); err != nil {
 		return err

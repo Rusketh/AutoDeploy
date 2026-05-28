@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -60,11 +62,86 @@ func handleBulkCreate(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// AD coordination for bulk rename (§13.2). The design sequences a
+		// rename as: rename -> directory update -> reboot. The directory
+		// update happens here, before the per-machine job is claimed by
+		// the agent, so the AD object is already at the new name when
+		// the local OS rename runs and rebooting completes a successful
+		// secure-channel handshake.
+		//
+		// Partial AD failure does NOT block queuing the local rename --
+		// some operators have AD-unjoined targets in the same selection.
+		// Failures are recorded as warnings on the response and as
+		// secret.access-style log lines for audit.
+		if op.Action == model.BulkActionRename && r.AD != nil {
+			adWarnings := coordinateRenameAD(req, r, op, jobs)
+			if len(adWarnings) > 0 {
+				writeJSON(w, http.StatusCreated, map[string]any{
+					"operation":   op,
+					"jobs":        jobs,
+					"ad_warnings": adWarnings,
+				})
+				return
+			}
+		}
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"operation": op,
 			"jobs":      jobs,
 		})
 	}
+}
+
+// coordinateRenameAD walks the jobs the bulk operation just produced,
+// looks each machine up in inventory, and asks the Domain Integration
+// Service to rename the AD object from its current binding name to
+// the new name supplied in the operation payload. Returns a list of
+// per-machine warnings the response can surface; the operator can
+// look at the audit log for the failed cases and re-run on the
+// remainder.
+func coordinateRenameAD(req *http.Request, r Repos, op model.BulkOperation, jobs []model.BulkJob) []string {
+	var payload struct {
+		NewName string `json:"new_name"`
+	}
+	if err := json.Unmarshal([]byte(op.Payload), &payload); err != nil || payload.NewName == "" {
+		return []string{"rename payload missing new_name; AD rename skipped"}
+	}
+	var warns []string
+	for _, j := range jobs {
+		m, err := r.Inventory.Get(req.Context(), j.MachineID)
+		if err != nil {
+			warns = append(warns, "machine "+itoa64(int64(j.MachineID))+": inventory lookup failed: "+err.Error())
+			continue
+		}
+		binding, err := r.Inventory.GetBinding(req.Context(), m.ID)
+		if err != nil || binding.MachineName == "" {
+			// No binding (or no current name) -- nothing to rename in
+			// AD. The local OS rename still runs. Common for ad-hoc
+			// machines and lab targets.
+			continue
+		}
+		newDN, err := r.AD.RenameComputer(req.Context(), binding.MachineName, payload.NewName)
+		if err != nil {
+			warns = append(warns, "machine "+binding.MachineName+": AD rename failed: "+err.Error())
+			slog.Default().Error("bulk.rename.ad.fail",
+				slog.String("actor", "server"),
+				slog.String("target", binding.MachineName),
+				slog.String("new_name", payload.NewName),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		// Update the binding so subsequent operations see the new
+		// name. Group memberships travel with the DN inside the
+		// directory; nothing to do for them here.
+		binding.MachineName = payload.NewName
+		_ = r.Inventory.UpsertBinding(req.Context(), binding)
+		slog.Default().Info("bulk.rename.ad.ok",
+			slog.String("actor", "server"),
+			slog.String("target", payload.NewName),
+			slog.String("new_dn", newDN),
+		)
+	}
+	return warns
 }
 
 func handleBulkList(r Repos) http.HandlerFunc {

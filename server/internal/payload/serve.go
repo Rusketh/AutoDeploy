@@ -27,6 +27,12 @@ type Service struct {
 	// Resolver lets the unattend endpoint pick the nearest-wins unattend
 	// for a given image. Optional; nil disables the endpoint.
 	Resolver *resolve.Resolver
+	// Inventory lets the unattend endpoint look up the requesting
+	// machine's binding by SMBIOS UUID and inject per-machine identity
+	// (computer name, target OU) into the generated XML. Optional; nil
+	// disables per-machine identity injection and the unattend falls
+	// back to the shared template's values.
+	Inventory *model.InventoryRepo
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -51,6 +57,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/isos/{id}/upload", s.uploadISO)
 	mux.HandleFunc("POST /api/v1/isos/{id}/extract", s.extractISO)
 	mux.HandleFunc("PUT /api/v1/drivers/{id}/upload", s.uploadDriver)
+	mux.HandleFunc("POST /api/v1/drivers/{id}/extract", s.extractDriver)
 	mux.HandleFunc("PUT /api/v1/software/{id}/upload", s.uploadSoftware)
 
 	// Throttle the download routes; uploads and the lightweight
@@ -72,6 +79,13 @@ func (s *Service) throttleHandler(h http.Handler) http.Handler {
 // returns the generated unattend.xml. The path id is the IMAGE id (not the
 // unattend id), because the choice of unattend depends on the image's
 // inheritance chain — only the resolver knows which one applies.
+//
+// If a ?uuid=<smbios-uuid> query parameter is present and a binding
+// exists for that machine, per-machine identity (computer name, target
+// OU) is layered onto the resolved unattend so the deployed machine
+// matches the AD object the manifest endpoint prepared. Without the
+// query param the endpoint behaves as before — useful for the portal's
+// "preview XML" link.
 //
 // Logging note: the generated XML contains the local-admin password and
 // any domain-join password. The endpoint logs only the fact of access
@@ -100,6 +114,14 @@ func (s *Service) serveUnattend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Per-machine identity injection. The boot client adds ?uuid=... to
+	// the URL the manifest gave it; we resolve that to the bound name +
+	// OU and override the unattend's computer-naming and domain-join
+	// settings so re-imaging preserves identity (§4.3) and the bound AD
+	// object matches the joined name.
+	if uuid := strings.TrimSpace(r.URL.Query().Get("uuid")); uuid != "" && s.Inventory != nil {
+		applyBindingIdentity(r, s.Inventory, uuid, &settings)
+	}
 	xml, err := unattend.Generate(settings)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -108,6 +130,31 @@ func (s *Service) serveUnattend(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="unattend.xml"`)
 	_, _ = w.Write(xml)
+}
+
+// applyBindingIdentity looks up the binding for the given SMBIOS UUID
+// and, if present, layers its MachineName and TargetOU onto the
+// settings before XML generation. Lookup failures are silent: the
+// generator still produces a valid XML, just without per-machine
+// identity. The decision to layer rather than replace means the
+// operator's catalog choices (locale, software, RDP/policies, …) are
+// kept; only the identity-bearing fields are overridden.
+func applyBindingIdentity(r *http.Request, inv *model.InventoryRepo, uuid string, settings *unattend.Settings) {
+	machine, err := inv.GetByUUID(r.Context(), uuid)
+	if err != nil {
+		return
+	}
+	binding, err := inv.GetBinding(r.Context(), machine.ID)
+	if err != nil {
+		return
+	}
+	if binding.MachineName != "" {
+		settings.NameStrategy = "literal"
+		settings.ComputerName = binding.MachineName
+	}
+	if binding.TargetOU != "" && settings.DomainJoin != nil {
+		settings.DomainJoin.OU = binding.TargetOU
+	}
 }
 
 // uploadISO accepts a raw octet-stream PUT body and writes it to

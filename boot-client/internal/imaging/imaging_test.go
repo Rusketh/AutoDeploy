@@ -27,8 +27,18 @@ func TestApplyIssuesExpectedSteps(t *testing.T) {
 		"mkfs.ntfs -Q -L Windows /dev/sda2",
 		"mount /dev/sda2 /tmp/work/win",
 		"wimlib-imagex apply /tmp/install.wim 1 /tmp/work/win",
-		"wimlib-imagex update /tmp/install.wim 1 --command=add /tmp/drv1",
-		"wimlib-imagex update /tmp/install.wim 1 --command=add /tmp/drv2",
+		// Each driver becomes a target directory under
+		// <mount>/Windows/INF/AutoDeploy/<name>/ which the runner
+		// either unzips into (if the source is a zip) or cp's into
+		// (legacy single-file fallback). The test feeds non-zip
+		// strings as DriverPaths so the cp path is exercised; the
+		// unzip path has its own focused test.
+		"mkdir -p /tmp/work/win/Windows/INF/AutoDeploy/drv1",
+		"cp /tmp/drv1 /tmp/work/win/Windows/INF/AutoDeploy/drv1",
+		"mkdir -p /tmp/work/win/Windows/INF/AutoDeploy/drv2",
+		"cp /tmp/drv2 /tmp/work/win/Windows/INF/AutoDeploy/drv2",
+		"mkdir -p /tmp/work/win/Windows/Panther",
+		"cp /tmp/unattend.xml /tmp/work/win/Windows/Panther/unattend.xml",
 		"umount /tmp/work/win",
 	}
 	for _, want := range mustContain {

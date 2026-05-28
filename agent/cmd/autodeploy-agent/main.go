@@ -51,7 +51,11 @@ func main() {
 	flag.DurationVar(&f.checkInInterval, "check-in", 0, "Resident-mode check-in interval, e.g. 5m. Zero = one-shot.")
 	flag.Parse()
 
-	log := logging.New(os.Stdout, "agent")
+	log, shipper := logging.NewWithShipper(os.Stdout, "agent", 2048)
+	// Ship buffered records to the server when the agent exits (one-
+	// shot mode) or periodically while it runs (resident mode -- the
+	// check-in loop calls shipLogs each tick).
+	defer shipLogs(log, shipper, f.server, f.insecureTLS)
 
 	if f.uuid == "" {
 		f.uuid = readSystemUUID()
@@ -117,8 +121,9 @@ func main() {
 		Message   string `json:"message,omitempty"`
 	}
 	var openResp struct {
-		MachineID    int64 `json:"machine_id"`
-		DeploymentID int64 `json:"deployment_id"`
+		MachineID    int64  `json:"machine_id"`
+		DeploymentID int64  `json:"deployment_id"`
+		DeployToken  string `json:"deploy_token,omitempty"`
 	}
 	identityBody := map[string]any{
 		"system_uuid": f.uuid,
@@ -131,6 +136,10 @@ func main() {
 		log.Warn("report.open", slog.String("error", err.Error()))
 	}
 	depID := openResp.DeploymentID
+	// The deploy token authenticates the agent to secret-returning
+	// endpoints (BitLocker config) for the lifetime of this deploy.
+	// Kept in memory only; never written to disk; never logged.
+	c.DeployToken = openResp.DeployToken
 
 	var packageReports []pkgReport
 	failed := false
@@ -234,6 +243,12 @@ func main() {
 	// or on a host without TPM/PowerShell, the agent logs and skips.
 	maybeEnableBitLocker(ctx, log, c, f, identityBody)
 
+	// Branding (Phase 15 / design §12): write the operator's OEM
+	// identity to HKLM\...\OEMInformation so System Properties shows
+	// the right manufacturer / support URL. Best-effort: failures are
+	// logged but do not break the deployment.
+	applyOEMBranding(ctx, log, c, f)
+
 	// Final report: mark the deployment ok/failed and ship per-package
 	// detection state.
 	outcome := "ok"
@@ -258,7 +273,7 @@ func main() {
 	// Resident check-in mode (Phase 13). Run forever, polling for queued
 	// bulk jobs and executing them.
 	if f.checkInInterval > 0 {
-		runCheckInLoop(ctx, log, c, f, identityBody)
+		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
 	}
 	_ = time.Now // placeholder for resident-mode timing in Phase 13
 }
@@ -325,10 +340,90 @@ func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client
 	)
 }
 
+// applyOEMBranding fetches the operator's branding from the server
+// and writes the relevant fields to HKLM\SOFTWARE\Microsoft\Windows\
+// CurrentVersion\OEMInformation. Windows reads those keys when
+// rendering System Properties; setting them is what makes the
+// deployed machine look like the operator's organisation rather
+// than the OEM's. No-op on non-Windows hosts (the registry path
+// doesn't exist and the agent is built for Windows targets anyway).
+func applyOEMBranding(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	type brand struct {
+		OrganisationName string `json:"organisation_name"`
+		SupportURL       string `json:"support_url"`
+		SupportPhone     string `json:"support_phone"`
+		OEMManufacturer  string `json:"oem_manufacturer"`
+	}
+	var b brand
+	if err := c.GetJSON(ctx, "/api/v1/branding", &b); err != nil {
+		log.Info("brand.fetch.skip", slog.String("reason", err.Error()))
+		return
+	}
+	manufacturer := b.OEMManufacturer
+	if manufacturer == "" {
+		manufacturer = b.OrganisationName
+	}
+	if manufacturer == "" && b.SupportURL == "" && b.SupportPhone == "" {
+		// Nothing to write.
+		return
+	}
+	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+	const root = `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation`
+	// reg.exe is the simplest tool to set these values from a
+	// userland process; Set-ItemProperty would work too but reg.exe
+	// is shorter to compose. Each value is best-effort.
+	writes := []struct{ name, value string }{
+		{"Manufacturer", manufacturer},
+		{"SupportURL", b.SupportURL},
+		{"SupportPhone", b.SupportPhone},
+	}
+	for _, w := range writes {
+		if w.value == "" {
+			continue
+		}
+		code, err := runner.Run(ctx, "reg",
+			[]string{"add", root, "/v", w.name, "/d", w.value, "/t", "REG_SZ", "/f"}, "")
+		if err != nil || code != 0 {
+			log.Warn("brand.oem.write.fail",
+				slog.String("key", w.name),
+				slog.Int("exit_code", code),
+				slog.String("error", errString(err)))
+			continue
+		}
+	}
+	log.Info("brand.oem.applied",
+		slog.String("actor", f.uuid),
+		slog.String("target", root),
+	)
+}
+
+// shipLogs flushes the buffered slog records to the server. Failures
+// are reported on stdout (and will sit in the buffer for the next
+// attempt) but otherwise silent so the agent's exit path stays
+// non-fatal.
+func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) {
+	if server == "" || shipper == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	n, err := shipper.Ship(ctx, server, insecureTLS)
+	if err != nil {
+		log.Warn("logs.ship.fail", slog.String("error", err.Error()))
+		return
+	}
+	if n > 0 {
+		log.Info("logs.ship.ok", slog.Int("events", n))
+	}
+}
+
 // runCheckInLoop is the Phase 13 resident-mode loop. The agent
 // periodically calls /api/v1/agent/checkin, claims any queued bulk
 // jobs, executes them, and posts results. Loops forever.
-func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any) {
+func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any, shipper *logging.Shipper) {
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	type bulkJob struct {
 		ID      int64  `json:"id"`
@@ -355,6 +450,9 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 					map[string]any{"status": status, "result_json": result}, nil)
 			}
 		}
+		// Best-effort log ship at the end of each tick so the
+		// portal sees a near-live view of resident-mode activity.
+		shipLogs(log, shipper, f.server, f.insecureTLS)
 		select {
 		case <-ctx.Done():
 			return
@@ -498,19 +596,13 @@ func replaceToken(s, payload string) string {
 	return string(out)
 }
 
-// readSystemUUID returns "" on non-Linux dev hosts; the Windows agent
-// reads it via the SMBIOS APIs and the override flag is provided for
-// integration testing.
-func readSystemUUID() string {
-	b, err := os.ReadFile("/sys/class/dmi/id/product_uuid")
-	if err != nil {
-		return ""
-	}
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r' || b[len(b)-1] == ' ') {
-		b = b[:len(b)-1]
-	}
-	return string(b)
-}
+// readSystemUUID dispatches to the platform-specific implementation
+// (see uuid_windows.go and uuid_other.go). Returning "" is acceptable
+// at the boundary -- the caller can fall back to the --uuid flag for
+// integration testing -- but the supported deployment target
+// (Windows) MUST resolve a real UUID or the server cannot identify
+// the machine in inventory, BitLocker, or bulk-job lookups.
+func readSystemUUID() string { return readSystemUUIDPlatform() }
 
 func defaultWorkDir() string {
 	if runtime.GOOS == "windows" {

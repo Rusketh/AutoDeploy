@@ -164,6 +164,11 @@ type agentBLConfigResp struct {
 	PIN    string `json:"pin,omitempty"` // present only if pin_set
 }
 
+// DeployTokenHeader is the header the agent sets to authenticate to
+// secret-returning endpoints. The token is issued by the agent-report
+// endpoint at deploy time and never logged.
+const DeployTokenHeader = "X-AutoDeploy-Deploy-Token"
+
 func handleAgentBitLockerConfig(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in agentBLConfigReq
@@ -174,6 +179,26 @@ func handleAgentBitLockerConfig(r Repos) http.HandlerFunc {
 		m, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
 		if err != nil {
 			writeError(w, err)
+			return
+		}
+		// Bearer-token check. SMBIOS UUID alone is too weak a
+		// credential to disclose a cleartext PIN -- the audit
+		// (§10.2) flagged this. The token was issued to the agent
+		// during the open report at the start of this deploy, so
+		// only the freshly deploying client has it.
+		token := req.Header.Get(DeployTokenHeader)
+		ok, err := r.Inventory.ValidateDeployToken(req.Context(), m.ID, token)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			slog.Default().Warn("deploy.token.invalid",
+				slog.String("actor", "agent:"+in.Identity.SystemUUID),
+				slog.String("target", "machine:"+itoa64(int64(m.ID))),
+				slog.String("endpoint", "bitlocker/config"),
+			)
+			http.Error(w, "unauthorized: missing or invalid deploy token", http.StatusUnauthorized)
 			return
 		}
 		st, err := r.BitLocker.PINStatus(req.Context(), m.ID)

@@ -158,6 +158,37 @@ func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN stri
 	return nil
 }
 
+// RenameComputer issues an LDAP MODRDN with the same parent (so the
+// object stays in its current OU; only the CN changes).
+func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) (string, error) {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	req := ldap.NewModifyDNRequest(dn, "CN="+newName, true, "")
+	if err := c.ModifyDN(req); err != nil {
+		return "", fmt.Errorf("rename %s -> %s: %w", dn, newName, err)
+	}
+	// Compose the new DN: replace the leading RDN.
+	parent := dn
+	if i := strings.Index(dn, ","); i >= 0 {
+		parent = dn[i+1:]
+	}
+	newDN := "CN=" + newName + "," + parent
+	// Also update sAMAccountName to match the new CN (workstation
+	// accounts have sAMAccountName = "<cn>$"). Some AD callers fail
+	// secure-channel checks if the two drift.
+	mod := ldap.NewModifyRequest(newDN, nil)
+	mod.Replace("sAMAccountName", []string{newName + "$"})
+	if err := c.Modify(mod); err != nil {
+		// Non-fatal: log via returned error so the operator sees it but
+		// the rename itself completed.
+		return newDN, fmt.Errorf("rename ok; sAMAccountName update failed: %w", err)
+	}
+	return newDN, nil
+}
+
 func (l *LDAPDirectory) findGroupDN(c *ldap.Conn, name string) (string, error) {
 	filter := fmt.Sprintf("(&(objectClass=group)(cn=%s))", ldap.EscapeFilter(name))
 	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,

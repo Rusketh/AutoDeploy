@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
@@ -174,9 +175,18 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 		})
 	}
 	if res.Unattend != nil {
+		// Thread the requesting machine's SMBIOS UUID through to the
+		// unattend endpoint so it can layer the binding's MachineName /
+		// TargetOU onto the generated XML — exactly what makes re-
+		// imaging preserve identity (§4.3) and what makes the joined
+		// AD name match the prepared object.
+		unattendURL := fmt.Sprintf("%s/payload/unattend/%d", base, int64(id))
+		if identity.SystemUUID != "" {
+			unattendURL += "?uuid=" + url.QueryEscape(identity.SystemUUID)
+		}
 		m.Items = append(m.Items, ManifestItem{
 			Role: "unattend",
-			URL:  fmt.Sprintf("%s/payload/unattend/%d", base, int64(id)),
+			URL:  unattendURL,
 			Name: res.Unattend.Name,
 		})
 		// Phase 10: if the unattend has a domain-join section and the

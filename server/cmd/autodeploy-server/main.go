@@ -95,34 +95,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	mtr := metrics.New()
 	mux, handler := httpx.New(cfg, logger, mtr)
-	api.Register(mux, api.Repos{
-		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
-		Software: r.Software, Loadouts: r.Loadouts,
-		Images: r.Images, Inventory: r.Inventory,
-		Resolver: r.Resolver,
-		Users:    r.Users, Settings: r.Settings,
-		BitLocker: r.BitLocker, Bulk: r.Bulk,
-		Logs: r.Logs, Branding: r.Branding,
-		Mirrors: r.Mirrors, Runtime: rt,
-	})
-
-	pl := &payload.Service{
-		Blobs:    blobs,
-		ISOs:     r.ISOs,
-		Drivers:  r.Drivers,
-		Software: r.Software,
-		Resolver: r.Resolver,
-	}
-	// Throttle /payload/* so a thundering herd queues rather than thrashes.
-	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, func() {
-		mtr.PayloadQueuedWaits.Inc()
-	})
-	pl.OnBytesServed = func(n int64) { mtr.PayloadBytesServed.Add(n) }
-	pl.Register(mux)
 
 	// AD Domain Integration Service (Phase 10). Always-on; the
 	// EnabledFunc reads the portal's current AD URL setting so an
 	// operator can turn AD on/off through the UI without restarting.
+	// Built BEFORE API registration so handlers that coordinate with
+	// AD (bulk rename, manifest's pre-deploy delete-and-replace) can
+	// reference it.
 	adSvc := &addomain.Service{
 		Dir: &addomain.DynamicDirectory{
 			Provider: func(_ context.Context) addomain.LDAPConfig {
@@ -140,6 +119,33 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			slog.String("bind_dn", c.BindDN),
 			slog.String("source", "portal/env"))
 	}
+
+	api.Register(mux, api.Repos{
+		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
+		Software: r.Software, Loadouts: r.Loadouts,
+		Images: r.Images, Inventory: r.Inventory,
+		Resolver: r.Resolver,
+		Users:    r.Users, Settings: r.Settings,
+		BitLocker: r.BitLocker, Bulk: r.Bulk,
+		Logs: r.Logs, Branding: r.Branding,
+		Mirrors: r.Mirrors, Runtime: rt,
+		AD: adSvc,
+	})
+
+	pl := &payload.Service{
+		Blobs:     blobs,
+		ISOs:      r.ISOs,
+		Drivers:   r.Drivers,
+		Software:  r.Software,
+		Resolver:  r.Resolver,
+		Inventory: r.Inventory,
+	}
+	// Throttle /payload/* so a thundering herd queues rather than thrashes.
+	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, func() {
+		mtr.PayloadQueuedWaits.Inc()
+	})
+	pl.OnBytesServed = func(n int64) { mtr.PayloadBytesServed.Add(n) }
+	pl.Register(mux)
 
 	mh := &payload.ManifestHandler{
 		Resolver:  r.Resolver,
@@ -169,6 +175,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Blobs:      blobs,
 		AD:         adSvc,
 		SecretsBox: bx,
+		DataDir:    cfg.DataDir,
 	}); err != nil {
 		return err
 	}
