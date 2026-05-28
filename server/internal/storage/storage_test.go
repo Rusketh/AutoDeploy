@@ -23,6 +23,7 @@ func TestOpenAndMigrate(t *testing.T) {
 		"bitlocker_pin", "bitlocker_recovery_key",
 		"bulk_operation", "bulk_job",
 		"log_event",
+		"payload_mirror",
 		"schema_migration",
 	} {
 		var name string

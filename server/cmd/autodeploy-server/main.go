@@ -23,6 +23,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/config"
 	"github.com/rusketh/autodeploy/server/internal/httpx"
 	"github.com/rusketh/autodeploy/server/internal/logging"
+	"github.com/rusketh/autodeploy/server/internal/metrics"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
@@ -83,7 +84,8 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	mux, handler := httpx.New(cfg, logger)
+	mtr := metrics.New()
+	mux, handler := httpx.New(cfg, logger, mtr)
 	api.Register(mux, api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
@@ -92,6 +94,7 @@ func run(logger *slog.Logger) error {
 		Users:    r.Users, Settings: r.Settings,
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
+		Mirrors: r.Mirrors,
 	})
 
 	pl := &payload.Service{
@@ -101,6 +104,11 @@ func run(logger *slog.Logger) error {
 		Software: r.Software,
 		Resolver: r.Resolver,
 	}
+	// Throttle /payload/* so a thundering herd queues rather than thrashes.
+	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, func() {
+		mtr.PayloadQueuedWaits.Inc()
+	})
+	pl.OnBytesServed = func(n int64) { mtr.PayloadBytesServed.Add(n) }
 	pl.Register(mux)
 
 	// Optional AD Domain Integration Service (Phase 10).
@@ -129,6 +137,7 @@ func run(logger *slog.Logger) error {
 		AD:        adSvc,
 		Inventory: r.Inventory,
 		Unattend:  r.Unattend,
+		Mirrors:   r.Mirrors,
 	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
 	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())
@@ -145,6 +154,7 @@ func run(logger *slog.Logger) error {
 		Images: r.Images, Inventory: r.Inventory,
 		BitLocker: r.BitLocker, Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
+		Mirrors:    r.Mirrors,
 		Resolver:   r.Resolver,
 		Blobs:      blobs,
 		AD:         adSvc,
@@ -219,6 +229,7 @@ type appRepos struct {
 	Bulk      *model.BulkRepo
 	Logs      *model.LogRepo
 	Branding  *branding.Repo
+	Mirrors   *model.PayloadMirrorRepo
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -235,6 +246,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	bulk := model.NewBulkRepo(db, inventory)
 	logs := model.NewLogRepo(db)
 	brandRepo := branding.New(db)
+	mirrors := model.NewPayloadMirrorRepo(db)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -243,7 +255,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 			WithDrivers(drivers).WithLoadouts(loadouts),
 		Users: users, Settings: settings,
 		BitLocker: bitlocker, Bulk: bulk,
-		Logs: logs, Branding: brandRepo,
+		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
 	}
 }
 

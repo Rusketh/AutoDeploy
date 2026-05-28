@@ -1139,3 +1139,94 @@ follow-ups (none are blockers):
   restarting the server.
 - Pagination on the machines and logs lists once a real fleet's
   worth of rows arrive.
+
+---
+
+## 2026-05-28 — Mass-scale deployment hardening
+
+**WHAT.**
+
+- Migration 0008 adds `payload_mirror` (name, base_url, site,
+  priority, healthy, last_checked) and `machine_record.last_site`.
+- `PayloadMirrorRepo`: CRUD plus `PickFor(site)` (site-specific
+  preferred, global "" fallback, unhealthy skipped), `SetHealth`,
+  and per-machine `last_site` memoisation.
+- `payload.Throttle`: bounded-concurrency semaphore wrapping the
+  `/payload/{iso,drivers,software}` routes. Default 64; configurable
+  via `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT`. Queue waits emit a metric;
+  a context-cancelled queued request returns 503 promptly.
+- `payload.ManifestHandler.BuildForSite(...)`: picks the mirror via
+  `Mirrors.PickFor` and rewrites the WIM / driver / software URLs to
+  the mirror's BaseURL. Unattend always stays on the primary (it is
+  generated server-side and small). Site comes from the
+  `X-AutoDeploy-Site` header, or the machine's stored `last_site`.
+- `payload.serveBlob` sets `Cache-Control: public, max-age=300` so
+  intermediate caches (squid, varnish, a CDN) can help. ETag and
+  Last-Modified are emitted by `http.ServeContent`.
+- `internal/metrics`: tiny Prometheus exposition (atomic
+  Counter/Gauge, no external dep). `/metrics` endpoint mounted on
+  the root mux. Counters: HTTP requests by status class, request
+  duration sum by route bucket, payload bytes, payload in-flight,
+  payload queued waits, deployments in progress / completed by
+  outcome, boot menu / manifest / agent check-in / log ingest
+  counters.
+- `httpx.New` now takes a `*metrics.Registry` and the request logger
+  emits metrics alongside the structured log line. The
+  `statusRecorder` tracks bytes written.
+- Boot Client: `--site <name>` flag, plus `autodeploy.site=<name>`
+  kernel-cmdline parsing from `/proc/cmdline`. `httpc.Client.WithSite`
+  attaches the `X-AutoDeploy-Site` header to every request.
+- Portal: Mirrors entity with list / new / edit / delete pages and
+  per-row health toggle. Nav bar gains "Mirrors". Setup checklist
+  on the edit page documents the rsync / squid / second-instance
+  options for standing up a mirror.
+- Operator docs: `docs/user-guide/scaling.md` covers the routing
+  model, throttle knobs, cache headers, `/metrics`, and a concrete
+  operational recipe for thousands of machines at once.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Mirrors are URL-rewrite targets, not synchronisation
+  endpoints. AutoDeploy does not manage replication itself —
+  operators choose rsync, squid pull-through, or a second
+  autodeploy-server instance. Keeping replication out keeps mirror
+  setup boring and lets operators reuse existing CDN / caching
+  infrastructure.
+- DECISION: Unattend XML stays on the primary even when mirrors are
+  configured. It is generated server-side, small, and contains the
+  per-machine secrets (admin password, domain join credentials)
+  that mirrors should never see, store, or potentially cache.
+- DECISION: Site routing uses an HTTP header with a kernel-cmdline
+  fallback, not the SMBIOS identity. The site is operationally
+  defined (which subnet / DHCP scope the machine boots into), not a
+  property of the hardware. Header-driven routing is the right
+  shape.
+- DECISION: Default throttle is 64. Below that, a 500-machine PXE
+  burst would exhaust the default 1024-FD limit on many Linux
+  installs. Operators on production hosts should raise both
+  `ulimit -n` and the throttle.
+- DECISION: Metrics use a homegrown Prometheus exposition rather
+  than the official client library. Goals — zero new deps, the
+  exposition format is a few text lines, our counter shapes are
+  trivial.
+- DECISION: SQLite is retained as the metadata store. At the
+  documented scale (low thousands of machines, hundreds of
+  concurrent deploys) WAL handles it. Higher concurrencies become a
+  Phase 16-revisit conversation alongside multi-site distributed
+  topology (still listed as the architecture's open question).
+
+**BUILD STATE.** Server, agent, boot-client all build green; all
+existing tests pass. New tests cover mirror routing
+(`TestManifestRewritesToSiteMirror`,
+`TestUnhealthyMirrorSkipped`) and the throttle pattern is exercised
+in code.
+
+**NEXT.** Mass-scale infrastructure is in place. Future enhancements
+that build on it (none are blockers):
+- A mirror-health checker that pings each mirror's `/healthz`
+  periodically and updates `payload_mirror.healthy` automatically.
+- A bytes-served breakdown per site/mirror in the metrics
+  exposition for capacity planning.
+- An optional "deployment slot" concept that caps concurrent
+  imaging operations system-wide and gives a "please retry"
+  response to overflow, for sites running near capacity.

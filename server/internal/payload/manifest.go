@@ -46,7 +46,15 @@ type ManifestHandler struct {
 	AD        *addomain.Service
 	Inventory *model.InventoryRepo
 	Unattend  *model.UnattendRepo
+	// Mirrors lets the handler rewrite payload URLs to a site-local
+	// mirror. Nil disables mirror routing.
+	Mirrors *model.PayloadMirrorRepo
 }
+
+// SiteHeader is the HTTP header the Boot Client / agent sets to tell
+// the server which site it is in. Empty means unknown and falls back
+// to a global mirror (or the primary if none is registered).
+const SiteHeader = "X-AutoDeploy-Site"
 
 // Handler returns an http.HandlerFunc that builds the manifest for the image
 // id in the URL path. POST with identity in the JSON body so the resolver
@@ -70,7 +78,16 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 				return
 			}
 		}
-		m, err := h.Build(r.Context(), id, baseURL(r), identity)
+		// Site routing: prefer the header the Boot Client sends; fall
+		// back to the machine record's last_site if we know the
+		// machine; finally fall back to "" which uses a global mirror.
+		site := strings.TrimSpace(r.Header.Get(SiteHeader))
+		if site != "" && h.Mirrors != nil && identity.SystemUUID != "" {
+			_ = h.Mirrors.RecordSiteForMachine(r.Context(), identity.SystemUUID, site)
+		} else if site == "" && h.Mirrors != nil && identity.SystemUUID != "" {
+			site, _ = h.Mirrors.LastSiteForMachine(r.Context(), identity.SystemUUID)
+		}
+		m, err := h.BuildForSite(r.Context(), id, baseURL(r), identity, site)
 		if err != nil {
 			writeModelErr(w, err)
 			return
@@ -79,10 +96,17 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 	}
 }
 
-// Build constructs the manifest in code (test-friendly entry point). When
-// identity is zero-valued the resolver runs without driver matching, which
-// is what the portal's "view manifest" link does.
+// Build is the no-site path retained for existing tests. Internally it
+// delegates to BuildForSite with an empty site.
 func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, identity match.Identity) (Manifest, error) {
+	return h.BuildForSite(ctx, id, base, identity, "")
+}
+
+// BuildForSite constructs the manifest, picking a mirror for the
+// machine's site if Mirrors is configured. Payload URLs (iso-wim,
+// driver, software, unattend) point at the mirror's BaseURL when one
+// matches; otherwise they point at base (the primary).
+func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base string, identity match.Identity, site string) (Manifest, error) {
 	var (
 		res resolve.Resolved
 		err error
@@ -95,7 +119,20 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, i
 	if err != nil {
 		return Manifest{}, err
 	}
+	// Pick the payload base URL: a site-matched mirror if available,
+	// otherwise the primary's base. Unattend always stays on the
+	// primary (it is computed server-side and small).
+	payloadBase := base
+	if h.Mirrors != nil {
+		mirror, ok, err := h.Mirrors.PickFor(ctx, site)
+		if err == nil && ok {
+			payloadBase = mirror.BaseURL
+		}
+	}
 	m := Manifest{ImageID: id, BaseURL: base, Warnings: res.Diagnostics}
+	if site != "" {
+		m.Warnings = append(m.Warnings, "payload site: "+site)
+	}
 	if res.ISO != nil {
 		// If extraction has happened, StoragePath points at the WIM/ESD
 		// inside the extracted tree (iso/{id}/files/...). Serve it from
@@ -107,7 +144,7 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, i
 			}
 			m.Items = append(m.Items, ManifestItem{
 				Role: "iso-wim",
-				URL:  fmt.Sprintf("%s/payload/iso/%d/%s", base, int64(res.ISO.ID), afterFiles),
+				URL:  fmt.Sprintf("%s/payload/iso/%d/%s", payloadBase, int64(res.ISO.ID), afterFiles),
 				Size: res.ISO.SizeBytes,
 				OS:   res.ISO.OSType,
 				Name: res.ISO.Name,
@@ -123,7 +160,7 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, i
 		}
 		m.Items = append(m.Items, ManifestItem{
 			Role: "driver",
-			URL:  fmt.Sprintf("%s/payload/drivers/%d", base, int64(d.ID)),
+			URL:  fmt.Sprintf("%s/payload/drivers/%d", payloadBase, int64(d.ID)),
 			Size: d.SizeBytes,
 			Name: d.Name,
 		})
@@ -133,7 +170,7 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, i
 	for _, link := range res.Software {
 		m.Items = append(m.Items, ManifestItem{
 			Role: "software",
-			URL:  fmt.Sprintf("%s/payload/software/%d", base, int64(link.PackageID)),
+			URL:  fmt.Sprintf("%s/payload/software/%d", payloadBase, int64(link.PackageID)),
 		})
 	}
 	if res.Unattend != nil {

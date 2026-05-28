@@ -49,6 +49,7 @@ type Repos struct {
 	Users     *auth.Repo
 	Settings  *auth.SettingsRepo
 	Branding  *branding.Repo
+	Mirrors   *model.PayloadMirrorRepo
 	Resolver  *resolve.Resolver
 	Blobs     *storage.BlobStore
 	AD        *addomain.Service
@@ -102,6 +103,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerBulkRoutes(get, post, r)
 	registerLogsRoutes(get, post, r)
 	registerSettingsRoutes(get, post, r)
+	mirrorRoutes(get, post, r)
 
 	return nil
 }

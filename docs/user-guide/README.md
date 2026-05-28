@@ -28,6 +28,7 @@ the product, and never before.
 17. [Centralised logging](logging.md) — what's logged, ingest, search, secrets.
 18. [Branding](branding.md) — the system-wide brand and where it shows up.
 19. [Operating AutoDeploy](operations.md) — deployment topology, backup/recovery, retention, security review.
+20. [Scaling for mass deployments](scaling.md) — payload mirrors per site, throttling, `/metrics`, the operational recipe for thousands of machines at once.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.

@@ -41,6 +41,11 @@ type Config struct {
 
 	// Phase 16. Log retention (days). 0 disables pruning.
 	LogRetentionDays int
+
+	// Mass-scale: bound concurrent /payload/* streams (default 64).
+	// Zero = unlimited (don't pick this on a production node — a
+	// 500-machine PXE burst will exhaust the file-descriptor budget).
+	PayloadMaxInFlight int
 }
 
 // Load reads configuration from the environment.
@@ -72,6 +77,11 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AUTODEPLOY_LOG_RETENTION_DAYS must be an integer")
 	}
 	c.LogRetentionDays = days
+	maxIF, err := strconv.Atoi(getenv("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT", "64"))
+	if err != nil {
+		return Config{}, errors.New("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT must be an integer")
+	}
+	c.PayloadMaxInFlight = maxIF
 	return c, nil
 }
 

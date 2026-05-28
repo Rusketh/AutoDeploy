@@ -37,6 +37,8 @@ type Repos struct {
 	Logs *model.LogRepo
 	// Phase 15.
 	Branding *branding.Repo
+	// Mass-scale: payload mirrors.
+	Mirrors *model.PayloadMirrorRepo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -49,6 +51,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterBulk(mux, r)
 	RegisterLogs(mux, r)
 	RegisterBranding(mux, r)
+	RegisterMirrors(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

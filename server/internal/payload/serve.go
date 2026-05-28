@@ -27,6 +27,12 @@ type Service struct {
 	// Resolver lets the unattend endpoint pick the nearest-wins unattend
 	// for a given image. Optional; nil disables the endpoint.
 	Resolver *resolve.Resolver
+	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
+	// 500-machine PXE burst queues rather than thrashes file descriptors.
+	Throttle *Throttle
+	// OnBytesServed is called with the byte count of each completed
+	// payload response so the operator can wire it into metrics.
+	OnBytesServed func(int64)
 }
 
 // Register mounts payload routes on mux:
@@ -47,10 +53,19 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/drivers/{id}/upload", s.uploadDriver)
 	mux.HandleFunc("PUT /api/v1/software/{id}/upload", s.uploadSoftware)
 
-	mux.HandleFunc("GET /payload/iso/{id}/", s.serveISOContent)
-	mux.HandleFunc("GET /payload/drivers/{id}", s.serveDriver)
-	mux.HandleFunc("GET /payload/software/{id}", s.serveSoftware)
+	// Throttle the download routes; uploads and the lightweight
+	// unattend generator are not in the burst path.
+	mux.Handle("GET /payload/iso/{id}/", s.throttleHandler(http.HandlerFunc(s.serveISOContent)))
+	mux.Handle("GET /payload/drivers/{id}", s.throttleHandler(http.HandlerFunc(s.serveDriver)))
+	mux.Handle("GET /payload/software/{id}", s.throttleHandler(http.HandlerFunc(s.serveSoftware)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
+}
+
+func (s *Service) throttleHandler(h http.Handler) http.Handler {
+	if s.Throttle == nil {
+		return h
+	}
+	return s.Throttle.Wrap(h)
 }
 
 // serveUnattend resolves the image, picks the nearest-wins unattend, and
@@ -289,8 +304,15 @@ func (s *Service) serveSoftware(w http.ResponseWriter, r *http.Request) {
 	s.serveBlob(w, r, pkg.StoragePath)
 }
 
-// serveBlob streams the file at relative to the response with range support
-// via http.ServeContent.
+// serveBlob streams the file at relative to the response with range
+// support via http.ServeContent. Cache headers allow intermediate
+// HTTP caches (squid, varnish, a reverse proxy) and the Boot Client
+// itself to short-circuit repeat fetches.
+//
+// Cache-Control is conservative (5 minutes) because operators can swap
+// the underlying blob by re-uploading; intermediate caches that respect
+// max-age will not serve a stale version for long. ETag is derived from
+// mtime+size by http.ServeContent.
 func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, relative string) {
 	f, err := s.Blobs.Open(relative)
 	if errors.Is(err, os.ErrNotExist) {
@@ -307,7 +329,24 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, relative str
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.ServeContent(w, r, filepath.Base(relative), info.ModTime(), f)
+	// Aid intermediate caches (squid/varnish/CDN).
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	cw := &byteCounter{ResponseWriter: w}
+	http.ServeContent(cw, r, filepath.Base(relative), info.ModTime(), f)
+	if s.OnBytesServed != nil {
+		s.OnBytesServed(cw.n)
+	}
+}
+
+type byteCounter struct {
+	http.ResponseWriter
+	n int64
+}
+
+func (b *byteCounter) Write(p []byte) (int, error) {
+	n, err := b.ResponseWriter.Write(p)
+	b.n += int64(n)
+	return n, err
 }
 
 func pathID(r *http.Request) (model.ID, error) {

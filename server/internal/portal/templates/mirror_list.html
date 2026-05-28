@@ -1,0 +1,32 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Payload mirrors</h2>
+  <div class="right"><a class="btn" href="/portal/mirrors/new">Add mirror</a></div>
+</div>
+{{if .Data.Mirrors}}
+<table>
+  <thead><tr><th>Name</th><th>Site</th><th>Base URL</th><th>Priority</th><th>Health</th><th>Last checked</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Mirrors}}
+    <tr>
+      <td><a href="/portal/mirrors/{{int64 .ID}}/edit">{{.Name}}</a><br><span class="small muted">{{.Description}}</span></td>
+      <td>{{if .Site}}<code>{{.Site}}</code>{{else}}<span class="muted">global</span>{{end}}</td>
+      <td><code>{{.BaseURL}}</code></td>
+      <td class="num">{{.Priority}}</td>
+      <td>{{if .Healthy}}<span class="badge ok">healthy</span>{{else}}<span class="badge bad">unhealthy</span>{{end}}</td>
+      <td class="small muted">{{formatTime .LastChecked}}</td>
+      <td class="actions">
+        <a class="btn secondary" href="/portal/mirrors/{{int64 .ID}}/edit">Edit</a>
+        <form method="POST" action="/portal/mirrors/{{int64 .ID}}/delete" onsubmit="return confirm('Delete this mirror?')">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No mirrors yet. <a href="/portal/mirrors/new">Add one</a> to offload payload delivery to a per-site HTTP server.</p>
+{{end}}
+<p class="muted small">A mirror is any HTTP server that serves the same <code>/payload/...</code> tree the primary serves. When a Boot Client passes the <code>X-AutoDeploy-Site</code> header (or has a remembered site from a previous boot), the manifest rewrites WIM / driver / software URLs to the highest-priority healthy mirror matching that site. Unattend XML stays on the primary.</p>
+{{end}}

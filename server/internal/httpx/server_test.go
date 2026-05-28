@@ -13,7 +13,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	logger := logging.New(io.Discard, "server.test")
-	_, h := New(config.Config{DevMode: true}, logger)
+	_, h := New(config.Config{DevMode: true}, logger, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil).WithContext(context.Background())
 	w := httptest.NewRecorder()
@@ -30,7 +30,7 @@ func TestHealthz(t *testing.T) {
 func TestProductionRefusesNonLoopbackPlainHTTP(t *testing.T) {
 	logger := logging.New(io.Discard, "server.test")
 	cfg := config.Config{DevMode: false, HTTPAddr: "0.0.0.0:8080"}
-	_, h := New(cfg, logger)
+	_, h := New(cfg, logger, nil)
 	err := ListenAndServe(context.Background(), cfg, h, logger)
 	if err != ErrPlainHTTPInProd {
 		t.Fatalf("ListenAndServe = %v, want ErrPlainHTTPInProd", err)

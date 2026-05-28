@@ -18,6 +18,7 @@ import (
 type Client struct {
 	BaseURL    string
 	UUID       string
+	Site       string
 	HTTPClient *http.Client
 }
 
@@ -38,6 +39,13 @@ func New(baseURL, uuid string, insecureTLS bool) *Client {
 	}
 }
 
+// WithSite tags every request with the X-AutoDeploy-Site header so the
+// server can route payload downloads to a site-local mirror.
+func (c *Client) WithSite(site string) *Client {
+	c.Site = site
+	return c
+}
+
 // PostJSON sends a JSON body and decodes a JSON response into out.
 func (c *Client) PostJSON(ctx context.Context, path string, in, out any) error {
 	b, err := json.Marshal(in)
@@ -50,6 +58,9 @@ func (c *Client) PostJSON(ctx context.Context, path string, in, out any) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	if c.Site != "" {
+		req.Header.Set("X-AutoDeploy-Site", c.Site)
+	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -72,6 +83,9 @@ func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 		return err
 	}
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	if c.Site != "" {
+		req.Header.Set("X-AutoDeploy-Site", c.Site)
+	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -91,6 +105,9 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer, progre
 		return err
 	}
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	if c.Site != "" {
+		req.Header.Set("X-AutoDeploy-Site", c.Site)
+	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err

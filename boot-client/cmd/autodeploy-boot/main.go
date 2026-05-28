@@ -47,6 +47,7 @@ type bootFlags struct {
 	disk        string
 	work        string
 	dryRun      bool
+	site        string
 }
 
 func main() {
@@ -57,7 +58,14 @@ func main() {
 	flag.StringVar(&f.disk, "disk", "/dev/sda", "Target disk device")
 	flag.StringVar(&f.work, "work", "/run/autodeploy", "Scratch directory")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log destructive steps without executing them")
+	flag.StringVar(&f.site, "site", "", "Site name forwarded to the server so payload downloads route to a site-local mirror")
 	flag.Parse()
+
+	// Also accept the site via kernel command line — DHCP option 175 or
+	// the iPXE chainload script can set autodeploy.site=<name>.
+	if f.site == "" {
+		f.site = siteFromKernelCmdline()
+	}
 
 	log := logging.New(os.Stdout, "boot")
 
@@ -135,7 +143,7 @@ type manifest struct {
 func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS)
+	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 
 	// Access PIN gate. Three attempts; on the third failure or lock-out,
 	// fail-safe to a normal boot. The Boot Client never decides whether
@@ -195,7 +203,7 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
 
 func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64) {
 	ctx := context.Background()
-	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS)
+	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 	var m manifest
 	// POST identity so the server can match driver packages.
 	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
@@ -360,6 +368,45 @@ func identityBody(id smbios.Identity) map[string]any {
 		"board_product":       id.BoardProduct,
 		"board_serial":        id.BoardSerial,
 	}
+}
+
+// siteFromKernelCmdline parses /proc/cmdline looking for
+// autodeploy.site=<name>. Empty on read failure or absence.
+func siteFromKernelCmdline() string {
+	b, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return ""
+	}
+	for _, tok := range bytesFields(b) {
+		const k = "autodeploy.site="
+		if len(tok) > len(k) && string(tok[:len(k)]) == k {
+			return string(tok[len(k):])
+		}
+	}
+	return ""
+}
+
+// bytesFields is a tiny strings.Fields for a []byte without an import.
+func bytesFields(b []byte) [][]byte {
+	var out [][]byte
+	start := -1
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if start >= 0 {
+				out = append(out, b[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, b[start:])
+	}
+	return out
 }
 
 // sanitise turns a URL fragment into a filename-safe string.
