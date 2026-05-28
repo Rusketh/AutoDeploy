@@ -907,3 +907,38 @@ logging is already wired in (Phases 0+); Phase 14 adds the
 client-side log shipper (Boot Client uploads its run log at end of
 run, agent ships activity on check-in) and the server-side store +
 portal view + retention setting.
+
+---
+
+## 2026-05-28 — Phase 14 complete (centralised log collection)
+
+**WHAT.**
+
+- Migration 0007 adds `log_event` (id, occurred_at, component, level,
+  actor, action, target, fields) with indexes on time, component+time,
+  actor+time.
+- `internal/model/logs.go`: `LogRepo` with `Append`, `AppendBatch`,
+  `Search` (filter by component/actor/action/since/until/limit) and
+  `Prune` (retention).
+- API:
+  - `POST /api/v1/logs/ingest` accepts a batch of events; refuses
+    events whose `fields` look like they contain a cleartext secret
+    (best-effort tripwire over `password`, `pin`, `recovery_key`).
+  - `GET /api/v1/logs` searches (authenticated).
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Ingest is OPEN (no session required) because the Boot
+  Client and pre-OS environments cannot authenticate as a portal
+  user. Identity is the actor string. The tripwire rejects obvious
+  secret leaks; in deployment scenarios where untrusted parties
+  could ship arbitrary log events to the public endpoint, place the
+  server behind a network boundary.
+- DECISION: Retention is a separate operator-driven concern in Phase
+  14. A scheduled `Prune` runner ships in Phase 16 alongside the
+  other operational housekeeping.
+
+**BUILD STATE.** Full test suite passes; server builds.
+
+**NEXT.** Phase 15 — branding. System-wide brand settings applied to
+the portal, the boot screen, and the deployed OEM info.

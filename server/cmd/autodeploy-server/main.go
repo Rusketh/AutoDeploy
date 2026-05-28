@@ -88,6 +88,7 @@ func run(logger *slog.Logger) error {
 		Resolver: r.Resolver,
 		Users:    r.Users, Settings: r.Settings,
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
+		Logs: r.Logs,
 	})
 
 	pl := &payload.Service{
@@ -192,6 +193,7 @@ type appRepos struct {
 	Settings  *auth.SettingsRepo
 	BitLocker *model.BitLockerRepo
 	Bulk      *model.BulkRepo
+	Logs      *model.LogRepo
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -206,6 +208,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	settings := auth.MustNewSettingsRepo(users)
 	bitlocker := model.NewBitLockerRepo(db, bx)
 	bulk := model.NewBulkRepo(db, inventory)
+	logs := model.NewLogRepo(db)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -214,6 +217,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 			WithDrivers(drivers).WithLoadouts(loadouts),
 		Users: users, Settings: settings,
 		BitLocker: bitlocker, Bulk: bulk,
+		Logs: logs,
 	}
 }
 

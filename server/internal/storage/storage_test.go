@@ -22,6 +22,7 @@ func TestOpenAndMigrate(t *testing.T) {
 		"system_setting", "user_account", "user_session", "pin_attempt",
 		"bitlocker_pin", "bitlocker_recovery_key",
 		"bulk_operation", "bulk_job",
+		"log_event",
 		"schema_migration",
 	} {
 		var name string
