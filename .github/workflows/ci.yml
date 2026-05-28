@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Build server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -count=1 ./...
+      - name: build
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autodeploy-server
+          path: server/bin/autodeploy-server
+          if-no-files-found: error
+
+  boot-client:
+    name: Build boot client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: boot-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: boot-client/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -count=1 ./...
+      - name: build (linux/amd64 static)
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autodeploy-boot
+          path: boot-client/bin/autodeploy-boot
+          if-no-files-found: error
+
+  agent:
+    name: Build agent (host + windows/amd64)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: agent/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -count=1 ./...
+      - name: build host
+        run: make build
+      - name: build windows/amd64
+        run: make build-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autodeploy-agent-windows
+          path: agent/bin/autodeploy-agent.exe
+          if-no-files-found: error
+
+  secret-check:
+    name: Secret-handling sanity check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/check-secrets.sh
+        run: bash scripts/check-secrets.sh
