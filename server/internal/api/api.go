@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 )
@@ -24,6 +25,9 @@ type Repos struct {
 	Images    *model.ImageRepo
 	Inventory *model.InventoryRepo
 	Resolver  *resolve.Resolver
+	// Phase 11.
+	Users    *auth.Repo
+	Settings *auth.SettingsRepo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -31,6 +35,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterBoot(mux, r)
 	RegisterAgent(mux, r)
 	RegisterInventory(mux, r)
+	RegisterAuth(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
+	base64URLpkg "encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
+	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/config"
 	"github.com/rusketh/autodeploy/server/internal/httpx"
 	"github.com/rusketh/autodeploy/server/internal/logging"
@@ -24,6 +27,8 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
+
+var base64URL = base64URLpkg.RawURLEncoding
 
 func main() {
 	logger := logging.New(os.Stdout, "server")
@@ -59,12 +64,22 @@ func run(logger *slog.Logger) error {
 
 	r := repos(db)
 
+	// Bootstrap a default admin account if no users exist yet, so an
+	// operator can log in on first boot. The password is logged ONCE at
+	// startup — the operator is expected to change it immediately. The
+	// log line is recognisable so it shows up in any first-time setup
+	// pipeline.
+	if err := bootstrapAdmin(ctx, r.Users, cfg.DataDir, logger); err != nil {
+		return err
+	}
+
 	mux, handler := httpx.New(cfg, logger)
 	api.Register(mux, api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
 		Images: r.Images, Inventory: r.Inventory,
 		Resolver: r.Resolver,
+		Users:    r.Users, Settings: r.Settings,
 	})
 
 	pl := &payload.Service{
@@ -165,6 +180,8 @@ type appRepos struct {
 	Images    *model.ImageRepo
 	Inventory *model.InventoryRepo
 	Resolver  *resolve.Resolver
+	Users     *auth.Repo
+	Settings  *auth.SettingsRepo
 }
 
 func repos(db *storage.DB) appRepos {
@@ -175,11 +192,60 @@ func repos(db *storage.DB) appRepos {
 	loadouts := model.NewSoftwareLoadoutRepo(db)
 	images := model.NewImageRepo(db)
 	inventory := model.NewInventoryRepo(db)
+	users := auth.New(db)
+	settings := auth.MustNewSettingsRepo(users)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
 		Inventory: inventory,
 		Resolver: resolve.New(images, isos, unattend).
 			WithDrivers(drivers).WithLoadouts(loadouts),
+		Users: users, Settings: settings,
 	}
+}
+
+// bootstrapAdmin creates an "admin" account on first start if no users
+// exist. The generated password is written to data/admin-bootstrap.txt
+// with 0600 permissions; the log records ONLY the path. The operator
+// reads the password from disk once, logs in, changes it, and deletes
+// the file. The secret never appears in any log line.
+func bootstrapAdmin(ctx context.Context, users *auth.Repo, dataDir string, logger *slog.Logger) error {
+	existing, err := users.ListUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	pw, err := randomPassword()
+	if err != nil {
+		return err
+	}
+	if _, err := users.CreateUser(ctx, "admin", pw); err != nil {
+		return err
+	}
+	path := filepath.Join(dataDir, "admin-bootstrap.txt")
+	if err := os.WriteFile(path, []byte("username: admin\npassword: "+pw+"\n"+
+		"# Read this once, log in, change the password, then delete this file.\n"),
+		0o600); err != nil {
+		return err
+	}
+	// Log ONLY the path — never the password. This is the one place we
+	// emit a "go look at this file" pointer; the file itself is the
+	// secret store and CONVENTIONS.md §4 stays intact.
+	logger.Warn("auth.bootstrap_admin",
+		slog.String("actor", "system"),
+		slog.String("target", "user:admin"),
+		slog.String("password_file", path),
+		slog.String("action", "Read the file, log in as admin, change the password via POST /api/v1/accounts/{id}/password, then delete the file"),
+	)
+	return nil
+}
+
+func randomPassword() (string, error) {
+	var b [16]byte
+	if _, err := cryptoRand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64URL.EncodeToString(b[:]), nil
 }

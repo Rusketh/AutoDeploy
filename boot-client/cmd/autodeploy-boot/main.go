@@ -133,9 +133,16 @@ type manifest struct {
 }
 
 func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS)
+
+	// Access PIN gate. Three attempts; on the third failure or lock-out,
+	// fail-safe to a normal boot. The Boot Client never decides whether
+	// a PIN is correct — every attempt is server-validated.
+	if !runAccessPIN(ctx, log, c, id) {
+		return
+	}
 
 	var resp menuResponse
 	if err := c.PostJSON(ctx, "/api/v1/clients/menu", map[string]any{
@@ -274,6 +281,69 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 			slog.String("url", it.URL),
 			slog.Int64("bytes", n))
 	})
+}
+
+// runAccessPIN prompts the operator for the global access PIN (if the
+// server has one configured) and submits each attempt to the server for
+// validation. Returns true when access is granted (or the server has no
+// PIN configured); returns false after three failures or a lock-out, in
+// which case the caller should NOT proceed to the menu.
+//
+// Every failure path here exits 0 / returns false: imaging never proceeds
+// on an access denial.
+func runAccessPIN(ctx context.Context, log *slog.Logger, c *httpc.Client, id smbios.Identity) bool {
+	type pinResp struct {
+		Granted   bool `json:"granted"`
+		LockedOut bool `json:"locked_out,omitempty"`
+	}
+	tryOnce := func(pin string) (pinResp, error) {
+		var r pinResp
+		err := c.PostJSON(ctx, "/api/v1/clients/validate-pin", map[string]any{
+			"system_uuid": id.SystemUUID,
+			"pin":         pin,
+		}, &r)
+		return r, err
+	}
+	// First call with empty PIN: when the server has no gate configured
+	// it grants immediately; otherwise it records a failed attempt and
+	// we prompt for real.
+	r, err := tryOnce("")
+	if err != nil {
+		log.Error("pin.validate", slog.String("error", err.Error()))
+		return false // fail-safe
+	}
+	if r.Granted {
+		return true
+	}
+	for attempt := 1; attempt <= 3; attempt++ {
+		fmt.Printf("\nAutoDeploy access PIN (attempt %d/3): ", attempt)
+		var pin string
+		if _, err := fmt.Scanln(&pin); err != nil || pin == "" {
+			log.Info("pin.cancel", slog.String("reason", "no input"))
+			return false
+		}
+		r, err := tryOnce(pin)
+		if err != nil {
+			log.Error("pin.validate", slog.String("error", err.Error()))
+			return false
+		}
+		if r.LockedOut {
+			log.Warn("pin.locked_out",
+				slog.String("actor", id.SystemUUID),
+				slog.String("target", "self"))
+			fmt.Println("Too many failed attempts. Booting normally.")
+			return false
+		}
+		if r.Granted {
+			log.Info("pin.granted", slog.String("actor", id.SystemUUID))
+			return true
+		}
+		log.Warn("pin.failed",
+			slog.String("actor", id.SystemUUID),
+			slog.Int("attempt", attempt))
+	}
+	fmt.Println("Three failed PIN attempts. Booting normally.")
+	return false
 }
 
 // identityBody is the SMBIOS-shaped JSON body the server expects for

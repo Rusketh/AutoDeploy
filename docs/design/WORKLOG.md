@@ -715,3 +715,72 @@ boot; the server rate-limits by machine identity. Portal auth is
 local username/password, with no graded permission model. Both pieces
 share a tiny secret store (hashed-password rows, plus the access-PIN
 setting).
+
+---
+
+## 2026-05-28 — Phase 11 complete (access PIN + portal authentication)
+
+**WHAT.**
+
+- Migration 0004 adds `system_setting`, `user_account`, `user_session`,
+  `pin_attempt`.
+- `internal/auth`: `Repo` for local username/password accounts
+  (bcrypt-hashed); session creation, lookup with expiry, deletion;
+  `SettingsRepo` for the global access PIN (set/clear/validate) and
+  rate-limit tracking.
+- API endpoints:
+  - `POST /api/v1/auth/login` issues a session cookie; `POST .../logout`
+    revokes it; `GET .../me` returns the current user.
+  - `/api/v1/accounts` CRUD (create / list / delete / disable / enable /
+    set-password). All require an authenticated session.
+  - `/api/v1/settings/access-pin` set + get status. Requires session.
+  - `POST /api/v1/clients/validate-pin` server-side PIN check with
+    rate-limit (5 failures in 15 minutes per `system_uuid` → 429). No
+    session required — this IS the boot-time auth.
+- Boot Client now runs `runAccessPIN` before fetching the menu. Three
+  prompts; each attempt server-validated; lock-out from the server
+  short-circuits to a normal boot. The Boot Client never decides whether
+  a PIN is correct.
+- Bootstrap: on first start with no users, the server creates an
+  `admin` account with a random password and writes it to
+  `$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt` (mode 0600). The log records
+  ONLY the path; the password value never appears in a log line.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Bootstrap password is written to a 0600 file, not logged.
+  Logging a fresh password would violate the no-secrets-in-logs rule
+  even as a one-time bootstrap. The file is a single audit-able
+  artifact the operator reads once and removes.
+- DECISION: Rate limit is per `system_uuid` (5 attempts / 15 minutes),
+  not per source IP. The PXE environment routinely re-NATs across
+  reboots; identity is the stable thing. The 3-attempt local prompt
+  cap covers the deskside operator path; the server cap defeats a
+  reboot-loop attack.
+- DECISION: Cleartext HTTP refusal in production mode (from Phase 0)
+  is even more important now that session cookies and admin
+  credentials are on the wire. The Secure cookie attribute is set
+  whenever the request was over TLS, so HTTPS deployments get the
+  full browser protection automatically.
+- DECISION: No graded permission model. The design is explicit. A
+  TODO marker in the API would suggest this is temporary; it isn't
+  — it's the chosen simplification. Accountability is the audit
+  trail's job.
+- DECISION: The PIN-validation endpoint, when no PIN is configured,
+  returns `granted: true` so the Boot Client's polite "try empty
+  first" probe just works. This is the safe direction (no PIN =
+  no gate = grant).
+
+**BUILD STATE.** All green; full end-to-end smoke validated:
+bootstrap file written and chmod 0600; login issues a session cookie;
+the session reaches `/api/v1/auth/me`; access PIN can be set, the
+correct PIN is accepted, the wrong one is rejected, and 5 wrong
+attempts produce a 429 on the next one for that machine.
+
+**NEXT.** Phase 12 — BitLocker management. The agent enables BitLocker
+on C: when the machine's inventory record has a PIN; recovery keys are
+escrowed back to inventory and kept as an append-only history;
+re-imaging re-applies the same PIN to the new volume (with a fresh
+recovery key necessarily). Secrets here include the BitLocker PIN
+itself and the recovery keys; both stored encrypted at rest, neither
+ever logged.
