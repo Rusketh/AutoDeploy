@@ -2231,3 +2231,92 @@ Chromium against the actual server build.
 **BUILD STATE.** Server unchanged; the docs are pure markdown +
 PNG. `go test ./...` cached green; secret check green. Total
 ~7.3 MB of PNG images, ~4100 lines of markdown.
+
+## 2026-05-28 — Configurable storage paths
+
+Operators with large fleets often want ISOs on a ZFS dataset,
+drivers on a separate NFS mount, downloads on a thin OS volume.
+Previously those all lived under `$DATA_DIR/<category>` with no
+override path -- moving them meant relocating the whole data dir
+or doing OS-level symlinks. This change exposes per-category
+overrides as a portal setting and routes the BlobStore through
+them.
+
+**BlobStore router (`internal/storage/blob.go`).** Adds an
+`overrides map[string]string` (category -> absolute path),
+protected by a RWMutex. New methods:
+
+- `SetCategoryRoot(category, absPath)` — operator-configured
+  override. Empty clears. Refuses non-absolute paths. Creates the
+  directory if missing.
+- `CategoryRoot(category)` — returns the effective root, falling
+  back to `root/<category>` when no override is set. Used by
+  callers that operate on the raw filesystem (TFTP listener, ipxe
+  static handler, Downloads page scanner).
+
+`Resolve()` is rewritten to split the relative path on the first
+slash, look up the category root, and confine the result. Path
+traversal protection (the `..` rejection) is preserved: the new
+test `TestResolve_PathTraversalStaysInsideKnownRoots_WithOverride`
+verifies every result lands inside either the base root or the
+configured override.
+
+**Runtime settings.** Five new keys (`storage.iso`,
+`storage.drivers`, `storage.software`, `storage.ipxe`,
+`storage.downloads`) follow the same env-seed-then-portal-wins
+pattern as AD/retention/throttle. `StoragePaths()`,
+`StoragePath(category)`, `SetStoragePath(category, abs)`, and
+`ApplyStorageOverrides(blobs)` round out the API. The
+`StorageCategories` slice is the canonical closed set used by
+both the runtime and the portal handler so adding a new category
+is one edit.
+
+**Wiring.** `main.go` calls `rt.ApplyStorageOverrides(blobs)`
+right after constructing the runtime settings. The TFTP server
+gained a `RootFunc func() string` field consulted on every
+request so a portal-driven storage relocation takes effect
+without a restart. The `/ipxe/static/` HTTP handler resolves
+its FS at every request via the same router. The Downloads page
+handler reads `r.Blobs.CategoryRoot("downloads")` instead of the
+hardcoded `filepath.Join(r.DataDir, "downloads")`.
+
+**Portal page (`/portal/settings/storage`).** Five fieldsets,
+each with override input, effective-path display + copy button,
+state badge (`writable` / `missing` / `default`), and a step-by-
+step relocate-without-downtime guide at the bottom. The submit
+handler validates that overrides are absolute (refuses relative
+paths with a flash), persists each setting, pushes the new
+values into the live BlobStore, and surfaces per-category errors
+as warnings rather than aborting.
+
+**WHY (decisions).**
+
+- DECISION: Override per category, not per row. Operators want
+  "ISOs on the big disk, downloads on the small disk", not "this
+  specific ISO on this disk". Per-category keeps the UI small and
+  the routing predictable.
+- DECISION: Database stores relative paths; the override is in
+  the resolver. This way a relocation doesn't require any data
+  migration -- the rows still say `iso/12/source.iso`, but the
+  resolver routes that to `/mnt/zfs/iso/12/source.iso`.
+- DECISION: Files are not moved automatically. The portal warns
+  loudly, the docs explain the stop-move-start-save sequence.
+  Auto-moving is a foot-gun: a sudden directory rename mid-deploy
+  would brick in-flight uploads. Operator does the move when
+  they're ready.
+- DECISION: The TFTP listener stores a RootFunc rather than a
+  static string so the iPXE relocation works without a restart.
+  Same for the ipxe static handler. The Downloads page already
+  reads the directory on every request so it gets the new path
+  for free.
+
+**BUILD STATE.** `go test ./...` green including five new
+BlobStore tests (default subdir, override resolve, refuse-
+relative, empty-clears, traversal-inside-known-roots). Secret
+check green. End-to-end smoke test: started server with
+`$DATA_DIR=/tmp/storage-smoke`, saved
+`storage_iso=/tmp/relocated-iso` through the portal page,
+uploaded an ISO via the API, confirmed the file landed at
+`/tmp/relocated-iso/1/source.iso` (NOT
+`/tmp/storage-smoke/iso/...`). Screenshot at
+`docs/user-guide/images/settings-storage.png`.

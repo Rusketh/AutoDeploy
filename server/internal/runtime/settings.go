@@ -35,7 +35,25 @@ const (
 	keyADSkipTLSVerify    = "ad.skip_tls_verify"
 	keyLogRetentionDays   = "retention.log_days"
 	keyPayloadMaxInFlight = "payload.max_in_flight"
+	keyStorageISO         = "storage.iso"
+	keyStorageDrivers     = "storage.drivers"
+	keyStorageSoftware    = "storage.software"
+	keyStorageIPXE        = "storage.ipxe"
+	keyStorageDownloads   = "storage.downloads"
 )
+
+// StorageCategories is the closed set of relocatable category prefixes
+// the portal lets operators override. The keys are the user-facing
+// names; the values are the underlying setting key.
+var StorageCategories = []struct {
+	Category, Key, Description string
+}{
+	{"iso", keyStorageISO, "Extracted ISO trees + the uploaded source.iso per ISO row."},
+	{"drivers", keyStorageDrivers, "Uploaded driver zips + extracted .inf trees per driver package."},
+	{"software", keyStorageSoftware, "Uploaded software installer payloads."},
+	{"ipxe", keyStorageIPXE, "iPXE bootstrap binaries + Boot Client kernel/initrd (TFTP + static)."},
+	{"downloads", keyStorageDownloads, "Operator-distributable binaries served by the portal Downloads page."},
+}
 
 // Settings is the runtime-changeable configuration façade.
 type Settings struct {
@@ -273,6 +291,66 @@ func (s *Settings) SetPayloadMaxInFlight(ctx context.Context, n int) error {
 		return errors.New("max in-flight must be >= 0")
 	}
 	return s.setRaw(ctx, keyPayloadMaxInFlight, strconv.Itoa(n))
+}
+
+// ApplyStorageOverrides pushes every configured storage path into
+// the given BlobStore. Empty entries are cleared (the BlobStore
+// falls back to its default subdirectory). Errors are accumulated
+// into the returned map keyed by category; the caller decides
+// whether to surface them to the operator.
+func (s *Settings) ApplyStorageOverrides(blobs *storage.BlobStore) map[string]error {
+	if blobs == nil {
+		return nil
+	}
+	errs := map[string]error{}
+	for _, c := range StorageCategories {
+		p := s.get(c.Key)
+		if err := blobs.SetCategoryRoot(c.Category, p); err != nil {
+			errs[c.Category] = err
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
+}
+
+// StoragePaths returns the operator-configured absolute paths for
+// each relocatable category. Empty value means "use the default
+// (<DATA_DIR>/<category>)". The portal Settings page edits these via
+// SetStoragePath; the BlobStore consumes them via SetCategoryRoot.
+func (s *Settings) StoragePaths() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]string{}
+	for _, c := range StorageCategories {
+		out[c.Category] = s.cache[c.Key]
+	}
+	return out
+}
+
+// StoragePath returns the configured path for one category, or "" if
+// the default applies. The path is operator input -- validate before
+// using.
+func (s *Settings) StoragePath(category string) string {
+	for _, c := range StorageCategories {
+		if c.Category == category {
+			return s.get(c.Key)
+		}
+	}
+	return ""
+}
+
+// SetStoragePath stores an operator-configured absolute path for one
+// category. Empty clears (revert to default). The caller is expected
+// to update the live BlobStore router after a successful set.
+func (s *Settings) SetStoragePath(ctx context.Context, category, absPath string) error {
+	for _, c := range StorageCategories {
+		if c.Category == category {
+			return s.setRaw(ctx, c.Key, absPath)
+		}
+	}
+	return fmt.Errorf("unknown storage category %q", category)
 }
 
 // EnvDefaults returns the (immutable) env-time defaults the Settings

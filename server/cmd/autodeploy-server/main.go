@@ -83,6 +83,20 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Push any operator-configured storage path overrides into the
+	// blob store so payload writes/reads route to the configured
+	// directories instead of $DATA_DIR/<category>. Errors here are
+	// non-fatal -- a missing override directory means the operator
+	// edited the setting before creating the path; the server still
+	// starts, the warning is logged, and subsequent writes will fail
+	// until the path exists.
+	if errs := rt.ApplyStorageOverrides(blobs); len(errs) > 0 {
+		for cat, e := range errs {
+			logger.Warn("storage.override.failed",
+				slog.String("category", cat),
+				slog.String("error", e.Error()))
+		}
+	}
 
 	// Bootstrap a default admin account if no users exist yet, so an
 	// operator can log in on first boot. The password is logged ONCE at
@@ -158,10 +172,14 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())
 
 	api.RegisterIPXE(mux)
-	// Static iPXE asset tree (kernel/initrd) lives under data/ipxe/.
-	staticDir := filepath.Join(cfg.DataDir, "ipxe")
-	_ = os.MkdirAll(staticDir, 0o755)
-	mux.Handle("GET /ipxe/static/", http.StripPrefix("/ipxe/static/", http.FileServer(http.Dir(staticDir))))
+	// Static iPXE asset tree (kernel / initrd / bootstrap binaries)
+	// lives under data/ipxe/ by default, but the operator can
+	// relocate it via the Settings -> Storage page. Resolve on every
+	// request so a runtime change picks up without restart.
+	mux.Handle("GET /ipxe/static/", http.StripPrefix("/ipxe/static/",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.FileServer(http.Dir(blobs.CategoryRoot("ipxe"))).ServeHTTP(w, r)
+		})))
 
 	if err := portal.Register(mux, portal.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
@@ -228,13 +246,16 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		}()
 	}
 	if cfg.TFTPAddr != "" {
-		// Built-in TFTP serves $DATA_DIR/ipxe read-only so a classic
-		// PXE setup can grab undionly.kpxe / ipxe.efi etc. without a
-		// separate TFTP daemon. Port 69 needs CAP_NET_BIND_SERVICE.
+		// Built-in TFTP serves the iPXE category root read-only so a
+		// classic PXE setup can grab undionly.kpxe / ipxe.efi etc.
+		// without a separate TFTP daemon. Port 69 needs
+		// CAP_NET_BIND_SERVICE. RootFunc consults the live BlobStore
+		// router so a portal-driven storage relocation takes effect
+		// without a restart.
 		ts := &tftp.Server{
-			Addr:   cfg.TFTPAddr,
-			Root:   filepath.Join(cfg.DataDir, "ipxe"),
-			Logger: logger,
+			Addr:     cfg.TFTPAddr,
+			RootFunc: func() string { return blobs.CategoryRoot("ipxe") },
+			Logger:   logger,
 		}
 		wg.Add(1)
 		go func() {

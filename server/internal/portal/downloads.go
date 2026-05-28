@@ -44,8 +44,13 @@ type downloadGroup struct {
 
 // downloadsDir is the on-disk root the operator drops distributable
 // binaries into. Treated as a flat directory; nested paths are
-// served too but the page lists them by filename only.
+// served too but the page lists them by filename only. Honours the
+// portal-configured storage override for the "downloads" category
+// when one is set.
 func downloadsDir(r Repos) string {
+	if r.Blobs != nil {
+		return r.Blobs.CategoryRoot("downloads")
+	}
 	if r.DataDir == "" {
 		return ""
 	}

@@ -10,12 +10,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-// BlobStore is a filesystem-backed payload store rooted at root. It serves
-// reads, accepts streamed writes, and refuses to escape its root.
+// BlobStore is a filesystem-backed payload store rooted at root. It
+// serves reads, accepts streamed writes, and refuses to escape its
+// root. Per-category overrides let operators relocate large payload
+// trees (iso, drivers, software) to a different filesystem at runtime
+// via the portal without rewriting the DB-stored relative paths.
 type BlobStore struct {
 	root string
+
+	mu        sync.RWMutex
+	overrides map[string]string // category prefix -> absolute root
 }
 
 // NewBlobStore returns a store rooted at root, creating the directory if
@@ -28,19 +35,75 @@ func NewBlobStore(root string) (*BlobStore, error) {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", abs, err)
 	}
-	return &BlobStore{root: abs}, nil
+	return &BlobStore{root: abs, overrides: map[string]string{}}, nil
 }
 
-// Root returns the absolute root directory. Useful for tests and logging.
+// Root returns the absolute base directory. Useful for tests and
+// logging. Per-category overrides (see SetCategoryRoot) shift the
+// resolution for individual prefixes; this remains the fallback.
 func (b *BlobStore) Root() string { return b.root }
 
-// Resolve joins relative with the store root and refuses paths that try to
-// escape the root via "..". Returns the absolute path.
+// SetCategoryRoot configures an absolute path to use as the root for
+// the given category prefix (the first slash-separated segment of a
+// relative path, e.g. "iso", "drivers", "software"). Empty path
+// clears the override and falls back to root/<category>. The path is
+// created if it doesn't already exist.
+//
+// Callable at runtime. Existing files are NOT moved -- the operator
+// is expected to relocate them before flipping the override.
+func (b *BlobStore) SetCategoryRoot(category, absPath string) error {
+	category = strings.Trim(category, "/")
+	if category == "" {
+		return fmt.Errorf("category must be non-empty")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	absPath = strings.TrimSpace(absPath)
+	if absPath == "" {
+		delete(b.overrides, category)
+		return nil
+	}
+	if !filepath.IsAbs(absPath) {
+		return fmt.Errorf("category root must be absolute: %q", absPath)
+	}
+	clean := filepath.Clean(absPath)
+	if err := os.MkdirAll(clean, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", clean, err)
+	}
+	b.overrides[category] = clean
+	return nil
+}
+
+// CategoryRoot returns the resolved root for a category. Returns the
+// configured override if one is set, otherwise root/<category>.
+// Useful for callers that operate on the raw filesystem (the TFTP
+// listener, the ipxe static handler, the Downloads page scanner).
+func (b *BlobStore) CategoryRoot(category string) string {
+	category = strings.Trim(category, "/")
+	b.mu.RLock()
+	override, ok := b.overrides[category]
+	b.mu.RUnlock()
+	if ok && override != "" {
+		return override
+	}
+	return filepath.Join(b.root, category)
+}
+
+// Resolve joins relative with the appropriate root (per-category
+// override when configured, otherwise the store base) and refuses
+// paths that try to escape it via "..".
 func (b *BlobStore) Resolve(relative string) (string, error) {
-	clean := filepath.Clean("/" + relative)            // normalise; leading / makes Clean drop ".."
-	abs := filepath.Join(b.root, clean)                 // root + cleaned
-	rel, err := filepath.Rel(b.root, abs)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	clean := filepath.Clean("/" + relative) // normalise; leading / makes Clean drop ".."
+	clean = strings.TrimPrefix(clean, "/")
+	if clean == "" || clean == "." {
+		return "", fmt.Errorf("empty relative path")
+	}
+	// Split off the category prefix.
+	category, rest, _ := strings.Cut(clean, "/")
+	base := b.CategoryRoot(category)
+	abs := filepath.Join(base, rest)
+	relCheck, err := filepath.Rel(base, abs)
+	if err != nil || strings.HasPrefix(relCheck, "..") {
 		return "", fmt.Errorf("path %q escapes blob root", relative)
 	}
 	return abs, nil

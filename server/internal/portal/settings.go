@@ -36,6 +36,10 @@ func init() {
 		// Operational (retention, throttle)
 		get("/portal/settings/operational", opsForm(r))
 		post("/portal/settings/operational", opsSubmit(r))
+
+		// Storage (per-category path overrides)
+		get("/portal/settings/storage", storageForm(r))
+		post("/portal/settings/storage", storageSubmit(r))
 	}
 }
 

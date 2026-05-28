@@ -74,12 +74,28 @@ type Server struct {
 	// want the privileged port 69; bind via setcap or a systemd unit.
 	Addr string
 	// Root is the directory files are served from. All requested
-	// paths are cleaned and confined to this root.
+	// paths are cleaned and confined to this root. When RootFunc is
+	// set it overrides this field on every request so a runtime
+	// reconfiguration (the portal Settings -> Storage page changing
+	// the iPXE path) takes effect without a server restart.
 	Root string
+	// RootFunc, when non-nil, is consulted on every request to obtain
+	// the current root. Use this when the path is operator-managed.
+	RootFunc func() string
 	// Logger receives structured events.
 	Logger *slog.Logger
 
 	conn *net.UDPConn
+}
+
+// rootDir returns the effective serving directory.
+func (s *Server) rootDir() string {
+	if s.RootFunc != nil {
+		if r := s.RootFunc(); r != "" {
+			return r
+		}
+	}
+	return s.Root
 }
 
 // ListenAndServe binds and serves until ctx is cancelled. Returns the
@@ -222,14 +238,15 @@ func (s *Server) log(action string, attrs ...slog.Attr) {
 	s.Logger.LogAttrs(context.Background(), slog.LevelInfo, action, all...)
 }
 
-// resolve cleans and confines path to s.Root.
+// resolve cleans and confines path to the server's current root.
 func (s *Server) resolve(filename string) (string, error) {
 	if filename == "" {
 		return "", errors.New("empty filename")
 	}
+	root := s.rootDir()
 	cleaned := filepath.Clean("/" + filename)
-	abs := filepath.Join(s.Root, cleaned)
-	rel, err := filepath.Rel(s.Root, abs)
+	abs := filepath.Join(root, cleaned)
+	rel, err := filepath.Rel(root, abs)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("path %q escapes root", filename)
 	}

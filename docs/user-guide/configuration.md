@@ -47,6 +47,49 @@ AUTODEPLOY_AD_SEARCH_BASE, AUTODEPLOY_AD_SKIP_TLS_VERIFY,
 AUTODEPLOY_LOG_RETENTION_DAYS, AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT
 ```
 
+## Relocating storage from the portal
+
+The categories under `$DATA_DIR/` — `iso/`, `drivers/`, `software/`,
+`ipxe/`, `downloads/` — can each be relocated to a different
+filesystem **from the portal**, without rewriting the database or
+restarting the server. Source: `Settings → Storage paths`.
+
+![Storage paths](images/settings-storage.png)
+
+Each row shows:
+
+- **Override path (absolute)** — the operator-configured root.
+  Empty falls back to `$DATA_DIR/<category>`.
+- **Effective** — the path the storage layer is currently routing
+  to. Copy button to grab it for backup scripts etc.
+- **State badge** — `writable` (green), `missing` (yellow — the
+  override directory doesn't exist yet), or `default` (neutral —
+  no override set).
+
+**Files are not moved automatically.** The save action records the
+new root; it does not copy or rename anything on disk. To relocate
+without downtime:
+
+1. **Stop** the AutoDeploy service.
+2. **Move** the existing directory:
+
+   ```sh
+   sudo mv $DATA_DIR/iso /mnt/zfs/iso
+   sudo chown -R autodeploy:autodeploy /mnt/zfs/iso
+   ```
+
+3. **Start** the service.
+4. **Save** the new path in `Settings → Storage paths`. The storage
+   layer routes every subsequent read/write to the override.
+
+Existing database rows still point at relative paths like
+`iso/12/source.iso`; the resolver consults the override at request
+time so those paths stay valid through any number of relocations.
+
+`scripts/backup.sh` and `scripts/windows/backup.ps1` read the
+*current* effective paths so backups follow the override
+automatically.
+
 ## On-disk layout
 
 ```
