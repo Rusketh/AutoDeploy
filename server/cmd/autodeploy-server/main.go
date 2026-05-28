@@ -65,7 +65,11 @@ func run(logger *slog.Logger) error {
 	})
 
 	pl := &payload.Service{
-		Blobs: blobs, ISOs: r.ISOs, Drivers: r.Drivers, Software: r.Software,
+		Blobs:    blobs,
+		ISOs:     r.ISOs,
+		Drivers:  r.Drivers,
+		Software: r.Software,
+		Resolver: r.Resolver,
 	}
 	pl.Register(mux)
 

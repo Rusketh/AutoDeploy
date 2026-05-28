@@ -16,11 +16,12 @@ the product, and never before.
 5. [Payload uploads and delivery](payloads.md) — uploading ISOs and packages, HTTPS, the manifest endpoint.
 6. [Boot Client and PXE](boot-client.md) — building the initramfs, the iPXE chainload, the deploy flow.
 7. [Driver matching](driver-matching.md) — SMBIOS filter shapes, preview endpoint, manifest integration.
+8. [Unattend configuration](unattend.md) — settings model, generated XML, secrets handling.
 
 Sections will be added as the corresponding features are implemented. If a
 section you expect is missing, the feature it documents has not yet shipped.
 
-## Current product surface (Phase 4)
+## Current product surface (Phase 5)
 
 - **Server** — runs the management portal and JSON API, with HTTPS support.
   SQLite-backed.
@@ -46,7 +47,7 @@ section you expect is missing, the feature it documents has not yet shipped.
 - **Agent** — starts and exits (lifecycle arrives in Phase 6).
 
 Still to come (sequenced by `docs/design/roadmap.txt`):
-unattend generation (Phase 5), software step execution
+software step execution
 (Phase 6), software loadouts (Phase 7), inventory and re-imaging
 (Phase 8–9), AD integration (Phase 10), the access PIN and authentication
 (Phase 11), BitLocker (Phase 12), bulk operations (Phase 13), centralised

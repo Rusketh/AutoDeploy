@@ -313,3 +313,74 @@ from them, and serves it at `/payload/unattend/{image-id}`. The Boot
 Client already downloads whatever `unattend` item the manifest lists and
 places it at `Windows\Panther\unattend.xml`, so the wire change is in
 the server.
+
+---
+
+## 2026-05-28 — Phase 5 complete (unattend generation)
+
+**WHAT.**
+
+- `internal/unattend`: structured `Settings` model covering locale,
+  language, keyboard, time zone, edition + product key, local admin
+  (with secret password), computer-naming strategy (random, literal,
+  prefix), OOBE skip flags, optional domain join (with secret join
+  password), and ordered first-logon commands.
+- `unattend.Generate(Settings)` writes a complete Windows 10/11
+  `unattend.xml` covering windowsPE, specialize and oobeSystem passes
+  with both `urn:schemas-microsoft-com:unattend` and the `wcm`
+  namespaces declared. HTML/XML-escapes every value.
+- The agent bootstrap command is always appended to the
+  FirstLogonCommands list so the agent runs after any operator-supplied
+  first-logon steps.
+- Payload service grew `GET /payload/unattend/{image-id}` which
+  resolves the nearest-wins unattend for the given image, parses its
+  settings_json and returns the generated XML. The Boot Client already
+  downloads this URL via the manifest's `unattend` item.
+- Tests: XML parses as valid XML; admin password is present in XML
+  (Windows needs it) but never logged; hidden-admin omits the
+  AdministratorPassword block; all three naming strategies emit the
+  expected `<ComputerName>` value; domain join section appears when
+  configured; defaults apply when settings_json is empty.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Unattend settings remain stored as JSON in the row, parsed
+  on each render. Avoids a schema migration every time a new field is
+  added; the structured type is the authority and the JSON is its
+  on-disk representation.
+- DECISION: The endpoint key is the IMAGE id, not the unattend id,
+  because the choice of unattend is a property of the resolved image
+  (nearest-wins up the chain). The Boot Client never knows or cares
+  which unattend row was used.
+- DECISION: The agent first-logon command is always appended by the
+  generator, not added by the operator. Removing it would leave the
+  machine without an agent, defeating the rest of the system.
+- DECISION: Secrets (admin password, domain join password) live in the
+  settings_json blob. They are emitted into the generated XML (this is
+  the entire point of unattended setup) but never written to any log,
+  HTTP error body, or stack trace. `scripts/check-secrets.sh` continues
+  to enforce the no-leak rule statically.
+- ASSUMPTION: Windows 10/11 amd64 is the target. The generated XML uses
+  `processorArchitecture="amd64"` everywhere. Arm64 support is a
+  follow-up: it would parameterise the architecture and select the
+  matching component versions.
+- ASSUMPTION: Operators that need a name strategy beyond `random`,
+  `literal`, `prefix` can still use the bulk-rename agent job (Phase
+  13) to set the authoritative name post-deploy. The unattend only
+  picks the initial transient name.
+
+**BUILD STATE.** `go test ./...` and `make build` green across the
+server. Smoke test confirms the generated XML contains the operator-
+configured first-logon command, the agent bootstrap, the local-admin
+password and the computer name, with no secret leakage into logs.
+
+**NEXT.** Phase 6 — Deployment Client (agent) and software step
+execution. The agent already starts and logs (Phase 0); Phase 6
+implements the detection rule evaluator (file presence/version,
+registry key/value, MSI product code, custom script), the typed
+install-step executor (copy files, run MSI, install APPX/MSIX, run CMD,
+run PowerShell, run an executable with arguments), and a fetch loop
+that pulls the effective software list from the API, skips already-
+installed packages, executes each package's steps in order and
+re-confirms via detection. The API already serves the resolved software
+set; the agent is where Phase 6 lives.

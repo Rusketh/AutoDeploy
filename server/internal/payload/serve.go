@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
 // Service serves payload uploads and downloads. Routes are registered on a
@@ -22,6 +24,9 @@ type Service struct {
 	ISOs     *model.ISORepo
 	Drivers  *model.DriverPackageRepo
 	Software *model.SoftwarePackageRepo
+	// Resolver lets the unattend endpoint pick the nearest-wins unattend
+	// for a given image. Optional; nil disables the endpoint.
+	Resolver *resolve.Resolver
 }
 
 // Register mounts payload routes on mux:
@@ -45,6 +50,49 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /payload/iso/{id}/", s.serveISOContent)
 	mux.HandleFunc("GET /payload/drivers/{id}", s.serveDriver)
 	mux.HandleFunc("GET /payload/software/{id}", s.serveSoftware)
+	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
+}
+
+// serveUnattend resolves the image, picks the nearest-wins unattend, and
+// returns the generated unattend.xml. The path id is the IMAGE id (not the
+// unattend id), because the choice of unattend depends on the image's
+// inheritance chain — only the resolver knows which one applies.
+//
+// Logging note: the generated XML contains the local-admin password and
+// any domain-join password. The endpoint logs only the fact of access
+// (which it gets for free from the request logger) — never the bytes.
+func (s *Service) serveUnattend(w http.ResponseWriter, r *http.Request) {
+	if s.Resolver == nil {
+		http.Error(w, "unattend generation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res, err := s.Resolver.Resolve(r.Context(), id)
+	if err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	if res.Unattend == nil {
+		http.Error(w, "no unattend resolved for this image", http.StatusNotFound)
+		return
+	}
+	settings, err := unattend.Parse(res.Unattend.SettingsJSON)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	xml, err := unattend.Generate(settings)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="unattend.xml"`)
+	_, _ = w.Write(xml)
 }
 
 // uploadISO accepts a raw octet-stream PUT body and writes it to
