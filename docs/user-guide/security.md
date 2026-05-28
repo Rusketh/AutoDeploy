@@ -1,112 +1,151 @@
-# Security: portal authentication and access PIN
+# Security
 
-> **Status.** Phase 11. Local username/password accounts gate the portal
-> and JSON API; an optional global access PIN gates the Boot Client menu.
-> Per the design, there is **no graded permission model** — every
-> authenticated user has full access. Accountability rests on the audit
-> trail.
+> Portal accounts, sessions, the access PIN, secret handling, and
+> the audit trail.
 
-## First-time login (bootstrap)
+## Portal accounts
 
-On its first run, the server creates an `admin` account with a random
-password. The password is written to:
+![Local accounts](images/settings-accounts.png)
 
-```
-$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt   (mode 0600)
-```
-
-The path appears in the server log; the **password value never does**.
-Read the file once, log in, change the password, then delete the file.
+- **bcrypt-hashed passwords**, no graded permissions. Every active
+  account has full portal/API access; accountability rests on the
+  audit log.
+- **Sessions** carry a `HttpOnly`, `SameSite=Lax` cookie, marked
+  `Secure` when served over HTTPS. Default TTL is 12 hours.
+- **First-time bootstrap**: on a fresh install the server writes
+  `$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt` (mode `0600`) containing
+  a random password. Operators log in once, change it via
+  **Settings → Local accounts → Change your own password**, then
+  delete the file. The portal shows a red banner while the file
+  still exists.
 
 ```sh
+# First login from CLI
 PW=$(grep ^password ./data/admin-bootstrap.txt | sed 's/^password: //')
 curl -c cookie.txt -X POST http://127.0.0.1:8080/api/v1/auth/login \
     -H 'Content-Type: application/json' \
     -d "{\"username\":\"admin\",\"password\":\"$PW\"}"
 ```
 
-The login response sets a session cookie (`autodeploy_session`, HttpOnly,
-SameSite=Lax, Secure on HTTPS). Subsequent requests pass the cookie back
-to authenticate.
+The login response sets a session cookie (`autodeploy_session`).
 
-## Account management
+## Access PIN (the boot gate)
 
-All accounts have full portal/API access. Use the audit log for
-accountability.
+![Access PIN](images/settings-pin.png)
 
-```sh
-# Create
-curl -b cookie.txt -X POST http://127.0.0.1:8080/api/v1/accounts \
-    -H 'Content-Type: application/json' \
-    -d '{"username":"bob","password":"correct-horse-battery-staple"}'
+A global PIN gates the Boot Client menu. When configured, every
+Boot Client prompts before showing deploy options.
 
-# List
-curl -b cookie.txt http://127.0.0.1:8080/api/v1/accounts
+| Property | Detail |
+|---|---|
+| Storage | bcrypt hash in `system_setting`. |
+| Validation | Server-side only. The Boot Client sends each attempt to `POST /api/v1/clients/validate-pin` and respects the verdict. |
+| Local limit | Three wrong attempts in a single Boot Client run → fail safe to a normal boot. |
+| Server limit | 5 failures in 15 minutes per machine UUID → 429 lockout regardless of reboots. |
+| Disable | Save with an empty PIN. The boot menu becomes open. |
 
-# Disable / enable
-curl -b cookie.txt -X POST http://127.0.0.1:8080/api/v1/accounts/2/disable
-curl -b cookie.txt -X POST http://127.0.0.1:8080/api/v1/accounts/2/enable
+## Deploy tokens (agent ↔ server)
 
-# Reset password
-curl -b cookie.txt -X POST http://127.0.0.1:8080/api/v1/accounts/2/password \
-    -H 'Content-Type: application/json' \
-    -d '{"password":"new-password"}'
+The agent's secret-returning endpoint (BitLocker config) requires a
+per-machine bearer token:
 
-# Delete
-curl -b cookie.txt -X DELETE http://127.0.0.1:8080/api/v1/accounts/2
+- Issued by `POST /api/v1/agent/report` when the agent opens a
+  deploy with `outcome: "in_progress"`.
+- Stored in the agent's memory only — never on disk, never logged.
+- Sent as `X-AutoDeploy-Deploy-Token` on subsequent calls.
+- Hashed (SHA-256) before storage in `machine_deploy_token`.
+- Valid for 24 hours; rotated on every new deploy.
+
+Stealing a SMBIOS UUID is not sufficient to retrieve a BitLocker
+PIN — only the freshly-deploying client has the token.
+
+## BitLocker secrets
+
+See [BitLocker](bitlocker.md) for the full story. Summary:
+
+- PINs and recovery keys are AES-256-GCM at rest.
+- Encryption key from `AUTODEPLOY_SECRETS_KEY` (preferred) or
+  `$DATA_DIR/secrets-key.bin` (auto-generated, mode 0600).
+- Back up the key separately from the database.
+
+## Secrets never appear in logs
+
+CONVENTIONS.md §4 enforces this statically.
+`scripts/check-secrets.sh` is a CI tripwire that searches the
+codebase for patterns that would leak a secret — `slog.String("pin",
+...)`, `fmt.Sprintf` with secret-shaped names, and `.Reveal()`
+calls outside the audited boundary in `internal/secrets` and
+`internal/auth`.
+
+When a secret IS read, the boundary emits a `secret.access` log
+line recording **who** retrieved **which secret** — never the value:
+
+```json
+{
+  "time": "...",
+  "level": "WARN",
+  "msg": "secret.access",
+  "actor": "portal:admin",
+  "target": "bitlocker.pin:machine:1",
+  "note": "value returned to client; not logged"
+}
 ```
 
-Passwords are stored as bcrypt hashes (cost 10). The cleartext is never
-written to disk after the create/reset call returns.
+The log ingest endpoint (`POST /api/v1/logs/ingest`) also runs a
+"best-effort secret-shape" tripwire — fields like `"pin":"..."`,
+`"password":"..."`, `"recovery_key":"..."` are rejected at the
+gateway.
 
-## The deployment access PIN
+## HTTPS rules
 
-The access PIN is an **optional** single global system setting that gates
-the Boot Client menu. When enabled, every machine that network-boots is
-challenged before any menu is shown.
+See [Configuring the server](configuration.md#http-vs-https-the-full-rules)
+for the full ruleset. One line:
 
-```sh
-# Enable (any non-empty value enables; the PIN is bcrypt-hashed at rest)
-curl -b cookie.txt -X PUT http://127.0.0.1:8080/api/v1/settings/access-pin \
-    -H 'Content-Type: application/json' \
-    -d '{"pin":"1234"}'
+- `AUTODEPLOY_DEV=true` (default) → HTTP and HTTPS both work on any
+  interface; HTTPS optional.
+- `AUTODEPLOY_DEV=false` (production) → HTTP must be loopback OR
+  HTTPS must be configured; the server refuses to bind cleartext
+  HTTP to a non-loopback address.
 
-# Check status
-curl -b cookie.txt http://127.0.0.1:8080/api/v1/settings/access-pin
+## Audit trail
 
-# Disable (empty PIN)
-curl -b cookie.txt -X PUT http://127.0.0.1:8080/api/v1/settings/access-pin \
-    -H 'Content-Type: application/json' \
-    -d '{"pin":""}'
-```
-
-### Fail-safe behaviour
-
-The Boot Client prompts for the PIN before the menu and submits each
-attempt to `POST /api/v1/clients/validate-pin`. Three wrong attempts and
-the client fails safe to a normal boot — no menu shown, no imaging.
-
-### Server-side rate limit
-
-The local three-attempt limit could be defeated by rebooting; the server
-also rate-limits by `system_uuid`. After **5 failed attempts in 15
-minutes** the server returns `429 Too Many Requests` for that machine
-regardless of how many times it reboots, until the window passes.
-
-The PIN value itself is never logged; only the fact (and outcome) of an
-attempt is recorded against the machine.
-
-## What the audit trail captures
-
-| Event                          | Source             |
-|--------------------------------|--------------------|
-| Login / logout                 | HTTP request log   |
+| Event | Source |
+|---|---|
+| Login / logout | HTTP request log |
 | Account create / disable / delete / password reset | HTTP request log |
-| Access-PIN enable / disable    | HTTP request log   |
-| Access-PIN attempt (success and failure)            | `pin_attempt` table + request log |
-| All artifact and image CRUD    | HTTP request log   |
-| Boot Client menu fetch, deploy, agent reports       | per-component logs |
+| Access-PIN enable / disable | HTTP request log |
+| Access-PIN attempt (success and failure) | `pin_attempt` table + request log |
+| All artifact and image CRUD | HTTP request log |
+| Boot Client menu fetch, deploy, agent reports | per-component logs (centralised — see [Logging](logging.md)) |
+| Every secret retrieval | `secret.access` log line — who/what, never the value |
 
-No secret value (password, PIN, recovery key, AD bind password) appears
-in any of these. Centralised collection and search across all of them
-arrives in Phase 14.
+## Security review checklist
+
+Run before each release.
+
+- [ ] HTTPS enforced. The server refuses cleartext HTTP on
+      non-loopback in production mode.
+- [ ] Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` over
+      TLS.
+- [ ] Passwords stored as bcrypt hashes. Bootstrap admin password
+      written to file (mode 0600), not logged.
+- [ ] Access PIN is bcrypt-hashed at rest. Server-side rate limit
+      keyed on `system_uuid` (5 / 15min).
+- [ ] BitLocker PINs and recovery keys are AES-256-GCM encrypted at
+      rest. Recovery-key history is append-only.
+- [ ] Agent BitLocker config endpoint requires a valid deploy
+      token.
+- [ ] AD service-account password loaded from env / portal,
+      encrypted at rest, never logged.
+- [ ] `scripts/check-secrets.sh` runs in CI and trips on common
+      cleartext-secret patterns.
+- [ ] `Secret.Reveal()` calls are confined to the audited
+      `internal/secrets` and `internal/auth` boundaries.
+- [ ] Log ingest endpoint has a body cap (256 KiB), events-per-
+      request cap (500), and per-IP rate limit.
+- [ ] Boot Client fails safe on every error path — imaging is
+      never the default outcome of a failure.
+- [ ] Bulk script action requires an authenticated session AND
+      every operation row records the operator + target selection.
+- [ ] Driver-package filters reject unknown keys at save time so a
+      typo cannot silently never-match.

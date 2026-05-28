@@ -1,40 +1,128 @@
 # Concepts
 
-A quick orientation to the objects and the flow you will work with in
-AutoDeploy. The full data model and lifecycle are in the design document;
-this is the short version for an operator opening the portal for the first
-time.
+Five minutes of vocabulary so the rest of the guide reads naturally.
 
-## Objects you create
+## The vocabulary
 
-| Object             | What it is                                                |
-|--------------------|-----------------------------------------------------------|
-| **ISO**            | An uploaded OS install medium. Source of the WIM/ESD that gets applied to a machine. |
-| **Unattend**       | A configuration object from which a complete `unattend.xml` is generated. Operators set values; they never hand-edit XML. |
-| **Driver package** | A driver payload (ingested from an SCCM package) with one or more SMBIOS filters that decide which machines it applies to. |
-| **Software package** | An installer with detection rules (so it is not reinstalled if already present) and an ordered list of install steps. |
-| **Software loadout** | A named, ordered collection of software packages. Loadouts can inherit from other loadouts. |
-| **Image**          | The composition object. An image links an ISO, an unattend and software (a loadout and/or individual packages), and may inherit from a parent image. |
+| Object | What it is | Where it lives |
+|---|---|---|
+| **ISO** | A Windows install ISO you upload. The server extracts the install.wim/esd so the Boot Client can apply it. | `/portal/isos` |
+| **Unattend** | A structured deployment recipe — locale, accounts, OOBE, optional domain join, licensing, policies, first-logon commands. AutoDeploy generates the `unattend.xml` at deploy time. | `/portal/unattends` |
+| **Driver package** | An SCCM-style zip of `.inf`-based drivers plus one or more **SMBIOS filters** that decide which machines it applies to. Global — no link from images. | `/portal/drivers` |
+| **Software package** | An app installer (MSI / EXE / APPX / script) with **detection rules** (so re-runs are idempotent) and ordered **install steps**. | `/portal/software` |
+| **Loadout** | An ordered, inheritable collection of software packages. One loadout can derive from another and override / opt out. | `/portal/loadouts` |
+| **Image** | A composition: ISO + Unattend + (optionally) a Loadout + direct software links. Images can inherit from a parent image. | `/portal/images` |
+| **Machine** | A row in inventory, keyed by SMBIOS UUID. Appears the first time a machine PXE-boots. | `/portal/machines` |
+| **Binding** | A machine's assignment — bound name, target image, target OU, AD group memberships. Used during deploy and on re-image. | machine detail page |
+| **Bulk operation** | A rename / script / software-push run against many machines at once. AD coordination is server-side. | `/portal/bulk` |
 
-## How an imaging job actually runs
+## How they connect
 
-1. A machine network-boots; iPXE chainloads the AutoDeploy Boot Client over HTTP.
-2. The Boot Client reads hardware identity from firmware (SMBIOS) and reports it to the server.
-3. If the global access PIN is enabled, the operator is prompted; the server validates it.
-4. The server returns the deployable image list — plus a "re-image this machine" option if the machine is recognised in inventory.
-5. The operator picks an image. The server **resolves** the effective configuration: which ISO, which unattend, which driver packages match this hardware, and what software set applies.
-6. The Boot Client downloads the WIM/ESD, the matched drivers and the generated unattend over HTTP, partitions the disk, applies the image with `wimlib`, injects the drivers, writes the unattend, and reboots.
-7. Windows runs unattended setup. The Deployment Client (agent) installs as part of that.
-8. The agent installs the assigned software in order, skipping anything already present, enables BitLocker if a PIN is defined for the machine, and reports inventory back.
-9. The server writes a dated deployment record. The machine is now in inventory and is bound to its assigned configuration.
+```
+              ┌──────────┐
+              │  ISOs    │
+              └────┬─────┘
+                   │  link
+                   ▼
+   ┌──────────┐  ┌────────┐  ┌──────────┐
+   │ Unattend │──│ IMAGE  │──│ Loadout  │
+   └──────────┘  └───┬────┘  └────┬─────┘
+        (link)      │              │ ordered set of …
+                    │              ▼
+                    │       ┌──────────┐
+                    │       │ Software │
+                    │       │ packages │
+                    │       └──────────┘
+                    │
+   ┌──────────┐     │    bind ┌────────────┐
+   │  Driver  │     └────────►│  Binding   │
+   │ packages │  (matched at  │  (per      │
+   │ (global) │   deploy time)│   machine) │
+   └──────────┘               └─────┬──────┘
+                                    │
+                                    ▼
+                                ┌────────┐
+                                │Machine │
+                                │(SMBIOS)│
+                                └────────┘
+```
 
-After that, the agent stays resident and silent, checking in periodically to
-pick up any bulk jobs (rename, software push, scripts) queued for the machine.
+- **Drivers are global**. They are not linked from images — they
+  apply to any machine whose reported SMBIOS matches one of the
+  driver's filters. This keeps "Dell Latitude 5520 drivers" one
+  package no matter how many images target that hardware.
+- **Software is per-image OR per-loadout**. The effective set is the
+  loadout (resolved up its own parent chain, with opt-outs honoured)
+  ∪ the image's direct software links.
+- **Unattend and ISO use nearest-wins resolution** up the image
+  parent chain. A child image without an unattend inherits its
+  parent's.
 
-## A few rules worth remembering
+## Resolution rules
 
-- **The server decides; the client executes.** Nothing security-relevant or resolution-related is computed by the Boot Client or the agent.
-- **Fail safe.** If something goes wrong — access denied, server unreachable, identity unreadable — the machine boots its existing OS. Imaging is never the default outcome of a failure.
-- **ISO and unattend are nearest-wins** up the image inheritance chain. **Drivers** are matched globally by hardware fit. **Software** accumulates from loadouts and direct links. That asymmetry is deliberate.
-- **No BitLocker PIN means "do not encrypt".** It is a meaningful state, not a missing setting.
-- **Secrets are never logged.** PINs, recovery keys and passwords never appear in any log; the *fact* and *actor* of a secret access are.
+These rules run on the server when a Boot Client requests a manifest
+for a given image. Source: `server/internal/resolve/`.
+
+| Object | Rule |
+|---|---|
+| **ISO** | Nearest-wins up the image chain. |
+| **Unattend** | Nearest-wins, used in full (no merging). Per-machine identity (computer name, target OU) is layered on at deploy time when a binding exists. |
+| **Drivers** | All driver packages whose filters match the requesting machine's SMBIOS identity. No image link. |
+| **Software** | Union of (a) the nearest loadout up the image chain, fully resolved up its own parent chain with opt-outs; (b) any direct software links on images in the chain. Duplicates dedup by package id; the nearest definition's order value wins. |
+
+The "Resolved" view on any image shows what the resolver hands to a
+requesting Boot Client right now:
+
+![Image resolved](images/image-resolved.png)
+
+## Lifecycle at a glance
+
+1. **Operator** uploads ISOs, builds an unattend, uploads driver
+   packages with filters, defines software with detection + install
+   steps, composes images.
+2. **Target machine** is configured by DHCP to PXE-boot AutoDeploy's
+   iPXE chainload. It downloads the Boot Client kernel + initramfs
+   over HTTP.
+3. **Boot Client** reads SMBIOS, calls the server's menu endpoint
+   with that identity. The operator picks (or "Re-image" picks
+   automatically if a binding exists). The server resolves the
+   image into a flat list of payload URLs.
+4. **Boot Client** downloads each payload, partitions the disk,
+   applies the WIM, extracts driver zips into
+   `Windows\INF\AutoDeploy\<pkg>\`, writes `unattend.xml`, reboots.
+5. **Windows** runs through OOBE using the unattend. The
+   AutoDeploy **agent** is auto-installed by a first-logon command;
+   it reports the deployment outcome and runs the software set,
+   skipping anything detection rules report as already installed.
+6. **Resident mode** (optional): the agent stays running and
+   polls for bulk jobs every few minutes.
+
+## Anti-goals
+
+What AutoDeploy explicitly does NOT do, by design:
+
+- Block-level disk cloning (FOG's model). File-based WIM/ESD only.
+- macOS or Linux **target** imaging. The architecture allows it; not
+  built today.
+- Software authoring tooling. AutoDeploy deploys installers; it does
+  not build them.
+- Graded portal permissions. Every active account has full
+  portal/API access. Accountability rests on the audit trail.
+- Per-image or multi-tenant branding. The brand is system-wide.
+- Merging of unattend objects up the chain. Each unattend is a
+  complete answer file on its own.
+- WMIC or WinPE in the boot environment. Identity comes from
+  SMBIOS/DMI in a Linux pre-boot environment.
+- Storing frozen historical images for routine re-imaging.
+  Re-imaging is always to the current definition of the binding.
+
+## Where TFTP fits in
+
+Originally the design banned TFTP outright. The current product
+clarifies that to **"no TFTP in the payload path"** — image, driver,
+software and unattend downloads are HTTP only. A built-in TFTP
+listener serves only the iPXE bootstrap binaries (`undionly.kpxe`,
+`ipxe.efi`, `snponly.efi`) because classic PXE firmware can't HTTP
+boot. Once iPXE has loaded, every subsequent transfer is HTTP(S).
+Enable the listener with `AUTODEPLOY_TFTP_ADDR=:69`. See
+[PXE setup](pxe-setup.md) for the DHCP and firmware story.

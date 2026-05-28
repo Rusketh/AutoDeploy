@@ -1,110 +1,135 @@
-# AutoDeploy Operator Guide
+# AutoDeploy — Operator Guide
 
-This guide documents how to install, configure and operate AutoDeploy. It is
-written for the people who will run the system day to day — not for its
-internals. For the design, see `docs/design/`.
+> A unified replacement for WDS / MDT / SCCM / FOG. Built around HTTP
+> delivery, a single management portal, and a Linux pre-boot client
+> that chainloads over iPXE.
 
-The guide grows alongside the software: features appear here as they appear in
-the product, and never before.
+![Dashboard](images/dashboard.png)
+
+This guide is the day-to-day reference for people who run AutoDeploy.
+It walks you from a freshly downloaded release to a deployed Windows
+machine, then dives into each subsystem. For the underlying design,
+see [`docs/design/`](../design/).
+
+---
 
 ## Start here
 
-**If you are setting AutoDeploy up for the first time, read this:**
+**First time? Read this:**
 
-→ **[Getting started](getting-started.md)** — zero to your first
-deployed machine in 30–60 minutes. Step-by-step: download the
-release, install the server, configure DHCP/PXE, upload an ISO,
-build an image, image a test machine.
+→ **[Getting started](getting-started.md)** — zero to a deployed
+machine in 30–60 minutes. Download, install, configure DHCP/PXE,
+upload an ISO, build an image, deploy.
 
-Everything below is reference documentation. Skim **Concepts** for
-orientation, then dip in as needed.
+→ **[Windows install](install-windows.md)** — same but for a Windows
+host. Native Windows Service, no NSSM, no wrapper.
 
-## Contents
+→ **[Concepts](concepts.md)** — five minutes to orient yourself in
+the vocabulary (ISO / Unattend / Image / Driver / Loadout / Binding).
 
-1. [Concepts](concepts.md) — what AutoDeploy is, and the objects you'll work with.
-2. [Installation](installation.md) — env vars, on-disk layout, alternative install paths.
-2b. [Windows installation](install-windows.md) — running the server as a native Windows Service.
-3. [Configuring the server](configuration.md) — environment variables and on-disk layout.
-4. [API quick-start](api-quickstart.md) — `curl` recipes against the JSON API.
-5. [Payload uploads and delivery](payloads.md) — uploading ISOs and packages, HTTPS, the manifest endpoint.
-6. [Boot Client and PXE](boot-client.md) — building the initramfs, the iPXE chainload, the deploy flow.
-7. [Driver matching](driver-matching.md) — SMBIOS filter shapes, preview endpoint, manifest integration.
-8. [Unattend configuration](unattend.md) — settings model, generated XML, secrets handling.
-9. [Software packages](software.md) — detection rules, ordered install steps, the agent flow.
-10. [Software loadouts](loadouts.md) — inheritable collections of packages, opt-outs, precedence.
-11. [Inventory and bindings](inventory.md) — machine records, bindings, deployment history, drift.
-12. [Re-imaging](reimaging.md) — what re-imaging does, what's preserved, what isn't.
-13. [Active Directory integration](active-directory.md) — service-account config, delete-and-replace lifecycle.
-14. [Security](security.md) — portal accounts, sessions, the access PIN, rate-limiting.
-15. [BitLocker](bitlocker.md) — opt-in PIN, escrowed recovery-key history, at-rest encryption.
-16. [Bulk operations](bulk-operations.md) — resident agent, AD-targeting, rename / software-push / scripts.
-17. [Centralised logging](logging.md) — what's logged, ingest, search, secrets.
-18. [Branding](branding.md) — the system-wide brand and where it shows up.
-19. [Operating AutoDeploy](operations.md) — deployment topology, backup/recovery, retention, security review.
-20. [Scaling for mass deployments](scaling.md) — payload mirrors per site, throttling, `/metrics`, the operational recipe for thousands of machines at once.
-21. [PXE setup (classic PXE, UEFI HTTP Boot, DHCP patterns)](pxe-setup.md) — the bridge from regular firmware PXE to AutoDeploy's HTTP-only flow.
+---
 
-Sections will be added as the corresponding features are implemented. If a
-section you expect is missing, the feature it documents has not yet shipped.
+## Reference by area
+
+### Setting it up
+
+| | |
+|---|---|
+| [Concepts](concepts.md) | What AutoDeploy is, and the objects you work with. |
+| [Installation (Linux)](installation.md) | Env vars, on-disk layout, systemd unit, install-linux.sh. |
+| [Installation (Windows)](install-windows.md) | Native Windows Service, PowerShell installer, registry env block. |
+| [Configuring the server](configuration.md) | Every env var, on-disk layout, **HTTP-only vs HTTPS** rules. |
+| [PXE setup](pxe-setup.md) | DHCP patterns, classic PXE, UEFI HTTPBoot, the bridge to AutoDeploy. |
+
+### Day-to-day artifacts
+
+| | |
+|---|---|
+| [Payload uploads and delivery](payloads.md) | Uploading ISOs / drivers / software, HTTP Range, the manifest endpoint. |
+| [Unattend configuration](unattend.md) | The structured 15-section editor, the generated XML, per-machine identity. |
+| [Driver matching](driver-matching.md) | SCCM-style zip ingest, .inf metadata, SMBIOS filters, "use a machine as filter". |
+| [Software packages](software.md) | Detection rules, ordered install steps, the agent flow. |
+| [Software loadouts](loadouts.md) | Inheritable package collections, opt-outs, precedence. |
+| [Inventory and bindings](inventory.md) | Machine records, bindings, deployment history, drift. |
+| [Re-imaging](reimaging.md) | What re-imaging does, what's preserved, what isn't. |
+
+### Operations
+
+| | |
+|---|---|
+| [Boot Client and PXE](boot-client.md) | Building the initramfs, the iPXE chainload, the deploy flow. |
+| [Active Directory integration](active-directory.md) | Service account, delete-and-replace lifecycle, group reconcile. |
+| [Security](security.md) | Portal accounts, sessions, access PIN, rate limits, audit. |
+| [BitLocker](bitlocker.md) | Per-machine PIN, escrowed recovery-key history, agent token. |
+| [Bulk operations](bulk-operations.md) | Resident agent, AD-targeting, rename / software-push / scripts. |
+| [Centralised logging](logging.md) | What's logged, ingest, search, secrets policy. |
+| [Branding](branding.md) | The system-wide brand and where it shows up. |
+| [Operating AutoDeploy](operations.md) | Deployment topology, backup/recovery, retention, security review. |
+| [Scaling for mass deployments](scaling.md) | Payload mirrors per site, throttling, /metrics, thousands-at-once recipes. |
+
+### APIs
+
+| | |
+|---|---|
+| [API quick-start](api-quickstart.md) | `curl` recipes against the JSON API. |
+
+---
 
 ## Using the portal
 
-Everything an operator needs to do is exposed as a structured form in the
-web portal at `/portal/`. You should **never** need to craft JSON or
-edit XML by hand. The JSON API at `/api/v1/` is the same authoritative
-surface and remains available for scripts and CI tooling, but the portal
-is the day-to-day interface.
+Everything you need is a structured form. You should **never** have to
+craft JSON or edit XML by hand — the portal does both for you. The
+JSON API at `/api/v1/` exposes the same surface for scripts and CI.
 
-Browser flow:
+| | |
+|---|---|
+| **Sign in** | ![](images/login.png) Visit `https://your-host/portal/` or, in a local install, `http://127.0.0.1:8080/portal/`. First time only: read the password from `$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt`, sign in, change it via Settings → Local accounts, then delete the file. |
+| **Dashboard** | ![](images/dashboard.png) Counters, 24-hour deploy outcomes, recently-seen machines, recent activity, a quick-start checklist. |
+| **Dark mode** | ![](images/dashboard-dark.png) Toggle in the header (auto / light / dark cycle), remembered in localStorage. |
+| **Settings** | ![](images/settings.png) Five cards covering Access PIN, Branding, Local accounts, Active Directory and Operational settings, plus a Downloads page for distributable binaries. |
 
-1. Visit `https://your-server/portal/`. You'll be redirected to the
-   login screen.
-2. First time only: the password is in
-   `$AUTODEPLOY_DATA_DIR/admin-bootstrap.txt` (mode 0600). Log in,
-   then change the password via **Settings → Local accounts**, then
-   delete the file.
-3. The portal home dashboard shows counters and a quick-start list.
-   Every entity has list / new / edit / delete with reference-count
-   guards (you can't delete an ISO that an image still links to, for
-   example).
-4. ISO upload, driver-package upload and software-installer upload
-   are file inputs on each entity's edit page.
-5. Unattends, software detection rules, install steps and SMBIOS
-   filters are all structured form fields — the portal generates the
-   JSON / XML for you.
+### Productivity helpers
 
-## Current product surface (Phase 16 — feature-complete)
+The portal ships a small set of keyboard shortcuts and live behaviours:
 
-- **Server** — runs the management portal and JSON API, with HTTPS support.
-  SQLite-backed.
-- **Portal** at `/portal/` — read-only views of every artifact and image,
-  with each image's resolved configuration viewable per row.
-- **JSON API** at `/api/v1/` — full CRUD on ISOs, Unattends, Driver
-  packages, Software packages and Images, plus payload upload endpoints,
-  ISO extraction, and a manifest endpoint that returns the Boot Client's
-  payload URLs derived from the resolved configuration.
-- **Payload delivery** at `/payload/iso/{id}/{path}`,
-  `/payload/drivers/{id}`, `/payload/software/{id}` — streamed with HTTP
-  Range support so a Boot Client can resume an interrupted fetch.
-- **HTTPS** — production cert/key via env vars, or auto-generated
-  self-signed under `AUTODEPLOY_DATA_DIR/tls/` in dev mode.
-- **Boot Client** — reads SMBIOS identity, calls the server for the
-  deployment menu, downloads the manifest's payloads and applies a WIM
-  to the target disk via `wimlib-imagex`. Includes a `--dry-run` mode
-  that logs every destructive step without executing it. Fails safe on
-  any error (boots the existing OS).
-- **iPXE** at `/ipxe/boot.ipxe` — chainload script and static asset tree
-  for kernel/initrd, with a reference initramfs build script under
-  `scripts/initramfs/`.
-- **Agent** — at deploy time, fetches the effective software set from
-  the server, evaluates each package's detection rules, downloads the
-  installer for packages not already installed, runs the typed install
-  steps with success-code and continue-on-failure handling, and reports
-  the outcome. Cross-compiles to Windows. (Resident check-in mode and
-  bulk operations arrive in Phase 13.)
+- **`/`** focuses the filter box on any list page.
+- **`g` then `i/m/l/s/u/d/w/o`** jumps to Images, Machines, Logs,
+  Settings, Unattends, Drivers, soft**w**are, l**o**adouts.
+- **`?`** opens the shortcut cheatsheet.
+- Tables with the **`data-sortable`** attribute (most of them) sort
+  by clicking column headers.
+- Copy buttons next to any UUID / path / URL.
+- The Logs page has a **Live tail** panel that polls every 4 s and
+  pauses when the tab is hidden.
 
-All sixteen phases of the roadmap have shipped. Subsequent work
-tracks the open questions carried through from the design document
-(distributed topology, point-in-time forensic restore, non-Windows
-target imaging, graded portal roles, multicast / bandwidth
-optimisation).
+---
+
+## At a glance
+
+What you can manage from the portal today:
+
+| Surface | Where |
+|---|---|
+| **Images** — compose ISOs + unattends + software into a deployable role | `/portal/images` |
+| **ISOs** — upload + extract Windows install media | `/portal/isos` |
+| **Unattends** — 15-section structured editor; generates XML at deploy | `/portal/unattends` |
+| **Drivers** — SCCM zip upload, .inf scan, SMBIOS filters | `/portal/drivers` |
+| **Software** — detection rules + ordered install steps | `/portal/software` |
+| **Loadouts** — inheritable software collections with opt-outs | `/portal/loadouts` |
+| **Machines** — SMBIOS-keyed inventory, bindings, deploy history | `/portal/machines` |
+| **Bulk** — rename / script / push-package across selections | `/portal/bulk` |
+| **Mirrors** — per-site payload mirrors for scale | `/portal/mirrors` |
+| **Logs** — search + live-tail of every component's events | `/portal/logs` |
+| **Settings** — branding, AD, accounts, PIN, retention, throttle | `/portal/settings` |
+| **Downloads** — agent / Boot Client / installer binaries | `/portal/downloads` |
+
+---
+
+## Where to find things if a section is missing
+
+The guide grows alongside the software. If a section you expect is
+missing, the feature it documents has not yet shipped — check the
+worklog at [`docs/design/WORKLOG.md`](../design/WORKLOG.md). Subsequent
+work tracks the open questions from the design document (distributed
+topology, point-in-time forensic restore, non-Windows target imaging,
+graded portal roles, multicast bandwidth optimisation).

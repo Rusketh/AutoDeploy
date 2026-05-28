@@ -13,7 +13,7 @@ machine. Read top to bottom; every command is copy-pastable.
 |---|---|
 | **A server host** | Runs AutoDeploy. Linux preferred (this guide); Windows / macOS also supported. 2 vCPU, 4 GB RAM, 100 GB disk is plenty to start. Disk grows with your ISO/driver/software library. |
 | **Root / sudo on the server host** | To install the binary, create a system user, install the systemd unit, bind to privileged ports. |
-| **A reachable IP / DNS name** | Target machines need to reach the server over your network. The portal is on HTTPS; PXE clients use HTTP (initially), TFTP if you enable the built-in TFTP, plus HTTPS for the actual imaging payloads. |
+| **A reachable IP / DNS name** | Target machines need to reach the server over your network. **HTTPS is optional for local / lab use** — the server runs on plain HTTP `127.0.0.1:8080` out of the box. For production set `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443` with a real cert. See [Configuration → HTTP vs HTTPS](configuration.md#http-vs-https-the-full-rules). |
 | **DHCP control** | You'll need to add a `next-server` / `bootfile` entry, or matching DHCP option 60/77/93 rules. If you can't change the DHCP server, you can still run AutoDeploy with an alternative DHCP proxy (out of scope here). |
 | **A Windows ISO** | Whatever release you deploy: Windows 10, 11, Server 2019/2022/2025. |
 | **A Linux kernel + initramfs** | The Boot Client runs in a pre-OS Linux. You can build the initramfs from the bundled script; the kernel comes from your distro of choice (or a small specialised one). |
@@ -238,10 +238,17 @@ sudo cat /var/lib/autodeploy/admin-bootstrap.txt
 # # Read this once, log in, change the password, then delete this file.
 ```
 
-Open `https://autodeploy.corp.example/portal/` in a browser. Log in
-as `admin` with that password.
+Open `https://autodeploy.corp.example/portal/` in a browser (or
+`http://127.0.0.1:8080/portal/` for a local install). Log in as
+`admin` with that password.
 
-Now **change it**:
+![Sign in](images/login.png)
+
+After sign-in you land on the dashboard:
+
+![Dashboard](images/dashboard.png)
+
+Now **change the password**:
 
 1. Click **Settings** → **Local accounts**.
 2. In the row for `admin`, type a new password and click **Set password**.

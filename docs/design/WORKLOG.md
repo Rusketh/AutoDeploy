@@ -2157,3 +2157,77 @@ compat for the TLS shim, `$LASTEXITCODE` check in the install
 wrapper so fetch failures land as a warning rather than a silent
 abort). Sandbox lacks outbound network so I couldn't validate the
 actual fetches end-to-end.
+
+## 2026-05-28 — Documentation overhaul + screenshots
+
+The user-facing docs were text-heavy and a few sections were stale
+(notably the "HTTPS required" implication in
+`configuration.md` and `operations.md`). This pass:
+
+- Captures **27 screenshots** of the now-fully-populated portal
+  (`docs/user-guide/images/`) — dashboard light/dark, every list
+  page, every form page, every settings sub-page, the Downloads
+  page, the 404 page.
+- Embeds screenshots inline in every doc where they explain the
+  feature better than prose.
+- Rewrites each section in a consistent shape: opening callout +
+  screenshot + structured walkthrough + tables for rules + API
+  recipes at the end.
+- Clarifies the HTTPS rules explicitly: `configuration.md` now has
+  a top-of-doc TL;DR table for the four common scenarios
+  (local dev, lab on LAN, lab with self-signed HTTPS, production)
+  and a full "HTTP vs HTTPS — the full rules" section spelling
+  out exactly when the server refuses to start.
+- Adds a **Concepts** rewrite with an ASCII diagram of how the
+  objects connect, the resolution rules table, and the lifecycle
+  walkthrough.
+- Restructures the README as an entry point — short intro,
+  screenshot, "Start here" links to getting-started / install-
+  windows / concepts, then reference grouped by area (Setting it
+  up / Day-to-day artifacts / Operations / APIs), then a "Using
+  the portal" tour with screenshots, then a feature surface table.
+- Each doc cross-references siblings instead of duplicating
+  content (e.g. BitLocker → Security, AD → Bulk operations).
+- Removes the leftover "Until in-process HTTPS option is added,
+  the loopback + reverse-proxy pattern is the supported production
+  deployment" line that contradicted shipped behaviour.
+- `getting-started.md` step 5 now embeds the login and dashboard
+  screenshots so first-time operators see what they're aiming
+  for, and the prerequisites table now points at
+  `configuration.md` for the HTTPS rules instead of implying
+  HTTPS is required.
+
+**Files rewritten:**
+
+- `README.md` (entry point)
+- `concepts.md` (object diagram + rules)
+- `configuration.md` (HTTPS TL;DR + full rules)
+- `installation.md` (Linux, with the install-script fetch story)
+- `unattend.md` (15-section walkthrough + JSON shape table)
+- `driver-matching.md` (renamed from "Driver matching" to "Drivers",
+  with the full SCCM upload + extract + machine-as-filter UX)
+- `software.md` (with worked 7-Zip example)
+- `loadouts.md` (resolution rules table + guards)
+- `inventory.md` (machine detail page tour)
+- `reimaging.md` (preserved-vs-discarded table)
+- `bitlocker.md` (with deploy token explanation)
+- `security.md` (with checklist + secret tripwire details)
+- `branding.md` (where-it-shows-up + agent OEM-info writer)
+- `active-directory.md` (with bulk-rename + AD coordination)
+- `bulk-operations.md` (two-stage form + AD rename sequence)
+- `logging.md` (live-tail panel + retention + secret tripwire)
+- `payloads.md` (per-resource flow + Range + throttle)
+- `operations.md` (env vs portal split + topology diagram)
+- `boot-client.md` (deploy step-by-step + initramfs build)
+- `api-quickstart.md` (auth + recipes by area)
+
+**Screenshots:** 27 images in `docs/user-guide/images/`. Generated
+from a seeded portal with 3 ISOs, 2 unattends, 3 driver packages,
+3 software packages, 1 loadout, 3 images, 6 machines (one bound +
+BitLocker PIN set), 1 bulk operation, brand set to "Acme
+Corporation". Captured at 1400x900 @ 2x via Playwright in headless
+Chromium against the actual server build.
+
+**BUILD STATE.** Server unchanged; the docs are pure markdown +
+PNG. `go test ./...` cached green; secret check green. Total
+~7.3 MB of PNG images, ~4100 lines of markdown.
