@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
@@ -29,6 +28,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/portal"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/retention"
+	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/tftp"
@@ -76,6 +76,15 @@ func run(logger *slog.Logger) error {
 
 	r := repos(db, bx)
 
+	// Runtime settings: the operator-facing settings the portal can
+	// change. AD config, log retention, payload throttle. The env-var
+	// values seed the table on first start so existing env-driven
+	// installs keep working.
+	rt, err := runtime.New(ctx, db, bx, cfg)
+	if err != nil {
+		return err
+	}
+
 	// Bootstrap a default admin account if no users exist yet, so an
 	// operator can log in on first boot. The password is logged ONCE at
 	// startup — the operator is expected to change it immediately. The
@@ -95,7 +104,7 @@ func run(logger *slog.Logger) error {
 		Users:    r.Users, Settings: r.Settings,
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
-		Mirrors: r.Mirrors,
+		Mirrors: r.Mirrors, Runtime: rt,
 	})
 
 	pl := &payload.Service{
@@ -112,25 +121,25 @@ func run(logger *slog.Logger) error {
 	pl.OnBytesServed = func(n int64) { mtr.PayloadBytesServed.Add(n) }
 	pl.Register(mux)
 
-	// Optional AD Domain Integration Service (Phase 10).
-	var adSvc *addomain.Service
-	if cfg.ADLDAPURL != "" {
-		adSvc = &addomain.Service{
-			Dir: addomain.NewLDAPDirectory(addomain.LDAPConfig{
-				URL:           cfg.ADLDAPURL,
-				BindDN:        cfg.ADBindDN,
-				BindPassword:  cfg.ADBindPassword,
-				SearchBase:    cfg.ADSearchBase,
-				SkipTLSVerify: cfg.ADSkipTLSVerify,
-			}),
-			Log:     logger,
-			Enabled: true,
-		}
+	// AD Domain Integration Service (Phase 10). Always-on; the
+	// EnabledFunc reads the portal's current AD URL setting so an
+	// operator can turn AD on/off through the UI without restarting.
+	adSvc := &addomain.Service{
+		Dir: &addomain.DynamicDirectory{
+			Provider: func(_ context.Context) addomain.LDAPConfig {
+				return rt.ADConfig(ctx)
+			},
+		},
+		Log:         logger,
+		EnabledFunc: rt.ADEnabled,
+	}
+	if rt.ADEnabled() {
+		c := rt.ADConfig(ctx)
 		logger.Info("addomain.configured",
-			slog.String("url", cfg.ADLDAPURL),
-			slog.String("search_base", cfg.ADSearchBase),
-			slog.String("bind_dn", cfg.ADBindDN),
-		)
+			slog.String("url", c.URL),
+			slog.String("search_base", c.SearchBase),
+			slog.String("bind_dn", c.BindDN),
+			slog.String("source", "portal/env"))
 	}
 
 	mh := &payload.ManifestHandler{
@@ -156,6 +165,7 @@ func run(logger *slog.Logger) error {
 		BitLocker: r.BitLocker, Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
 		Mirrors:    r.Mirrors,
+		Runtime:    rt,
 		Resolver:   r.Resolver,
 		Blobs:      blobs,
 		AD:         adSvc,
@@ -164,19 +174,22 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// Start the retention scheduler (Phase 16). Hourly tick, prunes
-	// log_event rows older than AUTODEPLOY_LOG_RETENTION_DAYS. Zero
-	// disables pruning.
-	if cfg.LogRetentionDays > 0 {
-		sch := &retention.Scheduler{
-			Logs:         r.Logs,
-			LogRetention: time.Duration(cfg.LogRetentionDays) * 24 * time.Hour,
-			Logger:       logger,
-		}
-		go sch.Start(ctx)
-		logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
-			slog.Int("log_retention_days", cfg.LogRetentionDays))
+	// Inject the runtime settings into the portal so the AD /
+	// retention pages can read and write through them.
+	// (Wired in r.Runtime — see appRepos.)
+	r.Runtime = rt
+
+	// Start the retention scheduler. Always on; it re-reads the
+	// retention setting each tick so an operator who changes it in
+	// the portal sees the new value take effect within an interval.
+	sch := &retention.Scheduler{
+		Logs:          r.Logs,
+		RetentionDays: rt.LogRetentionDays,
+		Logger:        logger,
 	}
+	go sch.Start(ctx)
+	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
+		slog.Int("log_retention_days", rt.LogRetentionDays()))
 
 	logger.LogAttrs(ctx, slog.LevelInfo, "server.start",
 		slog.String("actor", "system"),
@@ -248,6 +261,7 @@ type appRepos struct {
 	Logs      *model.LogRepo
 	Branding  *branding.Repo
 	Mirrors   *model.PayloadMirrorRepo
+	Runtime   *runtime.Settings
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {

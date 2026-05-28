@@ -26,6 +26,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -50,6 +51,7 @@ type Repos struct {
 	Settings  *auth.SettingsRepo
 	Branding  *branding.Repo
 	Mirrors   *model.PayloadMirrorRepo
+	Runtime   *runtime.Settings
 	Resolver  *resolve.Resolver
 	Blobs     *storage.BlobStore
 	AD        *addomain.Service

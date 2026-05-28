@@ -45,12 +45,23 @@ type Directory interface {
 
 // Service performs the high-level operations Phase 10 requires.
 type Service struct {
-	Dir    Directory
-	Log    *slog.Logger
+	Dir Directory
+	Log *slog.Logger
 	// Enabled gates the whole thing. When false (no AD integration
 	// configured), PrepareComputer is a successful no-op so the rest of
 	// the deployment flow keeps working without AD.
 	Enabled bool
+	// EnabledFunc, when non-nil, takes precedence over Enabled. Set
+	// this when AD config is portal-managed so toggling it off in the
+	// portal takes effect immediately, without restarting the server.
+	EnabledFunc func() bool
+}
+
+func (s *Service) isEnabled() bool {
+	if s.EnabledFunc != nil {
+		return s.EnabledFunc()
+	}
+	return s.Enabled
 }
 
 // PrepareComputer is the delete-and-replace lifecycle. If a computer
@@ -59,7 +70,7 @@ type Service struct {
 //
 // Returns the resulting computer DN, or "" if the service is disabled.
 func (s *Service) PrepareComputer(ctx context.Context, name, ou string, groups []string) (string, error) {
-	if s == nil || !s.Enabled {
+	if s == nil || !s.isEnabled() {
 		return "", nil
 	}
 	if strings.TrimSpace(name) == "" {

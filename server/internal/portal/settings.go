@@ -27,6 +27,15 @@ func init() {
 		post("/portal/settings/accounts/{id}/enable", accountSetDisabled(r, false))
 		post("/portal/settings/accounts/{id}/password", accountSetPassword(r))
 		post("/portal/settings/accounts/{id}/delete", accountDelete(r))
+
+		// Active Directory (runtime-managed, no env restart needed)
+		get("/portal/settings/active-directory", adForm(r))
+		post("/portal/settings/active-directory", adSubmit(r))
+		post("/portal/settings/active-directory/test", adTest(r))
+
+		// Operational (retention, throttle)
+		get("/portal/settings/operational", opsForm(r))
+		post("/portal/settings/operational", opsSubmit(r))
 	}
 }
 

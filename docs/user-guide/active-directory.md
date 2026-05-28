@@ -7,21 +7,48 @@
 
 ## Configuration
 
-Enable AD integration by setting these environment variables on the
-server:
+Configure AD integration through the portal:
 
-| Variable                          | Meaning                                                          |
-|-----------------------------------|------------------------------------------------------------------|
-| `AUTODEPLOY_AD_URL`               | LDAP URL, e.g. `ldaps://dc.corp.example:636`. Empty disables AD. |
-| `AUTODEPLOY_AD_BIND_DN`           | Service-account DN, e.g. `CN=autodeploy,OU=Service Accounts,DC=corp,DC=example`. |
-| `AUTODEPLOY_AD_BIND_PASSWORD`     | Service-account password. **Secret.** Never logged.              |
-| `AUTODEPLOY_AD_SEARCH_BASE`       | AD subtree to operate within, e.g. `DC=corp,DC=example`.         |
-| `AUTODEPLOY_AD_SKIP_TLS_VERIFY`   | `true` only in lab environments with self-signed certificates.   |
+**Settings → Active Directory**
 
-The service account needs the AD rights to create, delete and modify
+| Field | What |
+|-------|------|
+| LDAP URL | e.g. `ldaps://dc.corp.example:636`. LDAPS strongly preferred. Empty disables AD. |
+| Service-account bind DN | e.g. `CN=autodeploy,OU=Service Accounts,DC=corp,DC=example`. |
+| Service-account password | **Secret.** Stored AES-256-GCM encrypted in the database; never logged. Leave blank when editing to keep the existing value. |
+| Search base | AD subtree to operate within, e.g. `DC=corp,DC=example`. |
+| Skip TLS verification | Lab DCs with self-signed certs only. |
+
+Click **Test connection** to dial the LDAP server, bind with the
+service account and run a quick search. The result appears as a
+flash message. Click **Save** to persist; changes take effect on
+the **next** manifest request — no server restart needed. Click
+**Disable AD** to clear every AD setting (turning AD integration
+off without losing the rest of your portal configuration).
+
+The service account needs AD rights to create, delete and modify
 computer objects in the target OUs, and to modify group memberships
 for the groups your bindings reference. No domain-admin equivalent is
 required; least-privilege is recommended.
+
+### Environment-variable seed (one-time, optional)
+
+If you'd rather provision AD via configuration management, set these
+in `/etc/default/autodeploy`:
+
+```
+AUTODEPLOY_AD_URL=ldaps://dc.corp.example:636
+AUTODEPLOY_AD_BIND_DN=CN=autodeploy,OU=Service Accounts,DC=corp,DC=example
+AUTODEPLOY_AD_BIND_PASSWORD=…
+AUTODEPLOY_AD_SEARCH_BASE=DC=corp,DC=example
+AUTODEPLOY_AD_SKIP_TLS_VERIFY=false
+```
+
+These values are read **only on first start** and only when the
+corresponding portal setting is empty. Once you save anything
+through the portal, the portal becomes the source of truth and
+later changes to the env file are ignored — this avoids the failure
+mode where two sources of truth silently drift apart.
 
 ## When AD runs
 

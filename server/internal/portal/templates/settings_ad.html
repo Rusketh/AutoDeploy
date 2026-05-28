@@ -1,0 +1,64 @@
+{{define "body"}}
+{{$cfg := .Data.Cfg}}
+{{$env := .Data.Env}}
+<h2>Active Directory</h2>
+<p>Current state:
+{{if $cfg.URL}}
+<span class="badge ok">enabled</span> — <code>{{$cfg.URL}}</code>
+{{else}}
+<span class="badge">disabled</span>
+{{end}}
+</p>
+
+<form class="std" method="POST" action="/portal/settings/active-directory">
+  <fieldset><legend>Connection</legend>
+    <label><span class="lbl">LDAP URL</span>
+      <input type="url" name="url" value="{{$cfg.URL}}" placeholder="ldaps://dc.corp.example:636">
+      <span class="hint">LDAPS recommended (port 636). Plain LDAP on 389 only if your network is tightly controlled.</span>
+    </label>
+    <label><span class="lbl">Service-account bind DN</span>
+      <input type="text" name="bind_dn" value="{{$cfg.BindDN}}" placeholder="CN=autodeploy,OU=Service Accounts,DC=corp,DC=example">
+    </label>
+    <label><span class="lbl">Service-account password</span>
+      <input type="password" name="bind_password" placeholder="{{if $cfg.URL}}(leave blank to keep stored value){{else}}required{{end}}" autocomplete="new-password">
+      <span class="hint">Stored encrypted at rest (AES-256-GCM). Never written to any log.</span>
+    </label>
+    <label><span class="lbl">Search base (subtree the service operates within)</span>
+      <input type="text" name="search_base" value="{{$cfg.SearchBase}}" placeholder="DC=corp,DC=example">
+    </label>
+    <label><input type="checkbox" name="skip_tls_verify" value="1" {{if $cfg.SkipTLSVerify}}checked{{end}}>
+      Skip TLS verification (lab DCs with self-signed certs only — never enable in production)
+    </label>
+  </fieldset>
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings">Cancel</a>
+    <button type="submit" formaction="/portal/settings/active-directory/test" formmethod="POST">Test connection</button>
+    <button type="submit" name="disable" value="1" class="danger" formnovalidate onclick="return confirm('Disable AD integration? Future deploys with domain-join unattends will fail to prepare the computer object.')">Disable AD</button>
+    <button type="submit">Save</button>
+  </div>
+</form>
+
+<h3>How AutoDeploy uses these values</h3>
+<p>When a Boot Client requests a deployment manifest and the resolved
+unattend has a <code>&lt;UnattendedJoin&gt;</code> section, AutoDeploy's
+Domain Integration Service runs the delete-and-replace lifecycle on
+the bound computer object before returning the manifest. That way the
+machine's first reboot into Windows finds the AD object exactly where
+the unattend expects it.</p>
+<p>Changes here take effect on the <strong>next</strong> manifest
+request — no server restart needed.</p>
+
+{{if or $env.URL $env.BindDN $env.SearchBase}}
+<h3 class="muted">Environment defaults (informational)</h3>
+<p class="small muted">These values were read from environment
+variables at startup. The portal value above overrides them once
+set; clearing the portal value would NOT fall back to env (that
+would cause confusing drift between two sources of truth).</p>
+<dl class="kv small muted">
+  {{if $env.URL}}<dt>AUTODEPLOY_AD_URL</dt><dd><code>{{$env.URL}}</code></dd>{{end}}
+  {{if $env.BindDN}}<dt>AUTODEPLOY_AD_BIND_DN</dt><dd><code>{{$env.BindDN}}</code></dd>{{end}}
+  {{if $env.SearchBase}}<dt>AUTODEPLOY_AD_SEARCH_BASE</dt><dd><code>{{$env.SearchBase}}</code></dd>{{end}}
+  {{if $env.SkipTLSVerify}}<dt>AUTODEPLOY_AD_SKIP_TLS_VERIFY</dt><dd>true</dd>{{end}}
+</dl>
+{{end}}
+{{end}}

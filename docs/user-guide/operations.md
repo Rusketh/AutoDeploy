@@ -45,24 +45,56 @@ Place the server on a machine with:
   catalogue size).
 - An LDAPS line of sight to the AD service account's DCs (if AD is used).
 
-## Environment variables (full list)
+## Configuration: env vars vs portal
+
+AutoDeploy splits its configuration in two:
+
+**Bootstrap settings** (env vars): values the server needs to know
+*before* it can listen. These stay in `/etc/default/autodeploy`.
+
+**Runtime settings** (portal): values the operator changes day-to-day.
+Edit them in `Settings → …` in the portal. They are stored in the
+database, encrypted where appropriate (the AD bind password).
+
+### Bootstrap (env vars)
 
 | Variable                          | Purpose                                          |
 |-----------------------------------|--------------------------------------------------|
 | `AUTODEPLOY_HTTP_ADDR`            | Cleartext HTTP bind. Loopback only in prod.       |
 | `AUTODEPLOY_HTTPS_ADDR`           | HTTPS bind.                                      |
 | `AUTODEPLOY_TLS_CERT` / `_KEY`    | PEM cert + key for HTTPS (required in prod).     |
+| `AUTODEPLOY_TFTP_ADDR`            | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. |
 | `AUTODEPLOY_DATA_DIR`             | Persistent state root.                           |
 | `AUTODEPLOY_DEV`                  | `false` in production.                           |
-| `AUTODEPLOY_AD_URL`               | LDAP URL of the directory.                       |
-| `AUTODEPLOY_AD_BIND_DN`           | Service-account DN.                              |
-| `AUTODEPLOY_AD_BIND_PASSWORD`     | Service-account password. **Secret.**            |
-| `AUTODEPLOY_AD_SEARCH_BASE`       | AD subtree the service operates within.          |
-| `AUTODEPLOY_AD_SKIP_TLS_VERIFY`   | Lab use only.                                    |
 | `AUTODEPLOY_SECRETS_KEY`          | Hex-encoded 32-byte at-rest encryption key.      |
-| `AUTODEPLOY_LOG_RETENTION_DAYS`   | Auto-prune log_event older than N days. 0 = never.|
-| `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT`| Concurrent `/payload/*` streams. Default 64.     |
-| `AUTODEPLOY_TFTP_ADDR`            | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. |
+
+### Runtime (portal — `Settings`)
+
+| Setting | Portal page | Effect |
+|---------|-------------|--------|
+| Access PIN | Access PIN | Boot-time gate. Hashed at rest. |
+| Branding | Branding | Portal + boot screen + Windows OEM info. |
+| Local accounts | Local accounts | bcrypt-hashed. |
+| Active Directory connection | Active Directory | Encrypted bind password; "Test connection" button; changes apply on next manifest fetch. |
+| Log retention (days) | Operational | Applied on next hourly tick of the retention scheduler. |
+| Concurrent payload throttle | Operational | Applied on next server restart. |
+| Payload mirrors | Mirrors | Applied on next manifest fetch. |
+
+### One-time env seeds (optional)
+
+These env vars **seed** the portal-managed values on first start
+(and only when the corresponding portal value is empty):
+
+```
+AUTODEPLOY_AD_URL, AUTODEPLOY_AD_BIND_DN, AUTODEPLOY_AD_BIND_PASSWORD,
+AUTODEPLOY_AD_SEARCH_BASE, AUTODEPLOY_AD_SKIP_TLS_VERIFY,
+AUTODEPLOY_LOG_RETENTION_DAYS, AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT
+```
+
+Once the operator saves anything through the portal, the portal is
+the source of truth and env changes are ignored. Use the seeds when
+configuration management (Ansible, Puppet, …) provisions a fresh
+AutoDeploy host; use the portal for day-to-day operation.
 
 ## Backup and recovery
 

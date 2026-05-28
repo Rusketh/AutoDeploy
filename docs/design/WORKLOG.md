@@ -1363,3 +1363,101 @@ will fire on the next `v*` tag push.
 
 **BUILD STATE.** Workflow YAML parses; everything else is docs and
 shell scripts that don't run in CI. Release pipeline still green.
+
+---
+
+## 2026-05-28 — Runtime settings moved from env vars to portal
+
+**WHAT.**
+
+- `internal/runtime`: new façade over `system_setting` that gives
+  typed getters/setters for runtime-changeable configuration: AD
+  connection (URL, bind DN, bind password, search base, skip TLS
+  verify), log retention days, payload throttle. Reads cache-backed;
+  writes invalidate the cache. AD bind password is encrypted via
+  `internal/secrets` before storage (AES-256-GCM). On first start,
+  any env values seed the corresponding portal settings; after that
+  the portal is the source of truth and env changes are ignored
+  (avoids two-sources-of-truth drift).
+
+- `internal/addomain/DynamicDirectory`: wraps `Directory` and pulls
+  the LDAP config from a provider closure on each call. Backed by
+  `runtime.Settings.ADConfig` in production. Caches the inner
+  `LDAPDirectory` when the config hasn't moved (value-equality
+  check on `LDAPConfig`) so we don't churn dialers needlessly. AD
+  config changes through the portal take effect on the next
+  manifest fetch — no server restart.
+
+- `addomain.Service.EnabledFunc`: optional closure that overrides
+  the static `Enabled` flag. Wired to `runtime.Settings.ADEnabled`
+  so disabling AD in the portal short-circuits PrepareComputer
+  cleanly.
+
+- `retention.Scheduler.RetentionDays`: changed from a static
+  `LogRetention time.Duration` to a callback that reads the
+  current value on each tick. Operators who change retention in
+  the portal see the new cutoff applied on the next hourly tick.
+
+- `cmd/autodeploy-server/main.go`: constructs `runtime.Settings`
+  early, wires the dynamic directory + the retention callback, and
+  passes the settings into `api.Repos` + `portal.Repos`.
+
+- Portal pages:
+  - `Settings → Active Directory` (`settings_ad.html`): all five
+    AD fields, "Test connection" button (one-shot bind +
+    search), "Disable AD" button (clears every AD key), "Save"
+    button. Password is `<input type="password">` and only
+    written when the operator types something — blank preserves
+    the existing stored value. Shows env-default values
+    informationally if any are set.
+  - `Settings → Operational` (`settings_ops.html`): log
+    retention days and payload throttle. Clear notes on when
+    each takes effect (retention: next hourly tick; throttle:
+    next restart).
+  - `Settings` index updated to include both.
+
+- `/etc/default/autodeploy.env.example` and `active-directory.md`
+  + `operations.md` rewritten to reflect the split: bootstrap env
+  vars vs portal-managed runtime settings, plus the one-time
+  env-seed escape hatch.
+
+**WHY (decisions).**
+
+- DECISION: AD password is encrypted at rest with the same Box
+  (AES-256-GCM) used for BitLocker secrets. The DB row contains
+  ciphertext only; the cleartext exists in process memory while
+  AD operations run and is otherwise inaccessible.
+
+- DECISION: Empty password in the form preserves the stored value.
+  An operator editing the URL doesn't have to re-type the password
+  every time, and an empty form field can't accidentally clear the
+  stored password by submission.
+
+- DECISION: Portal beats env once portal has a value. Env values
+  seed on first start and on first read of a key that's never been
+  set. The alternative (env always overrides) would let a
+  forgotten env var silently clobber a portal value, which is a
+  surprising and bad failure mode.
+
+- DECISION: AD changes apply immediately (next manifest fetch);
+  retention changes apply within the hour; throttle requires
+  restart. Each setting's "when it applies" is documented inline
+  on the portal form. The throttle is restart-required because
+  swapping a semaphore's capacity safely under live load needs
+  more care than this release wanted to spend.
+
+- DECISION: "Test connection" performs a tiny live search rather
+  than only dialing. A successful TCP connect + TLS handshake +
+  bind covers most failure modes, but a search exercises the
+  search-base path too.
+
+- DECISION: Bootstrap settings stay env. Bind addresses, data
+  dir, dev mode, and the secrets key all need to be known before
+  the database is even open (and the secrets key encrypts the
+  database rows that would otherwise hold them). Moving these to
+  the portal would create a bootstrapping cycle.
+
+**BUILD STATE.** Server builds; `go test ./...` green; end-to-end
+smoke validated: AD config saved through portal, password
+ciphertext-only in DB, decrypt round-trip OK, retention + throttle
+saved + read back, no secret in any log line.

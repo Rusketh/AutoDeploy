@@ -13,6 +13,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/runtime"
 )
 
 // Repos is the bundle of repositories the API depends on. Pass one
@@ -39,6 +40,9 @@ type Repos struct {
 	Branding *branding.Repo
 	// Mass-scale: payload mirrors.
 	Mirrors *model.PayloadMirrorRepo
+	// Runtime settings (AD, retention, throttle) — operator-managed
+	// via the portal at runtime.
+	Runtime *runtime.Settings
 }
 
 // Register mounts /api/v1/* routes on mux.

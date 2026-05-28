@@ -1,7 +1,8 @@
 // Package retention runs the periodic housekeeping tasks: log pruning
 // (Phase 14) and any future scheduled cleanup. A single goroutine
-// wakes on Tick and runs each task once. Operators set retention from
-// AUTODEPLOY_LOG_RETENTION_DAYS.
+// wakes on Tick and runs each task once. Retention days is read on
+// each tick so an operator who changes it in the portal sees the new
+// value take effect within an interval.
 package retention
 
 import (
@@ -14,10 +15,12 @@ import (
 
 // Scheduler runs periodic retention tasks. Construct, then Start.
 type Scheduler struct {
-	Logs           *model.LogRepo
-	LogRetention   time.Duration // 0 disables log pruning
-	Interval       time.Duration // 0 -> hourly
-	Logger         *slog.Logger
+	Logs *model.LogRepo
+	// RetentionDays is a callback so the scheduler picks up portal
+	// changes on the next tick without a restart. Return 0 to disable.
+	RetentionDays func() int
+	Interval      time.Duration // 0 -> hourly
+	Logger        *slog.Logger
 }
 
 // Start runs the scheduler until ctx is cancelled.
@@ -39,18 +42,24 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) runOnce(ctx context.Context) {
-	if s.Logs != nil && s.LogRetention > 0 {
-		cutoff := time.Now().Add(-s.LogRetention)
-		n, err := s.Logs.Prune(ctx, cutoff)
-		if err != nil {
-			s.log().Warn("retention.log_prune.fail",
-				slog.String("error", err.Error()))
-			return
-		}
-		s.log().Info("retention.log_prune.ok",
-			slog.Int64("removed", n),
-			slog.String("cutoff", cutoff.Format(time.RFC3339)))
+	days := 0
+	if s.RetentionDays != nil {
+		days = s.RetentionDays()
 	}
+	if s.Logs == nil || days <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	n, err := s.Logs.Prune(ctx, cutoff)
+	if err != nil {
+		s.log().Warn("retention.log_prune.fail",
+			slog.String("error", err.Error()))
+		return
+	}
+	s.log().Info("retention.log_prune.ok",
+		slog.Int64("removed", n),
+		slog.Int("days", days),
+		slog.String("cutoff", cutoff.Format(time.RFC3339)))
 }
 
 func (s *Scheduler) log() *slog.Logger {
