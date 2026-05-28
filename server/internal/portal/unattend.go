@@ -56,6 +56,11 @@ func unattendForm(r Repos, ua model.Unattend, isNew bool) http.HandlerFunc {
 		}
 		render(w, req, r, "unattend_form.html", title, map[string]any{
 			"Unattend": ua, "S": s, "IsNew": isNew,
+			"TargetOSes": unattend.TargetOSes,
+			"Locales":    unattend.Locales,
+			"Keyboards":  unattend.Keyboards,
+			"TimeZones":  unattend.TimeZones,
+			"Editions":   unattend.EditionsFor(s.TargetOS),
 		})
 	}
 }
@@ -163,6 +168,7 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 		return model.Unattend{}, fmt.Errorf("bad form: %w", err)
 	}
 	s := unattend.Defaults()
+	s.TargetOS = formStr(req, "target_os", s.TargetOS)
 	s.Locale = formStr(req, "locale", s.Locale)
 	s.UILanguage = formStr(req, "ui_language", s.UILanguage)
 	s.Keyboard = formStr(req, "keyboard", s.Keyboard)
@@ -181,6 +187,8 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 	s.HideOnlineAccountScreens = formBool(req, "hide_online_account_screens")
 	s.HideWirelessSetup = formBool(req, "hide_wireless_setup")
 	s.ProtectYourPC = formInt(req, "protect_your_pc", 3)
+	s.BypassNRO = formBool(req, "bypass_nro")
+	s.BypassWin11Reqs = formBool(req, "bypass_win11_reqs")
 
 	// Domain join: present only when the toggle is on.
 	if formBool(req, "domain_join_enabled") {

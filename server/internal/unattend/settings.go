@@ -24,6 +24,12 @@ import (
 // Settings is the operator-facing unattend configuration. JSON-shaped to
 // match what the portal stores on the unattend row.
 type Settings struct {
+	// Target OS — drives generator behaviour. windows-11 enables the OOBE
+	// online-account bypass (BypassNRO) and exposes the optional Windows-
+	// 11-requirements bypass for unsupported hardware (TPM/Secure
+	// Boot/RAM/CPU/Storage). Older Windows generators do not emit those.
+	TargetOS string `json:"target_os"` // "windows-11" | "windows-10" | "windows-server-2022" | …
+
 	// Regional.
 	Locale     string `json:"locale"`         // "en-US"
 	UILanguage string `json:"ui_language"`    // "en-US"
@@ -59,6 +65,18 @@ type Settings struct {
 	HideOnlineAccountScreens bool `json:"hide_online_account_screens"`
 	HideWirelessSetup bool `json:"hide_wireless_setup"`
 	ProtectYourPC    int  `json:"protect_your_pc"` // 1=express settings, 3=skip
+
+	// Windows 11 specifics (ignored for other target OSes).
+	// BypassNRO forces a local-account path through OOBE on Win11 22H2+
+	// where Home and Pro otherwise insist on an online Microsoft account.
+	// AutoDeploy strongly recommends leaving this on for unattended
+	// deployments; the default is true.
+	BypassNRO bool `json:"bypass_nro"`
+	// BypassWin11Reqs sets the LabConfig registry keys that let Windows 11
+	// install on hardware that does not meet the TPM 2.0 / Secure Boot /
+	// RAM / CPU / Storage requirements. Use ONLY for lab / legacy fleet;
+	// production Windows 11 hardware should not need this.
+	BypassWin11Reqs bool `json:"bypass_win11_reqs"`
 
 	// Active Directory.
 	DomainJoin    *DomainJoin `json:"domain_join,omitempty"`
@@ -96,6 +114,9 @@ func Parse(raw string) (Settings, error) {
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return Settings{}, fmt.Errorf("invalid unattend settings JSON: %w", err)
 	}
+	if s.TargetOS == "" {
+		s.TargetOS = "windows-11"
+	}
 	if s.Locale == "" {
 		s.Locale = "en-US"
 	}
@@ -124,6 +145,7 @@ func Parse(raw string) (Settings, error) {
 // lab build: en-US, skip OOBE, no domain, install the agent on first boot.
 func Defaults() Settings {
 	return Settings{
+		TargetOS:                 "windows-11",
 		Locale:                   "en-US",
 		UILanguage:               "en-US",
 		Keyboard:                 "0409:00000409",
@@ -138,5 +160,6 @@ func Defaults() Settings {
 		HideOnlineAccountScreens: true,
 		HideWirelessSetup:        true,
 		ProtectYourPC:            3,
+		BypassNRO:                true, // safe default; only used on Win11
 	}
 }
