@@ -1,0 +1,25 @@
+# Build artifacts
+*/bin/
+bin/
+
+# Local data dirs
+data/
+*/data/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Test caches
+*.test
+*.out
+coverage.*
+
+# Local scratch / extracted artifacts (e.g. the .docx design doc
+# unpacked to markdown for in-session review).
+.design-extracted.md

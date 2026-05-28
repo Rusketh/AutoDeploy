@@ -1,0 +1,49 @@
+{{define "body"}}
+{{$op := .Data.Op}}
+<div class="toolbar">
+  <h2>Bulk operation #{{int64 $op.ID}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
+</div>
+
+<dl class="kv">
+  <dt>Action</dt><dd><span class="badge accent">{{$op.Action}}</span></dd>
+  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code>{{end}}</dd>
+  <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
+  <dt>Created</dt><dd>{{formatTime $op.CreatedAt}}</dd>
+  <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>
+</dl>
+
+<div class="section-head"><h3>Jobs ({{len .Data.Jobs}})</h3><div class="line"></div></div>
+{{if .Data.Jobs}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr>
+    <th class="num" data-sort="num">Job</th>
+    <th>Machine</th>
+    <th>Status</th>
+    <th data-sort="num">Claimed</th>
+    <th data-sort="num">Completed</th>
+    <th data-nosort>Result</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Jobs}}
+    <tr>
+      <td class="num"><code>#{{int64 .ID}}</code></td>
+      <td><a href="/portal/machines/{{int64 .MachineID}}"><code>#{{int64 .MachineID}}</code></a></td>
+      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{end}}">{{.Status}}</span></td>
+      <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}—{{end}}</td>
+      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}—{{end}}</td>
+      <td class="small"><code>{{.ResultJSON}}</code></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-bolt"/></svg>
+  <h3>No jobs queued</h3>
+  <p>The target selection matched no machines, or the jobs are still being created.</p>
+</div>
+{{end}}
+{{end}}

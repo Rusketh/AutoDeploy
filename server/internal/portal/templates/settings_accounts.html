@@ -1,0 +1,58 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-server"/></svg>Local accounts</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Username</th><th>Status</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Users}}
+    <tr>
+      <td><strong>{{.Username}}</strong> {{if eq .ID $.Data.Me.ID}}<span class="badge accent">you</span>{{end}}</td>
+      <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok"><svg><use href="#i-check"/></svg>active</span>{{end}}</td>
+      <td class="small muted">{{formatTime .CreatedAt}}</td>
+      <td class="actions">
+        {{if .Disabled}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/enable" class="inline"><button class="secondary sm">Enable</button></form>
+        {{else}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/disable" class="inline" data-confirm="Disable {{.Username}}?"><button class="secondary sm">Disable</button></form>
+        {{end}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline" style="display:inline-flex;gap:4px;">
+          <input type="password" name="password" placeholder="new password" required style="width:160px;padding:4px 8px;">
+          <button class="sm" title="Set new password"><svg><use href="#i-lock"/></svg>Set</button>
+        </form>
+        {{if ne .ID $.Data.Me.ID}}
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/delete" class="inline" data-confirm="Delete {{.Username}}?">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
+        </form>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+
+{{if .Data.Me.ID}}
+<div class="section-head"><h3>Change your own password</h3><div class="line"></div></div>
+<form class="std" method="POST" action="/portal/settings/accounts/{{.Data.Me.ID}}/password">
+  <label><span class="lbl">New password for <strong>{{.Data.Me.Username}}</strong></span>
+    <input type="password" name="password" required autocomplete="new-password" placeholder="Type a new password">
+    <span class="hint">Stored as a bcrypt hash. After saving, the next sign-in will use the new password.</span>
+  </label>
+  <div class="actions"><button type="submit"><svg><use href="#i-lock"/></svg>Update my password</button></div>
+</form>
+{{end}}
+
+<div class="section-head"><h3>Add account</h3><div class="line"></div></div>
+<form class="std" method="POST" action="/portal/settings/accounts">
+  <div class="row">
+    <label><span class="lbl">Username</span><input type="text" name="username" required autocomplete="off"></label>
+    <label><span class="lbl">Password</span><input type="password" name="password" required autocomplete="new-password"></label>
+  </div>
+  <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Create</button></div>
+</form>
+<p class="muted small" style="margin-top: var(--sp-3);">There is no graded permission model: every active account has full portal/API access. Accountability rests on the audit trail.</p>
+{{end}}

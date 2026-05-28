@@ -1,0 +1,68 @@
+{{define "body"}}
+{{$page := .Data.Page}}
+<div class="toolbar">
+  <h2>Machines</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right small muted">
+    {{if $page}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{else}}<span data-filter-count="tbl">{{len .Data.Rows}}</span> machines{{end}}
+  </div>
+</div>
+{{if .Data.Rows}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>UUID</th>
+    <th>Make / model</th>
+    <th>Serial</th>
+    <th>Binding</th>
+    <th>Image</th>
+    <th>BitLocker</th>
+    <th data-sort="num">Last seen</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Rows}}
+    <tr>
+      <td>
+        <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
+        <button class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
+      </td>
+      <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
+      <td class="small">{{.Machine.SystemSerial}}</td>
+      <td>{{if .BindingName}}<span class="badge accent">{{.BindingName}}</span>{{else}}<span class="badge">unbound</span>{{end}}</td>
+      <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .BLSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN set</span>{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{.Machine.LastSeen.Unix}}">{{formatTime .Machine.LastSeen}}</td>
+      <td class="actions"><a class="btn secondary sm" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{template "pagination" $page}}
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-server"/></svg>
+  <h3>No machines yet</h3>
+  <p>Machines appear here the first time they PXE-boot the AutoDeploy Boot Client. Once they do, bind each one to an image to enable re-imaging.</p>
+</div>
+{{end}}
+{{end}}
+
+{{define "pagination"}}
+{{if and . (gt .Total 1)}}
+<nav class="pager" aria-label="Pagination">
+  <div class="pager-info small muted">
+    Showing <strong>{{add .Offset 1}}</strong>–<strong>{{.End}}</strong> of <strong>{{.TotalRow}}</strong>
+  </div>
+  <div class="pager-links">
+    {{if .PrevURL}}<a class="btn secondary sm" href="{{.PrevURL}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
+    <span class="small muted">page {{.Current}} of {{.Total}}</span>
+    {{if .NextURL}}<a class="btn secondary sm" href="{{.NextURL}}">Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></button>{{end}}
+  </div>
+</nav>
+{{end}}
+{{end}}

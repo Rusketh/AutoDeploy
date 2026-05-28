@@ -1,0 +1,60 @@
+{{define "body"}}
+{{$r := .Data.R}}
+<div class="toolbar">
+  <h2>Resolved configuration — image #{{$r.ImageID}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/images"><svg><use href="#i-arrow-left"/></svg>Back to images</a></div>
+</div>
+
+<p><strong>Inheritance chain:</strong>
+{{range $i, $n := $r.ChainNames}}{{if $i}} <span class="muted">→</span> {{end}}<span class="badge accent">{{$n}}</span>{{end}}</p>
+
+<div class="section-head"><h3>ISO (nearest-wins)</h3><div class="line"></div></div>
+{{if $r.ISO}}
+<dl class="kv">
+  <dt>Name</dt><dd>{{$r.ISO.Name}}</dd>
+  <dt>OS type</dt><dd><span class="badge">{{$r.ISO.OSType}}</span></dd>
+  <dt>Storage path</dt><dd><code>{{$r.ISO.StoragePath}}</code><button class="copy" data-copy="{{$r.ISO.StoragePath}}" aria-label="Copy path"><svg><use href="#i-copy"/></svg></button></dd>
+</dl>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-disc"/></svg>
+  <h3>No ISO resolved</h3>
+  <p>This image and its inheritance chain don't link to an ISO. Either link one on this image or on a parent.</p>
+</div>
+{{end}}
+
+<div class="section-head"><h3>Unattend (nearest-wins, used in full)</h3><div class="line"></div></div>
+{{if $r.Unattend}}
+<dl class="kv">
+  <dt>Name</dt><dd>{{$r.Unattend.Name}}</dd>
+  <dt>Description</dt><dd>{{$r.Unattend.Description}}</dd>
+</dl>
+<p style="margin-top: var(--sp-3);"><a class="btn secondary sm" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview"><svg><use href="#i-eye"/></svg>View generated XML</a></p>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-file"/></svg>
+  <h3>No unattend resolved</h3>
+  <p>The machine will boot Windows setup interactively.</p>
+</div>
+{{end}}
+
+<div class="section-head"><h3>Software (loadout-resolved ∪ direct links)</h3><div class="line"></div></div>
+{{if $r.Software}}
+<ol class="card" style="padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-6);">
+  {{range $r.Software}}<li>package <code>#{{int64 .PackageID}}</code> <span class="muted small">(order {{.OrderValue}})</span></li>{{end}}
+</ol>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-box"/></svg>
+  <h3>No software resolved</h3>
+  <p>This image doesn't link a loadout or any direct packages.</p>
+</div>
+{{end}}
+
+{{if $r.Diagnostics}}
+<div class="section-head"><h3>Warnings</h3><div class="line"></div></div>
+<div class="card" style="background: var(--warn-soft); border-color: var(--warn);">
+  <ul style="margin: 0; padding-left: 1.2rem;">{{range $r.Diagnostics}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+{{end}}

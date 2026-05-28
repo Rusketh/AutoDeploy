@@ -1,0 +1,217 @@
+{{define "body"}}
+{{$p := .Data.Pkg}}
+{{$new := .Data.IsNew}}
+<h2>{{if $new}}New software package{{else}}Edit software package: {{$p.Name}}{{end}}</h2>
+
+<form class="std" method="POST" action="{{if $new}}/portal/software{{else}}/portal/software/{{int64 $p.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$p.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$p.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>Detection rules</legend>
+    <p class="hint">A package is considered already installed when <strong>every</strong> rule reports present. Zero rules means re-install every time.</p>
+    <div id="rules">
+      {{range $i, $r := .Data.Rules}}{{template "ruleblock" dict "Idx" $i "R" $r}}{{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addRule()">Add detection rule</button>
+  </fieldset>
+
+  <fieldset><legend>Install steps</legend>
+    <p class="hint">Run in order. The literal token <code>{payload}</code> in source / msi / appx / exe paths is replaced with the on-disk path of the downloaded installer at run time.</p>
+    <div id="steps">
+      {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s}}{{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addStep()">Add install step</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/software">Cancel</a>
+    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+{{if not $new}}
+<h3>Installer payload</h3>
+<form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data">
+  <label><span class="lbl">Installer file (.msi, .exe, .appx, .zip…)</span><input type="file" name="file" required></label>
+  <div class="actions"><button type="submit">Upload</button></div>
+</form>
+<p class="small muted">Current: {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code> ({{$p.SizeBytes}} bytes){{else}}<em>nothing uploaded</em>{{end}}</p>
+{{end}}
+
+<script>
+function ruleTypeChanged(sel){
+  var b = sel.closest('.block');
+  ['file','registry','msi','script'].forEach(function(t){
+    var d = b.querySelector('.rule-'+t);
+    if (d) d.style.display = (sel.value===t)?'block':'none';
+  });
+}
+function stepTypeChanged(sel){
+  var b = sel.closest('.block');
+  ['copy','msi','appx','cmd','powershell','exe'].forEach(function(t){
+    var d = b.querySelector('.step-'+t);
+    if (d) d.style.display = (sel.value===t)?'block':'none';
+  });
+}
+var nextRuleIdx = {{len .Data.Rules}};
+function addRule(){
+  var idx = String(nextRuleIdx++);
+  var html = '<div class="block">' +
+    '<input type="hidden" name="rule_index[]" value="' + idx + '">' +
+    '<div class="row"><label><span class="lbl">Type</span>' +
+    '<select name="rule_' + idx + '_type" onchange="ruleTypeChanged(this)">' +
+      '<option value="file" selected>file</option><option value="registry">registry</option>' +
+      '<option value="msi">msi product code</option><option value="script">script</option>' +
+    '</select></label>' +
+    '<button type="button" class="danger" onclick="this.closest(\'.block\').remove()" style="align-self:flex-end">Remove rule</button></div>' +
+    '<div class="rule-file"><label><span class="lbl">File path</span><input type="text" name="rule_' + idx + '_file_path"></label>' +
+    '<div class="row"><label><span class="lbl">File version</span><input type="text" name="rule_' + idx + '_file_version"></label>' +
+    '<label><span class="lbl">SHA-256</span><input type="text" name="rule_' + idx + '_file_sha256"></label></div></div>' +
+    '<div class="rule-registry" style="display:none"><div class="row"><label><span class="lbl">Hive</span>' +
+    '<select name="rule_' + idx + '_registry_hive"><option>HKLM</option><option>HKCU</option></select></label>' +
+    '<label><span class="lbl">Key</span><input type="text" name="rule_' + idx + '_registry_key"></label></div>' +
+    '<div class="row"><label><span class="lbl">Value name</span><input type="text" name="rule_' + idx + '_registry_value"></label>' +
+    '<label><span class="lbl">Equals</span><input type="text" name="rule_' + idx + '_registry_equals"></label></div></div>' +
+    '<div class="rule-msi" style="display:none"><label><span class="lbl">MSI product code</span><input type="text" name="rule_' + idx + '_msi_product_code"></label></div>' +
+    '<div class="rule-script" style="display:none"><label><span class="lbl">Shell</span>' +
+    '<select name="rule_' + idx + '_script_shell"><option>powershell</option><option>cmd</option></select></label>' +
+    '<label><span class="lbl">Body</span><textarea name="rule_' + idx + '_script_body"></textarea></label></div></div>';
+  var wrap = document.createElement('div'); wrap.innerHTML = html;
+  document.getElementById('rules').appendChild(wrap.firstChild);
+}
+var nextStepIdx = {{len .Data.Steps}};
+function addStep(){
+  var idx = String(nextStepIdx++);
+  var html = '<div class="block"><input type="hidden" name="step_index[]" value="' + idx + '">' +
+    '<div class="row"><label><span class="lbl">Type</span>' +
+    '<select name="step_' + idx + '_type" onchange="stepTypeChanged(this)">' +
+    '<option value="copy" selected>copy</option><option value="msi">msi</option>' +
+    '<option value="appx">appx</option><option value="cmd">cmd</option>' +
+    '<option value="powershell">powershell</option><option value="exe">exe</option></select></label>' +
+    '<label><span class="lbl">Description</span><input type="text" name="step_' + idx + '_desc"></label>' +
+    '<button type="button" class="danger" onclick="this.closest(\'.block\').remove()" style="align-self:flex-end">Remove step</button></div>' +
+    '<div class="row"><label><span class="lbl">Success codes</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0,3010"></label>' +
+    '<label><span class="lbl">On failure</span><select name="step_' + idx + '_continue"><option value="">abort package</option><option value="1">continue</option></select></label></div>' +
+    '<div class="step-copy"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="{payload}"></label>' +
+    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path"></label></div>' +
+    '<div class="step-msi" style="display:none"><label><span class="lbl">MSI path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="{payload}"></label>' +
+    '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_msi_args"></label></div>' +
+    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="{payload}"></label></div>' +
+    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C body</span><textarea name="step_' + idx + '_script_body"></textarea></label></div>' +
+    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell body</span><textarea name="step_' + idx + '_script_body"></textarea></label></div>' +
+    '<div class="step-exe" style="display:none"><label><span class="lbl">Exe path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="{payload}"></label>' +
+    '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args"></label></div></div>';
+  var wrap = document.createElement('div'); wrap.innerHTML = html;
+  document.getElementById('steps').appendChild(wrap.firstChild);
+}
+</script>
+<style>
+.block { border:1px solid var(--border); border-radius:4px; padding:0.5rem 0.7rem; margin:0.5rem 0; background:#fafbfc; }
+.block label { margin: 0.3rem 0; }
+</style>
+{{end}}
+
+{{define "ruleblock"}}
+{{$i := .Idx}}{{$r := .R}}
+<div class="block">
+  <input type="hidden" name="rule_index[]" value="{{$i}}">
+  <div class="row">
+    <label><span class="lbl">Type</span>
+      <select name="rule_{{$i}}_type" onchange="ruleTypeChanged(this)">
+        <option value="file"     {{if eq $r.Type "file"}}selected{{end}}>file</option>
+        <option value="registry" {{if eq $r.Type "registry"}}selected{{end}}>registry</option>
+        <option value="msi"      {{if eq $r.Type "msi"}}selected{{end}}>msi product code</option>
+        <option value="script"   {{if eq $r.Type "script"}}selected{{end}}>script</option>
+      </select>
+    </label>
+    <button type="button" class="danger" onclick="this.closest('.block').remove()" style="align-self:flex-end">Remove rule</button>
+  </div>
+  <div class="rule-file" {{if ne $r.Type "file"}}style="display:none"{{end}}>
+    <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="C:\Program Files\Acme\acme.exe"></label>
+    <div class="row">
+      <label><span class="lbl">File version (optional, exact match)</span><input type="text" name="rule_{{$i}}_file_version" value="{{$r.FileVersion}}"></label>
+      <label><span class="lbl">SHA-256 (optional)</span><input type="text" name="rule_{{$i}}_file_sha256" value="{{$r.FileSHA256}}"></label>
+    </div>
+  </div>
+  <div class="rule-registry" {{if ne $r.Type "registry"}}style="display:none"{{end}}>
+    <div class="row">
+      <label><span class="lbl">Hive</span>
+        <select name="rule_{{$i}}_registry_hive">
+          <option value="HKLM" {{if eq $r.RegistryHive "HKLM"}}selected{{end}}>HKLM</option>
+          <option value="HKCU" {{if eq $r.RegistryHive "HKCU"}}selected{{end}}>HKCU</option>
+        </select>
+      </label>
+      <label><span class="lbl">Key (no hive)</span><input type="text" name="rule_{{$i}}_registry_key" value="{{$r.RegistryKey}}" placeholder="Software\Acme"></label>
+    </div>
+    <div class="row">
+      <label><span class="lbl">Value name (optional)</span><input type="text" name="rule_{{$i}}_registry_value" value="{{$r.RegistryValue}}"></label>
+      <label><span class="lbl">Value equals (optional)</span><input type="text" name="rule_{{$i}}_registry_equals" value="{{$r.RegistryEquals}}"></label>
+    </div>
+  </div>
+  <div class="rule-msi" {{if ne $r.Type "msi"}}style="display:none"{{end}}>
+    <label><span class="lbl">MSI product code</span><input type="text" name="rule_{{$i}}_msi_product_code" value="{{$r.MSIProductCode}}" placeholder="{12345678-…}"></label>
+  </div>
+  <div class="rule-script" {{if ne $r.Type "script"}}style="display:none"{{end}}>
+    <label><span class="lbl">Shell</span>
+      <select name="rule_{{$i}}_script_shell">
+        <option value="powershell" {{if eq $r.ScriptShell "powershell"}}selected{{end}}>powershell</option>
+        <option value="cmd"        {{if eq $r.ScriptShell "cmd"}}selected{{end}}>cmd</option>
+      </select>
+    </label>
+    <label><span class="lbl">Body (exit 0 = detected)</span><textarea name="rule_{{$i}}_script_body">{{$r.ScriptBody}}</textarea></label>
+  </div>
+</div>
+{{end}}
+
+{{define "stepblock"}}
+{{$i := .Idx}}{{$s := .S}}
+<div class="block">
+  <input type="hidden" name="step_index[]" value="{{$i}}">
+  <div class="row">
+    <label><span class="lbl">Type</span>
+      <select name="step_{{$i}}_type" onchange="stepTypeChanged(this)">
+        <option value="copy"       {{if eq $s.Type "copy"}}selected{{end}}>copy</option>
+        <option value="msi"        {{if eq $s.Type "msi"}}selected{{end}}>msi</option>
+        <option value="appx"       {{if eq $s.Type "appx"}}selected{{end}}>appx / msix</option>
+        <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>cmd</option>
+        <option value="powershell" {{if eq $s.Type "powershell"}}selected{{end}}>powershell</option>
+        <option value="exe"        {{if eq $s.Type "exe"}}selected{{end}}>exe</option>
+      </select>
+    </label>
+    <label><span class="lbl">Description</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}"></label>
+    <button type="button" class="danger" onclick="this.closest('.block').remove()" style="align-self:flex-end">Remove step</button>
+  </div>
+  <div class="row">
+    <label><span class="lbl">Success codes (comma-sep, default 0)</span><input type="text" name="step_{{$i}}_success_codes" value="{{range $j, $c := $s.SuccessCodes}}{{if $j}},{{end}}{{$c}}{{end}}" placeholder="0,3010"></label>
+    <label><span class="lbl">On failure</span>
+      <select name="step_{{$i}}_continue">
+        <option value=""  {{if not $s.ContinueOnFailure}}selected{{end}}>abort package</option>
+        <option value="1" {{if $s.ContinueOnFailure}}selected{{end}}>continue</option>
+      </select>
+    </label>
+  </div>
+  <div class="step-copy" {{if ne $s.Type "copy"}}style="display:none"{{end}}>
+    <label><span class="lbl">Source path</span><input type="text" name="step_{{$i}}_source_path" value="{{$s.SourcePath}}" placeholder="{payload} or C:\src\…"></label>
+    <label><span class="lbl">Destination path</span><input type="text" name="step_{{$i}}_destination_path" value="{{$s.DestinationPath}}"></label>
+  </div>
+  <div class="step-msi" {{if ne $s.Type "msi"}}style="display:none"{{end}}>
+    <label><span class="lbl">MSI path</span><input type="text" name="step_{{$i}}_msi_path" value="{{$s.MSIPath}}" placeholder="{payload}"></label>
+    <label><span class="lbl">Extra args (after /quiet /norestart)</span><input type="text" name="step_{{$i}}_msi_args" value="{{range $j, $a := $s.MSIArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="TARGETDIR=C:\Foo"></label>
+  </div>
+  <div class="step-appx" {{if ne $s.Type "appx"}}style="display:none"{{end}}>
+    <label><span class="lbl">APPX / MSIX path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="{payload}"></label>
+  </div>
+  <div class="step-cmd" {{if ne $s.Type "cmd"}}style="display:none"{{end}}>
+    <label><span class="lbl">cmd /C body</span><textarea name="step_{{$i}}_script_body">{{$s.ScriptBody}}</textarea></label>
+  </div>
+  <div class="step-powershell" {{if ne $s.Type "powershell"}}style="display:none"{{end}}>
+    <label><span class="lbl">PowerShell body (stdin)</span><textarea name="step_{{$i}}_script_body">{{$s.ScriptBody}}</textarea></label>
+  </div>
+  <div class="step-exe" {{if ne $s.Type "exe"}}style="display:none"{{end}}>
+    <label><span class="lbl">Exe path</span><input type="text" name="step_{{$i}}_exe_path" value="{{$s.ExePath}}" placeholder="{payload}"></label>
+    <label><span class="lbl">Args</span><input type="text" name="step_{{$i}}_exe_args" value="{{range $j, $a := $s.ExeArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="/S /quiet"></label>
+  </div>
+</div>
+{{end}}

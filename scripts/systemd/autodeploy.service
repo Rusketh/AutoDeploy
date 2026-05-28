@@ -1,0 +1,47 @@
+[Unit]
+Description=AutoDeploy server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=autodeploy
+Group=autodeploy
+WorkingDirectory=/var/lib/autodeploy
+
+# Edit /etc/default/autodeploy to override settings without editing
+# this unit. AUTODEPLOY_HTTPS_ADDR / TFTP_ADDR may need privileged
+# ports — the AmbientCapabilities below covers TCP/UDP ports below
+# 1024.
+EnvironmentFile=-/etc/default/autodeploy
+Environment=AUTODEPLOY_DATA_DIR=/var/lib/autodeploy
+
+ExecStart=/usr/local/bin/autodeploy-server
+
+# Process hygiene.
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Allow binding to ports 80/443/69 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Sandbox the service. AutoDeploy reads/writes only its data dir;
+# everything else is read-only or invisible.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/autodeploy
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

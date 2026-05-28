@@ -1,0 +1,126 @@
+{{define "body"}}
+{{$m := .Data.M}}
+{{$b := .Data.Binding}}
+<div class="toolbar">
+  <h2>Machine <code style="font-size:0.7em;">{{slice $m.SystemUUID 0 8}}…</code></h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a></div>
+</div>
+
+<dl class="kv">
+  <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
+  <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
+  <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
+  <dt>BIOS</dt><dd>{{$m.BIOSVendor}} {{$m.BIOSVersion}}</dd>
+  <dt>Board</dt><dd>{{$m.BoardManufacturer}} {{$m.BoardProduct}} ({{$m.BoardSerial}})</dd>
+  <dt>First seen</dt><dd>{{formatTime $m.FirstSeen}}</dd>
+  <dt>Last seen</dt><dd>{{formatTime $m.LastSeen}}</dd>
+</dl>
+
+<div class="section-head"><h3>Binding</h3><div class="line"></div></div>
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding">
+  <label><span class="lbl">Machine name (used in AD object + unattend ComputerName)</span>
+    <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="LAB-01">
+  </label>
+  <label><span class="lbl">Bound image (re-image will rebuild to the current definition of this)</span>
+    <select name="image_id">
+      <option value="">(none)</option>
+      {{range .Data.Images}}<option value="{{int64 .ID}}" {{if idEq $b.ImageID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label><span class="lbl">Target OU (DN)</span>
+    <input type="text" name="target_ou" value="{{$b.TargetOU}}" placeholder="OU=Lab,DC=corp,DC=example">
+  </label>
+  <label><span class="lbl">AD group memberships (one per line)</span>
+    <textarea name="groups" rows="3">{{range $i, $g := $b.GroupMemberships}}{{if $i}}
+{{end}}{{$g}}{{end}}</textarea>
+  </label>
+  <div class="actions"><button type="submit"><svg><use href="#i-check"/></svg>Save binding</button></div>
+</form>
+
+<div class="section-head"><h3>BitLocker</h3><div class="line"></div></div>
+<p>Current state:
+{{if .Data.BL.PINSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN configured</span>
+{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}
+</p>
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
+  <label><span class="lbl">Pre-boot PIN</span>
+    <input type="password" name="pin" autocomplete="new-password" placeholder="{{if .Data.BL.PINSet}}Type a new PIN to replace the existing one{{else}}Type a PIN to enable BitLocker on this machine{{end}}">
+    <span class="hint">No PIN = machine is left unencrypted. Stored AES-256-GCM at rest; reapplied on re-image; never logged. The agent only receives the PIN over a per-deploy bearer token.</span>
+  </label>
+  <div class="actions">
+    <button type="submit"><svg><use href="#i-check"/></svg>Save PIN</button>
+    <button type="submit" name="pin" value="" class="danger" data-confirm="Clear the BitLocker PIN? Future deploys will leave the volume unencrypted.">
+      <svg><use href="#i-trash"/></svg>Clear PIN
+    </button>
+  </div>
+</form>
+
+{{if .Data.Recovery}}
+<div class="section-head"><h4>Recovery-key history (append-only)</h4><div class="line"></div></div>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Escrowed</th><th>Note</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Recovery}}
+    <tr>
+      <td class="small muted">{{formatTime .EscrowedAt}}</td>
+      <td>{{.Note}}</td>
+      <td class="actions"><a class="btn ghost sm" href="/api/v1/recovery-keys/{{int64 .ID}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Retrieve key</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+<p class="small muted" style="margin-top: var(--sp-2);">Retrieving a recovery key emits a <code>secret.access</code> audit event recording who, when, and which row — never the value.</p>
+{{end}}
+
+<div class="section-head"><h3>Deployment history</h3><div class="line"></div></div>
+{{if .Data.History}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr>
+    <th data-sort="num">Started</th>
+    <th data-sort="num">Completed</th>
+    <th>Image</th>
+    <th>Outcome</th>
+    <th data-nosort>Notes</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.History}}
+    <tr>
+      <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{formatTime .StartedAt}}</td>
+      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="badge warn">in progress</span>{{end}}</td>
+      <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td><span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span></td>
+      <td class="small">{{.Notes}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No deployments recorded yet.</p>
+{{end}}
+
+<div class="section-head"><h3>Detected software state</h3><div class="line"></div></div>
+{{if .Data.Detected}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr><th>Package</th><th>Detected</th><th data-sort="num">Last evaluated</th></tr></thead>
+  <tbody>
+    {{$pkgs := .Data.Packages}}
+    {{range .Data.Detected}}
+    {{$pid := .SoftwarePackageID}}
+    <tr>
+      <td>{{range $pkgs}}{{if eq .ID $pid}}<strong>{{.Name}}</strong>{{end}}{{end}} <span class="small muted">#{{int64 $pid}}</span></td>
+      <td>{{if .Detected}}<span class="badge ok"><svg><use href="#i-check"/></svg>present</span>{{else}}<span class="badge bad">absent</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{.LastEvaluatedAt.Unix}}">{{formatTime .LastEvaluatedAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No detection state reported yet.</p>
+{{end}}
+{{end}}

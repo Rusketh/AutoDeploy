@@ -1,0 +1,70 @@
+// Package retention runs the periodic housekeeping tasks: log pruning
+// (Phase 14) and any future scheduled cleanup. A single goroutine
+// wakes on Tick and runs each task once. Retention days is read on
+// each tick so an operator who changes it in the portal sees the new
+// value take effect within an interval.
+package retention
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/rusketh/autodeploy/server/internal/model"
+)
+
+// Scheduler runs periodic retention tasks. Construct, then Start.
+type Scheduler struct {
+	Logs *model.LogRepo
+	// RetentionDays is a callback so the scheduler picks up portal
+	// changes on the next tick without a restart. Return 0 to disable.
+	RetentionDays func() int
+	Interval      time.Duration // 0 -> hourly
+	Logger        *slog.Logger
+}
+
+// Start runs the scheduler until ctx is cancelled.
+func (s *Scheduler) Start(ctx context.Context) {
+	if s.Interval == 0 {
+		s.Interval = time.Hour
+	}
+	t := time.NewTicker(s.Interval)
+	defer t.Stop()
+	s.runOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.runOnce(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) runOnce(ctx context.Context) {
+	days := 0
+	if s.RetentionDays != nil {
+		days = s.RetentionDays()
+	}
+	if s.Logs == nil || days <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	n, err := s.Logs.Prune(ctx, cutoff)
+	if err != nil {
+		s.log().Warn("retention.log_prune.fail",
+			slog.String("error", err.Error()))
+		return
+	}
+	s.log().Info("retention.log_prune.ok",
+		slog.Int64("removed", n),
+		slog.Int("days", days),
+		slog.String("cutoff", cutoff.Format(time.RFC3339)))
+}
+
+func (s *Scheduler) log() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
+}

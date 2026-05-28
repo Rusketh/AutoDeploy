@@ -1,0 +1,48 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Unattends</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/unattends/new"><svg><use href="#i-plus"/></svg>New unattend</a>
+  </div>
+</div>
+{{if .Data.Unattends}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Name</th>
+    <th>Description</th>
+    <th class="num" data-sort="num">Used by</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Unattends}}
+    <tr>
+      <td><a href="/portal/unattends/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
+      <td class="small muted">{{.Description}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn ghost sm" href="/portal/unattends/{{int64 .ID}}/preview" title="Preview generated XML"><svg><use href="#i-eye"/></svg>Preview</a>
+        <a class="btn secondary sm" href="/portal/unattends/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/unattends/{{int64 .ID}}/delete" data-confirm="Delete this unattend? Will fail if images still link it.">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+<p class="muted small" style="margin-top: var(--sp-3);">Resolution is nearest-wins, used in full — every unattend is a complete answer file on its own. The agent bootstrap is always appended automatically by the generator.</p>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-file"/></svg>
+  <h3>No unattend templates yet</h3>
+  <p>Create an unattend to define locale, accounts, OOBE flags, licensing, policies and post-install commands. One template per role; bindings layer per-machine identity on top.</p>
+  <a class="btn" href="/portal/unattends/new"><svg><use href="#i-plus"/></svg>Create unattend</a>
+</div>
+{{end}}
+{{end}}

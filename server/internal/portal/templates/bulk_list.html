@@ -1,0 +1,45 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Bulk operations</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/bulk/new"><svg><use href="#i-plus"/></svg>New bulk operation</a>
+  </div>
+</div>
+{{if .Data.Ops}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th class="num" data-sort="num">ID</th>
+    <th>Action</th>
+    <th>Target</th>
+    <th>Created by</th>
+    <th data-sort="num">Created</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Ops}}
+    <tr>
+      <td class="num"><code>#{{int64 .ID}}</code></td>
+      <td><span class="badge accent">{{.Action}}</span></td>
+      <td class="small muted">{{if .Target.NameRegex}}name=<code>{{.Target.NameRegex}}</code> {{end}}{{if .Target.OU}}ou=<code>{{.Target.OU}}</code> {{end}}{{if .Target.Group}}group=<code>{{.Target.Group}}</code>{{end}}</td>
+      <td class="small">{{.CreatedBy}}</td>
+      <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
+      <td class="actions"><a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-bolt"/></svg>
+  <h3>No bulk operations yet</h3>
+  <p>Queue a rename, software-push or script across a fleet selection. The server coordinates AD renames; agents pull each job at check-in time.</p>
+  <a class="btn" href="/portal/bulk/new"><svg><use href="#i-plus"/></svg>Create operation</a>
+</div>
+{{end}}
+{{end}}

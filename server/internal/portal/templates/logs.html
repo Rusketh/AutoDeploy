@@ -1,0 +1,84 @@
+{{define "body"}}
+{{$q := .Data.Query}}
+<div class="toolbar">
+  <h2>Logs</h2>
+  <div class="right">
+    <button class="btn ghost sm" id="toggle-tail" type="button"><svg><use href="#i-bolt"/></svg>Live tail</button>
+  </div>
+</div>
+
+<details id="tail-panel" open>
+  <summary style="cursor:pointer; padding: var(--sp-2) 0; color: var(--fg-muted); font-size: var(--fs-sm);">
+    Live tail — newest events stream in every few seconds
+  </summary>
+  <div id="logs-tail" class="logs-tail" data-url="/api/v1/logs?limit=50" data-interval-ms="4000" aria-live="polite">
+    <div class="row"><span class="ts">…</span><span class="lvl">INFO</span><span class="msg muted">waiting for events</span></div>
+  </div>
+</details>
+
+<h3>Search</h3>
+<form class="std" method="GET" action="/portal/logs">
+  <div class="row">
+    <label><span class="lbl">Component</span><input type="text" name="component" value="{{$q.Component}}" placeholder="server / boot / agent"></label>
+    <label><span class="lbl">Actor</span><input type="text" name="actor" value="{{$q.Actor}}" placeholder="UUID or username"></label>
+    <label><span class="lbl">Action</span><input type="text" name="action" value="{{$q.Action}}" placeholder="package.install.ok"></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">Since</span><input type="datetime-local" name="since"></label>
+    <label><span class="lbl">Limit</span><input type="number" name="limit" value="{{if $q.Limit}}{{$q.Limit}}{{else}}200{{end}}" min="1" max="10000"></label>
+  </div>
+  <div class="actions"><button type="submit"><svg><use href="#i-search"/></svg>Search</button></div>
+</form>
+
+<div class="section-head">
+  <h3>{{len .Data.Events}} event{{if ne (len .Data.Events) 1}}s{{end}}</h3>
+  <div class="line"></div>
+  <div class="filter" style="flex: 0 1 240px;">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter rows — press /" data-filter="#log-rows">
+  </div>
+</div>
+
+<div class="tablewrap">
+<table id="log-rows" data-sortable>
+  <thead><tr>
+    <th data-sort="num">Time</th>
+    <th>Level</th>
+    <th>Component</th>
+    <th>Actor</th>
+    <th>Action</th>
+    <th>Target</th>
+    <th data-nosort>Fields</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Events}}
+    <tr>
+      <td class="small" data-sort-value="{{.OccurredAt.Unix}}">{{formatTime .OccurredAt}}</td>
+      <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{end}}">{{.Level}}</span></td>
+      <td><code>{{.Component}}</code></td>
+      <td class="small"><code>{{.Actor}}</code></td>
+      <td><code>{{.Action}}</code></td>
+      <td class="small">{{.Target}}</td>
+      <td class="small"><code>{{.Fields}}</code></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+<p class="muted small" style="margin-top: var(--sp-3);">
+  <svg style="width:14px;height:14px;vertical-align:-2px;"><use href="#i-shield"/></svg>
+  Secrets are never logged. <code>secret.access</code> events record retrievals — actor + target — but not the value.
+</p>
+
+<script>
+(function(){
+  var btn = document.getElementById('toggle-tail');
+  var panel = document.getElementById('tail-panel');
+  if(!btn||!panel) return;
+  btn.addEventListener('click', function(){
+    panel.open = !panel.open;
+    btn.classList.toggle('on', panel.open);
+  });
+})();
+</script>
+{{end}}

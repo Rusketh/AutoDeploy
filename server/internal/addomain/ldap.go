@@ -1,0 +1,205 @@
+package addomain
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"strings"
+
+	ldap "github.com/go-ldap/ldap/v3"
+)
+
+// LDAPConfig is the operator-supplied AD connection configuration.
+type LDAPConfig struct {
+	// URL is the LDAP server URL, e.g. "ldaps://dc.corp.example:636".
+	URL string
+	// BindDN is the service account, e.g. "CN=autodeploy,OU=Service
+	// Accounts,DC=corp,DC=example".
+	BindDN string
+	// BindPassword is the service-account password. Treat as secret.
+	BindPassword string
+	// SearchBase is the AD subtree the service operates within, e.g.
+	// "DC=corp,DC=example".
+	SearchBase string
+	// SkipTLSVerify disables certificate verification. Production should
+	// never need this; useful for lab DCs with self-signed certs.
+	SkipTLSVerify bool
+}
+
+// LDAPDirectory is the real AD backend. Each call dials, binds, performs
+// the operation, then closes — connection caching is left for Phase 16 if
+// the throughput motivates it.
+type LDAPDirectory struct {
+	cfg LDAPConfig
+}
+
+// NewLDAPDirectory returns a Directory bound to cfg.
+func NewLDAPDirectory(cfg LDAPConfig) *LDAPDirectory {
+	return &LDAPDirectory{cfg: cfg}
+}
+
+// Close is a no-op: connections are not cached.
+func (l *LDAPDirectory) Close() error { return nil }
+
+func (l *LDAPDirectory) dial(ctx context.Context) (*ldap.Conn, error) {
+	if l.cfg.URL == "" {
+		return nil, ErrNotConnected
+	}
+	c, err := ldap.DialURL(l.cfg.URL, ldap.DialWithTLSConfig(&tls.Config{
+		InsecureSkipVerify: l.cfg.SkipTLSVerify,
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("ldap dial %s: %w", l.cfg.URL, err)
+	}
+	if err := c.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("ldap bind: %w", err)
+	}
+	return c, nil
+}
+
+func (l *LDAPDirectory) FindComputer(ctx context.Context, name string) (string, error) {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	filter := fmt.Sprintf("(&(objectClass=computer)(cn=%s))", ldap.EscapeFilter(name))
+	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases, 1, 30, false,
+		filter, []string{"distinguishedName"}, nil)
+	res, err := c.Search(req)
+	if err != nil {
+		return "", err
+	}
+	if len(res.Entries) == 0 {
+		return "", nil
+	}
+	return res.Entries[0].DN, nil
+}
+
+func (l *LDAPDirectory) DeleteComputer(ctx context.Context, dn string) error {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Del(ldap.NewDelRequest(dn, nil))
+}
+
+func (l *LDAPDirectory) CreateComputer(ctx context.Context, ou, name string) (string, error) {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	dn := computerDN(name, ou)
+	req := ldap.NewAddRequest(dn, nil)
+	req.Attribute("objectClass", []string{"top", "computer"})
+	req.Attribute("cn", []string{name})
+	req.Attribute("sAMAccountName", []string{name + "$"})
+	// userAccountControl 4096 = WORKSTATION_TRUST_ACCOUNT.
+	req.Attribute("userAccountControl", []string{"4096"})
+	if err := c.Add(req); err != nil {
+		return "", fmt.Errorf("create %s: %w", dn, err)
+	}
+	return dn, nil
+}
+
+func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN string, groups []string) error {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	// Find current groups: groups whose 'member' includes computerDN.
+	filter := fmt.Sprintf("(&(objectClass=group)(member=%s))", ldap.EscapeFilter(computerDN))
+	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases, 0, 60, false,
+		filter, []string{"distinguishedName", "cn"}, nil)
+	res, err := c.Search(req)
+	if err != nil {
+		return err
+	}
+	want := map[string]bool{}
+	for _, g := range groups {
+		want[strings.ToLower(g)] = true
+	}
+	// Remove from groups we no longer want; tick off groups we already are
+	// in but still want.
+	for _, e := range res.Entries {
+		groupName := e.GetAttributeValue("cn")
+		key := strings.ToLower(groupName)
+		if want[key] {
+			delete(want, key) // already a member
+			continue
+		}
+		mod := ldap.NewModifyRequest(e.DN, nil)
+		mod.Delete("member", []string{computerDN})
+		if err := c.Modify(mod); err != nil {
+			return fmt.Errorf("remove %s from %s: %w", computerDN, e.DN, err)
+		}
+	}
+	// Add to remaining wanted groups.
+	for groupName := range want {
+		groupDN, err := l.findGroupDN(c, groupName)
+		if err != nil {
+			return err
+		}
+		if groupDN == "" {
+			return fmt.Errorf("group %s not found", groupName)
+		}
+		mod := ldap.NewModifyRequest(groupDN, nil)
+		mod.Add("member", []string{computerDN})
+		if err := c.Modify(mod); err != nil {
+			return fmt.Errorf("add %s to %s: %w", computerDN, groupDN, err)
+		}
+	}
+	return nil
+}
+
+// RenameComputer issues an LDAP MODRDN with the same parent (so the
+// object stays in its current OU; only the CN changes).
+func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) (string, error) {
+	c, err := l.dial(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	req := ldap.NewModifyDNRequest(dn, "CN="+newName, true, "")
+	if err := c.ModifyDN(req); err != nil {
+		return "", fmt.Errorf("rename %s -> %s: %w", dn, newName, err)
+	}
+	// Compose the new DN: replace the leading RDN.
+	parent := dn
+	if i := strings.Index(dn, ","); i >= 0 {
+		parent = dn[i+1:]
+	}
+	newDN := "CN=" + newName + "," + parent
+	// Also update sAMAccountName to match the new CN (workstation
+	// accounts have sAMAccountName = "<cn>$"). Some AD callers fail
+	// secure-channel checks if the two drift.
+	mod := ldap.NewModifyRequest(newDN, nil)
+	mod.Replace("sAMAccountName", []string{newName + "$"})
+	if err := c.Modify(mod); err != nil {
+		// Non-fatal: log via returned error so the operator sees it but
+		// the rename itself completed.
+		return newDN, fmt.Errorf("rename ok; sAMAccountName update failed: %w", err)
+	}
+	return newDN, nil
+}
+
+func (l *LDAPDirectory) findGroupDN(c *ldap.Conn, name string) (string, error) {
+	filter := fmt.Sprintf("(&(objectClass=group)(cn=%s))", ldap.EscapeFilter(name))
+	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases, 1, 30, false,
+		filter, []string{"distinguishedName"}, nil)
+	res, err := c.Search(req)
+	if err != nil {
+		return "", err
+	}
+	if len(res.Entries) == 0 {
+		return "", nil
+	}
+	return res.Entries[0].DN, nil
+}

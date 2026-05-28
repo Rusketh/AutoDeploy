@@ -1,0 +1,51 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Driver packages</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/drivers/new"><svg><use href="#i-plus"/></svg>New driver package</a>
+  </div>
+</div>
+{{if .Data.Drivers}}
+<div class="tablewrap">
+<table id="tbl" data-sortable data-bulk-target="/portal/drivers/{id}/delete">
+  <thead><tr>
+    <th data-nosort style="width: 32px;"><input type="checkbox" class="row-check" aria-label="Select all rows"></th>
+    <th>Name</th>
+    <th>Description</th>
+    <th class="num" data-sort="num">Filters</th>
+    <th class="num" data-sort="num">Size</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Drivers}}
+    <tr>
+      <td><input type="checkbox" class="row-check" data-id="{{int64 .ID}}" aria-label="Select {{.Name}}"></td>
+      <td><a href="/portal/drivers/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
+      <td class="small muted">{{.Description}}</td>
+      <td class="num">{{len .Filters}}</td>
+      <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="actions">
+        <a class="btn secondary sm" href="/portal/drivers/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/drivers/{{int64 .ID}}/delete" data-confirm="Delete this driver package?">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+<p class="muted small" style="margin-top: var(--sp-3);">Driver matching is <em>global</em>: a package applies to any machine whose reported SMBIOS matches one of its filters, regardless of the image. Make filters as specific as the driver requires.</p>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-cpu"/></svg>
+  <h3>No driver packages yet</h3>
+  <p>Upload SCCM-style driver packages and define SMBIOS filters so AutoDeploy can match each driver to the right hardware automatically.</p>
+  <a class="btn" href="/portal/drivers/new"><svg><use href="#i-plus"/></svg>Add driver package</a>
+</div>
+{{end}}
+{{end}}

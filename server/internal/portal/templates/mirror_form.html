@@ -1,0 +1,45 @@
+{{define "body"}}
+{{$m := .Data.M}}
+{{$new := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $new}}New payload mirror{{else}}Edit mirror: {{$m.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/mirrors"><svg><use href="#i-arrow-left"/></svg>Back to mirrors</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if $new}}/portal/mirrors{{else}}/portal/mirrors/{{int64 $m.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$m.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$m.Description}}" maxlength="200"></label>
+  </fieldset>
+  <fieldset><legend>Location</legend>
+    <label><span class="lbl">Base URL</span>
+      <input type="url" name="base_url" value="{{$m.BaseURL}}" required placeholder="https://mirror-eu.corp.example">
+      <span class="hint">Operators serve the same <code>/payload/...</code> tree from this host (rsync from the primary's data dir, or a pull-through reverse proxy).</span>
+    </label>
+    <label><span class="lbl">Site (used for routing)</span>
+      <input type="text" name="site" value="{{$m.Site}}" placeholder="eu-west, london-1, …">
+      <span class="hint">Empty = global mirror (used when no site-specific mirror matches). Boot Clients pass the site via the <code>X-AutoDeploy-Site</code> header (or kernel cmdline).</span>
+    </label>
+    <label><span class="lbl">Priority (lower = preferred among same-site mirrors)</span>
+      <input type="number" name="priority" value="{{if $m.Priority}}{{$m.Priority}}{{else}}100{{end}}" min="0" max="1000">
+    </label>
+    {{if not $new}}
+    <label><input type="checkbox" name="healthy" value="1" {{if $m.Healthy}}checked{{end}}> Healthy (uncheck to mark out-of-service)</label>
+    {{end}}
+  </fieldset>
+  <div class="actions">
+    <a class="btn secondary" href="/portal/mirrors">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Add{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+{{if not $new}}
+<div class="section-head"><h3>Setup checklist</h3><div class="line"></div></div>
+<ol>
+  <li>Stand up the mirror host (any HTTP server that serves the path tree below). Suitable options: a nginx / apache reverse proxy in front of an rsync'd copy of <code>$AUTODEPLOY_DATA_DIR</code>, a Squid configured as a pull-through cache, or a second autodeploy-server instance pointed at a synced data dir.</li>
+  <li>Make sure the mirror responds to <code>GET /payload/iso/&lt;id&gt;/&lt;path&gt;</code>, <code>GET /payload/drivers/&lt;id&gt;</code> and <code>GET /payload/software/&lt;id&gt;</code> with the same bytes the primary serves.</li>
+  <li>HTTPS is recommended. The Boot Client will accept the mirror's certificate via its system trust store.</li>
+  <li>Configure DHCP option 175 (or your iPXE script) on the site's subnet to set <code>autodeploy.site=&lt;site&gt;</code> on the kernel cmdline so the Boot Client passes it in the <code>X-AutoDeploy-Site</code> header.</li>
+</ol>
+{{end}}
+{{end}}

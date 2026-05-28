@@ -1,0 +1,61 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-box"/></svg>Storage paths</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
+<p class="muted" style="max-width:780px;">
+  Relocate the per-category payload trees to a different filesystem (e.g. a ZFS dataset for ISOs, an NFS mount for drivers) without rewriting the database. The relative paths the server stores stay the same; the storage layer routes each category to the configured root. Empty = use the default <code>$AUTODEPLOY_DATA_DIR/&lt;category&gt;</code>.
+</p>
+
+<div class="flash flash-warn" style="border-radius: var(--r); margin-bottom: var(--sp-3);">
+  <svg><use href="#i-info"/></svg>
+  <span>
+    <strong>Files are not moved automatically.</strong>
+    Move the existing tree to the new location <em>before</em> you save, or the server will look for old files in the new directory and find nothing. The save action only records the new root; it does not copy or rename anything on disk.
+  </span>
+</div>
+
+<form class="std" method="POST" action="/portal/settings/storage">
+  {{range .Data.Entries}}
+  <fieldset>
+    <legend>{{.Category}}</legend>
+    <p class="hint" style="margin-top:0;">{{.Description}}</p>
+    <label>
+      <span class="lbl">Override path (absolute)</span>
+      <input type="text" name="storage_{{.Category}}" value="{{.Override}}" placeholder="{{.Default}} (default)">
+      <span class="hint">Leave blank to use the default. Must be an absolute path that the server process can read and write.</span>
+    </label>
+    <div class="flex wrap small" style="gap: var(--sp-4); margin-top: var(--sp-2);">
+      <span><span class="muted">Effective:</span> <code>{{.Effective}}</code><button type="button" class="copy" data-copy="{{.Effective}}" aria-label="Copy effective path"><svg><use href="#i-copy"/></svg></button></span>
+      <span>
+        {{if eq .State "ok"}}<span class="badge ok"><svg><use href="#i-check"/></svg>writable</span>
+        {{else if eq .State "default"}}<span class="badge">default · {{.Detail}}</span>
+        {{else if eq .State "missing"}}<span class="badge warn"><svg><use href="#i-alert"/></svg>missing</span>
+        {{else}}<span class="badge bad"><svg><use href="#i-alert"/></svg>{{.State}}</span>
+        {{end}}
+        <span class="muted">{{.Detail}}</span>
+      </span>
+    </div>
+  </fieldset>
+  {{end}}
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
+  </div>
+</form>
+
+<div class="section-head"><h3>How to relocate without downtime</h3><div class="line"></div></div>
+<ol class="muted">
+  <li><strong>Stop</strong> the AutoDeploy service so no payload writes are in flight.</li>
+  <li><strong>Move</strong> the existing directory:
+    <pre>sudo mv {{.Data.DataDir}}/&lt;category&gt; /new/path/&lt;category&gt;
+sudo chown -R autodeploy:autodeploy /new/path/&lt;category&gt;</pre>
+  </li>
+  <li><strong>Start</strong> the service. The directory is now empty under the data dir; saved rows still point at relative paths like <code>iso/12/source.iso</code>.</li>
+  <li><strong>Save</strong> the new path here. The server's blob store routes every subsequent read or write to the override; the relative paths in the database stay valid because the resolver consults the override at request time.</li>
+</ol>
+
+<p class="muted small">If you skip step 2, the server will write new uploads to the new location and existing rows will 404 because their files are in the old (now-orphaned) tree. <code>scripts/backup.sh</code> and <code>scripts/windows/backup.ps1</code> always read the <em>current</em> effective paths so backups follow the override automatically.</p>
+{{end}}

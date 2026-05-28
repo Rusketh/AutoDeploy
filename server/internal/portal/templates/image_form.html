@@ -1,0 +1,82 @@
+{{define "body"}}
+{{$im := .Data.Im}}
+{{$new := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $new}}New image{{else}}Edit image: {{$im.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/images"><svg><use href="#i-arrow-left"/></svg>Back to images</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if $new}}/portal/images{{else}}/portal/images/{{int64 $im.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$im.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$im.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>Inheritance</legend>
+    <label><span class="lbl">Parent image (optional)</span>
+      <select name="parent_id">
+        <option value="">(none)</option>
+        {{range .Data.Images}}{{if ne .ID $im.ID}}<option value="{{int64 .ID}}" {{if idEq $im.ParentID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+      </select>
+      <span class="hint">ISO and Unattend resolve nearest-wins up this chain. Software is additive.</span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Composition</legend>
+    <label><span class="lbl">ISO</span>
+      <select name="iso_id">
+        <option value="">(inherit / none)</option>
+        {{range .Data.ISOs}}<option value="{{int64 .ID}}" {{if idEq $im.ISOID (int64 .ID)}}selected{{end}}>{{.Name}} ({{.OSType}})</option>{{end}}
+      </select>
+    </label>
+    <label><span class="lbl">Unattend</span>
+      <select name="unattend_id">
+        <option value="">(inherit / none)</option>
+        {{range .Data.Unattends}}<option value="{{int64 .ID}}" {{if idEq $im.UnattendID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <label><span class="lbl">Software loadout</span>
+      <select name="loadout_id">
+        <option value="">(none)</option>
+        {{range .Data.Loadouts}}<option value="{{int64 .ID}}" {{if idEq $im.LoadoutID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <span class="hint">The nearest loadout up the image chain applies; descendants override entries by package id, opt-outs remove them.</span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Direct software links (override loadout for these packages)</legend>
+    <div id="pkgs">
+      {{range $im.SoftwareLinks}}
+      <div class="rep">
+        <select name="sw_id[]">
+          {{$cur := .PackageID}}
+          {{range $.Data.Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) (int64 $cur)}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <input type="number" name="sw_order[]" value="{{.OrderValue}}" style="max-width:6rem">
+        <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary sm" onclick="addSw()"><svg><use href="#i-plus"/></svg>Add package</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/images">Cancel</a>
+    {{if not $new}}<a class="btn ghost" href="/portal/images/{{int64 $im.ID}}/resolved"><svg><use href="#i-eye"/></svg>Resolved</a>{{end}}
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+<script>
+var availSw=[{{range $i,$p := .Data.Packages}}{{if $i}},{{end}}{id:{{int64 $p.ID}},name:"{{$p.Name}}"}{{end}}];
+function addSw(){
+  var d=document.createElement('div'); d.className='rep';
+  var sel=document.createElement('select'); sel.name='sw_id[]';
+  availSw.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);});
+  var ord=document.createElement('input'); ord.type='number'; ord.name='sw_order[]'; ord.value=100; ord.style.maxWidth='6rem';
+  var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.setAttribute('aria-label','Remove row'); rm.onclick=function(){d.remove();};
+  d.appendChild(sel); d.appendChild(ord); d.appendChild(rm);
+  document.getElementById('pkgs').appendChild(d);
+}
+</script>
+{{end}}

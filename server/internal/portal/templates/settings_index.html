@@ -1,0 +1,45 @@
+{{define "body"}}
+<h2>Settings</h2>
+<p class="muted" style="max-width: 720px;">All operator-changeable configuration lives here.
+Bootstrap settings (bind addresses, data directory, dev mode, the
+at-rest secrets key) stay in environment variables on the server —
+they must be known before the server can listen.</p>
+
+<div class="grid stats">
+  <a class="stat" href="/portal/settings/access-pin">
+    <span class="lbl"><svg><use href="#i-shield"/></svg>Access PIN</span>
+    <span class="num" style="font-size: 1.1rem;">Boot gate</span>
+    <span class="small muted">Server-side validated, bcrypt-hashed, rate-limited per machine.</span>
+  </a>
+  <a class="stat" href="/portal/settings/branding">
+    <span class="lbl"><svg><use href="#i-image"/></svg>Branding</span>
+    <span class="num" style="font-size: 1.1rem;">{{.Data.Brand.ProductName}}</span>
+    <span class="small muted">Portal name, logo, primary colour, deployed-machine OEM info.</span>
+  </a>
+  <a class="stat" href="/portal/settings/accounts">
+    <span class="lbl"><svg><use href="#i-server"/></svg>Local accounts</span>
+    <span class="num" style="font-size: 1.1rem;">{{.Data.UserCount}} user{{if ne .Data.UserCount 1}}s{{end}}</span>
+    <span class="small muted">Portal operators with bcrypt-hashed credentials.</span>
+  </a>
+  <a class="stat" href="/portal/settings/active-directory">
+    <span class="lbl"><svg><use href="#i-globe"/></svg>Active Directory</span>
+    <span class="num" style="font-size: 1.1rem;">{{if .Data.ADEnabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</span>
+    <span class="small muted">LDAP service-account, computer-object lifecycle, encrypted at rest.</span>
+  </a>
+  <a class="stat" href="/portal/settings/operational">
+    <span class="lbl"><svg><use href="#i-gear"/></svg>Operational</span>
+    <span class="num" style="font-size: 1.1rem;">Retention · throttle</span>
+    <span class="small muted">Log retention days, payload concurrency cap.</span>
+  </a>
+  <a class="stat" href="/portal/settings/storage">
+    <span class="lbl"><svg><use href="#i-box"/></svg>Storage paths</span>
+    <span class="num" style="font-size: 1.1rem;">Per-category</span>
+    <span class="small muted">Relocate ISOs, drivers, software, iPXE or downloads to a different filesystem.</span>
+  </a>
+  <a class="stat" href="/portal/downloads">
+    <span class="lbl"><svg><use href="#i-box"/></svg>Downloads</span>
+    <span class="num" style="font-size: 1.1rem;">Agent &amp; tools</span>
+    <span class="small muted">Windows agent, Boot Client and installer binaries for ad-hoc use.</span>
+  </a>
+</div>
+{{end}}

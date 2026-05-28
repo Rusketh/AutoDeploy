@@ -1,0 +1,29 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-shield"/></svg>Access PIN</h2>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a>
+  </div>
+</div>
+
+<p>Current state:
+{{if .Data.On}}<span class="badge ok"><svg><use href="#i-check"/></svg>enabled</span>{{else}}<span class="badge"><svg><use href="#i-info"/></svg>disabled</span>{{end}}
+</p>
+
+<form class="std" method="POST" action="/portal/settings/access-pin">
+  <fieldset>
+    <legend>New PIN</legend>
+    <label>
+      <input type="password" name="pin" autocomplete="new-password" placeholder="Leave blank to disable">
+      <span class="hint">
+        Hashed at rest with bcrypt. Server-side rate-limit: 5 failures in 15 minutes per machine UUID returns 429.
+        The Boot Client prompts for this PIN before showing the deploy menu.
+      </span>
+    </label>
+  </fieldset>
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
+  </div>
+</form>
+{{end}}

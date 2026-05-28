@@ -1,0 +1,56 @@
+{{define "body"}}
+{{$b := .Data.B}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-image"/></svg>Branding</h2>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a>
+  </div>
+</div>
+
+<form class="std" method="POST" action="/portal/settings/branding">
+  <fieldset>
+    <legend>Names and contact</legend>
+    <label><span class="lbl">Product name</span><input type="text" name="product_name" value="{{$b.ProductName}}" required></label>
+    <label><span class="lbl">Organisation name</span><input type="text" name="organisation_name" value="{{$b.OrganisationName}}" placeholder="Your company"></label>
+    <div class="row">
+      <label><span class="lbl">Support URL</span><input type="url" name="support_url" value="{{$b.SupportURL}}" placeholder="https://it.example.com"></label>
+      <label><span class="lbl">Support phone</span><input type="text" name="support_phone" value="{{$b.SupportPhone}}" placeholder="+1 555 0100"></label>
+    </div>
+    <label><span class="lbl">OEM Manufacturer</span>
+      <input type="text" name="oem_manufacturer" value="{{$b.OEMManufacturer}}" placeholder="Defaults to Organisation name">
+      <span class="hint">Written to <code>HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation\Manufacturer</code> by the agent after deploy. Shows up in System Properties.</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Appearance</legend>
+    <label><span class="lbl">Primary colour</span>
+      <div class="row" style="align-items:center;">
+        <input type="text" name="primary_color" value="{{$b.PrimaryColor}}" placeholder="#0b65c2" style="flex:1 1 220px;">
+        <input type="color" value="{{$b.PrimaryColor}}" onchange="document.querySelector('input[name=primary_color]').value=this.value" style="flex:0 0 60px;height:38px;padding:2px;cursor:pointer;">
+      </div>
+      <span class="hint">Used for buttons, accent badges, the active nav highlight.</span>
+    </label>
+    <label><span class="lbl">Logo</span>
+      <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…">
+      <span class="hint">Paste a data URL, or upload an image to embed it:
+        <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" style="display:inline-block;width:auto;margin-left:0.4rem;">
+      </span>
+    </label>
+    {{if $b.LogoDataURL}}<div style="margin-top:var(--sp-2);">Current logo: <img src="{{$b.LogoDataURL}}" alt="logo preview" style="max-height:40px;vertical-align:middle;background:var(--surface-2);padding:4px;border-radius:var(--r);"></div>{{end}}
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
+  </div>
+</form>
+<script>
+function fileToDataURL(input){
+  var f = input.files[0]; if(!f) return;
+  var rd = new FileReader();
+  rd.onload = function(){ document.querySelector('input[name=logo_data_url]').value = rd.result; };
+  rd.readAsDataURL(f);
+}
+</script>
+{{end}}

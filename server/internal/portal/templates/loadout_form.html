@@ -1,0 +1,62 @@
+{{define "body"}}
+{{$l := .Data.L}}
+{{$new := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $new}}New loadout{{else}}Edit loadout: {{$l.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/loadouts"><svg><use href="#i-arrow-left"/></svg>Back to loadouts</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if $new}}/portal/loadouts{{else}}/portal/loadouts/{{int64 $l.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$l.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$l.Description}}" maxlength="200"></label>
+    <label><span class="lbl">Parent loadout (optional)</span>
+      <select name="parent_id">
+        <option value="">(none)</option>
+        {{range .Data.Parents}}
+        {{if ne .ID $l.ID}}<option value="{{int64 .ID}}" {{if idEq $l.ParentID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+        {{end}}
+      </select>
+      <span class="hint">Child inherits parent's packages additively; opt-out below removes an inherited package.</span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Packages</legend>
+    <div id="pkgs">
+      {{range $i, $p := $l.Packages}}
+      <div class="rep">
+        <select name="pkg_id[]">
+          {{range $.Data.Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) (int64 $p.PackageID)}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <input type="number" name="pkg_order[]" value="{{$p.OrderValue}}" style="max-width:6rem" title="Install order">
+        <label class="inline"><input type="checkbox" name="pkg_optout[]" value="1" {{if $p.OptOut}}checked{{end}}> opt-out</label>
+        <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary sm" onclick="addPkg()"><svg><use href="#i-plus"/></svg>Add package</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/loadouts">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+<script>
+var availPkgs = [{{range $i, $p := .Data.Packages}}{{if $i}},{{end}}{id:{{int64 $p.ID}}, name: "{{$p.Name}}"}{{end}}];
+function addPkg(){
+  var d = document.createElement('div'); d.className='rep';
+  var sel = document.createElement('select'); sel.name='pkg_id[]';
+  availPkgs.forEach(function(p){
+    var o=document.createElement('option'); o.value=p.id; o.textContent=p.name; sel.appendChild(o);
+  });
+  var ord=document.createElement('input'); ord.type='number'; ord.name='pkg_order[]'; ord.value=100; ord.style.maxWidth='6rem';
+  var opt=document.createElement('label'); opt.className='inline';
+  opt.innerHTML='<input type="checkbox" name="pkg_optout[]" value="1"> opt-out';
+  var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.onclick=function(){d.remove();};
+  d.appendChild(sel); d.appendChild(ord); d.appendChild(opt); d.appendChild(rm);
+  document.getElementById('pkgs').appendChild(d);
+}
+</script>
+{{end}}
