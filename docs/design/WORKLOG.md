@@ -645,3 +645,73 @@ LDAP is wrapped behind an interface so a fake provider drives tests
 without a live directory; the real backend uses
 `github.com/go-ldap/ldap/v3` and configures credentials via
 environment variables.
+
+---
+
+## 2026-05-28 — Phase 10 complete (Active Directory integration)
+
+**WHAT.**
+
+- `internal/addomain`: Domain Integration Service with a `Directory`
+  interface so tests use `FakeDirectory` and production uses
+  `LDAPDirectory` (real AD via `github.com/go-ldap/ldap/v3`).
+- `Service.PrepareComputer(name, ou, groups)` implements the
+  delete-and-replace lifecycle: find existing object by CN, delete it
+  if present, create a fresh one at the target OU, reconcile group
+  memberships by diffing current vs. wanted.
+- LDAPDirectory: dials with TLS, binds with service account, performs
+  search/add/del/modify operations. Each call opens its own
+  connection — connection caching is left for Phase 16.
+- Config grew `AUTODEPLOY_AD_URL`, `AUTODEPLOY_AD_BIND_DN`,
+  `AUTODEPLOY_AD_BIND_PASSWORD`, `AUTODEPLOY_AD_SEARCH_BASE`,
+  `AUTODEPLOY_AD_SKIP_TLS_VERIFY`. Empty URL disables AD entirely; the
+  service then no-ops cleanly.
+- Manifest handler wires the AD service in. When the resolved unattend
+  has a `domain_join` section AND the requesting machine has a binding
+  with name+OU, the handler runs PrepareComputer before returning the
+  manifest, so JoinDomain succeeds on first boot.
+- Tests: delete-and-replace exercised against the fake directory;
+  group reconciliation adds new groups and removes old; disabled
+  service is a no-op; manifest-level integration test confirms the
+  end-to-end flow on a real httptest server.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: AD is invoked from the manifest path rather than from a
+  dedicated agent-side endpoint. By the time the Boot Client asks for
+  the manifest, the operator has committed to imaging this machine
+  with this image; that is the right moment to prepare the AD object
+  so the unattend's JoinDomain can succeed.
+- DECISION: Delete-and-replace is the documented behaviour from the
+  design; the service emits a loud INFO log line whenever it deletes
+  an existing object so the LAPS / GUID consequences are visible in
+  the audit trail.
+- DECISION: Group reconciliation is per-deploy. Drift between deploys
+  is not corrected continuously — the design says re-applied on each
+  deployment, not "continuously enforced". A future revision could
+  add a periodic reconcile.
+- DECISION: Group reconciliation failure does not unwind the new
+  computer object. The join will still work; the operator can fix
+  groups via the portal. We log loudly so the failure is visible.
+- DECISION: Each AD call opens its own connection. AD connections are
+  expensive at scale, but Phase 16 is the right place to measure and
+  add pooling if it bites.
+- ASSUMPTION: AD attribute schema uses the standard
+  `objectClass=computer`, `sAMAccountName=<name>$`,
+  `userAccountControl=4096` (WORKSTATION_TRUST_ACCOUNT). Customised
+  schemas would need additional configuration; out of scope for the
+  initial release.
+
+**BUILD STATE.** Server builds and tests green; LDAP backend compiles
+on all platforms; FakeDirectory drives the test suite without a real
+DC. End-to-end test confirms PrepareComputer runs at manifest time
+when the unattend declares domain join and a binding exists.
+
+**NEXT.** Phase 11 — Security: the optional global access PIN and
+portal authentication. The access PIN is a single system setting
+gating the Boot Client menu; the Boot Client prompts and submits each
+attempt to a server endpoint; three failures fail-safe to a normal
+boot; the server rate-limits by machine identity. Portal auth is
+local username/password, with no graded permission model. Both pieces
+share a tiny secret store (hashed-password rows, plus the access-PIN
+setting).

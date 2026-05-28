@@ -26,6 +26,13 @@ type Config struct {
 	// DevMode permits cleartext HTTP on non-loopback addresses and enables
 	// self-signed-cert generation. Production deployments must set false.
 	DevMode bool
+
+	// Active Directory integration (Phase 10). Empty ADLDAPURL disables AD.
+	ADLDAPURL        string
+	ADBindDN         string
+	ADBindPassword   string
+	ADSearchBase     string
+	ADSkipTLSVerify  bool
 }
 
 // Load reads configuration from the environment.
@@ -42,6 +49,15 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AUTODEPLOY_DEV must be a boolean")
 	}
 	c.DevMode = dev
+	c.ADLDAPURL = getenv("AUTODEPLOY_AD_URL", "")
+	c.ADBindDN = getenv("AUTODEPLOY_AD_BIND_DN", "")
+	c.ADBindPassword = getenv("AUTODEPLOY_AD_BIND_PASSWORD", "")
+	c.ADSearchBase = getenv("AUTODEPLOY_AD_SEARCH_BASE", "")
+	skip, err := strconv.ParseBool(getenv("AUTODEPLOY_AD_SKIP_TLS_VERIFY", "false"))
+	if err != nil {
+		return Config{}, errors.New("AUTODEPLOY_AD_SKIP_TLS_VERIFY must be a boolean")
+	}
+	c.ADSkipTLSVerify = skip
 	return c, nil
 }
 

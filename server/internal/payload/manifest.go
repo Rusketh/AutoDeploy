@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
 // Manifest is the Boot Client's instruction sheet: a flat list of URLs to
@@ -36,6 +38,14 @@ type ManifestItem struct {
 // operator picks a configuration.
 type ManifestHandler struct {
 	Resolver *resolve.Resolver
+	// AD is the Domain Integration Service (Phase 10). When non-nil and
+	// the resolved unattend has a domain_join section AND the machine has
+	// a binding, the handler prepares the computer object before
+	// returning the manifest so by the time the unattend runs JoinDomain
+	// the object is ready.
+	AD        *addomain.Service
+	Inventory *model.InventoryRepo
+	Unattend  *model.UnattendRepo
 }
 
 // Handler returns an http.HandlerFunc that builds the manifest for the image
@@ -127,15 +137,48 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, i
 		})
 	}
 	if res.Unattend != nil {
-		// Unattend generation lands in Phase 5; expose the endpoint shape
-		// now so the Boot Client manifest format is stable.
 		m.Items = append(m.Items, ManifestItem{
 			Role: "unattend",
 			URL:  fmt.Sprintf("%s/payload/unattend/%d", base, int64(id)),
 			Name: res.Unattend.Name,
 		})
+		// Phase 10: if the unattend has a domain-join section and the
+		// machine is in inventory with a binding, prepare the AD object
+		// before the OS is laid down so JoinDomain succeeds on first
+		// boot.
+		if h.AD != nil && h.Inventory != nil && identity.SystemUUID != "" {
+			if err := h.prepareAD(ctx, res.Unattend, identity, &m); err != nil {
+				m.Warnings = append(m.Warnings, "ad: "+err.Error())
+			}
+		}
 	}
 	return m, nil
+}
+
+// prepareAD inspects the resolved unattend for a domain_join section and,
+// if one is configured and the machine has a binding, calls the Domain
+// Integration Service to delete-and-replace the computer object.
+func (h *ManifestHandler) prepareAD(ctx context.Context, ua *model.Unattend, identity match.Identity, m *Manifest) error {
+	settings, err := unattend.Parse(ua.SettingsJSON)
+	if err != nil || settings.DomainJoin == nil {
+		return nil
+	}
+	machine, err := h.Inventory.GetByUUID(ctx, identity.SystemUUID)
+	if err != nil {
+		return nil // no binding yet — nothing to prepare
+	}
+	binding, err := h.Inventory.GetBinding(ctx, machine.ID)
+	if err != nil || binding.MachineName == "" || binding.TargetOU == "" {
+		return nil
+	}
+	dn, err := h.AD.PrepareComputer(ctx, binding.MachineName, binding.TargetOU, binding.GroupMemberships)
+	if err != nil {
+		return err
+	}
+	if dn != "" {
+		m.Warnings = append(m.Warnings, "ad: prepared computer object at "+dn)
+	}
+	return nil
 }
 
 func baseURL(r *http.Request) string {

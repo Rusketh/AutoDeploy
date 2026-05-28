@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"
 	"github.com/rusketh/autodeploy/server/internal/config"
 	"github.com/rusketh/autodeploy/server/internal/httpx"
@@ -75,7 +76,33 @@ func run(logger *slog.Logger) error {
 	}
 	pl.Register(mux)
 
-	mh := &payload.ManifestHandler{Resolver: r.Resolver}
+	// Optional AD Domain Integration Service (Phase 10).
+	var adSvc *addomain.Service
+	if cfg.ADLDAPURL != "" {
+		adSvc = &addomain.Service{
+			Dir: addomain.NewLDAPDirectory(addomain.LDAPConfig{
+				URL:           cfg.ADLDAPURL,
+				BindDN:        cfg.ADBindDN,
+				BindPassword:  cfg.ADBindPassword,
+				SearchBase:    cfg.ADSearchBase,
+				SkipTLSVerify: cfg.ADSkipTLSVerify,
+			}),
+			Log:     logger,
+			Enabled: true,
+		}
+		logger.Info("addomain.configured",
+			slog.String("url", cfg.ADLDAPURL),
+			slog.String("search_base", cfg.ADSearchBase),
+			slog.String("bind_dn", cfg.ADBindDN),
+		)
+	}
+
+	mh := &payload.ManifestHandler{
+		Resolver:  r.Resolver,
+		AD:        adSvc,
+		Inventory: r.Inventory,
+		Unattend:  r.Unattend,
+	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
 	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())
 
