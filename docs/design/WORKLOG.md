@@ -2104,3 +2104,56 @@ Provider / Version / Date. Downloads page rendered with the four
 seeded binaries grouped under their proper section headers; the
 path-traversal probe (`%2F..%2Fetc%2Fpasswd`) returned the styled
 400 page rather than the file. Both screenshots attached above.
+
+## 2026-05-28 — Windows installer fetches iPXE binaries automatically
+
+Symmetry fix between the two install scripts. install-linux.sh has
+always run fetch-ipxe.sh by default; install-windows.ps1 only created
+the empty ipxe\ directory and left the operator to populate it.
+That's a needless friction step on a fresh Windows server.
+
+- New `scripts/windows/fetch-ipxe.ps1` mirrors `scripts/fetch-ipxe.sh`:
+  pulls undionly.kpxe, ipxe.pxe, ipxe.efi, snponly.efi and the arm64
+  ipxe.efi from boot.ipxe.org into `$DATA_DIR\ipxe\`. Per-file failure
+  doesn't abort the batch (transient network blips are common);
+  files below 1 KiB are deleted on the assumption they're error
+  pages. The TLS-1.2 fallback is wrapped in try/catch so older
+  Windows PowerShell hosts that lack `Tls13`/.NET 4.8 still run.
+- `install-windows.ps1` now calls the fetcher between env-file copy
+  and service registration. Accepts `-NoIPXE` to skip (mirrors the
+  Linux script's `--no-ipxe`). Failures from the fetcher land as a
+  warning rather than an installer abort, so an offline install host
+  can still finish bringing the service up; the operator re-runs
+  `fetch-ipxe.ps1` once they have network access.
+- Hardened the Linux side at the same time: `install-linux.sh` no
+  longer aborts when fetch-ipxe.sh fails. `fetch-ipxe.sh` itself now
+  retries per-file independently, deletes sub-1 KiB stubs, and
+  exits non-zero only at the end with a clear "re-run later"
+  message.
+- Docs (`docs/user-guide/install-windows.md`) updated to mention
+  the new fetch step and the `-NoIPXE` switch; the Step 5 iPXE
+  section now describes what's already there and what the operator
+  still has to produce (autodeploy-kernel / -initrd from the
+  initramfs build).
+- Files ship in the existing `autodeploy-extras.tar.gz` bundle
+  because `scripts/windows/` is already in the tar.
+
+**WHY (decisions).**
+
+- DECISION: Fetch on install rather than on first server start.
+  Doing it at install time means the operator notices network
+  reachability problems while they have the install console
+  open, rather than discovering them when a PXE client tries to
+  chainload at 02:00.
+- DECISION: Use `boot.ipxe.org` directly instead of an iPXE
+  mirror we host. Operators can already replace the URL with a
+  local mirror by editing the script; bundling iPXE binaries
+  into the AutoDeploy release would force us to track iPXE's
+  release cadence and adds ~5 MB to each release tarball.
+
+**BUILD STATE.** Bash scripts `bash -n` clean; PowerShell
+hand-review for syntax (Windows PowerShell + .NET Framework
+compat for the TLS shim, `$LASTEXITCODE` check in the install
+wrapper so fetch failures land as a warning rather than a silent
+abort). Sandbox lacks outbound network so I couldn't validate the
+actual fetches end-to-end.

@@ -74,6 +74,7 @@ param(
     [string]$ServiceAccount = 'LocalSystem',
     [switch]$NoFirewall,
     [switch]$NoStart,
+    [switch]$NoIPXE,
     [switch]$ApplyEnv
 )
 
@@ -254,6 +255,27 @@ $EnvDst = Join-Path $InstallDir 'autodeploy.env'
 if (-not (Test-Path -LiteralPath $EnvDst)) {
     Copy-Item -LiteralPath $EnvSrc -Destination $EnvDst
     Write-Host "Installed $EnvDst (edit this and re-run with -ApplyEnv to change settings)"
+}
+
+if (-not $NoIPXE) {
+    Write-Section "Fetching iPXE bootstrap binaries"
+    $fetcher = Join-Path (Split-Path -Parent $MyInvocation.PSCommandPath) 'fetch-ipxe.ps1'
+    if (Test-Path -LiteralPath $fetcher) {
+        # Don't abort the installer if the network is unreachable -- the
+        # operator can re-run fetch-ipxe.ps1 later. The child script
+        # may exit 1; check $LASTEXITCODE rather than rely on try/catch
+        # since exit codes don't surface as PowerShell exceptions.
+        try {
+            & $fetcher -DataDir $DataDir
+            if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
+                throw "fetch-ipxe.ps1 returned exit code $LASTEXITCODE"
+            }
+        } catch {
+            Write-Warning "iPXE fetch failed: $($_.Exception.Message). The server still installs; re-run scripts/windows/fetch-ipxe.ps1 once you have network access, or drop the binaries into $DataDir\ipxe by hand."
+        }
+    } else {
+        Write-Warning "fetch-ipxe.ps1 not found at $fetcher; skipping iPXE download. Drop the binaries into $DataDir\ipxe yourself when ready."
+    }
 }
 
 Write-Section "Registering Windows Service"

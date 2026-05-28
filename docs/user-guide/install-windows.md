@@ -71,17 +71,25 @@ Administrator) in the directory that contains the binary and run:
 The installer will:
 
 1. Copy `autodeploy-server.exe` to `C:\Program Files\AutoDeploy\`.
-2. Create the data directory at `C:\ProgramData\AutoDeploy\` (and an
-   `ipxe\` subdirectory for the static iPXE assets).
+2. Create the data directory at `C:\ProgramData\AutoDeploy\` (with
+   `ipxe\` for the static iPXE assets and `downloads\` for portal-
+   served binaries).
 3. Drop a fresh `autodeploy.env` next to the binary if one doesn't
    already exist there (copied from `autodeploy.env.example`).
-4. Register the binary as a Windows Service called **autodeploy**,
+4. **Fetch the iPXE bootstrap binaries** (`undionly.kpxe`,
+   `ipxe.efi`, `snponly.efi`, `ipxe.pxe`, `ipxe-arm64.efi`) from
+   `boot.ipxe.org` into `C:\ProgramData\AutoDeploy\ipxe\` so the
+   built-in TFTP listener can serve them straight away. Pass
+   `-NoIPXE` to skip if your install host has no internet access;
+   you can re-run the fetcher later with
+   `.\scripts\windows\fetch-ipxe.ps1`.
+5. Register the binary as a Windows Service called **autodeploy**,
    set to start automatically, running as **LocalSystem** by default.
-5. Write the env-file values into the service's environment block in
+6. Write the env-file values into the service's environment block in
    `HKLM\SYSTEM\CurrentControlSet\Services\autodeploy\Environment`.
-6. Open Windows Firewall inbound rules for HTTPS (TCP 443),
+7. Open Windows Firewall inbound rules for HTTPS (TCP 443),
    HTTP (TCP 80) and TFTP (UDP 69), scoped to the AutoDeploy binary.
-7. Start the service.
+8. Start the service.
 
 When the installer finishes it prints the path to a one-time
 bootstrap-admin file:
@@ -146,18 +154,30 @@ For a lab install you can leave dev mode on and AutoDeploy will
 auto-generate a self-signed cert into
 `C:\ProgramData\AutoDeploy\tls\` on first start.
 
-## Step 5 — iPXE assets (only if you use built-in TFTP)
+## Step 5 — iPXE assets and the kernel/initrd
 
-If you set `AUTODEPLOY_TFTP_ADDR=:69`, drop the iPXE bootstrap
-binaries into `C:\ProgramData\AutoDeploy\ipxe\`:
+The installer's iPXE fetch step already populated
+`C:\ProgramData\AutoDeploy\ipxe\` with the bootstrap binaries
+(`undionly.kpxe`, `ipxe.efi`, `snponly.efi`, `ipxe.pxe`,
+`ipxe-arm64.efi`). If you skipped that step with `-NoIPXE`, or if
+you need to refresh after an iPXE release, re-run:
+
+```powershell
+.\scripts\windows\fetch-ipxe.ps1
+```
+
+You still have to drop the Boot Client kernel + initramfs into the
+same directory so PXE-booted clients can chainload into the
+AutoDeploy boot environment:
 
 ```
-undionly.kpxe       # BIOS PXE bootstrap
-ipxe.efi            # UEFI PXE bootstrap (amd64)
-snponly.efi         # UEFI bootstrap that reuses the NIC's SNP driver
-autodeploy-kernel   # Linux kernel from scripts/initramfs
+autodeploy-kernel   # Linux kernel built by scripts/initramfs
 autodeploy-initrd   # initramfs containing autodeploy-boot
 ```
+
+Those are produced by `scripts/initramfs/build-initramfs.sh` on a
+Linux host (the build is Linux-only); copy the two files into
+`C:\ProgramData\AutoDeploy\ipxe\` after building.
 
 Configure your DHCP scope to hand out `undionly.kpxe` for BIOS clients
 and `ipxe.efi` for UEFI clients, with the server option pointing at

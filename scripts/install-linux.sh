@@ -95,7 +95,13 @@ fi
 if [ "$FETCH_IPXE" -eq 1 ]; then
     if [ -x "$HERE/fetch-ipxe.sh" ]; then
         echo "== Fetching iPXE bootstrap binaries =="
-        AUTODEPLOY_DATA_DIR="$DATA_DIR" "$HERE/fetch-ipxe.sh"
+        # Don't abort the installer if the network is unreachable --
+        # the operator can re-run fetch-ipxe.sh later, or build the
+        # iPXE binaries by hand and drop them in $DATA_DIR/ipxe.
+        if ! AUTODEPLOY_DATA_DIR="$DATA_DIR" "$HERE/fetch-ipxe.sh"; then
+            echo "  WARNING: iPXE fetch failed. Re-run scripts/fetch-ipxe.sh once you" >&2
+            echo "  have network access, or drop the binaries into $DATA_DIR/ipxe by hand." >&2
+        fi
         chown -R autodeploy:autodeploy "$DATA_DIR/ipxe"
     fi
 fi
