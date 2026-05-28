@@ -252,3 +252,64 @@ evaluation against reported hardware, and inclusion of the matched
 packages in the manifest the Boot Client already consumes. The Boot
 Client's imaging code already injects whatever driver paths the
 manifest lists, so the wire change is contained in the server.
+
+---
+
+## 2026-05-28 — Phase 4 complete (driver matching)
+
+**WHAT.**
+
+- `internal/match`: structured `Filter` type, `Identity` type, exact
+  case-insensitive matching with `*` wildcard support and a strict
+  empty-filter-never-matches rule.
+- Filter validation at save time: `validateDriverFilter` in the model
+  layer parses filter JSON through `match.ParseFilter` so unknown keys
+  are rejected with a clear error (no silent never-match).
+- Resolver: new `ResolveForMachine(ctx, id, identity)` evaluates every
+  driver package's filters against the reported identity, returning the
+  union. The non-identity `Resolve` is unchanged so the portal's
+  "view resolved" still works.
+- Manifest endpoint accepts POST with an identity body; when present,
+  matched drivers appear as `driver` items in the manifest. Diagnostic
+  emitted when packages exist but none matched.
+- Driver-preview endpoint (`POST /api/v1/drivers/{id}/preview`) returns
+  per-filter `{matches: bool}` plus a package-level verdict, so the
+  portal can show an operator whether a filter would catch a specific
+  machine.
+- Boot Client: `deploy` now POSTs identity to the manifest endpoint, so
+  the driver list reflects the real hardware. The imaging code already
+  injects whatever driver paths the manifest lists, so no Boot Client
+  imaging changes were required.
+
+**WHY (assumptions / decisions).**
+
+- DECISION: Filter syntax is a flat JSON object of allowed SMBIOS-key
+  -> required value. Case-insensitive equality, with `*` as the only
+  wildcard. Glob/regex support is not in scope; SMBIOS values are short
+  and structured, equality is enough.
+- DECISION: Empty filter never matches, by design. The design doc calls
+  out filter specificity as a key concern; the "never match" default is
+  the safe answer to a partially-edited filter.
+- DECISION: Unknown filter keys are rejected at save time, not silently
+  treated as never-match. A typo in a filter key would otherwise produce
+  the same observable behaviour as a correct filter that the machine
+  happens not to match — invisible and dangerous.
+- DECISION: Resolver gains an OPTIONAL drivers repo via `WithDrivers`,
+  rather than requiring it. This lets Phase 1/2 callers and tests keep
+  working without rewiring while making the driver path available to
+  Phase 4+.
+- DECISION: Plain `GET /api/v1/images/{id}/manifest` still works (for
+  the portal); the per-machine path is `POST` with an identity body.
+  Same handler, branches on method + body.
+
+**BUILD STATE.** `go test ./...` green across all modules; `make build`
+green for all three. End-to-end smoke: Dell machine receives driver in
+manifest, HP machine does not and gets a "no match" diagnostic.
+
+**NEXT.** Phase 5 — unattend generation. The Unattend entity exists
+(Phase 1) but settings are stored as opaque JSON. Phase 5 turns the
+settings into a structured type, generates a complete `unattend.xml`
+from them, and serves it at `/payload/unattend/{image-id}`. The Boot
+Client already downloads whatever `unattend` item the manifest lists and
+places it at `Windows\Panther\unattend.xml`, so the wire change is in
+the server.

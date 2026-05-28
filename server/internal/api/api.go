@@ -48,6 +48,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/drivers/{id}", handleGetDriver(r))
 	mux.HandleFunc("PUT /api/v1/drivers/{id}", handleUpdateDriver(r))
 	mux.HandleFunc("DELETE /api/v1/drivers/{id}", handleDeleteDriver(r))
+	mux.HandleFunc("POST /api/v1/drivers/{id}/preview", handleDriverPreview(r))
 
 	// Software packages
 	mux.HandleFunc("GET /api/v1/software", handleListSoftware(r))

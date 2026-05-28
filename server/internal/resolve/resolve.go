@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
 
@@ -29,7 +30,11 @@ type Resolved struct {
 	ISO        *model.ISO                `json:"iso,omitempty"`
 	Unattend   *model.Unattend           `json:"unattend,omitempty"`
 	Software   []model.ImageSoftwareLink `json:"software"`
-	ChainNames []string                  `json:"chain_names"`
+	// Drivers is populated only by ResolveForMachine; the no-identity
+	// Resolve returns it empty because driver matching needs reported
+	// hardware.
+	Drivers    []model.DriverPackage `json:"drivers,omitempty"`
+	ChainNames []string              `json:"chain_names"`
 	// Diagnostics surfaces issues that should be visible in the portal,
 	// not raised as errors: a missing ISO, a missing unattend, an empty
 	// software set, etc. The resolver does not refuse to produce a manifest
@@ -42,11 +47,21 @@ type Resolver struct {
 	images   *model.ImageRepo
 	isos     *model.ISORepo
 	unattend *model.UnattendRepo
+	drivers  *model.DriverPackageRepo // nil = driver matching disabled
 }
 
-// New constructs a resolver bound to the given repositories.
+// New constructs a resolver bound to the given repositories. The drivers
+// repo is optional and may be wired in via WithDrivers; this keeps the
+// Phase 1/2 callers that did not yet know about driver matching working.
 func New(images *model.ImageRepo, isos *model.ISORepo, unattend *model.UnattendRepo) *Resolver {
 	return &Resolver{images: images, isos: isos, unattend: unattend}
+}
+
+// WithDrivers attaches the driver-package repo so ResolveForMachine can
+// evaluate driver filters. Returns r for chaining.
+func (r *Resolver) WithDrivers(drivers *model.DriverPackageRepo) *Resolver {
+	r.drivers = drivers
+	return r
 }
 
 // Resolve computes the effective manifest for the image with id.
@@ -101,6 +116,53 @@ func (r *Resolver) Resolve(ctx context.Context, id model.ID) (Resolved, error) {
 			"no unattend resolved up the inheritance chain — deployment will not be unattended")
 	}
 	return out, nil
+}
+
+// ResolveForMachine is the per-machine resolution path. It runs Resolve to
+// compute the image-derived configuration, then evaluates every driver
+// package's filters against the reported identity and appends the matches.
+//
+// Driver matching is GLOBAL: image inheritance does not scope it. A package
+// applies if ANY of its filters matches the identity.
+func (r *Resolver) ResolveForMachine(ctx context.Context, id model.ID, identity match.Identity) (Resolved, error) {
+	out, err := r.Resolve(ctx, id)
+	if err != nil {
+		return Resolved{}, err
+	}
+	if r.drivers == nil {
+		return out, nil
+	}
+	pkgs, err := r.drivers.List(ctx)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("load driver packages: %w", err)
+	}
+	for _, p := range pkgs {
+		if packageMatches(p, identity) {
+			out.Drivers = append(out.Drivers, p)
+		}
+	}
+	if len(pkgs) > 0 && len(out.Drivers) == 0 {
+		out.Diagnostics = append(out.Diagnostics,
+			fmt.Sprintf("no driver packages matched the reported hardware (%d packages evaluated)",
+				len(pkgs)))
+	}
+	return out, nil
+}
+
+func packageMatches(p model.DriverPackage, id match.Identity) bool {
+	for _, raw := range p.Filters {
+		f, err := match.ParseFilter(raw.FilterJSON)
+		if err != nil {
+			// A persisted filter that fails to parse is a configuration
+			// bug, not a runtime crash. Skip it; the portal validates at
+			// save time so this should not happen in practice.
+			continue
+		}
+		if f.Matches(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // chain returns images from the selected one up to the root, inclusive.

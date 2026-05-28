@@ -2,10 +2,12 @@ package payload
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 )
@@ -37,8 +39,10 @@ type ManifestHandler struct {
 }
 
 // Handler returns an http.HandlerFunc that builds the manifest for the image
-// id in the URL path. The base URL is derived from the request so the client
-// uses whatever host:port reached us.
+// id in the URL path. POST with identity in the JSON body so the resolver
+// can match driver packages against the reported hardware. The base URL is
+// derived from the request so the client uses whatever host:port reached
+// us.
 func (h *ManifestHandler) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := pathID(r)
@@ -46,7 +50,17 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		m, err := h.Build(r.Context(), id, baseURL(r))
+		var identity match.Identity
+		// Accept GET (no identity → drivers skipped) or POST (identity →
+		// drivers matched). The GET path keeps the portal's
+		// "view manifest" link usable.
+		if r.Method == http.MethodPost && r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&identity); err != nil {
+				http.Error(w, "invalid identity body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		m, err := h.Build(r.Context(), id, baseURL(r), identity)
 		if err != nil {
 			writeModelErr(w, err)
 			return
@@ -55,9 +69,19 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 	}
 }
 
-// Build constructs the manifest in code (test-friendly entry point).
-func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string) (Manifest, error) {
-	res, err := h.Resolver.Resolve(ctx, id)
+// Build constructs the manifest in code (test-friendly entry point). When
+// identity is zero-valued the resolver runs without driver matching, which
+// is what the portal's "view manifest" link does.
+func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string, identity match.Identity) (Manifest, error) {
+	var (
+		res resolve.Resolved
+		err error
+	)
+	if (identity == match.Identity{}) {
+		res, err = h.Resolver.Resolve(ctx, id)
+	} else {
+		res, err = h.Resolver.ResolveForMachine(ctx, id, identity)
+	}
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -80,9 +104,22 @@ func (h *ManifestHandler) Build(ctx context.Context, id model.ID, base string) (
 			})
 		}
 	}
-	// Software items. Driver matching (Phase 4) and loadout resolution
-	// (Phase 7) extend the resolved set; the manifest just turns it into
-	// URLs.
+	// Driver packages matched against reported hardware (Phase 4). The
+	// Boot Client injects each one into the applied image.
+	for _, d := range res.Drivers {
+		if d.StoragePath == "" {
+			// Skip packages that have a row but no uploaded payload yet.
+			continue
+		}
+		m.Items = append(m.Items, ManifestItem{
+			Role: "driver",
+			URL:  fmt.Sprintf("%s/payload/drivers/%d", base, int64(d.ID)),
+			Size: d.SizeBytes,
+			Name: d.Name,
+		})
+	}
+	// Software items. Loadout resolution (Phase 7) extends res.Software;
+	// the manifest just turns the resolved list into URLs.
 	for _, link := range res.Software {
 		m.Items = append(m.Items, ManifestItem{
 			Role: "software",

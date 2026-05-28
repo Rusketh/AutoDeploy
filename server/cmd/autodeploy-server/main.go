@@ -71,6 +71,7 @@ func run(logger *slog.Logger) error {
 
 	mh := &payload.ManifestHandler{Resolver: r.Resolver}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
+	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())
 
 	api.RegisterIPXE(mux)
 	// Static iPXE asset tree (kernel/initrd) lives under data/ipxe/.
@@ -140,6 +141,6 @@ func repos(db *storage.DB) appRepos {
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Images: images,
-		Resolver: resolve.New(images, isos, unattend),
+		Resolver: resolve.New(images, isos, unattend).WithDrivers(drivers),
 	}
 }

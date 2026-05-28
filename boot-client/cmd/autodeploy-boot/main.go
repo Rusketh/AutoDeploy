@@ -190,7 +190,9 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64)
 	ctx := context.Background()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS)
 	var m manifest
-	if err := c.GetJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID), &m); err != nil {
+	// POST identity so the server can match driver packages.
+	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
+		identityBody(id), &m); err != nil {
 		log.Error("manifest.fetch", slog.String("error", err.Error()))
 		os.Exit(0)
 	}
@@ -272,6 +274,22 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 			slog.String("url", it.URL),
 			slog.Int64("bytes", n))
 	})
+}
+
+// identityBody is the SMBIOS-shaped JSON body the server expects for
+// driver-matching resolution.
+func identityBody(id smbios.Identity) map[string]any {
+	return map[string]any{
+		"system_manufacturer": id.SystemManufacturer,
+		"system_product":      id.SystemProduct,
+		"system_serial":       id.SystemSerial,
+		"system_uuid":         id.SystemUUID,
+		"bios_vendor":         id.BIOSVendor,
+		"bios_version":        id.BIOSVersion,
+		"board_manufacturer":  id.BoardManufacturer,
+		"board_product":       id.BoardProduct,
+		"board_serial":        id.BoardSerial,
+	}
 }
 
 // sanitise turns a URL fragment into a filename-safe string.

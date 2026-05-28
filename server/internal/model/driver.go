@@ -3,12 +3,24 @@ package model
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
+
+// validateDriverFilter checks that filter_json parses as a recognised SMBIOS
+// filter (keys are in match.AllowedKeys). An empty filter is allowed at
+// save time — the matcher treats it as "matches nothing", which is the
+// safe default for an in-progress filter.
+func validateDriverFilter(raw string) error {
+	if raw == "" || raw == "{}" {
+		return nil
+	}
+	_, err := match.ParseFilter(raw)
+	return err
+}
 
 // DriverPackageRepo is the repository for driver_package and its child
 // driver_filter rows.
@@ -23,8 +35,8 @@ func (r *DriverPackageRepo) Create(ctx context.Context, in DriverPackage) (Drive
 		return DriverPackage{}, err
 	}
 	for _, f := range in.Filters {
-		if f.FilterJSON != "" && !json.Valid([]byte(f.FilterJSON)) {
-			return DriverPackage{}, fmt.Errorf("%w: filter_json is not valid JSON", ErrValidation)
+		if err := validateDriverFilter(f.FilterJSON); err != nil {
+			return DriverPackage{}, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -150,8 +162,8 @@ func (r *DriverPackageRepo) Update(ctx context.Context, in DriverPackage) error 
 		return err
 	}
 	for _, f := range in.Filters {
-		if f.FilterJSON != "" && !json.Valid([]byte(f.FilterJSON)) {
-			return fmt.Errorf("%w: filter_json is not valid JSON", ErrValidation)
+		if err := validateDriverFilter(f.FilterJSON); err != nil {
+			return fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
