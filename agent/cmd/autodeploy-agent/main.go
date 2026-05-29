@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rusketh/autodeploy/agent/internal/bitlocker"
@@ -111,6 +112,11 @@ func main() {
 			Name           string                 `json:"name"`
 			OrderValue     int64                  `json:"order_value"`
 			PayloadURL     string                 `json:"payload_url"`
+			Files          []struct {
+				Name      string `json:"name"`
+				URL       string `json:"url"`
+				SizeBytes int64  `json:"size_bytes"`
+			} `json:"files,omitempty"`
 			DetectionRules []swspec.DetectionRule `json:"detection_rules"`
 			InstallSteps   []swspec.InstallStep   `json:"install_steps"`
 		} `json:"items"`
@@ -187,35 +193,102 @@ func main() {
 				slog.String("note", "no detection rules; package will install every time"))
 		}
 
-		// Download the installer payload to work dir.
-		dst := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
-		url := pkg.PayloadURL
-		if len(url) > 0 && url[0] == '/' {
-			url = f.server + url
-		}
-		out, err := os.Create(dst)
-		if err != nil {
-			log.Error("package.download.create",
-				slog.String("package", pkg.Name),
-				slog.String("error", err.Error()))
-			continue
-		}
-		if err := c.Download(ctx, url, out); err != nil {
+		// Multi-file packages: download every file the server
+		// advertises into a per-package work directory, then
+		// resolve bare filenames in install-step paths against
+		// that directory. Legacy single-file packages (no Files
+		// list) fall back to the {payload} -> pkg-N.bin path so
+		// existing rules don't break.
+		pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
+		filesDir := filepath.Join(pkgDir, "files")
+		var legacyPayloadPath string
+		if len(pkg.Files) > 0 {
+			if err := os.MkdirAll(filesDir, 0o755); err != nil {
+				log.Error("package.workdir",
+					slog.String("package", pkg.Name),
+					slog.String("error", err.Error()))
+				continue
+			}
+			downloadOK := true
+			for _, pf := range pkg.Files {
+				url := pf.URL
+				if len(url) > 0 && url[0] == '/' {
+					url = f.server + url
+				}
+				fdst := filepath.Join(filesDir, pf.Name)
+				out, err := os.Create(fdst)
+				if err != nil {
+					log.Error("package.download.create",
+						slog.String("package", pkg.Name),
+						slog.String("file", pf.Name),
+						slog.String("error", err.Error()))
+					downloadOK = false
+					break
+				}
+				if err := c.Download(ctx, url, out); err != nil {
+					_ = out.Close()
+					log.Error("package.download",
+						slog.String("package", pkg.Name),
+						slog.String("file", pf.Name),
+						slog.String("error", err.Error()))
+					downloadOK = false
+					break
+				}
+				_ = out.Close()
+				log.Info("package.download.ok",
+					slog.String("package", pkg.Name),
+					slog.String("file", pf.Name),
+					slog.String("path", fdst))
+			}
+			if !downloadOK {
+				continue
+			}
+			// {payload} is only meaningful when there's exactly
+			// one file; multi-file packages should reference each
+			// file by name. Set legacyPayloadPath only for the
+			// single-file case so rewriteSteps' substitution
+			// behaviour stays backward compat.
+			if len(pkg.Files) == 1 {
+				legacyPayloadPath = filepath.Join(filesDir, pkg.Files[0].Name)
+			}
+		} else if pkg.PayloadURL != "" {
+			// Legacy single-file path: server didn't advertise a
+			// Files list, fall back to the old single-blob URL.
+			legacyPayloadPath = filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
+			url := pkg.PayloadURL
+			if len(url) > 0 && url[0] == '/' {
+				url = f.server + url
+			}
+			out, err := os.Create(legacyPayloadPath)
+			if err != nil {
+				log.Error("package.download.create",
+					slog.String("package", pkg.Name),
+					slog.String("error", err.Error()))
+				continue
+			}
+			if err := c.Download(ctx, url, out); err != nil {
+				_ = out.Close()
+				log.Error("package.download",
+					slog.String("package", pkg.Name),
+					slog.String("error", err.Error()))
+				continue
+			}
 			_ = out.Close()
-			log.Error("package.download",
+			log.Info("package.download.ok",
 				slog.String("package", pkg.Name),
-				slog.String("error", err.Error()))
-			continue
+				slog.String("path", legacyPayloadPath))
 		}
-		_ = out.Close()
-		log.Info("package.download.ok",
-			slog.String("package", pkg.Name),
-			slog.String("path", dst))
 
-		// Rewrite step source/exe paths if they reference the magic
-		// "{payload}" placeholder, so steps don't have to know the disk
-		// path the agent picked.
-		rewritten := rewriteSteps(pkg.InstallSteps, dst)
+		// Two-phase rewrite: substitute the legacy {payload}
+		// token, then resolve bare filenames against filesDir.
+		rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
+		if len(pkg.Files) > 0 {
+			knownFiles := make(map[string]string, len(pkg.Files))
+			for _, pf := range pkg.Files {
+				knownFiles[pf.Name] = filepath.Join(filesDir, pf.Name)
+			}
+			rewritten = resolveBareFilenames(rewritten, knownFiles)
+		}
 
 		log.Info("package.install.start",
 			slog.String("actor", f.uuid),
@@ -669,6 +742,49 @@ func replaceToken(s, payload string) string {
 		i++
 	}
 	return string(out)
+}
+
+// resolveBareFilenames substitutes bare filenames in install-step
+// path fields with their absolute path on disk. A path is treated as
+// "bare" when it doesn't contain any directory separator or drive
+// letter and doesn't start with a Windows env-var (%X%). Absolute
+// paths and env-var paths are left untouched so the operator's
+// explicit C:\... / %ProgramFiles%\... are not silently shadowed by
+// a package file that happens to share a basename. The destination
+// path on copy/unzip is NOT remapped -- that's where files land on
+// the target, not where they come from.
+func resolveBareFilenames(in []swspec.InstallStep, files map[string]string) []swspec.InstallStep {
+	out := make([]swspec.InstallStep, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].SourcePath = resolveOne(out[i].SourcePath, files)
+		out[i].MSIPath = resolveOne(out[i].MSIPath, files)
+		out[i].APPXPath = resolveOne(out[i].APPXPath, files)
+		out[i].ExePath = resolveOne(out[i].ExePath, files)
+	}
+	return out
+}
+
+func resolveOne(p string, files map[string]string) string {
+	if p == "" {
+		return p
+	}
+	// Skip already-absolute paths (POSIX or Windows) and anything
+	// that uses an env-var or contains a separator. The remaining
+	// case is a single filename like "setup.exe" -- if we have a
+	// matching upload, swap it for the absolute path; otherwise
+	// leave the operator's value alone so a typo surfaces as a
+	// real "file not found" at run time, not a silent skip.
+	if strings.ContainsAny(p, `/\`) || strings.HasPrefix(p, "%") {
+		return p
+	}
+	if len(p) >= 2 && p[1] == ':' { // C:foo style
+		return p
+	}
+	if abs, ok := files[p]; ok {
+		return abs
+	}
+	return p
 }
 
 // readSystemUUID dispatches to the platform-specific implementation
