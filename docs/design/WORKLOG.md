@@ -2427,3 +2427,48 @@ green. End-to-end smoke test:
 - A current agent reporting v0.1.0 received `update_available:
   false`.
 - The portal Updates page rendered with both sections.
+
+## 2026-05-29 — HTTP-only is a valid production deployment
+
+Cleartext HTTP on a non-loopback bind in production mode previously
+returned `ErrPlainHTTPInProd` and refused to start. That ruled out
+two legitimate deployment shapes: (a) a reverse proxy terminates
+TLS upstream of AutoDeploy and forwards to its bind, and (b)
+trusted-network LAN deployments where TLS-cert management is more
+operational overhead than it's worth.
+
+**Change.** `ListenAndServe` no longer refuses; it emits a single
+`http.cleartext_public_bind` WARN at startup naming the risk
+("session cookies, admin credentials, BitLocker keys and agent
+payloads will travel unencrypted on the wire") and the mitigation
+("set HTTPS, or front this with a reverse proxy"). Loopback binds
+get no warning -- they're the most common dev shape and would be
+noise.
+
+The HTTPS listener's behaviour is unchanged: if you set
+`AUTODEPLOY_HTTPS_ADDR` with `DEV=false` you must also supply a
+cert + key. Setting `HTTPS_ADDR=` empty is now a fully supported
+production choice.
+
+**WHY.** Forcing HTTPS at the binary level made AutoDeploy
+unusable in topologies the rest of the architecture handled
+fine. The boot client and agent both accept cleartext URLs; the
+install scripts hand them whatever URL the server advertises; the
+sensitive endpoints (sessions, BitLocker key escrow) are
+identified in the WARN message so an operator scanning the
+install log gets the consequences spelled out without having to
+look them up.
+
+**Files touched.** `server/internal/httpx/server.go` (removed
+`ErrPlainHTTPInProd`, added warning log), the matching test in
+`server_test.go` (rewrote `TestProductionRefusesNonLoopbackPlainHTTP`
+as `TestProductionAllowsNonLoopbackPlainHTTPWithWarning` plus
+`TestProductionLoopbackBindNoWarning`), the env example files for
+both Linux and Windows installs, `scripts/install-linux.sh`'s
+next-steps banner, and three docs sections: a new "TLS deployment
+shapes" block in `operations.md`, updated tables in
+`configuration.md`, and a tweaked security-review checklist item
+in `security.md`. End-to-end smoke verified
+`AUTODEPLOY_DEV=false AUTODEPLOY_HTTP_ADDR=0.0.0.0:<port>`
+starts, serves `/healthz`, returns `/api/v1/version`, and emits
+the expected WARN line.
