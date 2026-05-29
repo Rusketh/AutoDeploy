@@ -1,0 +1,88 @@
+name: Update docs with latest release tag
+
+# When a release is published, rewrite the TAG=... placeholders in
+# README.md and getting-started.md so the copy-pastable install
+# snippets reference the version operators can actually download.
+# Commits with [skip release] so the auto-tag workflow doesn't
+# recursively bump the patch number for a docs-only update.
+
+on:
+  release:
+    types: [published]
+  # Allow re-running on demand from the Actions tab if a docs
+  # rewrite gets reverted by hand.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to use (default: latest published release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then tag="$RELEASE_TAG"; fi
+          if [ -z "$tag" ]; then
+            # Fall back to whatever the latest release is. Belt-and-
+            # braces for the workflow_dispatch path with no input.
+            tag=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)
+          fi
+          case "$tag" in
+            v[0-9]*) : ;;
+            *) echo "::error::Tag '$tag' is not vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Using tag: $tag"
+
+      - name: Rewrite TAG= references
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          # README quick-start snippet
+          # Match TAG=v<digits>.<digits>.<digits>(optional pre-release)
+          # anchored at line start with optional indent so we don't
+          # touch in-prose mentions of versions.
+          for f in README.md docs/user-guide/getting-started.md; do
+            if [ ! -f "$f" ]; then continue; fi
+            sed -i -E "s|^TAG=v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$|TAG=${tag}|" "$f"
+            sed -i -E "s|^(# Replace v)[0-9]+\.[0-9]+\.[0-9]+( with the actual tag you're installing\.)$|\1${tag#v}\2|" "$f"
+            sed -i -E "s|releases/download/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?/|releases/download/${tag}/|g" "$f"
+          done
+
+      - name: Commit if changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          if git diff --quiet; then
+            echo "::notice::No README/docs changes needed for $tag"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/user-guide/getting-started.md 2>/dev/null || true
+          # [skip release] keeps auto-tag.yml from firing a patch
+          # bump for this docs-only commit.
+          git commit -m "docs: bump install snippet to ${tag} [skip release]"
+          # Push to main directly. The protected-branch rules (if
+          # any) need to allow github-actions[bot] -- if your repo
+          # requires PR review for main, change this step to open a
+          # PR instead.
+          git push origin HEAD:main
+          echo "::notice::Pushed docs update for $tag"

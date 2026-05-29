@@ -25,24 +25,106 @@
         <div class="small muted">no published release yet</div>
       {{end}}
     </div>
-    <div class="right">
+    <div class="right" style="display:flex;gap:var(--sp-2);align-items:center;">
       {{if and .Data.LatestServerVersion (ne .Data.LatestServerVersion .Data.ServerVersion)}}
-        <a class="btn" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Open release on GitHub</a>
+        {{if .Data.UpdaterAvailable}}
+        <button type="button" class="btn" id="server-update-btn"
+                data-target-tag="{{.Data.LatestServerVersion}}"
+                data-confirm="Restart the AutoDeploy server and upgrade to {{.Data.LatestServerVersion}}? Brief downtime expected.">
+          <svg><use href="#i-bolt"/></svg>Update to {{.Data.LatestServerVersion}}
+        </button>
+        {{end}}
+        <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Release notes</a>
       {{else if .Data.LatestServerVersion}}
         <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
       {{end}}
     </div>
   </div>
+  <div id="server-update-status" hidden style="margin-top:var(--sp-3);"></div>
+  {{if .Data.UpdaterAvailable}}
   <p class="hint" style="margin-top:var(--sp-3);">
-    To install a new server build:
+    The <strong>Update</strong> button runs <code>{{.Data.UpdaterPath}}</code> via the
+    narrowly-scoped sudoers rule the install script created. The helper
+    downloads the new binary, verifies its SHA-256, stops the service,
+    swaps the binary, and restarts. Total downtime is typically under 10 seconds.
+    Logs go to <code>journalctl -u autodeploy</code>.
+  </p>
+  {{else}}
+  <p class="hint warn" style="margin-top:var(--sp-3);">
+    The in-place updater is not installed at <code>{{.Data.UpdaterPath}}</code>.
+    Re-run <code>scripts/install-linux.sh</code> from the release bundle to install it,
+    or apply updates by hand:
   </p>
   <ol class="small muted">
     <li>Download the new <code>autodeploy-server-&lt;os&gt;-&lt;arch&gt;</code> binary from the release page.</li>
-    <li>Place it next to your existing copy and re-run the install script (<code>scripts/install-linux.sh</code> on Linux, <code>scripts/windows/install-windows.ps1</code> on Windows). Both scripts stop the service, swap the binary, and restart -- they're idempotent.</li>
+    <li>Place it next to your existing copy and re-run the install script. Both Linux and Windows installers stop the service, swap the binary, and restart -- they're idempotent.</li>
     <li>The service comes back up on the new version. The portal continues to work.</li>
   </ol>
-  <p class="small muted">If the install host has no internet access, set <code>AUTODEPLOY_DEV=true</code> on a lab machine to do the download / unpack workflow, then sync the binary to production.</p>
+  {{end}}
 </div>
+
+<script>
+(function () {
+  var btn = document.getElementById('server-update-btn');
+  if (!btn) return;
+  var status = document.getElementById('server-update-status');
+  btn.addEventListener('click', function () {
+    if (!window.confirm(btn.getAttribute('data-confirm') || 'Update server?')) return;
+    btn.disabled = true;
+    btn.textContent = 'Starting update…';
+    status.hidden = false;
+    status.className = 'card';
+    status.innerHTML = '<strong>Update launched.</strong> The server is downloading the new binary, verifying its SHA-256, and restarting. Polling for the new version…';
+    fetch('/api/v1/server/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ tag: btn.getAttribute('data-target-tag') })
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return { error: 'HTTP ' + r.status }; }).then(function (j) {
+          throw new Error(j.error || ('HTTP ' + r.status));
+        });
+      }
+      // The script will stop the service in ~50ms; we won't receive
+      // a clean response. Move into the polling phase.
+      pollForNewVersion(btn.getAttribute('data-target-tag'), 0);
+    }).catch(function (err) {
+      status.innerHTML = '<strong>Update failed:</strong> ' + (err && err.message ? err.message : err);
+      btn.disabled = false;
+      btn.innerHTML = btn.dataset.originalText || 'Retry update';
+    });
+  });
+
+  function pollForNewVersion(targetTag, attempt) {
+    if (attempt > 60) {
+      // 60 * 2s = 2 minutes. If the server isn't back by now, the
+      // update probably failed and the operator needs to check
+      // journalctl.
+      status.innerHTML = '<strong>Update is taking longer than expected.</strong> Check <code>journalctl -u autodeploy</code> on the server. Once it comes back, reload this page.';
+      return;
+    }
+    setTimeout(function () {
+      fetch('/api/v1/version', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (info) {
+          if (info && info.version === targetTag) {
+            status.innerHTML = '<strong>Server is now on ' + escapeHTML(info.version) + '.</strong> Reloading…';
+            setTimeout(function () { window.location.reload(); }, 800);
+            return;
+          }
+          pollForNewVersion(targetTag, attempt + 1);
+        })
+        .catch(function () { pollForNewVersion(targetTag, attempt + 1); });
+    }, 2000);
+  }
+
+  function escapeHTML(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+    });
+  }
+})();
+</script>
 
 <div class="section-head"><h3>Agents</h3><div class="line"></div></div>
 {{if .Data.AgentAvailable}}

@@ -23,6 +23,12 @@ type updatesPageData struct {
 	LatestServerChecked  time.Time
 	LatestServerError    string
 	AgentAvailable       []agentAvailability
+	// UpdaterAvailable is true when the in-place update helper is
+	// installed on this server, which gates whether the "Update"
+	// button appears. The path itself is shown alongside so the
+	// operator can verify exactly what would run.
+	UpdaterAvailable bool
+	UpdaterPath      string
 }
 
 // agentAvailability is one row in the "agents in your downloads
@@ -56,6 +62,13 @@ func updatesPage(r Repos) http.HandlerFunc {
 		// page shows what agents the resident check-in loops would
 		// be advertised.
 		data.AgentAvailable = scanAvailableAgents(r)
+		// Whether the in-place updater is installed. The path is
+		// platform-fixed and hard-coded in updater_path_*.go so
+		// nothing operator-supplied gets executed by the portal.
+		data.UpdaterPath = updaterHelperPath()
+		if _, err := os.Stat(data.UpdaterPath); err == nil {
+			data.UpdaterAvailable = true
+		}
 		render(w, req, r, "settings_updates.html", "Updates", data)
 	}
 }

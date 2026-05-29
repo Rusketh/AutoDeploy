@@ -108,7 +108,9 @@ function addStep(){
 }
 </script>
 <style>
-.block { border:1px solid var(--border); border-radius:4px; padding:0.5rem 0.7rem; margin:0.5rem 0; background:#fafbfc; }
+/* .block is rendered inside <fieldset>s on a dark-mode page; use the
+ * theme-aware surface token so labels stay legible in both themes. */
+.block { border:1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); margin: var(--sp-3) 0; background: var(--surface-2); }
 .block label { margin: 0.3rem 0; }
 </style>
 {{end}}

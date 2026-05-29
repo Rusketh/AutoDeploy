@@ -179,3 +179,55 @@ func TestHandleAgentUpdateInfo_SameVersion_NoUpdate(t *testing.T) {
 	}
 }
 
+
+func TestLooksLikeSemver(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"v0.1.0", true},
+		{"v10.20.300", true},
+		{"v0.1.0-rc.1", true},
+		{"v0.1.0+build.5", true},
+		// Reject anything we'd be uncomfortable handing to a shell.
+		{"0.1.0", false},          // missing v prefix
+		{"v0.1", false},           // only two parts
+		{"v0.1.0.0", false},       // four parts
+		{"v0.1.x", false},         // non-numeric
+		{"v0.1.0; rm -rf /", false},
+		{"v0.1.0 && evil", false},
+		{"", false},
+		{"latest", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeSemver(c.in); got != c.want {
+			t.Errorf("looksLikeSemver(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestHandleServerUpdate_RejectsBogusTag(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/server/update",
+		strings.NewReader(`{"tag":"; rm -rf /"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handleServerUpdate(Repos{})(rr, req)
+	if rr.Code != 400 {
+		t.Errorf("expected 400 for bogus tag, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleServerUpdate_MissingHelperReturns503(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/server/update",
+		strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	handleServerUpdate(Repos{})(rr, req)
+	// On a host without /usr/local/sbin/autodeploy-update installed
+	// (the CI runners aren't pre-seeded with it), we expect 503.
+	// If the runner happens to have one installed -- unlikely but
+	// possible -- we accept 202 too.
+	if rr.Code != 503 && rr.Code != 202 {
+		t.Errorf("expected 503 or 202, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
