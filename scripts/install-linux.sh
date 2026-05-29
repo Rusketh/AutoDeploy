@@ -156,9 +156,11 @@ AutoDeploy is installed. Next steps:
 
   4. Read the bootstrap admin password (one-time):
          cat $DATA_DIR/admin-bootstrap.txt
-     Log in at https://<this-host>/portal/ (or http:// for an
-     HTTP-only deployment) and change it via
-     Settings → Local accounts. Delete the file when done.
+     Default shape is HTTP on port 8080; log in at
+         http://<this-host>:8080/portal/
+     (or https://<this-host>/portal/ if you configured HTTPS).
+     Change the password via Settings → Local accounts, then
+     delete the bootstrap file.
 
   5. Drop a Linux kernel into $DATA_DIR/ipxe/autodeploy-kernel
      and an initramfs into $DATA_DIR/ipxe/autodeploy-initrd.

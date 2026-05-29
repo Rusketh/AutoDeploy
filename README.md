@@ -40,7 +40,9 @@ sudo systemctl enable --now autodeploy
 
 # 4. Read the bootstrap admin password and change it in the portal:
 sudo cat /var/lib/autodeploy/admin-bootstrap.txt
-# → https://your-server/portal/  (Settings → Local accounts)
+# → http://your-server:8080/portal/  (Settings → Local accounts)
+# Default shape is HTTP on :8080; switch to HTTPS later if you want
+# (see Configuration -> HTTP vs HTTPS in docs/user-guide/).
 ```
 
 Everything beyond this — building the initramfs, configuring DHCP,

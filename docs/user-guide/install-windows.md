@@ -99,8 +99,10 @@ First-time bootstrap admin password (one-time):
     Get-Content 'C:\ProgramData\AutoDeploy\admin-bootstrap.txt'
 ```
 
-Read it once, log in at `https://<this-host>/portal/`, change the
-password under **Settings → Local accounts**, and delete the file.
+Read it once. The default shape is HTTP on port 8080, so log in at
+`http://<this-host>:8080/portal/` (or `https://<this-host>/portal/`
+if you configured HTTPS), change the password under **Settings →
+Local accounts**, and delete the bootstrap file.
 
 ## Step 3 — Configure
 

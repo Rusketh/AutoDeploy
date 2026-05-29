@@ -13,7 +13,7 @@ machine. Read top to bottom; every command is copy-pastable.
 |---|---|
 | **A server host** | Runs AutoDeploy. Linux preferred (this guide); Windows / macOS also supported. 2 vCPU, 4 GB RAM, 100 GB disk is plenty to start. Disk grows with your ISO/driver/software library. |
 | **Root / sudo on the server host** | To install the binary, create a system user, install the systemd unit, bind to privileged ports. |
-| **A reachable IP / DNS name** | Target machines need to reach the server over your network. **HTTPS is optional for local / lab use** — the server runs on plain HTTP `127.0.0.1:8080` out of the box. For production set `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443` with a real cert. See [Configuration → HTTP vs HTTPS](configuration.md#http-vs-https-the-full-rules). |
+| **A reachable IP / DNS name** | Target machines need to reach the server over your network. The default shape is HTTP on `0.0.0.0:8080` — works on any network without TLS material. HTTPS is opt-in: set `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443` and (optionally) supply `AUTODEPLOY_TLS_CERT`/`KEY`. See [Configuration → HTTP vs HTTPS](configuration.md#http-vs-https-the-full-rules). |
 | **DHCP control** | You'll need to add a `next-server` / `bootfile` entry, or matching DHCP option 60/77/93 rules. If you can't change the DHCP server, you can still run AutoDeploy with an alternative DHCP proxy (out of scope here). |
 | **A Windows ISO** | Whatever release you deploy: Windows 10, 11, Server 2019/2022/2025. |
 | **A Linux kernel + initramfs** | The Boot Client runs in a pre-OS Linux. You can build the initramfs from the bundled script; the kernel comes from your distro of choice (or a small specialised one). |
@@ -129,13 +129,16 @@ sudo nano /etc/default/autodeploy
 The bits that matter for a first install:
 
 ```sh
-# Pick the surfaces you need.
-AUTODEPLOY_HTTP_ADDR=127.0.0.1:8080        # loopback HTTP only
-AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443           # portal + payload over HTTPS
+# Pick the surfaces you need. Default ships HTTP on :8080 so the
+# portal is reachable immediately. Enable HTTPS by uncommenting the
+# HTTPS_ADDR line (cert auto-generates if no AUTODEPLOY_TLS_CERT/KEY).
+AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080           # portal + API + payload over HTTP
+#AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443          # uncomment to add HTTPS too
 AUTODEPLOY_TFTP_ADDR=:69                    # built-in TFTP for PXE
 
-# Production: stricter rules. Set to false once you've verified the
-# server starts and the portal loads.
+# Production mode. Set to false once you've verified the server starts
+# and the portal loads. Does NOT force HTTPS -- HTTP is still permitted,
+# it just logs a clearly-marked WARN if bound non-loopback.
 AUTODEPLOY_DEV=false
 
 # Generate this ONCE and never lose it. Encrypts BitLocker PINs and
@@ -210,21 +213,23 @@ You should see something like:
 
 ```
 auth.bootstrap_admin password_file=/var/lib/autodeploy/admin-bootstrap.txt
-server.start target=0.0.0.0:443 https_addr=0.0.0.0:443 …
-http.listen addr=0.0.0.0:443 dev_mode=false
+server.start target=0.0.0.0:8080 https_addr= …
+http.listen addr=0.0.0.0:8080 dev_mode=false
 tftp.listen addr=:69 root=/var/lib/autodeploy/ipxe
 ```
 
-If `https.listen` is missing, the cert/key didn't load — check the
-path and permissions. The `autodeploy` user must be able to read
-both files.
+If you enabled HTTPS too you'll also see an `https.listen` line. If
+that line is missing despite HTTPS_ADDR being set, the cert/key
+didn't load — check the path and permissions. The `autodeploy` user
+must be able to read both files.
 
 ### Troubleshooting
 
 | Symptom | Likely fix |
 |---------|------------|
 | `permission denied` binding to :443 / :69 | The unit grants `CAP_NET_BIND_SERVICE`; if your distro doesn't honour the AmbientCapabilities directive, run on a high port (`:8443`, `:6969`) and front with a reverse proxy or `iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443`. |
-| `cleartext HTTP refused in production mode` | `AUTODEPLOY_DEV=true` then restart; or bind HTTP to `127.0.0.1` only. |
+| Browser auto-redirects HTTP to HTTPS | Most modern browsers silently upgrade `http://` for non-loopback hosts. Test with `curl -v http://<host>:8080/portal/` to confirm the server itself isn't redirecting; if curl reaches the portal, disable your browser's "HTTPS-only" mode for the host. |
+| `tls.self_signed_generated` WARN at startup | HTTPS_ADDR is set but no AUTODEPLOY_TLS_CERT/KEY supplied — the server auto-generated a self-signed cert. Either accept it (clients need to trust it manually), set the cert paths to a CA-signed pair, or unset HTTPS_ADDR if you don't want HTTPS at all. |
 | Portal returns 502 / nothing | Service crashed; `journalctl -u autodeploy -n 200` |
 
 ## Step 5 — Log in and change the admin password
@@ -238,9 +243,11 @@ sudo cat /var/lib/autodeploy/admin-bootstrap.txt
 # # Read this once, log in, change the password, then delete this file.
 ```
 
-Open `https://autodeploy.corp.example/portal/` in a browser (or
-`http://127.0.0.1:8080/portal/` for a local install). Log in as
-`admin` with that password.
+Open the portal in a browser. With the default HTTP-on-:8080 shape:
+`http://<this-host>:8080/portal/` (or `http://127.0.0.1:8080/portal/`
+when you're on the server itself). If you enabled HTTPS, use
+`https://<this-host>/portal/` instead. Log in as `admin` with that
+password.
 
 ![Sign in](images/login.png)
 
