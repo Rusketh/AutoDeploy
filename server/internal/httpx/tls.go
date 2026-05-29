@@ -22,18 +22,18 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/config"
 )
 
-// ListenAndServeTLS starts an HTTPS server. If certFile or keyFile is empty
-// and DevMode is true, it generates a self-signed certificate at the
-// configured paths (or under DataDir/tls if unset) and uses that. In
-// production both files MUST be supplied.
+// ListenAndServeTLS starts an HTTPS server. If certFile or keyFile is
+// empty -- regardless of DevMode -- a self-signed cert is generated
+// under DataDir/tls and used. Production mode logs a loud warning when
+// it falls back to the self-signed cert so the choice is auditable,
+// but never refuses to start: HTTPS is opt-in, and an operator who
+// asked for an HTTPS listener should get one, even if their cert
+// material isn't ready yet.
 func ListenAndServeTLS(ctx context.Context, cfg config.Config, h http.Handler, logger *slog.Logger) error {
 	certFile := cfg.TLSCertFile
 	keyFile := cfg.TLSKeyFile
 
 	if certFile == "" || keyFile == "" {
-		if !cfg.DevMode {
-			return errors.New("AUTODEPLOY_TLS_CERT and AUTODEPLOY_TLS_KEY must be set in production mode")
-		}
 		dir := filepath.Join(cfg.DataDir, "tls")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
@@ -42,12 +42,18 @@ func ListenAndServeTLS(ctx context.Context, cfg config.Config, h http.Handler, l
 		keyFile = filepath.Join(dir, "dev-key.pem")
 		if _, err := os.Stat(certFile); errors.Is(err, os.ErrNotExist) {
 			if err := generateSelfSigned(certFile, keyFile, cfg.HTTPSAddr); err != nil {
-				return fmt.Errorf("generate dev cert: %w", err)
+				return fmt.Errorf("generate self-signed cert: %w", err)
 			}
-			logger.LogAttrs(ctx, slog.LevelWarn, "tls.dev_cert_generated",
+			level := slog.LevelInfo
+			note := "self-signed; clients must trust this certificate"
+			if !cfg.DevMode {
+				level = slog.LevelWarn
+				note = "self-signed cert auto-generated for production HTTPS bind; clients (browsers, agents, boot client) will fail TLS verification unless they trust this cert. Set AUTODEPLOY_TLS_CERT/KEY to a CA-signed pair, or front the server with a reverse proxy that terminates TLS"
+			}
+			logger.LogAttrs(ctx, level, "tls.self_signed_generated",
 				slog.String("cert", certFile),
 				slog.String("key", keyFile),
-				slog.String("note", "self-signed; clients must trust this certificate"),
+				slog.String("note", note),
 			)
 		}
 	}
