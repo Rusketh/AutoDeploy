@@ -94,3 +94,75 @@ func TestFileSHA256(t *testing.T) {
 		t.Fatalf("expected SHA match, got ok=%v err=%v", ok, err)
 	}
 }
+
+// File detection runs expandPath on the rule's file_path before
+// touching the host. On Linux (dev / CI) os.ExpandEnv handles
+// $VAR and ${VAR}; %VAR% (the Windows-style production syntax)
+// passes through untouched -- by design, a rule that expects
+// Windows env vars must not silently "detect" on a Linux dev host.
+func TestEvaluateFileExpandsEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AD_DETECT_TEST_DIR", dir)
+	path := filepath.Join(dir, "expanded.exe")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fb := &fakeBackend{files: map[string]bool{path: true}}
+	e := &Evaluator{Backend: fb}
+	// $VAR form -- the portable expander handles it on Linux.
+	ok, err := e.EvaluatePackage(context.Background(), []swspec.DetectionRule{
+		{Type: "file", FilePath: `$AD_DETECT_TEST_DIR/expanded.exe`},
+	})
+	if err != nil || !ok {
+		t.Errorf("$VAR expansion: ok=%v err=%v (FilePath should have expanded to %q)",
+			ok, err, path)
+	}
+	// ${VAR} form.
+	ok, err = e.EvaluatePackage(context.Background(), []swspec.DetectionRule{
+		{Type: "file", FilePath: `${AD_DETECT_TEST_DIR}/expanded.exe`},
+	})
+	if err != nil || !ok {
+		t.Errorf("${VAR} expansion: ok=%v err=%v", ok, err)
+	}
+}
+
+// SHA-256 verification path also receives the expanded path, so a
+// rule with a $VAR file_path + SHA-256 works the same as a literal
+// absolute path.
+func TestEvaluateFileExpandsEnvVarsForSHA256(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AD_DETECT_TEST_DIR", dir)
+	path := filepath.Join(dir, "y.bin")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const helloSHA = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	fb := &fakeBackend{files: map[string]bool{path: true}}
+	e := &Evaluator{Backend: fb}
+	ok, err := e.EvaluatePackage(context.Background(), []swspec.DetectionRule{
+		{Type: "file", FilePath: `$AD_DETECT_TEST_DIR/y.bin`, FileSHA256: helloSHA},
+	})
+	if err != nil || !ok {
+		t.Errorf("env var + SHA-256: ok=%v err=%v", ok, err)
+	}
+}
+
+// %VAR% syntax (Windows-style) MUST NOT expand on Linux. A
+// production rule written for Windows that gets evaluated on a
+// non-Windows agent host should fall through to "not detected"
+// rather than silently match a wrong file. This is the
+// fail-closed default the package docs promise.
+func TestEvaluateFilePercentVarDoesNotExpandOnPosix(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AD_DETECT_TEST_DIR", dir)
+	path := filepath.Join(dir, "z.exe")
+	_ = os.WriteFile(path, []byte("x"), 0o644)
+	fb := &fakeBackend{files: map[string]bool{path: true}}
+	e := &Evaluator{Backend: fb}
+	ok, _ := e.EvaluatePackage(context.Background(), []swspec.DetectionRule{
+		{Type: "file", FilePath: `%AD_DETECT_TEST_DIR%/z.exe`},
+	})
+	if ok {
+		t.Error("%VAR% should not expand on Linux; expected not detected")
+	}
+}

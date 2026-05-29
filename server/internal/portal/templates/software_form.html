@@ -131,7 +131,9 @@ function addStep(){
     <button type="button" class="danger" onclick="this.closest('.block').remove()" style="align-self:flex-end">Remove rule</button>
   </div>
   <div class="rule-file" {{if ne $r.Type "file"}}style="display:none"{{end}}>
-    <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="C:\Program Files\Acme\acme.exe"></label>
+    <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="%ProgramFiles%\Acme\acme.exe">
+      <span class="hint">Windows env-vars are expanded on the agent: <code>%ProgramFiles%</code>, <code>%ProgramFiles(x86)%</code>, <code>%LOCALAPPDATA%</code>, <code>%SystemRoot%</code>, etc.</span>
+    </label>
     <div class="row">
       <label><span class="lbl">File version (optional, exact match)</span><input type="text" name="rule_{{$i}}_file_version" value="{{$r.FileVersion}}"></label>
       <label><span class="lbl">SHA-256 (optional)</span><input type="text" name="rule_{{$i}}_file_sha256" value="{{$r.FileSHA256}}"></label>
