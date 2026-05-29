@@ -1,0 +1,213 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bolt"/></svg>PXE setup</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
+<p class="muted" style="max-width:820px;">
+  Everything you need to set up network booting in one place. The
+  iPXE binaries below are what targets fetch via TFTP; the snippets
+  below tell your DHCP server which one to hand out. Once a target
+  PXE-boots successfully, it lands on the AutoDeploy boot menu.
+</p>
+
+{{if not .Data.TFTPListening}}
+<div class="card warn-banner" style="background: var(--bad-soft); border-color: var(--bad); padding: var(--sp-3); margin-bottom: var(--sp-4);">
+  <strong>TFTP listener is not configured.</strong>
+  <code>AUTODEPLOY_TFTP_ADDR</code> is empty in your environment.
+  Set it to <code>:69</code> in <code>/etc/default/autodeploy</code>
+  and restart the service, otherwise the iPXE binaries below won't
+  be reachable by PXE clients.
+</div>
+{{end}}
+
+<div class="section-head"><h3>1. iPXE binaries (TFTP root)</h3><div class="line"></div></div>
+<p class="small muted">
+  Served from <code>{{.Data.IPXEDir}}</code> on UDP/69. Download
+  buttons let you grab a copy for archival or to upload to a
+  separate TFTP server.
+</p>
+
+{{if .Data.Binaries}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr>
+    <th>Filename</th>
+    <th>Purpose</th>
+    <th class="num">Size</th>
+    <th>SHA-256</th>
+    <th>Embedded?</th>
+    <th>Modified</th>
+    <th></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Binaries}}
+    <tr>
+      <td><code>{{.Name}}</code><button class="copy" data-copy="{{.Name}}" aria-label="Copy filename"><svg><use href="#i-copy"/></svg></button></td>
+      <td class="small">{{.Purpose}}</td>
+      <td class="num small muted">{{humanBytes .Size}}</td>
+      <td class="small muted">{{if .SHA256}}<code>{{slice .SHA256 0 12}}…</code><button class="copy" data-copy="{{.SHA256}}" aria-label="Copy SHA-256"><svg><use href="#i-copy"/></svg></button>{{else}}—{{end}}</td>
+      <td>{{if .HasEmbedded}}<span class="badge ok"><svg><use href="#i-check"/></svg>yes</span>{{else}}<span class="badge warn">vanilla</span>{{end}}</td>
+      <td class="small muted">{{relTime .Modified}}</td>
+      <td class="right"><a class="btn ghost sm" href="/portal/settings/pxe/download/{{.Name}}" title="Download {{.Name}}"><svg><use href="#i-download"/></svg></a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+
+<p class="hint" style="margin-top:var(--sp-3);">
+  <strong>Embedded</strong> means the binary contains an AutoDeploy
+  bootstrap script that chains directly to this server using
+  <code>${next-server}</code> from DHCP — works with any DHCP that
+  can hand out a TFTP server + filename (UniFi, OPNsense, consumer
+  routers). <strong>Vanilla</strong> binaries need conditional DHCP
+  (ISC dhcpd, Microsoft DHCP with Vendor Classes) to chainload to
+  AutoDeploy. If you see "vanilla" in your fleet, prefer the
+  embedded binaries from a newer release.
+</p>
+
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-box"/></svg>
+  <h3>No iPXE binaries found</h3>
+  <p>Expected files in <code>{{.Data.IPXEDir}}</code>. Run the
+  fetch helper to grab them:</p>
+  <pre style="text-align:left; max-width: 720px; margin: var(--sp-3) auto;">{{if .Data.FetchHelperPath}}sudo {{.Data.FetchHelperPath}}{{else}}sudo /etc/autodeploy/scripts/fetch-ipxe.sh{{end}}</pre>
+  <p class="small muted">Pre-built embedded binaries are pulled from
+  the matching GitHub release first, then boot.ipxe.org as a
+  fallback.</p>
+</div>
+{{end}}
+
+<div class="section-head"><h3>2. DHCP configuration</h3><div class="line"></div></div>
+<p class="small muted">
+  Tell your DHCP server to hand out the iPXE binary. Pick the
+  section that matches your router/server. Each snippet has your
+  AutoDeploy server's IP (<code>{{.Data.ServerIP}}</code>) pre-filled.
+</p>
+
+<div class="card spaced">
+  <h4 style="margin: 0 0 var(--sp-2) 0;">UniFi (UDM, UDM-Pro, UDR, UCG, USG)</h4>
+  <p class="small muted" style="margin: 0 0 var(--sp-2) 0;">
+    Settings → Networks → <em>[your LAN]</em> → Advanced → DHCP
+    Service → <strong>Network Boot</strong>. UniFi can only set
+    one Boot File per network — match your fleet:
+  </p>
+  <table class="small">
+    <thead><tr><th>Fleet</th><th>Boot File</th></tr></thead>
+    <tbody>
+      <tr><td>Modern UEFI x64 (~2015+)</td><td><code>ipxe.efi</code></td></tr>
+      <tr><td>UEFI x64 with NIC driver issues / Hyper-V Gen2</td><td><code>snponly.efi</code></td></tr>
+      <tr><td>Legacy BIOS</td><td><code>undionly.kpxe</code></td></tr>
+      <tr><td>UEFI arm64</td><td><code>ipxe-arm64.efi</code></td></tr>
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top: var(--sp-2);">
+    Set <strong>Next Server</strong> to <code>{{.Data.ServerIP}}</code><button class="copy" data-copy="{{.Data.ServerIP}}" aria-label="Copy server IP"><svg><use href="#i-copy"/></svg></button>.
+  </p>
+</div>
+
+<div class="card spaced">
+  <h4 style="margin: 0 0 var(--sp-2) 0;">dnsmasq (proxy DHCP, recommended for mixed BIOS/UEFI on UniFi)</h4>
+  <p class="small muted">Add as <code>/etc/dnsmasq.d/autodeploy.conf</code>:</p>
+  <pre style="background:var(--surface-2); padding:var(--sp-2); border-radius:var(--r-sm);"
+       id="snippet-dnsmasq">dhcp-range=&lt;your-subnet&gt;,proxy
+dhcp-no-override
+dhcp-match=set:bios,option:client-arch,0
+dhcp-match=set:uefi64,option:client-arch,7
+dhcp-match=set:uefi64,option:client-arch,9
+dhcp-match=set:uefiarm,option:client-arch,11
+dhcp-boot=tag:bios,undionly.kpxe,,{{.Data.ServerIP}}
+dhcp-boot=tag:uefi64,ipxe.efi,,{{.Data.ServerIP}}
+dhcp-boot=tag:uefiarm,ipxe-arm64.efi,,{{.Data.ServerIP}}</pre>
+  <button class="btn ghost sm" type="button" data-copy-snippet="snippet-dnsmasq"><svg><use href="#i-copy"/></svg>Copy</button>
+</div>
+
+<div class="card spaced">
+  <h4 style="margin: 0 0 var(--sp-2) 0;">ISC dhcpd</h4>
+  <p class="small muted">In your subnet block in <code>/etc/dhcp/dhcpd.conf</code>:</p>
+  <pre style="background:var(--surface-2); padding:var(--sp-2); border-radius:var(--r-sm);"
+       id="snippet-isc">option arch code 93 = unsigned integer 16;
+option user-class code 77 = string;
+
+subnet &lt;your-subnet&gt; netmask &lt;your-netmask&gt; {
+    next-server {{.Data.ServerIP}};
+    if exists user-class and option user-class = "iPXE" {
+        filename "http://{{.Data.ServerIP}}{{if .Data.HTTPPort}}:{{.Data.HTTPPort}}{{end}}/ipxe/boot.ipxe";
+    } elsif option arch = 00:07 or option arch = 00:09 {
+        filename "ipxe.efi";
+    } elsif option arch = 00:0b {
+        filename "ipxe-arm64.efi";
+    } else {
+        filename "undionly.kpxe";
+    }
+}</pre>
+  <button class="btn ghost sm" type="button" data-copy-snippet="snippet-isc"><svg><use href="#i-copy"/></svg>Copy</button>
+</div>
+
+<div class="card spaced">
+  <h4 style="margin: 0 0 var(--sp-2) 0;">Microsoft DHCP Server</h4>
+  <ol class="small muted">
+    <li>DHCP console → right-click the scope → <strong>Configure Options</strong> → <strong>Advanced</strong>.</li>
+    <li>Option <strong>066</strong> (Boot Server Host Name): <code>{{.Data.ServerIP}}</code></li>
+    <li>Option <strong>067</strong> (Bootfile Name): <code>ipxe.efi</code> (or the right file for your fleet from the table above).</li>
+  </ol>
+  <p class="small muted">For per-arch branching, create a Vendor Class matching DHCP options 60/93 and override option 067 per class.</p>
+</div>
+
+<div class="card spaced">
+  <h4 style="margin: 0 0 var(--sp-2) 0;">OPNsense / pfSense</h4>
+  <p class="small muted">
+    Services → DHCPv4 → <em>[interface]</em> → <strong>Network Booting</strong>.
+  </p>
+  <table class="small">
+    <thead><tr><th>Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Next Server</td><td><code>{{.Data.ServerIP}}</code></td></tr>
+      <tr><td>Default BIOS file name</td><td><code>undionly.kpxe</code></td></tr>
+      <tr><td>UEFI 32 bit file name</td><td>(unused on x64 hardware)</td></tr>
+      <tr><td>UEFI 64 bit file name</td><td><code>ipxe.efi</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section-head"><h3>3. Verify it works</h3><div class="line"></div></div>
+
+<ol>
+  <li>Smoke-test TFTP from any LAN box: <code>tftp {{.Data.ServerIP}}</code> then <code>get ipxe.efi</code>. Should return ~1 MB.</li>
+  <li>PXE-boot a target machine. You should see an iPXE banner for ~1 second, then "<code>AutoDeploy bootstrap</code>" (embedded build) or AutoDeploy's boot menu directly (vanilla + conditional DHCP).</li>
+  <li>Watch the server: <code>sudo journalctl -u autodeploy -f | grep -E "tftp|/ipxe/boot.ipxe"</code> — you should see TFTP reads of the iPXE binary, then an HTTP fetch of <code>/ipxe/boot.ipxe</code>.</li>
+</ol>
+
+<div class="section-head"><h3>If something doesn't work</h3><div class="line"></div></div>
+
+<p>
+  See <a href="https://github.com/Rusketh/AutoDeploy/blob/main/docs/user-guide/troubleshooting.md#pxe-boot">Troubleshooting → PXE</a>
+  for the symptom table. The most common ones:
+</p>
+<ul class="small muted">
+  <li><strong>Hyper-V Gen2 "Network unreachable" after iPXE loads</strong> — swap UniFi's Boot File from <code>ipxe.efi</code> to <code>snponly.efi</code> (or vice versa). Hyper-V's synthetic NIC sometimes needs one, sometimes the other.</li>
+  <li><strong>iPXE loops back to firmware bootfile</strong> — DHCP isn't branching. Use one of the <em>Embedded</em> binaries from the table above (no conditional DHCP needed), or switch to dnsmasq proxy mode.</li>
+  <li><strong>TFTP says ENOTFOUND</strong> — the binary isn't in <code>{{.Data.IPXEDir}}</code>. Re-run the fetch helper.</li>
+</ul>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Wire the per-snippet copy buttons. Plain document.querySelectorAll
+  // grab; the buttons are data-attributed so they're easy to find.
+  document.querySelectorAll('[data-copy-snippet]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-copy-snippet');
+      var pre = document.getElementById(id);
+      if (!pre) return;
+      navigator.clipboard.writeText(pre.textContent).then(function () {
+        var orig = btn.innerHTML;
+        btn.innerHTML = '<svg><use href="#i-check"/></svg>Copied';
+        setTimeout(function () { btn.innerHTML = orig; }, 1500);
+      });
+    });
+  });
+});
+</script>
+{{end}}

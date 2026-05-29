@@ -43,6 +43,10 @@ func init() {
 
 		// Updates (server + agent)
 		get("/portal/settings/updates", updatesPage(r))
+
+		// PXE setup central hub
+		get("/portal/settings/pxe", pxePage(r))
+		get("/portal/settings/pxe/download/{name}", pxeDownload(r))
 	}
 }
 

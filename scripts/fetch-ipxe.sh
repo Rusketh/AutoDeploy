@@ -6,76 +6,157 @@
 #
 # Usage:
 #   scripts/fetch-ipxe.sh [DATA_DIR]
+#   scripts/fetch-ipxe.sh --tag vX.Y.Z [DATA_DIR]
 #
 # Default DATA_DIR is $AUTODEPLOY_DATA_DIR/ipxe (or ./data/ipxe). The
 # downloaded files are placed there and named per the iPXE.org
 # convention, so an operator can point a TFTP server's root directly
 # at the directory.
 #
-# Files fetched:
-#   undionly.kpxe   - legacy BIOS PXE chainload (most common)
-#   ipxe.pxe        - alternative BIOS chainload (use when undionly.kpxe
-#                     hangs on the NIC; PXE NBP variant)
-#   ipxe.efi        - UEFI x64 chainload
-#   snponly.efi     - UEFI x64 chainload using only the SNP driver (use
-#                     when ipxe.efi fails to bring the NIC up)
-#   ipxe-arm64.efi  - UEFI arm64 chainload
+# Files fetched (in priority order):
+#   1. AutoDeploy release assets    (built by .github/workflows/build-ipxe.yml,
+#                                    embedded with a universal chainloader
+#                                    script that uses DHCP option 66 to find
+#                                    the AutoDeploy server -- works on UniFi
+#                                    and any other DHCP that can't do
+#                                    conditional bootfiles)
+#   2. boot.ipxe.org                (vanilla iPXE, no embedded script --
+#                                    requires conditional DHCP to chainload
+#                                    to AutoDeploy)
 #
-# All files come from boot.ipxe.org's pre-built releases. If your
-# environment cannot reach the internet, build iPXE yourself from
-# https://github.com/ipxe/ipxe and drop the binaries in this directory.
+# AutoDeploy's bundled binaries are the recommended path. The boot.ipxe.org
+# fallback exists for releases that pre-date the iPXE build workflow.
 set -euo pipefail
 
-DATA_DIR="${1:-${AUTODEPLOY_DATA_DIR:-./data}}/ipxe"
+TAG=""
+DATA_DIR_ARG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tag) TAG="$2"; shift 2 ;;
+        --help|-h)
+            sed -n '2,/^set -euo/p' "$0" | sed 's/^# \?//' | head -n -1
+            exit 0 ;;
+        *)
+            if [ -z "$DATA_DIR_ARG" ]; then
+                DATA_DIR_ARG="$1"; shift
+            else
+                echo "Unknown arg: $1" >&2; exit 2
+            fi ;;
+    esac
+done
+
+DATA_DIR="${DATA_DIR_ARG:-${AUTODEPLOY_DATA_DIR:-./data}}/ipxe"
 mkdir -p "$DATA_DIR"
 
-# boot.ipxe.org serves BIOS chainloaders at the top level and EFI
-# binaries under <arch>-efi/. The x86_64 subdirectory uses iPXE's
-# own internal arch name (x86_64-efi, matching the source-tree
-# bin-x86_64-efi/ output), NOT amd64-efi -- an earlier fix guessed
-# amd64-efi/ by analogy with arm64-efi/ and was silently wrong.
-BASE="http://boot.ipxe.org"
+# Resolve TAG to fetch AutoDeploy-built binaries from. Falls back to
+# the running server binary's --version, then to the latest GitHub
+# release.
+resolve_tag() {
+    if [ -n "$TAG" ]; then return; fi
+    if command -v autodeploy-server >/dev/null 2>&1; then
+        TAG=$(autodeploy-server --version 2>/dev/null | head -n1 | tr -d '[:space:]')
+        case "$TAG" in v*) return ;; esac
+        TAG=""
+    fi
+    if command -v /usr/local/bin/autodeploy-server >/dev/null 2>&1; then
+        TAG=$(/usr/local/bin/autodeploy-server --version 2>/dev/null | head -n1 | tr -d '[:space:]')
+        case "$TAG" in v*) return ;; esac
+        TAG=""
+    fi
+    if command -v curl >/dev/null; then
+        TAG=$(curl -sSfL --connect-timeout 5 \
+                https://api.github.com/repos/Rusketh/AutoDeploy/releases/latest \
+                2>/dev/null | grep -m1 '"tag_name"' | cut -d'"' -f4 || true)
+    fi
+}
+
+resolve_tag
+echo "== AutoDeploy iPXE fetch =="
+echo "  Target dir: $DATA_DIR"
+if [ -n "$TAG" ]; then
+    echo "  AutoDeploy release tag: $TAG (primary source)"
+fi
+echo "  Fallback: boot.ipxe.org (vanilla iPXE, no embedded script)"
+echo
+
 FILES=(
     "undionly.kpxe"
     "ipxe.pxe"
-    "x86_64-efi/ipxe.efi:ipxe.efi"
-    "x86_64-efi/snponly.efi:snponly.efi"
-    "arm64-efi/ipxe.efi:ipxe-arm64.efi"
+    "ipxe.efi"
+    "snponly.efi"
+    "ipxe-arm64.efi"
+)
+# boot.ipxe.org's path layout: BIOS at top level, EFI under <arch>-efi/.
+# The x86_64 directory uses iPXE's internal arch name (matches the
+# source-tree bin-x86_64-efi/ output).
+declare -A FALLBACK=(
+    [undionly.kpxe]="http://boot.ipxe.org/undionly.kpxe"
+    [ipxe.pxe]="http://boot.ipxe.org/ipxe.pxe"
+    [ipxe.efi]="http://boot.ipxe.org/x86_64-efi/ipxe.efi"
+    [snponly.efi]="http://boot.ipxe.org/x86_64-efi/snponly.efi"
+    [ipxe-arm64.efi]="http://boot.ipxe.org/arm64-efi/ipxe.efi"
 )
 
-cd "$DATA_DIR"
-failed=0
-for spec in "${FILES[@]}"; do
-    src="${spec%%:*}"
-    dst="${spec##*:}"
-    if [ "$src" = "$dst" ]; then
-        dst="$(basename "$src")"
-    fi
-    echo "Fetching $BASE/$src -> $DATA_DIR/$dst"
-    # Per-file failure should not abort the whole batch -- a single
-    # broken URL or transient 5xx is recoverable on a later re-run.
-    fetch_ok=1
+fetch_url() {
+    # fetch_url <url> <dest>
+    # Returns 0 on success (file present, >=1KB), 1 on failure.
+    local url="$1" dst="$2"
     if command -v curl >/dev/null; then
-        curl -sSfL -o "$dst" "$BASE/$src" || fetch_ok=0
+        curl -sSfL --connect-timeout 10 -o "$dst" "$url" 2>/dev/null || return 1
     elif command -v wget >/dev/null; then
-        wget -q -O "$dst" "$BASE/$src" || fetch_ok=0
+        wget -q --timeout=10 -O "$dst" "$url" 2>/dev/null || return 1
     else
         echo "ERROR: need curl or wget" >&2
         exit 1
     fi
-    if [ "$fetch_ok" -eq 0 ]; then
-        echo "  WARN: failed to fetch $src" >&2
-        failed=$((failed+1))
-        rm -f "$dst"
-        continue
-    fi
-    # A sub-1KB file is almost certainly an error page, not a real
-    # binary. Remove it so the next re-run can replace it.
+    # Sub-1KB is almost certainly an error page; remove and report.
+    local size
     size=$(wc -c < "$dst" 2>/dev/null || echo 0)
     if [ "$size" -lt 1024 ]; then
-        echo "  WARN: $dst is only $size bytes -- looks like an error response, not a real binary." >&2
         rm -f "$dst"
+        return 1
+    fi
+    return 0
+}
+
+cd "$DATA_DIR"
+failed=0
+for f in "${FILES[@]}"; do
+    got=""
+
+    # 1. Try AutoDeploy release asset.
+    if [ -n "$TAG" ]; then
+        url="https://github.com/Rusketh/AutoDeploy/releases/download/$TAG/$f"
+        echo "Trying release: $url"
+        if fetch_url "$url" "$f"; then
+            got="release"
+        fi
+    fi
+
+    # 2. Fall back to boot.ipxe.org.
+    if [ -z "$got" ]; then
+        url="${FALLBACK[$f]:-}"
+        if [ -n "$url" ]; then
+            echo "Trying fallback: $url"
+            if fetch_url "$url" "$f"; then
+                got="fallback"
+            fi
+        fi
+    fi
+
+    if [ -z "$got" ]; then
+        echo "  WARN: failed to fetch $f from any source" >&2
         failed=$((failed+1))
+        continue
+    fi
+    size=$(wc -c < "$f")
+    echo "  OK: $f ($size bytes, source=$got)"
+done
+
+# Best-effort sidecar sha256 (just for parity with release assets).
+for f in "${FILES[@]}"; do
+    if [ -f "$f" ]; then
+        sha256sum "$f" > "$f.sha256" 2>/dev/null || true
     fi
 done
 
@@ -84,10 +165,11 @@ echo "iPXE binaries in $DATA_DIR:"
 ls -la "$DATA_DIR"
 echo
 if [ "$failed" -gt 0 ]; then
-    echo "WARNING: $failed download(s) failed. Re-run this script once network access is restored, or" >&2
-    echo "build iPXE yourself from https://github.com/ipxe/ipxe and drop the binaries in $DATA_DIR." >&2
+    echo "WARNING: $failed download(s) failed. Re-run once network access is" >&2
+    echo "restored, or build iPXE yourself and drop the binaries in $DATA_DIR." >&2
     exit 1
 fi
 echo "Next step: point your TFTP server's root at $DATA_DIR (or use AutoDeploy's"
 echo "built-in TFTP listener by setting AUTODEPLOY_TFTP_ADDR) and configure DHCP."
-echo "See docs/user-guide/pxe-setup.md for the DHCP config patterns."
+echo "Per-platform DHCP setup: docs/user-guide/tutorial-02-pxe.md, or"
+echo "open the portal's Settings -> PXE page after first start."
