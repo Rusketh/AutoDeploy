@@ -29,12 +29,16 @@ set -euo pipefail
 DATA_DIR="${1:-${AUTODEPLOY_DATA_DIR:-./data}}/ipxe"
 mkdir -p "$DATA_DIR"
 
+# boot.ipxe.org serves BIOS chainloaders at the top level and EFI
+# binaries under <arch>-efi/ (the bare /ipxe.efi and /snponly.efi
+# paths used to work but now 404 -- the mirror reorganised so amd64
+# EFI mirrors arm64 EFI's layout).
 BASE="http://boot.ipxe.org"
 FILES=(
     "undionly.kpxe"
     "ipxe.pxe"
-    "ipxe.efi"
-    "snponly.efi"
+    "amd64-efi/ipxe.efi:ipxe.efi"
+    "amd64-efi/snponly.efi:snponly.efi"
     "arm64-efi/ipxe.efi:ipxe-arm64.efi"
 )
 
