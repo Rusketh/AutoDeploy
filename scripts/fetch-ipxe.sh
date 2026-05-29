@@ -30,15 +30,16 @@ DATA_DIR="${1:-${AUTODEPLOY_DATA_DIR:-./data}}/ipxe"
 mkdir -p "$DATA_DIR"
 
 # boot.ipxe.org serves BIOS chainloaders at the top level and EFI
-# binaries under <arch>-efi/ (the bare /ipxe.efi and /snponly.efi
-# paths used to work but now 404 -- the mirror reorganised so amd64
-# EFI mirrors arm64 EFI's layout).
+# binaries under <arch>-efi/. The x86_64 subdirectory uses iPXE's
+# own internal arch name (x86_64-efi, matching the source-tree
+# bin-x86_64-efi/ output), NOT amd64-efi -- an earlier fix guessed
+# amd64-efi/ by analogy with arm64-efi/ and was silently wrong.
 BASE="http://boot.ipxe.org"
 FILES=(
     "undionly.kpxe"
     "ipxe.pxe"
-    "amd64-efi/ipxe.efi:ipxe.efi"
-    "amd64-efi/snponly.efi:snponly.efi"
+    "x86_64-efi/ipxe.efi:ipxe.efi"
+    "x86_64-efi/snponly.efi:snponly.efi"
     "arm64-efi/ipxe.efi:ipxe-arm64.efi"
 )
 
