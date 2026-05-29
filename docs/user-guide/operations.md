@@ -150,6 +150,102 @@ filesystem snapshots if you need them in the same archive.
 the escrowed PINs and recovery keys are unreadable, so back this up
 out-of-band as well.
 
+## Versions and updates
+
+![Updates page](images/settings-updates.png)
+
+**Settings → Updates** compares the running server version against
+the latest published GitHub release and lists every agent binary
+staged for distribution.
+
+### How versions are stamped
+
+Each binary (server, Boot Client, agent) is built with
+`-ldflags "-X main.Version=<tag>"`. CI sets `VERSION` from the tag
+that triggered the build; local `make build` falls back to `dev`.
+The Makefiles accept `VERSION=v0.1.2 make build` for one-off
+builds.
+
+The version is exposed at:
+
+- `GET /api/v1/version` (open) — server's running version + Go version + GOOS/GOARCH.
+- `POST /api/v1/agent/update-info` — server's view of the latest
+  agent available for a given `os/arch`, plus SHA-256 and download URL.
+
+### Auto-tag on merge
+
+`.github/workflows/auto-tag.yml` runs on every push to `main` and
+pushes a new semver tag, which triggers `release.yml`. Rules:
+
+| Trigger | Effect |
+|---|---|
+| Default (no PR labels) | patch bump (`v0.1.2` → `v0.1.3`) |
+| Merged PR has label `release:minor` | minor bump (`v0.1.2` → `v0.2.0`) |
+| Merged PR has label `release:major` | major bump (`v0.1.2` → `v1.0.0`) |
+| Commit message contains `[skip release]` or `[no release]` | no tag, no release |
+| No prior `v*` tag exists | first release will be `v0.1.0` |
+
+### Server updates — download and apply
+
+The Updates page shows current vs latest published. To upgrade:
+
+1. **Download** the new `autodeploy-server-<os>-<arch>` binary from
+   the GitHub release.
+2. **Re-run the install script** with the new binary alongside it:
+   - Linux: `sudo ./scripts/install-linux.sh`
+   - Windows: `.\scripts\windows\install-windows.ps1`
+   Both scripts stop the service, replace the binary, restart. They
+   preserve the data dir, env file, and TLS material.
+3. The portal continues to work; the service comes back up on the
+   new version.
+
+The server does **not** self-install — operators own when the
+service goes down. The Updates page is download + notify.
+
+### Agent updates — fully automatic
+
+Resident-mode agents poll `/api/v1/agent/update-info` after every
+check-in. Mechanism:
+
+1. Agent sends its `os/arch` and current version.
+2. Server scans the downloads directory for `autodeploy-agent-<os>-<arch>`
+   binaries plus their `.version` sidecars; picks the highest semver.
+3. If the highest available version is strictly newer than what the
+   agent reports, the response includes a download URL and SHA-256.
+4. Agent downloads to a sibling `.new` file. **Refuses to install** if
+   the SHA-256 doesn't match — the hash is the only authenticator
+   against a tampered binary.
+5. Agent writes a small updater script (`.cmd` on Windows, `.sh`
+   elsewhere) that:
+   - Waits for the agent process to exit (up to 30 s).
+   - Renames the binary to `.bak`, moves `.new` into place.
+   - Relaunches the agent with the same command-line.
+6. Agent spawns the script detached and exits. Restart completes
+   within seconds.
+7. The next agent run cleans up the `.bak` and the script file.
+
+To **pin** an agent to its current version (canary testing,
+staged rollout), launch it with `--no-self-update`. The agent will
+report its version on check-in but never apply an update.
+
+### Staging a new agent version
+
+The release workflow writes three files per binary:
+
+```
+autodeploy-agent-windows-amd64.exe
+autodeploy-agent-windows-amd64.exe.version    # contains "v0.1.3"
+autodeploy-agent-windows-amd64.exe.sha256     # "<hex>  filename"
+```
+
+Drop all three into `$DATA_DIR/downloads/`. The portal Downloads
+page lists the binary; the Updates page shows it as staged for
+distribution; the next resident-mode check-in tells every agent in
+the fleet to upgrade.
+
+The install scripts seed this directory automatically when the
+release bundle is unpacked alongside the server binary.
+
 ## Log retention
 
 Set `AUTODEPLOY_LOG_RETENTION_DAYS=90` (or whatever your policy

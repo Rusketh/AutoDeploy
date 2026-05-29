@@ -60,13 +60,23 @@ jobs:
             boot-client) bin=autodeploy-boot ;;
             agent)       bin=autodeploy-agent ;;
           esac
+          # Strip the refs/tags/ prefix when the trigger was a tag
+          # push; manual workflow_dispatch falls back to "dev" so the
+          # version is never an empty string.
+          version="${GITHUB_REF#refs/tags/}"
+          if [ "$version" = "$GITHUB_REF" ]; then version=dev; fi
           out="bin/${bin}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
           mkdir -p bin
-          go build -trimpath -ldflags="-s -w" -o "$out" "./cmd/${bin}"
+          go build -trimpath \
+              -ldflags="-s -w -X main.Version=${version}" \
+              -o "$out" "./cmd/${bin}"
           ls -la "$out"
-          # Compute SHA-256 alongside the binary so operators can
-          # verify downloads.
+          # SHA-256 alongside the binary so operators can verify
+          # downloads. The .version sidecar lets the server (and the
+          # operator-facing install scripts) discover the bundled
+          # version without running the binary.
           sha256sum "$out" > "$out.sha256"
+          echo "$version" > "$out.version"
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -118,7 +128,7 @@ jobs:
           mkdir -p release
           # Flatten the per-matrix subdirectories into a single
           # release/ directory.
-          find artifacts -type f \( -name 'autodeploy-*' -o -name '*.tar.gz' -o -name '*.sha256' \) \
+          find artifacts -type f \( -name 'autodeploy-*' -o -name '*.tar.gz' -o -name '*.sha256' -o -name '*.version' \) \
             -exec cp -a '{}' release/ \;
           ls -la release/
       - name: Generate release notes

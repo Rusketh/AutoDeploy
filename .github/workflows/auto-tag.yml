@@ -1,0 +1,94 @@
+name: Auto-tag releases on merge to main
+
+# When a PR merges to main this workflow picks the next semver tag and
+# pushes it. The tag push triggers release.yml which builds the
+# artifacts and publishes a GitHub Release.
+#
+# Bump rules:
+#   - default: patch (v0.1.2 -> v0.1.3).
+#   - PR label "release:minor": minor (v0.1.2 -> v0.2.0).
+#   - PR label "release:major": major (v0.1.2 -> v1.0.0).
+#   - commit message contains "[skip release]" or "[no release]": no tag.
+#   - first run (no v* tag exists): v0.1.0.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip release]') && !contains(github.event.head_commit.message, '[no release]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # GITHUB_TOKEN can push tags because contents: write above.
+          # Tag pushes trigger release.yml the same as if they came
+          # from a developer's terminal.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump type from PR labels
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the PR associated with this commit. Search API
+          # accepts a sha and returns the PR if there is one.
+          pr_json=$(gh api -X GET "search/issues" \
+              -f q="sha:${GITHUB_SHA} repo:${GITHUB_REPOSITORY} is:pr" \
+              --jq '.items[0]' 2>/dev/null || echo '')
+          labels=$(echo "$pr_json" | jq -r '.labels[]?.name' 2>/dev/null || true)
+          echo "PR labels for ${GITHUB_SHA}: ${labels:-<none>}"
+          bump=patch
+          if echo "$labels" | grep -qx 'release:major'; then
+            bump=major
+          elif echo "$labels" | grep -qx 'release:minor'; then
+            bump=minor
+          fi
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate next version
+        id: ver
+        run: |
+          # Latest existing v* tag, sorted by semver. Empty = first release.
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            new=v0.1.0
+            echo "No prior v* tag; first release will be $new"
+          else
+            # Strip leading v, split on . and -, take first three numbers.
+            stripped="${latest#v}"
+            stripped="${stripped%%-*}"  # drop any pre-release suffix
+            major=$(echo "$stripped" | cut -d. -f1)
+            minor=$(echo "$stripped" | cut -d. -f2)
+            patch=$(echo "$stripped" | cut -d. -f3)
+            case "${{ steps.bump.outputs.bump }}" in
+              major) major=$((major+1)); minor=0; patch=0 ;;
+              minor) minor=$((minor+1)); patch=0 ;;
+              patch) patch=$((patch+1)) ;;
+              *) echo "unknown bump"; exit 1 ;;
+            esac
+            new="v${major}.${minor}.${patch}"
+            echo "Bumping ${latest} -> ${new} (${{ steps.bump.outputs.bump }})"
+          fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag="${{ steps.ver.outputs.new }}"
+          # Annotated tag carries the bump type + commit message for
+          # later auditability.
+          msg="$(printf 'Auto-tagged from main (%s bump).\n\nCommit: %s\n%s' \
+              "${{ steps.bump.outputs.bump }}" \
+              "${GITHUB_SHA}" \
+              "${{ github.event.head_commit.message }}")"
+          git tag -a "$tag" -m "$msg"
+          git push origin "$tag"
+          echo "::notice::Tagged $tag (${{ steps.bump.outputs.bump }} bump). release.yml will now build and publish."

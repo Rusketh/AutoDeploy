@@ -15,6 +15,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
+	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
 // Repos is the bundle of repositories the API depends on. Pass one
@@ -47,6 +48,10 @@ type Repos struct {
 	// AD is the Domain Integration Service. Optional; nil disables
 	// server-side AD coordination (the local OS rename still runs).
 	AD *addomain.Service
+	// Blobs is the configurable storage layer. Used by the version
+	// handler to scan the downloads category for a newer agent
+	// binary to advertise to checkin-mode agents.
+	Blobs *storage.BlobStore
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -60,6 +65,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterLogs(mux, r)
 	RegisterBranding(mux, r)
 	RegisterMirrors(mux, r)
+	RegisterVersion(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))

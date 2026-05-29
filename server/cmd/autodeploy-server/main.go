@@ -34,8 +34,28 @@ import (
 
 var base64URL = base64URLpkg.RawURLEncoding
 
+// Version is set at build time via -ldflags
+// "-X main.Version=v0.1.2". Empty in dev builds; the CI release
+// workflow populates it from the tag that triggered the build.
+var Version = "dev"
+
+// Version returns the build-time version string, falling back to
+// "dev" for unstamped local builds. Exposed via the /api/v1/version
+// endpoint so the portal Settings -> Updates page can show what's
+// currently running.
+func ServerVersion() string { return Version }
+
 func main() {
+	// Honour the `--version` flag for parity with how CI tools and
+	// Windows package managers inspect binaries.
+	for _, a := range os.Args[1:] {
+		if a == "--version" || a == "-version" || a == "-v" {
+			os.Stdout.WriteString(Version + "\n")
+			return
+		}
+	}
 	logger := logging.New(os.Stdout, "server")
+	logger.Info("server.version", slog.String("version", Version))
 	if err := runPlatform(logger); err != nil {
 		logger.Error("server.fatal", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -134,6 +154,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			slog.String("source", "portal/env"))
 	}
 
+	// Expose the build-time version through the api package so the
+	// /api/v1/version handler and the agent update-info handler
+	// return the correct value.
+	api.SetServerVersion(Version)
+
 	api.Register(mux, api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
@@ -143,7 +168,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
 		Mirrors: r.Mirrors, Runtime: rt,
-		AD: adSvc,
+		AD:    adSvc,
+		Blobs: blobs,
 	})
 
 	pl := &payload.Service{
@@ -189,11 +215,12 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
 		Mirrors:    r.Mirrors,
 		Runtime:    rt,
-		Resolver:   r.Resolver,
-		Blobs:      blobs,
-		AD:         adSvc,
-		SecretsBox: bx,
-		DataDir:    cfg.DataDir,
+		Resolver:      r.Resolver,
+		Blobs:         blobs,
+		AD:            adSvc,
+		SecretsBox:    bx,
+		DataDir:       cfg.DataDir,
+		ServerVersion: Version,
 	}); err != nil {
 		return err
 	}

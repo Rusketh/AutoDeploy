@@ -63,6 +63,9 @@ type Repos struct {
 	// DataDir is the on-disk root used to check for the bootstrap-
 	// admin file so the portal can warn while it still exists.
 	DataDir string
+	// ServerVersion is the build-time version main.go reads from
+	// -ldflags. Rendered in the Settings -> Updates page header.
+	ServerVersion string
 }
 
 const (

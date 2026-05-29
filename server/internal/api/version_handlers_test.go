@@ -1,0 +1,181 @@
+package api
+
+import (
+	"encoding/hex"
+	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/rusketh/autodeploy/server/internal/storage"
+)
+
+func TestSemverLess(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"v0.1.0", "v0.1.1", true},
+		{"v0.1.1", "v0.1.0", false},
+		{"v0.1.0", "v0.1.0", false},
+		{"v0.9.0", "v0.10.0", true},
+		{"v0.10.0", "v1.0.0", true},
+		{"v1.0.0", "v0.99.99", false},
+		{"v0.1.0-rc.1", "v0.1.0", true},  // pre-release loses to release
+		{"v0.1.0", "v0.1.0-rc.1", false},
+		{"v0.1.0-alpha", "v0.1.0-beta", true},
+		// Non-semver strings -- "dev" loses to anything that parses.
+		{"dev", "v0.1.0", true},
+		{"v0.1.0", "dev", false},
+	}
+	for _, c := range cases {
+		if got := semverLess(c.a, c.b); got != c.want {
+			t.Errorf("semverLess(%q,%q)=%v want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestIsOlderVersion_EmptyOrDevAlwaysOlder(t *testing.T) {
+	if !isOlderVersion("", "v0.1.0") {
+		t.Error("empty current should be older")
+	}
+	if !isOlderVersion("dev", "v0.1.0") {
+		t.Error("dev should be older than tagged")
+	}
+	if isOlderVersion("v0.1.0", "v0.1.0") {
+		t.Error("equal versions: not older")
+	}
+	if !isOlderVersion("v0.1.0", "v0.1.1") {
+		t.Error("v0.1.0 < v0.1.1")
+	}
+}
+
+func TestHandleVersion_ReturnsBuildVersion(t *testing.T) {
+	SetServerVersion("v9.9.9")
+	defer SetServerVersion("dev")
+	rr := httptest.NewRecorder()
+	handleVersion()(rr, httptest.NewRequest("GET", "/api/v1/version", nil))
+	if rr.Code != 200 {
+		t.Fatalf("status %d", rr.Code)
+	}
+	var info VersionInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Version != "v9.9.9" {
+		t.Errorf("got version %q want v9.9.9", info.Version)
+	}
+	if info.GoVersion == "" || info.GOOS == "" || info.GOARCH == "" {
+		t.Errorf("missing runtime info: %+v", info)
+	}
+}
+
+func TestHandleAgentUpdateInfo_NoBinary_NoUpdate(t *testing.T) {
+	tmp := t.TempDir()
+	blobs, err := storage.NewBlobStore(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Repos{Blobs: blobs}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/agent/update-info", nil)
+	handleAgentUpdateInfo(r)(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status %d body=%s", rr.Code, rr.Body.String())
+	}
+	var info AgentUpdateInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &info)
+	if info.UpdateAvailable {
+		t.Error("UpdateAvailable should be false with no binary present")
+	}
+	if info.URL != "" || info.SHA256 != "" {
+		t.Errorf("URL/SHA should be empty: %+v", info)
+	}
+}
+
+func TestHandleAgentUpdateInfo_NewerBinary_Advertises(t *testing.T) {
+	tmp := t.TempDir()
+	blobs, err := storage.NewBlobStore(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed a fake agent binary + .version + .sha256 in the
+	// downloads category.
+	dlDir := blobs.CategoryRoot("downloads")
+	if err := os.MkdirAll(dlDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := []byte("fake binary contents")
+	name := "autodeploy-agent-windows-amd64.exe"
+	if err := os.WriteFile(filepath.Join(dlDir, name), bin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dlDir, name+".version"), []byte("v0.2.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Realistic .sha256 line shape so the readSHA256Sidecar parser
+	// confirms it accepts "<hex>  <filename>" pairs.
+	hash := computeSHA256(filepath.Join(dlDir, name))
+	if hash == "" {
+		t.Fatal("hash empty")
+	}
+	if err := os.WriteFile(filepath.Join(dlDir, name+".sha256"),
+		[]byte(hash+"  "+name+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Defence in depth: verify the SHA-256 we expect.
+	if _, err := hex.DecodeString(hash); err != nil {
+		t.Fatalf("hash not hex: %v", err)
+	}
+
+	r := Repos{Blobs: blobs}
+	body := `{"os":"windows","arch":"amd64","current_version":"v0.1.0"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/agent/update-info",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	handleAgentUpdateInfo(r)(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status %d body=%s", rr.Code, rr.Body.String())
+	}
+	var info AgentUpdateInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Current != "v0.2.0" {
+		t.Errorf("Current = %q want v0.2.0", info.Current)
+	}
+	if !info.UpdateAvailable {
+		t.Errorf("UpdateAvailable should be true; got %+v", info)
+	}
+	if info.SHA256 != hash {
+		t.Errorf("SHA256 = %q want %q", info.SHA256, hash)
+	}
+	if info.URL == "" || info.Size == 0 {
+		t.Errorf("URL/Size unset: %+v", info)
+	}
+}
+
+func TestHandleAgentUpdateInfo_SameVersion_NoUpdate(t *testing.T) {
+	tmp := t.TempDir()
+	blobs, _ := storage.NewBlobStore(tmp)
+	dlDir := blobs.CategoryRoot("downloads")
+	_ = os.MkdirAll(dlDir, 0o755)
+	name := "autodeploy-agent-windows-amd64.exe"
+	_ = os.WriteFile(filepath.Join(dlDir, name), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(dlDir, name+".version"), []byte("v0.2.0"), 0o644)
+	r := Repos{Blobs: blobs}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/agent/update-info",
+		strings.NewReader(`{"current_version":"v0.2.0"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handleAgentUpdateInfo(r)(rr, req)
+	var info AgentUpdateInfo
+	_ = json.Unmarshal(rr.Body.Bytes(), &info)
+	if info.UpdateAvailable {
+		t.Errorf("UpdateAvailable should be false for same version; got %+v", info)
+	}
+}
+

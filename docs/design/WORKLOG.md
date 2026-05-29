@@ -2320,3 +2320,110 @@ uploaded an ISO via the API, confirmed the file landed at
 `/tmp/relocated-iso/1/source.iso` (NOT
 `/tmp/storage-smoke/iso/...`). Screenshot at
 `docs/user-guide/images/settings-storage.png`.
+
+## 2026-05-29 — Versioning, auto-tag releases, server/agent updates
+
+End-to-end versioning lands so the user-facing question "what's
+running here, and is it current?" gets a clear answer. Three
+pieces stack:
+
+1. **Build-time version stamping.** Each component's main.go
+   declares `var Version = "dev"`. The Makefiles inject the real
+   version through `-ldflags "-X main.Version=$VERSION"`. CI's
+   release.yml derives `VERSION` from `${GITHUB_REF#refs/tags/}`;
+   local builds get the literal "dev". Each binary also honours
+   `--version` for a bare one-line check.
+
+2. **Auto-tag on merge to main** (`.github/workflows/auto-tag.yml`).
+   On every push to main, the workflow looks up the merged PR via
+   the search API, inspects its labels, picks a bump type
+   (`patch` default, `release:minor` or `release:major` override),
+   walks `git tag -l 'v*' --sort=-v:refname` for the prior tag,
+   and pushes the next semver. The tag push triggers the existing
+   `release.yml` which builds + publishes. Operator can opt out
+   with `[skip release]` / `[no release]` in the commit message;
+   first run with no prior tag publishes `v0.1.0`.
+
+3. **Version + update endpoints + portal page** (Settings →
+   Updates). `GET /api/v1/version` returns the running server
+   version. `POST /api/v1/agent/update-info` accepts the agent's
+   `(os, arch, current_version)` and scans the operator-managed
+   downloads directory for a newer `autodeploy-agent-<os>-<arch>`
+   binary using `.version` sidecars + SHA-256 sidecars. The portal
+   page compares server-running against the latest published
+   GitHub release (best-effort; failures surface as a warning and
+   the page still renders), and lists every agent binary staged
+   for distribution.
+
+**Agent self-update** (`agent/internal/selfupdate/`).
+
+- `selfupdate.Download` streams the new binary to a `.tmp` sibling,
+  hashes it as it goes, and renames to `.new` only if the SHA-256
+  matches the value the server sent. The hash is the *only*
+  authenticator -- the agent refuses to install anything that
+  doesn't match.
+- `selfupdate.Swap` writes a small platform-specific updater (`.cmd`
+  on Windows, `.sh` elsewhere) that waits for the current agent
+  process to exit (poll up to 30 s), renames the binary to `.bak`
+  (one-step rollback), moves the `.new` over the live path, and
+  re-launches with the original command-line. On failure it
+  restores from `.bak` and exits 1.
+- `selfupdate.Cleanup` runs at agent startup to remove any debris
+  (`.bak`, half-written `.new`, leftover updater scripts) from a
+  prior swap.
+- The resident check-in loop calls `maybeSelfUpdate` after each
+  tick. If the server advertises a newer build, the agent
+  downloads, verifies, swaps, and exits -- the updater script
+  re-launches it within seconds.
+- A `--no-self-update` flag pins an agent to its current version
+  for canary testing.
+
+**Server self-install is operator-driven** (per the design
+decision earlier in the session). The Updates page shows current
+vs latest, links to the release on GitHub, and points at the
+install-script-rerun flow. The server never replaces its own
+binary while running.
+
+**WHY (decisions).**
+
+- DECISION: SHA-256 sidecars, not signatures. The server is the
+  only authenticator for the binary the agent downloads, so the
+  trust chain is "agent trusts the server's TLS cert / cookie ->
+  server states the SHA-256 -> agent verifies". A full
+  signing/verification path with key management is overkill at
+  this size; the operator-controlled downloads directory keeps
+  the attack surface tight.
+- DECISION: Agent self-update can't rely on a Windows service.
+  The default install launches the agent as a first-logon command
+  with `--check-in 5m`, not as a service. The updater script
+  uses `start "" /B` to detach + relaunch with the original
+  argv, which works in both modes.
+- DECISION: Auto-tag uses PR labels rather than commit-message
+  prefixes (`feat:` / `fix:` / `BREAKING CHANGE:`). Labels are
+  easier to set retroactively and don't require team-wide
+  commit-message discipline. The default is patch so unlabeled
+  PRs get a predictable bump.
+- DECISION: First release without a prior tag is `v0.1.0` not
+  `v0.0.1`. That matches the version-number references already
+  in the install docs.
+
+**BUILD STATE.** `go test ./...` green across server, agent and
+boot-client. New tests: `TestSemverLess`,
+`TestIsOlderVersion_EmptyOrDevAlwaysOlder`,
+`TestHandleVersion_ReturnsBuildVersion`,
+`TestHandleAgentUpdateInfo_NoBinary_NoUpdate`,
+`TestHandleAgentUpdateInfo_NewerBinary_Advertises`,
+`TestHandleAgentUpdateInfo_SameVersion_NoUpdate`,
+`TestDownload_RejectsBadHash`, `TestDownload_HappyPath`,
+`TestDownload_RejectsEmptyArgs`, `TestDownload_HTTPError`,
+`TestSiblingPath_HasSuffix`. Secret check green; bash linter
+green. End-to-end smoke test:
+
+- `VERSION=v0.9.0 make build` produced a server with the
+  embedded version visible at `GET /api/v1/version`.
+- An older agent reporting v0.0.1 received `update_available:
+  true` with the URL + SHA-256 from a seeded
+  `autodeploy-agent-windows-amd64.exe.version` sidecar.
+- A current agent reporting v0.1.0 received `update_available:
+  false`.
+- The portal Updates page rendered with both sections.

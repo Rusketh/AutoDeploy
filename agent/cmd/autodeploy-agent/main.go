@@ -26,6 +26,7 @@ import (
 	"github.com/rusketh/autodeploy/agent/internal/detect"
 	"github.com/rusketh/autodeploy/agent/internal/httpc"
 	"github.com/rusketh/autodeploy/agent/internal/logging"
+	"github.com/rusketh/autodeploy/agent/internal/selfupdate"
 	"github.com/rusketh/autodeploy/agent/internal/steps"
 	"github.com/rusketh/autodeploy/agent/internal/swspec"
 )
@@ -38,9 +39,21 @@ type agentFlags struct {
 	workDir         string
 	dryRun          bool
 	checkInInterval time.Duration
+	noSelfUpdate    bool
 }
 
+// Version is set at build time via -ldflags
+// "-X main.Version=v0.1.2". Reported on every check-in so the
+// server can decide whether to push a self-update.
+var Version = "dev"
+
 func main() {
+	for _, a := range os.Args[1:] {
+		if a == "--version" || a == "-version" || a == "-v" {
+			os.Stdout.WriteString(Version + "\n")
+			return
+		}
+	}
 	var f agentFlags
 	flag.StringVar(&f.server, "server", "", "AutoDeploy server base URL")
 	flag.Int64Var(&f.imageID, "image-id", 0, "Image id this machine was deployed from")
@@ -49,6 +62,7 @@ func main() {
 	flag.StringVar(&f.workDir, "work", defaultWorkDir(), "Scratch directory for downloaded payloads")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log steps without executing them")
 	flag.DurationVar(&f.checkInInterval, "check-in", 0, "Resident-mode check-in interval, e.g. 5m. Zero = one-shot.")
+	flag.BoolVar(&f.noSelfUpdate, "no-self-update", false, "Don't apply self-updates even if the server advertises a newer version. Useful for testing or pinning.")
 	flag.Parse()
 
 	log, shipper := logging.NewWithShipper(os.Stdout, "agent", 2048)
@@ -56,6 +70,11 @@ func main() {
 	// shot mode) or periodically while it runs (resident mode -- the
 	// check-in loop calls shipLogs each tick).
 	defer shipLogs(log, shipper, f.server, f.insecureTLS)
+
+	// Clean up any debris from a previous self-update on startup
+	// (an .bak the prior swap left behind, a half-written .new from
+	// a crashed download, etc).
+	selfupdate.Cleanup()
 
 	if f.uuid == "" {
 		f.uuid = readSystemUUID()
@@ -453,12 +472,68 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		// Best-effort log ship at the end of each tick so the
 		// portal sees a near-live view of resident-mode activity.
 		shipLogs(log, shipper, f.server, f.insecureTLS)
+		// Check for a self-update last so the in-flight bulk-job
+		// loop completes before we exit. maybeSelfUpdate returns
+		// true when an update was successfully launched -- the
+		// updater script is now running and will restart us, so
+		// the agent process must exit promptly.
+		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f) {
+			log.Info("selfupdate.exiting",
+				slog.String("note", "updater script spawned; exiting so the swap can complete"))
+			shipLogs(log, shipper, f.server, f.insecureTLS)
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
 	}
+}
+
+// maybeSelfUpdate asks the server whether a newer agent is
+// available; if so, downloads + SHA-256 verifies + spawns the
+// updater script. Returns true when the updater has been launched
+// (so the caller should exit). All failure paths return false so a
+// transient network glitch doesn't break the check-in loop.
+func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
+	var info selfupdate.UpdateInfo
+	body := map[string]string{
+		"os":              runtime.GOOS,
+		"arch":            runtime.GOARCH,
+		"current_version": Version,
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/update-info", body, &info); err != nil {
+		log.Warn("selfupdate.checkfail", slog.String("error", err.Error()))
+		return false
+	}
+	if !info.UpdateAvailable || info.URL == "" {
+		return false
+	}
+	log.Info("selfupdate.available",
+		slog.String("from", Version),
+		slog.String("to", info.Current),
+		slog.String("url", info.URL),
+		slog.Int64("size_bytes", info.Size),
+	)
+	dst, err := selfupdate.SiblingPath(".new")
+	if err != nil {
+		log.Warn("selfupdate.path", slog.String("error", err.Error()))
+		return false
+	}
+	if err := selfupdate.Download(ctx, info.URL, dst, info.SHA256, f.insecureTLS); err != nil {
+		log.Warn("selfupdate.download", slog.String("error", err.Error()))
+		return false
+	}
+	log.Info("selfupdate.downloaded",
+		slog.String("path", dst),
+		slog.String("sha256", info.SHA256),
+	)
+	if err := selfupdate.Swap(dst, os.Args); err != nil {
+		log.Warn("selfupdate.swap", slog.String("error", err.Error()))
+		return false
+	}
+	return true
 }
 
 // executeBulkJob dispatches on action and returns (status, result JSON).

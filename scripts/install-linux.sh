@@ -74,6 +74,18 @@ for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm
         if [ -f "$src" ] && [ ! -f "$DATA_DIR/downloads/$candidate" ]; then
             install -m 0644 -o autodeploy -g autodeploy "$src" "$DATA_DIR/downloads/$candidate"
             echo "    seeded $DATA_DIR/downloads/$candidate"
+            # Sidecar files written alongside by the release workflow.
+            # The .version sidecar is what the server reads to decide
+            # whether an agent should self-update; the .sha256 is what
+            # the agent verifies before swapping its binary. Copy both
+            # if they exist in the same release bundle.
+            for sidecar in "$candidate.version" "$candidate.sha256"; do
+                if [ -f "$src.${sidecar#$candidate.}" ]; then
+                    install -m 0644 -o autodeploy -g autodeploy \
+                        "$src.${sidecar#$candidate.}" \
+                        "$DATA_DIR/downloads/$sidecar"
+                fi
+            done
             break
         fi
     done
