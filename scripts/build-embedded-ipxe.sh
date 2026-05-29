@@ -96,15 +96,24 @@ echo "  AutoDeploy URL: $URL"
 echo "  Target dir:     $DATA_DIR/ipxe/"
 echo
 
-# Check toolchain. iPXE's build needs GCC, binutils, GNU Make plus
-# liblzma-dev for ZLib compression of the EFI ROMs. mtools and a
-# couple of other bits are pulled in for image-mode builds; harmless.
+# Check toolchain. iPXE's build needs:
+#   - GCC, binutils, GNU Make (build-essential)
+#   - perl (for src/util/* helpers)
+#   - liblzma-dev (header for compression at link time)
+#   - gcc-multilib (BIOS targets compile with -m32; without the 32-bit
+#     libs on a 64-bit host, undionly.kpxe / ipxe.pxe builds fail with
+#     "fatal error: bits/libc-header-start.h: No such file or directory"
+#     or "/usr/bin/ld: cannot find -lgcc")
 need_apt=()
 command -v gcc      >/dev/null || need_apt+=(build-essential)
 command -v git      >/dev/null || need_apt+=(git)
 command -v perl     >/dev/null || need_apt+=(perl)
-# xz/liblzma are required at link time; check the dev headers
 ldconfig -p 2>/dev/null | grep -q liblzma.so || need_apt+=(liblzma-dev)
+# Test for 32-bit support directly rather than guessing the package name
+# -- some distros call it gcc-multilib, others lib32gcc-s1 + libc6-dev-i386.
+if ! echo 'int main(void){return 0;}' | gcc -m32 -x c -o /dev/null - 2>/dev/null; then
+    need_apt+=(gcc-multilib)
+fi
 if [ ${#need_apt[@]} -gt 0 ]; then
     if command -v apt-get >/dev/null; then
         echo "== Installing build toolchain (${need_apt[*]}) =="
@@ -176,6 +185,8 @@ if [ -z "$(command -v aarch64-linux-gnu-gcc 2>/dev/null)" ]; then
 fi
 
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/ipxe"
+declare -a OK_BUILDS=()
+declare -a FAILED_BUILDS=()
 for spec in "${TARGETS[@]}"; do
     src="${spec%%:*}"
     dst="${spec##*:}"
@@ -188,20 +199,34 @@ for spec in "${TARGETS[@]}"; do
         bin-x86_64-efi) CROSS=""  ;;
         bin-arm64-efi)  CROSS="CROSS_COMPILE=aarch64-linux-gnu-" ;;
     esac
+    log="/tmp/ipxe-build-${arch_dir}-${bin_name}.log"
     # shellcheck disable=SC2086
-    make $CROSS "$arch_dir/$bin_name" EMBED="$EMBED" >/dev/null 2>&1 || {
-        echo "  WARN: build failed for $src -- skipping" >&2
-        continue
-    }
-    install -m 0644 -o autodeploy -g autodeploy \
-        "$arch_dir/$bin_name" "$DATA_DIR/ipxe/$dst"
-    echo "    installed $DATA_DIR/ipxe/$dst"
+    if make $CROSS "$arch_dir/$bin_name" EMBED="$EMBED" >"$log" 2>&1; then
+        install -m 0644 -o autodeploy -g autodeploy \
+            "$arch_dir/$bin_name" "$DATA_DIR/ipxe/$dst"
+        echo "    installed $DATA_DIR/ipxe/$dst"
+        OK_BUILDS+=("$dst")
+        rm -f "$log"
+    else
+        echo "  WARN: build failed for $src -- last 25 lines:" >&2
+        tail -25 "$log" | sed 's/^/    /' >&2
+        echo "  (full log: $log)" >&2
+        FAILED_BUILDS+=("$dst")
+    fi
 done
 
 echo
 echo "== Done =="
+if [ ${#OK_BUILDS[@]} -gt 0 ]; then
+    echo "  built: ${OK_BUILDS[*]}"
+fi
+if [ ${#FAILED_BUILDS[@]} -gt 0 ]; then
+    echo "  failed: ${FAILED_BUILDS[*]}" >&2
+fi
 ls -la "$DATA_DIR/ipxe/" | grep -E "\.(efi|kpxe|pxe)$"
 echo
 echo "PXE boot a target now; the embedded script will chain to:"
 echo "  $URL/ipxe/boot.ipxe"
 echo "No DHCP changes needed."
+# Exit non-zero if NOTHING built so CI / wrapper scripts notice.
+[ ${#OK_BUILDS[@]} -gt 0 ]
