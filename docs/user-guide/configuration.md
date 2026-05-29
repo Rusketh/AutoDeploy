@@ -1,5 +1,12 @@
 # Configuring the server
 
+> **Note:** For a task-oriented walkthrough that covers HTTP-only,
+> HTTPS-with-self-signed, and HTTPS-with-real-cert shapes in one place,
+> see **[Tutorial 1 — Install AutoDeploy](tutorial-01-install.md)**.
+> HTTPS is no longer required in production — HTTP on a non-loopback
+> bind logs a `http.cleartext_public_bind` WARN but the server starts
+> cleanly. This page is the full env-var reference.
+
 The server is configured by environment variables at boot. Runtime
 operational settings (AD config, retention, throttle, branding, the
 access PIN) live in the portal — see [Operating AutoDeploy](operations.md)

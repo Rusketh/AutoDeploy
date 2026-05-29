@@ -1,5 +1,14 @@
 # Getting started — zero to your first deployed machine
 
+> **Note:** This page has been split into three task-oriented tutorials:
+>
+> 1. [Install AutoDeploy](tutorial-01-install.md) (~15 min)
+> 2. [Set up PXE boot](tutorial-02-pxe.md) — covers UniFi, dnsmasq, ISC dhcpd, Microsoft DHCP, and the embedded-iPXE build (~20 min)
+> 3. [Deploy your first machine](tutorial-03-first-deploy.md) (~30 min)
+>
+> The content below is the original combined walkthrough; the three
+> tutorials supersede it.
+
 This walks you end-to-end: download the release, install the server,
 configure DHCP/PXE, upload an ISO, build an image, image a test
 machine. Read top to bottom; every command is copy-pastable.

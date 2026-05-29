@@ -199,6 +199,17 @@ EOF
     rm -f "$SUDOERS_TMP"
 fi
 
+# Install the embedded-iPXE build helper alongside the binary. It's
+# not run automatically (the build pulls in ~300 MB of apt deps and
+# takes a few minutes) but operators on UniFi / OPNsense / consumer
+# routers that can't do conditional DHCP will need it -- the next-
+# steps banner below tells them so.
+EMBED_SRC="$HERE/build-embedded-ipxe.sh"
+if [ -f "$EMBED_SRC" ]; then
+    install -m 0755 "$EMBED_SRC" /usr/local/sbin/autodeploy-build-embedded-ipxe
+    echo "    installed /usr/local/sbin/autodeploy-build-embedded-ipxe"
+fi
+
 systemctl daemon-reload || true
 
 cat <<EOF
@@ -248,7 +259,15 @@ AutoDeploy is installed. Next steps:
      Build the initramfs with scripts/initramfs/build-initramfs.sh.
 
   6. Configure DHCP to chainload undionly.kpxe (BIOS) or
-     ipxe.efi (UEFI) — see docs/user-guide/pxe-setup.md.
+     ipxe.efi (UEFI). Best place to start:
+       docs/user-guide/tutorial-02-pxe.md
+
+     If your DHCP server can't do conditional bootfile (UniFi,
+     OPNsense, most consumer routers), run:
+       sudo autodeploy-build-embedded-ipxe
+     -- builds iPXE binaries with this server's URL baked in, so
+     DHCP only needs to hand out one boot file. ~3 min build,
+     pulls in build-essential the first time.
 
 Status: systemctl status autodeploy
 Logs:   journalctl -u autodeploy -f

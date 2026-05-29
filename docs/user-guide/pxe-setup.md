@@ -1,5 +1,11 @@
 # PXE setup — does this work with regular PXE?
 
+> **Note:** For a task-oriented PXE walkthrough that covers **UniFi**
+> (with the embedded-iPXE build for routers that can't do conditional
+> DHCP), dnsmasq, ISC dhcpd and Microsoft DHCP step by step, see
+> **[Tutorial 2 — Set up PXE boot](tutorial-02-pxe.md)**. This page is
+> the longer-form architecture explanation.
+
 Yes — with a small bridge. AutoDeploy itself speaks **HTTP only**: the
 design's "no TFTP, no layer-2 PXE dependency" rule is about how the
 **deployment payload** moves. The **bootstrap** (DHCP → first network

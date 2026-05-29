@@ -1,5 +1,16 @@
 # Software packages
 
+> **Note:** This page documents the single-file payload model. Multi-file
+> packages (upload `setup.exe` + `config.xml` + drivers and reference each
+> by bare filename in install steps) and env-var expansion in detection
+> rules (`%ProgramFiles%\...`) landed later. For those, see:
+>
+> - **[Tutorial 4 — Add software packages](tutorial-04-add-software.md)** — worked examples (VS Code single-file, Office multi-file).
+> - **[Detection rules reference](reference-detection-rules.md)**.
+> - **[Install steps reference](reference-install-steps.md)**.
+>
+> The rest of this page is still accurate for the original single-file model.
+
 > Each package is **detection rules** + **install steps** + an
 > installer payload. The agent skips packages that detection reports
 > as already installed, so re-runs are idempotent.
