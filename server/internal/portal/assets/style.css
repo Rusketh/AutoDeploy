@@ -809,3 +809,17 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 .logs-tail .row .ts { color: var(--fg-muted); }
 .logs-tail .row.error { background: var(--bad-soft); }
 .logs-tail .row.warn  { background: var(--warn-soft); }
+
+/* ---- Upload progress ----
+ * Rendered by app.js when a form with data-upload-progress submits.
+ * Lives at the bottom of the form so the bar appears just below the
+ * Upload button when the upload starts.
+ */
+.upload-progress { margin-top: var(--sp-3); display: grid; gap: var(--sp-2); }
+.upload-progress-row { display: flex; align-items: center; gap: var(--sp-3); }
+.upload-progress-bar { flex: 1; height: 14px; appearance: none; -webkit-appearance: none; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2); overflow: hidden; }
+.upload-progress-bar::-webkit-progress-bar { background: var(--surface-2); }
+.upload-progress-bar::-webkit-progress-value { background: var(--accent); transition: width 120ms linear; }
+.upload-progress-bar::-moz-progress-bar { background: var(--accent); transition: width 120ms linear; }
+.upload-progress-label { font-variant-numeric: tabular-nums; }
+.upload-progress-error { color: var(--bad); }
