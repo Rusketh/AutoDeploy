@@ -2472,3 +2472,34 @@ in `security.md`. End-to-end smoke verified
 `AUTODEPLOY_DEV=false AUTODEPLOY_HTTP_ADDR=0.0.0.0:<port>`
 starts, serves `/healthz`, returns `/api/v1/version`, and emits
 the expected WARN line.
+
+## 2026-05-29 — Auto-tag now reliably triggers release.yml
+
+`auto-tag.yml` was pushing the tag with `GITHUB_TOKEN`, which
+GitHub deliberately suppresses from triggering further workflows
+to prevent infinite loops. Symptom: `v0.1.1` and `v0.1.2` were
+tagged on main but have no published GitHub Release attached.
+Only `v0.1.0` (manually published earlier) shows on the releases
+page.
+
+**Fix.** After pushing the tag, `auto-tag.yml` now calls
+`gh workflow run release.yml --ref <tag>` explicitly. workflow_dispatch
+is one of the two events (with repository_dispatch) that the
+loop-protection rule exempts; release.yml's release-job gate is
+`startsWith(github.ref, 'refs/tags/v')`, which is satisfied when
+the dispatch ref is the tag.
+
+`actions: write` added to the workflow's permissions block --
+required for the `gh workflow run` REST call to succeed.
+
+**Orphan tags.** The pre-fix tags `v0.1.1` and `v0.1.2` already
+exist on the remote. To publish them retroactively, run:
+
+```
+gh workflow run release.yml --ref v0.1.1
+gh workflow run release.yml --ref v0.1.2
+```
+
+Going forward, every merge to main produces both a tag and a
+published release with binaries + sidecars, with no manual
+intervention.
