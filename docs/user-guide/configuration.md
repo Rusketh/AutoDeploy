@@ -10,14 +10,15 @@ for the split between bootstrap (env) and runtime (portal) settings.
 | Scenario | What to set | What the server does |
 |---|---|---|
 | **Local dev / lab on your laptop** | Nothing | Plain HTTP on `127.0.0.1:8080`. No TLS material needed. |
-| **Lab over the LAN, no PII** | `AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080` | Still plain HTTP, but bound to all interfaces. **Requires `AUTODEPLOY_DEV=true`** (the default) — otherwise the server refuses to start. |
+| **Lab over the LAN, no PII** | `AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080` | Plain HTTP bound to all interfaces. Works in any mode; production mode logs a `http.cleartext_public_bind` WARN at startup so the choice is auditable. |
 | **Lab with self-signed HTTPS** | `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443` + `AUTODEPLOY_DEV=true` | HTTPS with a self-signed cert auto-generated under `$DATA_DIR/tls/`. Browsers warn; clients can `-k`. |
-| **Production** | `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443`, `AUTODEPLOY_TLS_CERT`, `AUTODEPLOY_TLS_KEY`, `AUTODEPLOY_DEV=false` | HTTPS with your real cert. Cleartext HTTP must be loopback-only or empty. |
+| **Production — HTTP only** | `AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080`, `AUTODEPLOY_HTTPS_ADDR=`, `AUTODEPLOY_DEV=false` | Plain HTTP everywhere. Recommended only when a reverse proxy terminates TLS upstream, or for trusted-network LAN deployments. |
+| **Production — HTTPS** | `AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443`, `AUTODEPLOY_TLS_CERT`, `AUTODEPLOY_TLS_KEY`, `AUTODEPLOY_DEV=false` | HTTPS with your real cert. The recommended deployment. |
 
-**HTTPS is fully optional.** The only "must use HTTPS" rule is: in
-`AUTODEPLOY_DEV=false` (production) mode the server refuses to bind
-cleartext HTTP to a non-loopback address. Local installs run on plain
-HTTP without any TLS material at all — that's the default.
+**HTTPS is fully optional and never enforced.** The server starts
+with whatever bind addresses you give it. Cleartext HTTP on a
+non-loopback address in production mode is permitted; it just logs
+a clearly-marked warning at startup so the choice is on the record.
 
 ## Environment variables
 
@@ -25,13 +26,13 @@ HTTP without any TLS material at all — that's the default.
 
 | Variable                          | Default              | Meaning |
 |-----------------------------------|----------------------|---------|
-| `AUTODEPLOY_HTTP_ADDR`            | `127.0.0.1:8080`     | Cleartext HTTP bind. Empty disables. In production mode only loopback is permitted. |
+| `AUTODEPLOY_HTTP_ADDR`            | `127.0.0.1:8080`     | Cleartext HTTP bind. Empty disables. Non-loopback binds in production mode log a `http.cleartext_public_bind` WARN at startup — never refused. |
 | `AUTODEPLOY_HTTPS_ADDR`           | `` (empty)           | HTTPS bind. Empty disables. |
-| `AUTODEPLOY_TLS_CERT`             | `` (empty)           | PEM cert path for HTTPS. In dev mode if both this and the key are empty, a self-signed cert is auto-generated under `$DATA_DIR/tls/`. In production both must be set. |
+| `AUTODEPLOY_TLS_CERT`             | `` (empty)           | PEM cert path for HTTPS. Required only when `AUTODEPLOY_HTTPS_ADDR` is set and `AUTODEPLOY_DEV=false`. With `DEV=true` a self-signed cert is auto-generated under `$DATA_DIR/tls/`. |
 | `AUTODEPLOY_TLS_KEY`              | `` (empty)           | PEM key path for HTTPS. |
 | `AUTODEPLOY_TFTP_ADDR`            | `` (empty)           | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. Serves `$DATA_DIR/ipxe/` read-only. |
 | `AUTODEPLOY_DATA_DIR`             | `./data`             | Root for the SQLite database, payload blobs, secrets key, etc. |
-| `AUTODEPLOY_DEV`                  | `true`               | When `false`, the server refuses cleartext HTTP on non-loopback addresses and disables dev-cert generation. |
+| `AUTODEPLOY_DEV`                  | `true`               | When `false`, dev-cert auto-generation is disabled. HTTP-only deployments are still supported; the server only warns, never refuses. |
 | `AUTODEPLOY_SECRETS_KEY`          | `` (empty)           | Hex-encoded 32-byte at-rest encryption key for BitLocker PINs / recovery keys / AD bind password. Empty auto-generates a key file under `$DATA_DIR/secrets-key.bin` (mode 0600). |
 
 ### Runtime settings seeded by env (one-time)
@@ -134,8 +135,10 @@ you need. Source: `server/internal/httpx/server.go`.
   / `localhost`) → listens; intended for use behind a TLS-terminating
   reverse proxy.
 - Set + `AUTODEPLOY_DEV=false` + bound to a non-loopback address →
-  **server refuses to start** with `cleartext HTTP refused in
-  production mode`.
+  listens; emits a single `http.cleartext_public_bind` WARN at
+  startup naming the risk and the mitigation. Cleartext HTTP is a
+  permitted production deployment shape — the warning exists so the
+  choice is auditable, not as a gate.
 
 **HTTPS listener** (`AUTODEPLOY_HTTPS_ADDR`):
 

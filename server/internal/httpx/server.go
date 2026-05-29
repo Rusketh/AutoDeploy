@@ -40,11 +40,19 @@ func New(cfg config.Config, logger *slog.Logger, m *metrics.Registry) (*http.Ser
 	return mux, withLogging(mux, logger, m)
 }
 
-// ListenAndServe starts the HTTP server. In non-dev mode it refuses to bind
-// cleartext to a non-loopback address.
+// ListenAndServe starts the HTTP server. Cleartext HTTP is a
+// permitted production deployment: not every operator can or wants
+// to manage TLS certificates, and many install behind a reverse
+// proxy that terminates TLS upstream. When the bind is non-loopback
+// and DevMode is off we log a loud warning so the choice is
+// explicit, but we never refuse to start.
 func ListenAndServe(ctx context.Context, cfg config.Config, h http.Handler, logger *slog.Logger) error {
 	if !cfg.DevMode && !isLoopback(cfg.HTTPAddr) {
-		return ErrPlainHTTPInProd
+		logger.LogAttrs(ctx, slog.LevelWarn, "http.cleartext_public_bind",
+			slog.String("addr", cfg.HTTPAddr),
+			slog.String("risk", "session cookies, admin credentials, BitLocker keys and agent payloads will travel unencrypted on the wire"),
+			slog.String("mitigation", "set AUTODEPLOY_HTTPS_ADDR + AUTODEPLOY_TLS_CERT/KEY for end-to-end TLS, or front this bind with a reverse proxy that terminates TLS and forwards to a loopback listener"),
+		)
 	}
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -125,11 +133,3 @@ func isLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// ErrPlainHTTPInProd is returned when DevMode=false and the configured bind
-// address is not loopback. Production deployments must front the server with
-// HTTPS or bind only to loopback behind a TLS terminator.
-var ErrPlainHTTPInProd = httpErr("cleartext HTTP refused in production mode; configure HTTPS or bind to loopback")
-
-type httpErr string
-
-func (e httpErr) Error() string { return string(e) }

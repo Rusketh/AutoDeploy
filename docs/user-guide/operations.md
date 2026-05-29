@@ -82,12 +82,12 @@ password).
 
 | Variable | Purpose |
 |---|---|
-| `AUTODEPLOY_HTTP_ADDR` | Cleartext HTTP bind. Loopback only in prod. |
-| `AUTODEPLOY_HTTPS_ADDR` | HTTPS bind. |
-| `AUTODEPLOY_TLS_CERT` / `_KEY` | PEM cert + key for HTTPS (required in prod). |
+| `AUTODEPLOY_HTTP_ADDR` | Cleartext HTTP bind. Permitted on any address; binds non-loopback in production mode log a `http.cleartext_public_bind` WARN at startup. |
+| `AUTODEPLOY_HTTPS_ADDR` | HTTPS bind. Empty = no HTTPS listener. |
+| `AUTODEPLOY_TLS_CERT` / `_KEY` | PEM cert + key. Required only when `AUTODEPLOY_HTTPS_ADDR` is set and `AUTODEPLOY_DEV=false`. With `DEV=true` an auto-generated self-signed cert is written under `$DATA_DIR/tls/`. |
 | `AUTODEPLOY_TFTP_ADDR` | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. |
 | `AUTODEPLOY_DATA_DIR` | Persistent state root. |
-| `AUTODEPLOY_DEV` | `false` in production. |
+| `AUTODEPLOY_DEV` | `false` in production. Turns off the dev TLS-cert auto-generation. HTTP-only deployments are still supported with `DEV=false`. |
 | `AUTODEPLOY_SECRETS_KEY` | Hex-encoded 32-byte at-rest encryption key. |
 
 ### Runtime (portal — Settings)
@@ -101,6 +101,72 @@ password).
 | Log retention (days) | Operational | Applied on next hourly tick of the retention scheduler. |
 | Concurrent payload throttle | Operational | Applied on next server restart. |
 | Payload mirrors | [Mirrors](scaling.md#payload-mirrors) | Applied on next manifest fetch. |
+
+### TLS deployment shapes
+
+AutoDeploy supports three TLS layouts. None of them are enforced — the
+server only refuses to start on misconfiguration that would silently
+fail (e.g., HTTPS bind set with `DEV=false` and no cert).
+
+**Shape A — HTTPS only (recommended).**
+
+```
+AUTODEPLOY_HTTP_ADDR=
+AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443
+AUTODEPLOY_TLS_CERT=/etc/autodeploy/tls/server.crt
+AUTODEPLOY_TLS_KEY=/etc/autodeploy/tls/server.key
+AUTODEPLOY_DEV=false
+```
+
+All portal sessions, BitLocker key responses, and agent payloads
+travel encrypted. The boot client and agent verify the cert; if you
+use a private CA, install it in the boot image's trust store.
+
+**Shape B — HTTP only.**
+
+```
+AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080
+AUTODEPLOY_HTTPS_ADDR=
+AUTODEPLOY_DEV=false
+```
+
+Permitted. On startup the server logs a single WARN line:
+
+```
+level=WARN msg=http.cleartext_public_bind addr=0.0.0.0:8080
+  risk="session cookies, admin credentials, BitLocker keys and
+        agent payloads will travel unencrypted on the wire"
+  mitigation="set AUTODEPLOY_HTTPS_ADDR + AUTODEPLOY_TLS_CERT/KEY
+              for end-to-end TLS, or front this bind with a reverse
+              proxy that terminates TLS and forwards to a loopback
+              listener"
+```
+
+Use this when:
+- A reverse proxy (IIS, nginx, Caddy, HAProxy) terminates TLS
+  upstream of AutoDeploy. Bind AutoDeploy to loopback and let the
+  proxy handle TLS — same security as Shape A, plus the proxy can
+  add WAF rules.
+- You're running on a trusted-network LAN where TLS-certificate
+  management isn't worth the operational overhead, and you've
+  accepted the trade-off.
+
+The boot client and agent both accept cleartext URLs; the install
+scripts hand them the URL the server advertises, so no client-side
+changes are needed.
+
+**Shape C — Both.**
+
+```
+AUTODEPLOY_HTTP_ADDR=127.0.0.1:8080
+AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443
+AUTODEPLOY_TLS_CERT=/etc/autodeploy/tls/server.crt
+AUTODEPLOY_TLS_KEY=/etc/autodeploy/tls/server.key
+```
+
+HTTPS for the fleet, loopback HTTP for local health probes,
+monitoring scrapes, and `curl` sanity checks. No warning because the
+HTTP bind is loopback.
 
 ### One-time env seeds (optional)
 

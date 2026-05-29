@@ -131,17 +131,33 @@ AutoDeploy is installed. Next steps:
      and paste it into AUTODEPLOY_SECRETS_KEY (or leave empty
      to auto-generate a key file under $DATA_DIR/secrets-key.bin).
 
-  2. (Production) Place a TLS cert + key:
-         /etc/autodeploy/tls/server.crt
-         /etc/autodeploy/tls/server.key
-     and point AUTODEPLOY_TLS_CERT / KEY at them.
+  2. Pick a TLS deployment shape (the env file documents all three):
+
+     a) HTTPS only: place a cert + key at
+            /etc/autodeploy/tls/server.crt
+            /etc/autodeploy/tls/server.key
+        and point AUTODEPLOY_TLS_CERT / KEY at them. Set
+        AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443 and leave HTTP_ADDR
+        empty (or bound to loopback).
+
+     b) HTTP only: leave the TLS paths empty, set
+            AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080
+            AUTODEPLOY_HTTPS_ADDR=
+        The server starts with a clearly-marked warning in the
+        log so the choice is auditable. Use this when a reverse
+        proxy terminates TLS upstream, or on a trusted-network
+        LAN deployment where TLS is not worth managing.
+
+     c) Both: HTTP on loopback for health checks, HTTPS for
+        everything else.
 
   3. Start the service:
          systemctl enable --now autodeploy
 
   4. Read the bootstrap admin password (one-time):
          cat $DATA_DIR/admin-bootstrap.txt
-     Log in at https://<this-host>/portal/ and change it via
+     Log in at https://<this-host>/portal/ (or http:// for an
+     HTTP-only deployment) and change it via
      Settings → Local accounts. Delete the file when done.
 
   5. Drop a Linux kernel into $DATA_DIR/ipxe/autodeploy-kernel

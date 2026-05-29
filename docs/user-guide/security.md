@@ -99,13 +99,16 @@ gateway.
 ## HTTPS rules
 
 See [Configuring the server](configuration.md#http-vs-https-the-full-rules)
-for the full ruleset. One line:
+and [Operations → TLS deployment shapes](operations.md#tls-deployment-shapes)
+for the full picture. One line:
 
-- `AUTODEPLOY_DEV=true` (default) → HTTP and HTTPS both work on any
-  interface; HTTPS optional.
-- `AUTODEPLOY_DEV=false` (production) → HTTP must be loopback OR
-  HTTPS must be configured; the server refuses to bind cleartext
-  HTTP to a non-loopback address.
+- HTTPS is **recommended** but never enforced. The server starts
+  with whatever bind addresses you give it.
+- Cleartext HTTP on a non-loopback address in production mode
+  (`AUTODEPLOY_DEV=false`) is permitted but logs a single
+  `http.cleartext_public_bind` WARN at startup so the choice is
+  auditable. Front it with a reverse proxy that terminates TLS,
+  or accept the risk on a trusted-network LAN.
 
 ## Audit trail
 
@@ -123,8 +126,11 @@ for the full ruleset. One line:
 
 Run before each release.
 
-- [ ] HTTPS enforced. The server refuses cleartext HTTP on
-      non-loopback in production mode.
+- [ ] HTTPS configured **or** a deliberate HTTP-only deployment.
+      The server permits cleartext HTTP but logs a
+      `http.cleartext_public_bind` WARN at startup when the bind is
+      non-loopback in production mode. Confirm that warning's
+      absence (or its conscious acceptance) in the install logs.
 - [ ] Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` over
       TLS.
 - [ ] Passwords stored as bcrypt hashes. Bootstrap admin password
