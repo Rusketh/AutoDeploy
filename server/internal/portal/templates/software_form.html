@@ -33,11 +33,24 @@
 
 {{if not $new}}
 <h3>Installer payload</h3>
+{{if $p.StoragePath}}
+<p class="small">
+  Current: <code>{{$p.StoragePath}}</code>
+  <span class="muted">({{$p.SizeBytes}} bytes)</span>
+</p>
+<form method="POST" action="/portal/software/{{int64 $p.ID}}/upload/delete"
+      onsubmit="return confirm('Remove the uploaded installer? The package definition (detection rules + install steps) stays; only the binary is deleted.');"
+      style="display:inline-block; margin-bottom:var(--sp-3);">
+  <button type="submit" class="danger"><svg><use href="#i-trash"/></svg>Delete uploaded installer</button>
+</form>
+<p class="small muted">Uploading below replaces the current file.</p>
+{{else}}
+<p class="small muted"><em>Nothing uploaded yet.</em></p>
+{{end}}
 <form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
   <label><span class="lbl">Installer file (.msi, .exe, .appx, .zip…)</span><input type="file" name="file" required></label>
-  <div class="actions"><button type="submit">Upload</button></div>
+  <div class="actions"><button type="submit">{{if $p.StoragePath}}Replace upload{{else}}Upload{{end}}</button></div>
 </form>
-<p class="small muted">Current: {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code> ({{$p.SizeBytes}} bytes){{else}}<em>nothing uploaded</em>{{end}}</p>
 {{end}}
 
 <script>
@@ -50,10 +63,21 @@ function ruleTypeChanged(sel){
 }
 function stepTypeChanged(sel){
   var b = sel.closest('.block');
+  // copy and unzip share the source/destination inputs, so the
+  // shared .step-srcdst div is visible for either type. The hint
+  // text below the inputs tweaks itself to match.
   ['copy','msi','appx','cmd','powershell','exe'].forEach(function(t){
     var d = b.querySelector('.step-'+t);
     if (d) d.style.display = (sel.value===t)?'block':'none';
   });
+  var srcdst = b.querySelector('.step-srcdst');
+  if (srcdst) srcdst.style.display = (sel.value==='copy' || sel.value==='unzip') ? 'block' : 'none';
+  var hint = b.querySelector('.step-srcdst-hint');
+  if (hint) {
+    hint.textContent = (sel.value==='unzip')
+      ? 'Source: the .zip file (use {payload} when uploading the zip). Destination: the directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).'
+      : 'Source and destination paths. Windows env vars (%ProgramFiles%, %LOCALAPPDATA%, …) are expanded by the agent.';
+  }
 }
 var nextRuleIdx = {{len .Data.Rules}};
 function addRule(){
@@ -87,15 +111,17 @@ function addStep(){
   var html = '<div class="block"><input type="hidden" name="step_index[]" value="' + idx + '">' +
     '<div class="row"><label><span class="lbl">Type</span>' +
     '<select name="step_' + idx + '_type" onchange="stepTypeChanged(this)">' +
-    '<option value="copy" selected>copy</option><option value="msi">msi</option>' +
+    '<option value="copy" selected>copy</option><option value="unzip">unzip</option>' +
+    '<option value="msi">msi</option>' +
     '<option value="appx">appx</option><option value="cmd">cmd</option>' +
     '<option value="powershell">powershell</option><option value="exe">exe</option></select></label>' +
     '<label><span class="lbl">Description</span><input type="text" name="step_' + idx + '_desc"></label>' +
     '<button type="button" class="danger" onclick="this.closest(\'.block\').remove()" style="align-self:flex-end">Remove step</button></div>' +
     '<div class="row"><label><span class="lbl">Success codes</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0,3010"></label>' +
     '<label><span class="lbl">On failure</span><select name="step_' + idx + '_continue"><option value="">abort package</option><option value="1">continue</option></select></label></div>' +
-    '<div class="step-copy"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="{payload}"></label>' +
-    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path"></label></div>' +
+    '<div class="step-srcdst"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="{payload}"></label>' +
+    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path"></label>' +
+    '<span class="hint step-srcdst-hint">Source and destination paths. Windows env vars (%ProgramFiles%, %LOCALAPPDATA%, …) are expanded by the agent.</span></div>' +
     '<div class="step-msi" style="display:none"><label><span class="lbl">MSI path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="{payload}"></label>' +
     '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_msi_args"></label></div>' +
     '<div class="step-appx" style="display:none"><label><span class="lbl">APPX path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="{payload}"></label></div>' +
@@ -177,6 +203,7 @@ function addStep(){
     <label><span class="lbl">Type</span>
       <select name="step_{{$i}}_type" onchange="stepTypeChanged(this)">
         <option value="copy"       {{if eq $s.Type "copy"}}selected{{end}}>copy</option>
+        <option value="unzip"      {{if eq $s.Type "unzip"}}selected{{end}}>unzip</option>
         <option value="msi"        {{if eq $s.Type "msi"}}selected{{end}}>msi</option>
         <option value="appx"       {{if eq $s.Type "appx"}}selected{{end}}>appx / msix</option>
         <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>cmd</option>
@@ -196,9 +223,10 @@ function addStep(){
       </select>
     </label>
   </div>
-  <div class="step-copy" {{if ne $s.Type "copy"}}style="display:none"{{end}}>
+  <div class="step-srcdst" {{if and (ne $s.Type "copy") (ne $s.Type "unzip")}}style="display:none"{{end}}>
     <label><span class="lbl">Source path</span><input type="text" name="step_{{$i}}_source_path" value="{{$s.SourcePath}}" placeholder="{payload} or C:\src\…"></label>
     <label><span class="lbl">Destination path</span><input type="text" name="step_{{$i}}_destination_path" value="{{$s.DestinationPath}}"></label>
+    <span class="hint step-srcdst-hint">{{if eq $s.Type "unzip"}}Source: the .zip file (use <code>{payload}</code> when uploading the zip). Destination: the directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).{{else}}Source and destination paths. Windows env vars (<code>%ProgramFiles%</code>, <code>%LOCALAPPDATA%</code>, …) are expanded by the agent.{{end}}</span>
   </div>
   <div class="step-msi" {{if ne $s.Type "msi"}}style="display:none"{{end}}>
     <label><span class="lbl">MSI path</span><input type="text" name="step_{{$i}}_msi_path" value="{{$s.MSIPath}}" placeholder="{payload}"></label>

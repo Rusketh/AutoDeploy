@@ -72,14 +72,18 @@ func (r DetectionRule) Validate() error {
 
 // InstallStep is one ordered, typed action.
 type InstallStep struct {
-	Type        string `json:"type"` // "copy" | "msi" | "appx" | "cmd" | "powershell" | "exe"
+	Type        string `json:"type"` // "copy" | "unzip" | "msi" | "appx" | "cmd" | "powershell" | "exe"
 	Description string `json:"description,omitempty"`
 
 	// Per-step result handling.
 	SuccessCodes      []int `json:"success_codes,omitempty"`        // default [0]
 	ContinueOnFailure bool  `json:"continue_on_failure,omitempty"`  // default false (abort)
 
-	// copy.
+	// copy and unzip both source from one path and write to another;
+	// reusing SourcePath/DestinationPath keeps the schema flat. unzip
+	// reads SourcePath as the .zip file and extracts every entry
+	// under DestinationPath, refusing entries whose resolved path
+	// escapes DestinationPath (zip-slip defence).
 	SourcePath      string `json:"source_path,omitempty"`
 	DestinationPath string `json:"destination_path,omitempty"`
 
@@ -105,6 +109,10 @@ func (s InstallStep) Validate() error {
 		if s.SourcePath == "" || s.DestinationPath == "" {
 			return fmt.Errorf("copy step: source_path and destination_path required")
 		}
+	case "unzip":
+		if s.SourcePath == "" || s.DestinationPath == "" {
+			return fmt.Errorf("unzip step: source_path (the .zip) and destination_path (the extract root) required")
+		}
 	case "msi":
 		if s.MSIPath == "" {
 			return fmt.Errorf("msi step: msi_path required")
@@ -122,7 +130,7 @@ func (s InstallStep) Validate() error {
 			return fmt.Errorf("exe step: exe_path required")
 		}
 	default:
-		return fmt.Errorf("unknown step type %q (allowed: copy, msi, appx, cmd, powershell, exe)", s.Type)
+		return fmt.Errorf("unknown step type %q (allowed: copy, unzip, msi, appx, cmd, powershell, exe)", s.Type)
 	}
 	return nil
 }

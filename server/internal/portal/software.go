@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ func init() {
 		post("/portal/software/{id}", softwareUpdate(r))
 		post("/portal/software/{id}/delete", softwareDelete(r))
 		post("/portal/software/{id}/upload", softwareUpload(r))
+		post("/portal/software/{id}/upload/delete", softwareUploadDelete(r))
 	}
 }
 
@@ -285,6 +287,45 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes.", n))
 			}
 			break
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+	}
+}
+
+// softwareUploadDelete removes the uploaded installer blob without
+// deleting the SoftwarePackage row -- so the detection rules and
+// install steps the operator already authored survive a re-upload.
+// Returning to the edit page leaves the operator one click away
+// from uploading the replacement file.
+func softwareUploadDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		pkg, err := r.Software.Get(req.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if pkg.StoragePath == "" {
+			flash(w, "warn", "No installer uploaded; nothing to delete.")
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		// Wipe the blob first; if the FS remove succeeds but the
+		// row update fails the operator gets an orphaned row that
+		// re-upload will reuse, which is the correct lesser of two
+		// evils (vs. an orphaned blob the portal would never show).
+		if err := r.Blobs.Remove(pkg.StoragePath); err != nil && !os.IsNotExist(err) {
+			flash(w, "err", "Remove blob: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		oldPath := pkg.StoragePath
+		pkg.StoragePath = ""
+		pkg.SizeBytes = 0
+		if err := r.Software.Update(req.Context(), pkg); err != nil {
+			flash(w, "err", "Clear row: "+err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("Removed installer payload (%s).", oldPath))
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 	}
