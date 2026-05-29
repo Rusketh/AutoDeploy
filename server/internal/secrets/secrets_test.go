@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,14 +34,23 @@ func TestTamperingRejected(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := Open("", filepath.Join(dir, "k.bin"))
 	ct, _ := b.Encrypt("x")
-	// Flip a byte (in the base64 alphabet).
-	mangled := []byte(ct)
-	if mangled[len(mangled)-2] == 'A' {
-		mangled[len(mangled)-2] = 'B'
-	} else {
-		mangled[len(mangled)-2] = 'A'
+	// Corrupt a byte in the binary ciphertext, not the base64
+	// envelope. The previous form -- mutating ct[len-2] from 'A' to
+	// 'B' or vice versa -- was a ~6% flake: in a StdEncoding string
+	// that ends in one '=' of padding, the second-to-last char's low
+	// 2 bits are padding bits. When the original char happened to
+	// fall in 'A'..'D' (high 4 bits zero) the test only flipped a
+	// padding bit, the decoded byte stream was identical, AEAD
+	// authentication passed, and the test failed with err=nil.
+	// Round-tripping through binary makes the corruption
+	// unambiguous: we flip a bit on the AEAD tag.
+	raw, err := base64.StdEncoding.DecodeString(ct)
+	if err != nil {
+		t.Fatalf("decode original ciphertext: %v", err)
 	}
-	if _, err := b.Decrypt(string(mangled)); err != ErrTampered {
+	raw[len(raw)-1] ^= 0x01
+	mangled := base64.StdEncoding.EncodeToString(raw)
+	if _, err := b.Decrypt(mangled); err != ErrTampered {
 		t.Errorf("expected ErrTampered, got %v", err)
 	}
 }
