@@ -1,0 +1,188 @@
+name: Build iPXE binaries
+
+# Builds iPXE chainloader binaries with a universal embedded boot
+# script that chains to the AutoDeploy server identified by the
+# DHCP next-server option. One binary works for every AutoDeploy
+# install -- no per-install URL bake-in needed.
+#
+# Triggers:
+#   - workflow_dispatch    (build on demand)
+#   - release: published   (build when a release goes out, then
+#                          attach the binaries to it)
+#
+# Outputs:
+#   - undionly.kpxe        legacy BIOS chainload
+#   - ipxe.pxe             legacy BIOS alternative
+#   - ipxe.efi             UEFI x64
+#   - snponly.efi          UEFI x64, SNP-only driver (fallback for
+#                          some NICs / hypervisors that ipxe.efi
+#                          can't bring up)
+#   - ipxe-arm64.efi       UEFI arm64
+#   - <name>.sha256        sha256 sidecar per binary
+#
+# Each binary has the same embedded script baked in. The script
+# (a) inherits the firmware DHCP exchange so it doesn't need to
+# re-DHCP on flaky synthetic NICs (Hyper-V Gen2), (b) chains to
+# the AutoDeploy server at ${next-server}, (c) drops to an iPXE
+# shell with a friendly message on failure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipxe_ref:
+        description: "iPXE git ref to build (default: master)"
+        required: false
+        default: "master"
+  release:
+    types: [published]
+
+permissions:
+  contents: write    # to attach the binaries to the release
+
+jobs:
+  build:
+    name: Build iPXE
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          # build-essential: gcc, g++, make, binutils
+          # gcc-multilib:    32-bit support for BIOS builds (-m32)
+          # liblzma-dev:     compression at link time
+          # gcc-aarch64-linux-gnu: cross-compiler for arm64-efi
+          # mtools, syslinux-utils, isolinux: only needed for iso/disk
+          #                                   targets; harmless extras
+          # perl, git:       iPXE source tooling + clone
+          sudo apt-get install -y \
+              build-essential gcc-multilib liblzma-dev \
+              gcc-aarch64-linux-gnu \
+              mtools syslinux-utils isolinux \
+              perl git
+
+      - name: Clone iPXE
+        env:
+          REF: ${{ github.event.inputs.ipxe_ref || 'master' }}
+        run: |
+          git clone --depth 1 --branch "$REF" \
+              https://github.com/ipxe/ipxe.git ipxe-src
+          ( cd ipxe-src && git rev-parse HEAD > ../IPXE_REVISION )
+          echo "iPXE revision: $(cat IPXE_REVISION)"
+
+      - name: Write embedded boot script
+        run: |
+          # Universal embedded bootstrap. Tries the common AutoDeploy
+          # bind addresses in order. ${next-server} is the DHCP option
+          # 66 value -- the operator already points this at the
+          # AutoDeploy host, so we don't need to bake any URL.
+          #
+          # Notes:
+          # - ifstat skipped if no link is up (e.g. iPXE hasn't
+          #   completed DHCP). We try chain anyway -- iPXE inherits
+          #   the firmware PXE DHCP lease, so ${next-server} is set
+          #   even when iPXE's own dhcp call fails (Hyper-V Gen2
+          #   synthetic-NIC SNP wrapper quirk).
+          # - ||  on each line is iPXE syntax for "continue on
+          #   failure"; the last 'shell' is the safety net.
+          cat > autoexec.ipxe <<'EOF'
+          #!ipxe
+          :start
+          echo
+          echo === AutoDeploy bootstrap (embedded) ===
+          echo iPXE ${version}, building since ${buildarch}
+          isset ${next-server} || dhcp net0 ||
+          echo Next-server (DHCP option 66): ${next-server}
+          isset ${next-server} || goto noserver
+          echo Trying http://${next-server}:8080/ipxe/boot.ipxe ...
+          chain --replace --autofree http://${next-server}:8080/ipxe/boot.ipxe ||
+          echo Trying http://${next-server}/ipxe/boot.ipxe ...
+          chain --replace --autofree http://${next-server}/ipxe/boot.ipxe ||
+          echo Trying https://${next-server}/ipxe/boot.ipxe ...
+          chain --replace --autofree https://${next-server}/ipxe/boot.ipxe ||
+          goto failed
+          :noserver
+          echo
+          echo ERROR: DHCP did not provide next-server. Configure your
+          echo        DHCP to set option 66 (TFTP server) to the
+          echo        AutoDeploy host IP.
+          goto failed
+          :failed
+          echo
+          echo Could not reach AutoDeploy. From here you can:
+          echo   chain http://YOUR-SERVER-IP:8080/ipxe/boot.ipxe
+          echo or check the AutoDeploy server is up.
+          echo
+          shell
+          EOF
+          echo "Embedded script:"
+          sed 's/^/  /' < autoexec.ipxe
+
+      - name: Build BIOS + EFI binaries
+        run: |
+          cd ipxe-src/src
+          EMBED=../../autoexec.ipxe
+          set +e   # don't abort on partial failure -- report at the end
+
+          declare -a TARGETS=(
+              "bin/undionly.kpxe:undionly.kpxe::"
+              "bin/ipxe.pxe:ipxe.pxe::"
+              "bin-x86_64-efi/ipxe.efi:ipxe.efi::"
+              "bin-x86_64-efi/snponly.efi:snponly.efi::"
+              "bin-arm64-efi/ipxe.efi:ipxe-arm64.efi:CROSS_COMPILE=aarch64-linux-gnu-:"
+          )
+          mkdir -p ../../ipxe-out
+          failed=0
+          for spec in "${TARGETS[@]}"; do
+              IFS=: read -r src dst cross _ <<< "$spec"
+              echo "::group::Build $src -> $dst"
+              # shellcheck disable=SC2086
+              make $cross "$src" EMBED="$EMBED" 2>&1 | tail -200
+              status=${PIPESTATUS[0]}
+              if [ $status -eq 0 ] && [ -f "$src" ]; then
+                  cp "$src" "../../ipxe-out/$dst"
+                  echo "::endgroup::"
+                  echo "OK: $dst ($(stat -c%s "$src") bytes)"
+              else
+                  echo "::endgroup::"
+                  echo "::warning::Build failed for $src"
+                  failed=$((failed+1))
+              fi
+          done
+          echo "Built $((${#TARGETS[@]} - failed)) / ${#TARGETS[@]} targets"
+          # Fail only if no target built -- partial success is OK.
+          if [ "$failed" -eq "${#TARGETS[@]}" ]; then
+              echo "::error::No iPXE targets built"
+              exit 1
+          fi
+
+      - name: Compute SHA-256 sidecars
+        run: |
+          cd ipxe-out
+          for f in *; do
+              sha256sum "$f" > "$f.sha256"
+          done
+          ls -la
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipxe-binaries
+          path: ipxe-out/*
+          if-no-files-found: error
+
+      - name: Attach to release (if this is a release event)
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Re-upload the binaries as release assets. gh release upload
+          # accepts a glob; --clobber lets re-runs replace existing
+          # assets so a manual re-build can fix a botched release
+          # without deleting and re-creating it.
+          gh release upload "${{ github.event.release.tag_name }}" \
+              ipxe-out/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          echo "::notice::Attached iPXE binaries to release ${{ github.event.release.tag_name }}"
