@@ -392,12 +392,15 @@ function addLA(){
 .unattend-shell { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; align-items: start; }
 .unattend-toc {
   position: sticky; top: 1rem;
-  background: var(--row); border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.75rem; display: flex; flex-direction: column; gap: 0.2rem;
+  /* Use theme-aware tokens so this works in dark mode. The earlier
+   * var(--row) and var(--muted) referenced names that don't exist
+   * in style.css, falling through to transparent / browser default. */
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: var(--sp-3); display: flex; flex-direction: column; gap: 0.2rem;
 }
-.unattend-toc strong { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.25rem; }
+.unattend-toc strong { font-size: 0.85rem; color: var(--fg-muted); margin-bottom: 0.25rem; }
 .unattend-toc a { color: var(--fg); text-decoration: none; font-size: 0.9rem; padding: 0.25rem 0.4rem; border-radius: 3px; }
-.unattend-toc a:hover { background: #eef1f5; color: var(--accent); }
+.unattend-toc a:hover { background: var(--accent-soft); color: var(--accent); }
 .unattend-shell form.std { max-width: none; }
 .checkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; }
 .rep-wide { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1.2fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
