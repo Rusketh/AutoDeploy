@@ -26,7 +26,10 @@
       {{end}}
     </div>
     <div class="right" style="display:flex;gap:var(--sp-2);align-items:center;">
-      {{if and .Data.LatestServerVersion (ne .Data.LatestServerVersion .Data.ServerVersion)}}
+      {{if eq .Data.UpdateState "up_to_date"}}
+        <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
+        <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Release notes</a>
+      {{else if eq .Data.UpdateState "older"}}
         {{if .Data.UpdaterAvailable}}
         <button type="button" class="btn" id="server-update-btn"
                 data-target-tag="{{.Data.LatestServerVersion}}"
@@ -35,13 +38,33 @@
         </button>
         {{end}}
         <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Release notes</a>
-      {{else if .Data.LatestServerVersion}}
-        <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
+      {{else if eq .Data.UpdateState "ahead"}}
+        <span class="badge accent">ahead of latest release</span>
+        <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Latest release</a>
+      {{else if eq .Data.UpdateState "pre_release"}}
+        <span class="badge warn">pre-release build</span>
+        {{if .Data.UpdaterAvailable}}
+        <button type="button" class="btn ghost" id="server-update-btn"
+                data-target-tag="{{.Data.LatestServerVersion}}"
+                data-confirm="Replace this pre-release build with the latest tagged release {{.Data.LatestServerVersion}}? The dev binary will be lost.">
+          <svg><use href="#i-bolt"/></svg>Install {{.Data.LatestServerVersion}}
+        </button>
+        {{end}}
+        <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Release notes</a>
       {{end}}
     </div>
   </div>
   <div id="server-update-status" hidden style="margin-top:var(--sp-3);"></div>
-  {{if .Data.UpdaterAvailable}}
+  {{if eq .Data.UpdateState "pre_release"}}
+  <p class="hint" style="margin-top:var(--sp-3);">
+    The running version <code>{{.Data.ServerVersion}}</code> doesn't parse as a
+    semver release tag, so this is almost certainly a build-from-source
+    of a feature branch. The latest tagged release is
+    <code>{{.Data.LatestServerVersion}}</code>; installing it would replace this
+    dev build. Browse the release notes to compare the two before
+    clicking.
+  </p>
+  {{else if .Data.UpdaterAvailable}}
   <p class="hint" style="margin-top:var(--sp-3);">
     The <strong>Update</strong> button runs <code>{{.Data.UpdaterPath}}</code> via the
     narrowly-scoped sudoers rule the install script created. The helper
@@ -124,9 +147,79 @@
     });
   }
 })();
+
+(function () {
+  var btn = document.getElementById('install-agent-btn');
+  if (!btn) return;
+  var osSel = document.getElementById('install-agent-os');
+  var archSel = document.getElementById('install-agent-arch');
+  var status = document.getElementById('install-agent-status');
+  btn.addEventListener('click', function () {
+    var os = osSel.value, arch = archSel.value;
+    btn.disabled = true;
+    var original = btn.innerHTML;
+    btn.textContent = 'Fetching…';
+    status.hidden = false;
+    status.className = 'small muted';
+    status.textContent = 'Downloading agent for ' + os + '/' + arch + '…';
+    fetch('/api/v1/server/install-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ os: os, arch: arch })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        throw new Error((res.body && res.body.error) || 'unknown error');
+      }
+      status.className = 'small';
+      status.style.color = 'var(--good)';
+      status.innerHTML = 'Installed <code>' + escapeHTML(res.body.filename) +
+        '</code> from <code>' + escapeHTML(res.body.tag) +
+        '</code> — sha256 <code>' + escapeHTML((res.body.sha256 || '').slice(0, 12)) + '…</code>. Reloading…';
+      setTimeout(function () { window.location.reload(); }, 1200);
+    }).catch(function (err) {
+      status.className = 'small';
+      status.style.color = 'var(--bad)';
+      status.textContent = 'Install failed: ' + (err && err.message ? err.message : err);
+      btn.disabled = false;
+      btn.innerHTML = original;
+    });
+  });
+  function escapeHTML(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+    });
+  }
+})();
 </script>
 
 <div class="section-head"><h3>Agents</h3><div class="line"></div></div>
+
+<div class="card spaced">
+  <div class="flex wrap" style="gap: var(--sp-3); align-items: center;">
+    <div style="flex:1;">
+      <strong>Install or refresh agent binary</strong>
+      <p class="small muted" style="margin:0;">Downloads the agent for the selected platform from the GitHub release of {{if .Data.LatestServerVersion}}<code>{{.Data.LatestServerVersion}}</code>{{else}}the latest published tag{{end}} into <code>{{.Data.UpdaterPath}}</code>'s downloads directory, then SHA-256-verifies it. Use this when you built the server from source (the install script's auto-fetch only fires during a packaged install).</p>
+    </div>
+    <div style="display:flex;gap:var(--sp-2);align-items:center;">
+      <select id="install-agent-os" aria-label="agent OS">
+        <option value="windows" {{if eq .Data.AgentForOS "windows"}}selected{{end}}>windows</option>
+        <option value="linux"   {{if eq .Data.AgentForOS "linux"}}selected{{end}}>linux</option>
+      </select>
+      <select id="install-agent-arch" aria-label="agent arch">
+        <option value="amd64" {{if eq .Data.AgentForArch "amd64"}}selected{{end}}>amd64</option>
+        <option value="arm64" {{if eq .Data.AgentForArch "arm64"}}selected{{end}}>arm64</option>
+      </select>
+      <button type="button" class="btn" id="install-agent-btn"
+              data-agent-missing="{{if .Data.AgentMissing}}1{{end}}">
+        <svg><use href="#i-box"/></svg>{{if .Data.AgentMissing}}Install agent{{else}}Refresh agent{{end}}
+      </button>
+    </div>
+  </div>
+  <div id="install-agent-status" class="small muted" hidden style="margin-top:var(--sp-3);"></div>
+</div>
+
 {{if .Data.AgentAvailable}}
 <p class="muted small">Resident-mode agents poll <code>/api/v1/agent/update-info</code> on every check-in. The server compares their reported version against the highest version available below for that <code>os/arch</code> and -- if newer -- hands the agent the download URL and the SHA-256. The agent verifies the hash, swaps the binary in place, and restarts.</p>
 <div class="tablewrap">

@@ -1,8 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -59,6 +63,228 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("POST /api/v1/server/update", handleServerUpdate(r))
+	mux.HandleFunc("POST /api/v1/server/install-agent", handleInstallAgent(r))
+}
+
+// handleInstallAgent downloads the requested agent binary + sidecars
+// from a GitHub release into the operator-configured downloads dir.
+// Used by the Settings -> Updates page's "Install agent" button when
+// the operator built the server from source and never ran
+// install-linux.sh's auto-fetch.
+//
+// Request body: {"os":"windows","arch":"amd64","tag":"v0.1.9"}.
+// All three are optional:
+//   - tag: defaults to "latest" via the GitHub releases API.
+//   - os/arch: default to windows/amd64 (the agent's primary target).
+//
+// On success returns the resolved tag, filename, and the SHA-256
+// the agent will be verified against, so the page can render an
+// "Installed v0.1.9, sha256 abc1234..." confirmation.
+func handleInstallAgent(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			OS   string `json:"os"`
+			Arch string `json:"arch"`
+			Tag  string `json:"tag"`
+		}
+		_ = decodeJSON(req, &body)
+		if body.OS == "" {
+			body.OS = "windows"
+		}
+		if body.Arch == "" {
+			body.Arch = "amd64"
+		}
+		// Same vMAJOR.MINOR.PATCH gate the in-place update path uses
+		// so an attacker can't smuggle a path-traversal-y "tag" into
+		// the downloaded URL.
+		if body.Tag != "" && !looksLikeSemver(body.Tag) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "tag must look like vMAJOR.MINOR.PATCH",
+			})
+			return
+		}
+		// Same OS/Arch whitelist so the page can't ask the server
+		// to download a "../../etc/passwd" archive.
+		if !isPlainIdent(body.OS) || !isPlainIdent(body.Arch) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "os and arch must be ASCII identifiers (a-z, 0-9, dash)",
+			})
+			return
+		}
+		dl := downloadsDirFor(r)
+		if dl == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "downloads directory is not configured",
+			})
+			return
+		}
+		// Resolve "latest" if no explicit tag came in.
+		tag := body.Tag
+		if tag == "" {
+			latest, err := resolveLatestReleaseTag(req.Context())
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{
+					"error": "failed to resolve latest release: " + err.Error(),
+				})
+				return
+			}
+			tag = latest
+		}
+		name := agentReleaseFilename(body.OS, body.Arch)
+		base := "https://github.com/Rusketh/AutoDeploy/releases/download/" + tag + "/"
+		hash, err := fetchAndVerifyRelease(req.Context(), base, name, dl)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error": "fetch failed: " + err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":   "installed",
+			"tag":      tag,
+			"filename": name,
+			"sha256":   hash,
+			"path":     filepath.Join(dl, name),
+		})
+	}
+}
+
+// isPlainIdent returns true when s is a non-empty string of
+// lower-case ASCII letters, digits and dashes. Restricts what we'll
+// concatenate into a URL or filesystem path.
+func isPlainIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// agentReleaseFilename matches the release-asset naming convention.
+// Centralised so handleInstallAgent and the agent-update-info
+// scanner can't drift apart on the trailing ".exe" detail.
+func agentReleaseFilename(goos, goarch string) string {
+	if goos == "windows" {
+		return "autodeploy-agent-" + goos + "-" + goarch + ".exe"
+	}
+	return "autodeploy-agent-" + goos + "-" + goarch
+}
+
+// resolveLatestReleaseTag returns the tag_name of the most recent
+// release. Uses the unauthenticated public API path so air-gapped
+// installs fail predictably.
+func resolveLatestReleaseTag(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://api.github.com/repos/Rusketh/AutoDeploy/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "autodeploy-server")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("releases/latest returned %s", resp.Status)
+	}
+	var body struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if !looksLikeSemver(body.TagName) {
+		return "", fmt.Errorf("unexpected tag_name %q", body.TagName)
+	}
+	return body.TagName, nil
+}
+
+// fetchAndVerifyRelease downloads the binary + its .sha256 sidecar
+// (and the optional .version sidecar) into dlDir, verifies the
+// binary's SHA-256 against the sidecar, and returns the verified
+// hex hash. On any verification failure the binary is removed so a
+// retry has a clean slate.
+func fetchAndVerifyRelease(ctx context.Context, urlBase, filename, dlDir string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Minute}
+
+	binPath := filepath.Join(dlDir, filename)
+	if err := fetchFile(ctx, client, urlBase+filename, binPath); err != nil {
+		return "", err
+	}
+	shaPath := binPath + ".sha256"
+	if err := fetchFile(ctx, client, urlBase+filename+".sha256", shaPath); err != nil {
+		_ = os.Remove(binPath)
+		return "", fmt.Errorf("fetch .sha256: %w", err)
+	}
+	// .version sidecar is optional pre-v0.1.3, treat its absence as
+	// harmless. Don't fail the whole install if it's missing.
+	verPath := binPath + ".version"
+	if err := fetchFile(ctx, client, urlBase+filename+".version", verPath); err != nil {
+		_ = os.Remove(verPath)
+	}
+
+	expected := readSHA256Sidecar(shaPath, filename)
+	if expected == "" {
+		_ = os.Remove(binPath)
+		_ = os.Remove(shaPath)
+		return "", errors.New("could not parse expected SHA-256 from sidecar")
+	}
+	got := computeSHA256(binPath)
+	if got != expected {
+		_ = os.Remove(binPath)
+		_ = os.Remove(shaPath)
+		_ = os.Remove(verPath)
+		return "", fmt.Errorf("SHA-256 mismatch (got %s, want %s)", got, expected)
+	}
+	return got, nil
+}
+
+func fetchFile(ctx context.Context, client *http.Client, url, dst string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "autodeploy-server")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".download-*")
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // handleServerUpdate triggers the in-place upgrade helper that the
