@@ -33,7 +33,7 @@
 
 {{if not $new}}
 <h3>Installer payload</h3>
-<form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data">
+<form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
   <label><span class="lbl">Installer file (.msi, .exe, .appx, .zip…)</span><input type="file" name="file" required></label>
   <div class="actions"><button type="submit">Upload</button></div>
 </form>

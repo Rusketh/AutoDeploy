@@ -35,7 +35,7 @@
 {{if not $new}}
 <div class="section-head"><h3>Payload</h3><div class="line"></div></div>
 
-<form class="std" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data">
+<form class="std" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
   <label><span class="lbl">Upload ISO file</span>
     <input type="file" name="file" accept=".iso" required>
     <span class="hint">Streamed to disk — large ISOs are fine. Click Upload to commit.</span>

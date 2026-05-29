@@ -389,6 +389,167 @@
     return dlg;
   }
 
+  // ---- Upload progress ----------------------------------------------
+  // Opt-in: <form data-upload-progress ...> with a <input type=file>
+  // inside. We hijack submit, send via XHR (NOT fetch, since fetch
+  // doesn't expose upload progress events), update an inline
+  // <progress> bar + label, and on 2xx follow the redirect / reload.
+  // Big payloads (multi-GB ISOs) are the main use case so the bar's
+  // value is real-time, not a fake animation.
+  document.addEventListener('submit', function (e) {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (!form.hasAttribute('data-upload-progress')) return;
+    const fileInput = form.querySelector('input[type=file]');
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+      // Let the browser handle the "required" validation message.
+      return;
+    }
+    e.preventDefault();
+    startUpload(form);
+  });
+
+  function startUpload(form) {
+    const fileInput = form.querySelector('input[type=file]');
+    const file = fileInput.files[0];
+    const ui = ensureProgressUI(form);
+    ui.label.textContent = file.name + ' — preparing…';
+    ui.bar.value = 0;
+    ui.bar.max = 100;
+    ui.wrap.hidden = false;
+    ui.error.hidden = true;
+    setSubmitDisabled(form, true);
+
+    const fd = new FormData(form);
+    const xhr = new XMLHttpRequest();
+    xhr.open(form.method || 'POST', form.action, true);
+    // Tell the server we want JSON if it has a JSON path; harmless
+    // when the response is HTML.
+    xhr.setRequestHeader('Accept', 'text/html, application/json');
+
+    const startedAt = Date.now();
+    xhr.upload.addEventListener('progress', function (evt) {
+      if (!evt.lengthComputable) {
+        ui.label.textContent = file.name + ' — uploading ' + formatBytes(evt.loaded) + '…';
+        return;
+      }
+      const pct = (evt.loaded / evt.total) * 100;
+      ui.bar.value = pct;
+      const secs = Math.max(0.001, (Date.now() - startedAt) / 1000);
+      const rate = evt.loaded / secs; // bytes/sec
+      const eta = (evt.total - evt.loaded) / Math.max(rate, 1);
+      ui.label.textContent =
+        file.name + ' — ' +
+        formatBytes(evt.loaded) + ' / ' + formatBytes(evt.total) +
+        ' (' + pct.toFixed(1) + '%, ' + formatBytes(rate) + '/s, ' +
+        formatDuration(eta) + ' left)';
+    });
+
+    xhr.upload.addEventListener('load', function () {
+      ui.label.textContent = file.name + ' — finalising on server…';
+    });
+
+    xhr.addEventListener('load', function () {
+      setSubmitDisabled(form, false);
+      if (xhr.status >= 200 && xhr.status < 400) {
+        // Successful upload. The handler usually returns a redirect
+        // to the edit page; XHR followed it transparently and we
+        // landed on the final URL via xhr.responseURL. Reload to
+        // that URL so the operator sees the post-upload state.
+        ui.bar.value = 100;
+        ui.label.textContent = file.name + ' — done. Reloading…';
+        const dst = xhr.responseURL || window.location.href;
+        window.location.assign(dst);
+        return;
+      }
+      ui.error.hidden = false;
+      ui.error.textContent =
+        'Upload failed: HTTP ' + xhr.status + (xhr.statusText ? ' ' + xhr.statusText : '') +
+        (xhr.responseText ? ' — ' + truncate(xhr.responseText, 240) : '');
+    });
+
+    xhr.addEventListener('error', function () {
+      setSubmitDisabled(form, false);
+      ui.error.hidden = false;
+      ui.error.textContent = 'Upload failed: network error. The server may have closed the connection -- check journalctl on the server.';
+    });
+
+    xhr.addEventListener('abort', function () {
+      setSubmitDisabled(form, false);
+      ui.error.hidden = false;
+      ui.error.textContent = 'Upload aborted.';
+    });
+
+    xhr.send(fd);
+    ui.abortBtn.onclick = function () { xhr.abort(); };
+  }
+
+  // ensureProgressUI returns the progress-bar widget for a form,
+  // creating it on first call. The widget is appended at the end of
+  // the form so the markup stays simple in the templates: just slap
+  // data-upload-progress on the form and we do the rest.
+  function ensureProgressUI(form) {
+    let wrap = form.querySelector('.upload-progress');
+    if (wrap) {
+      return {
+        wrap,
+        bar: wrap.querySelector('progress'),
+        label: wrap.querySelector('.upload-progress-label'),
+        error: wrap.querySelector('.upload-progress-error'),
+        abortBtn: wrap.querySelector('.upload-progress-abort'),
+      };
+    }
+    wrap = document.createElement('div');
+    wrap.className = 'upload-progress';
+    wrap.hidden = true;
+    wrap.innerHTML =
+      '<div class="upload-progress-row">' +
+        '<progress class="upload-progress-bar" value="0" max="100"></progress>' +
+        '<button type="button" class="btn ghost sm upload-progress-abort">Cancel</button>' +
+      '</div>' +
+      '<div class="upload-progress-label small muted"></div>' +
+      '<div class="upload-progress-error small warn" hidden></div>';
+    form.appendChild(wrap);
+    return {
+      wrap,
+      bar: wrap.querySelector('progress'),
+      label: wrap.querySelector('.upload-progress-label'),
+      error: wrap.querySelector('.upload-progress-error'),
+      abortBtn: wrap.querySelector('.upload-progress-abort'),
+    };
+  }
+
+  function setSubmitDisabled(form, disabled) {
+    form.querySelectorAll('button[type=submit], input[type=submit]').forEach(function (b) {
+      b.disabled = disabled;
+    });
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n.toFixed(0) + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KiB';
+    if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MiB';
+    return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GiB';
+  }
+
+  function formatDuration(secs) {
+    if (!isFinite(secs) || secs < 0) return '?';
+    if (secs < 60) return secs.toFixed(0) + 's';
+    if (secs < 3600) {
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return m + 'm ' + s + 's';
+    }
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return h + 'h ' + m + 'm';
+  }
+
+  function truncate(s, n) {
+    s = String(s).replace(/\s+/g, ' ').trim();
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  }
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
