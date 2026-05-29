@@ -91,6 +91,59 @@ for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm
     done
 done
 
+# For the Windows agent specifically: most operators only download the
+# server binary + extras.tar.gz, so the agent isn't sitting on disk for
+# the seeding loop above to find. Fetch it from the GitHub release that
+# matches the server binary's embedded version. This means the portal's
+# Downloads page works end-to-end after `install-linux.sh` with zero
+# manual steps -- operator goes straight to imaging.
+#
+# Failure here is non-fatal: an air-gapped install just won't have the
+# agent ready, the operator can drop it in by hand later.
+INSTALLED_VERSION=$(/usr/local/bin/autodeploy-server --version 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
+if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "dev" ]; then
+    GH_BASE="https://github.com/Rusketh/AutoDeploy/releases/download/$INSTALLED_VERSION"
+    # The agent is the only binary every install needs; boot client is
+    # optional (only needed if you'll PXE-boot bare metal). Fetch both
+    # but treat the agent as the primary case.
+    for fetch in autodeploy-agent-windows-amd64.exe \
+                 autodeploy-boot-linux-amd64; do
+        if [ -f "$DATA_DIR/downloads/$fetch" ]; then continue; fi
+        echo "== Fetching $fetch from $INSTALLED_VERSION =="
+        ok=1
+        for asset in "$fetch" "$fetch.sha256" "$fetch.version"; do
+            if ! curl -sSfL --connect-timeout 10 --retry 2 \
+                    -o "$DATA_DIR/downloads/$asset" \
+                    "$GH_BASE/$asset"; then
+                rm -f "$DATA_DIR/downloads/$asset"
+                # .version sidecar is optional pre-v0.1.3; treat its
+                # absence as harmless but a missing binary or .sha256
+                # means the whole fetch is no good.
+                case "$asset" in
+                    *.version) : ;;
+                    *) ok=0; break ;;
+                esac
+            fi
+        done
+        if [ "$ok" -eq 1 ] && [ -f "$DATA_DIR/downloads/$fetch.sha256" ]; then
+            if ( cd "$DATA_DIR/downloads" && sha256sum -c "$fetch.sha256" --quiet >/dev/null 2>&1 ); then
+                chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch" \
+                    "$DATA_DIR/downloads/$fetch.sha256" 2>/dev/null || true
+                [ -f "$DATA_DIR/downloads/$fetch.version" ] && \
+                    chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch.version" 2>/dev/null || true
+                echo "    fetched $DATA_DIR/downloads/$fetch (sha256 verified)"
+            else
+                echo "    WARN: SHA-256 mismatch for $fetch; removing" >&2
+                rm -f "$DATA_DIR/downloads/$fetch" \
+                      "$DATA_DIR/downloads/$fetch.sha256" \
+                      "$DATA_DIR/downloads/$fetch.version"
+            fi
+        elif [ "$ok" -eq 0 ]; then
+            echo "    WARN: failed to fetch $fetch from $GH_BASE -- offline install? Drop the binary into $DATA_DIR/downloads/ by hand." >&2
+        fi
+    done
+fi
+
 # Install the systemd unit and example env file.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 UNIT_SRC="$HERE/systemd/autodeploy.service"
@@ -116,6 +169,34 @@ if [ "$FETCH_IPXE" -eq 1 ]; then
         fi
         chown -R autodeploy:autodeploy "$DATA_DIR/ipxe"
     fi
+fi
+
+# Install the in-place upgrade helper and a narrowly-scoped sudoers
+# rule so the portal's "Update server" button can launch it as root
+# without granting the autodeploy user general sudo.
+UPDATE_SRC="$HERE/autodeploy-update-linux.sh"
+if [ -f "$UPDATE_SRC" ]; then
+    echo "== Installing self-update helper =="
+    install -m 0755 "$UPDATE_SRC" /usr/local/sbin/autodeploy-update
+    # The rule is exact: only the specific binary path, only by the
+    # autodeploy user, no password. visudo-validate before writing so
+    # a typo here doesn't lock the operator out of sudo.
+    SUDOERS_TMP=$(mktemp)
+    cat > "$SUDOERS_TMP" <<'EOF'
+# Allow the autodeploy service user to launch the in-place upgrade
+# helper without a password. Scope is intentionally narrow: only this
+# one absolute path is permitted, and only with arguments the portal
+# button supplies. Installed by scripts/install-linux.sh.
+autodeploy ALL=(root) NOPASSWD: /usr/local/sbin/autodeploy-update
+EOF
+    if visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
+        install -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/autodeploy-update
+        echo "    installed /etc/sudoers.d/autodeploy-update"
+    else
+        echo "  WARN: visudo validation failed; not installing sudoers rule" >&2
+        echo "  Drop in by hand later, or update will not work from the portal." >&2
+    fi
+    rm -f "$SUDOERS_TMP"
 fi
 
 systemctl daemon-reload || true

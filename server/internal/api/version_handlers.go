@@ -58,6 +58,102 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/version", handleVersion())
 	mux.HandleFunc("POST /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
+	mux.HandleFunc("POST /api/v1/server/update", handleServerUpdate(r))
+}
+
+// handleServerUpdate triggers the in-place upgrade helper that the
+// install script dropped at /usr/local/sbin/autodeploy-update. The
+// helper is granted passwordless sudo via /etc/sudoers.d/, so the
+// service user (which can't elevate by default) is allowed to launch
+// it but nothing else.
+//
+// The handler returns 202 Accepted immediately and spawns the helper
+// detached -- the script's `systemctl stop autodeploy.service` will
+// take this process down moments later, so we never get to write a
+// "done" response. The portal's button shows a "restarting" indicator
+// and polls /api/v1/version after a few seconds to confirm the new
+// version is live.
+//
+// Optional body: {"tag": "v0.1.5"}. Empty body means "latest".
+func handleServerUpdate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		// Same admin-or-better authorization the rest of /api/v1
+		// requires; the api package's middleware applies before we
+		// land here.
+		var body struct {
+			Tag string `json:"tag"`
+		}
+		_ = decodeJSON(req, &body)
+		// Tag whitelist: only vMAJOR.MINOR.PATCH with an optional
+		// pre-release suffix. Anything else is a non-starter --
+		// shells out via the helper which uses --tag.
+		if body.Tag != "" && !looksLikeSemver(body.Tag) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "tag must look like vMAJOR.MINOR.PATCH",
+			})
+			return
+		}
+		helper := serverUpdateHelperPath()
+		if _, err := os.Stat(helper); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "server update helper is not installed at " + helper +
+					"; the install script must have been run before this button works",
+			})
+			return
+		}
+		// Spawn detached. The helper's first action is
+		// `systemctl stop autodeploy.service`, which will kill us
+		// 50ms from now -- so we set Setsid so the child outlives
+		// our exit, and we don't wait for it.
+		args := []string{"-n", helper}
+		if body.Tag != "" {
+			args = append(args, "--tag", body.Tag)
+		}
+		cmd := execCommand("sudo", args...)
+		// Detach: new session so the child isn't in our process
+		// group and won't take a SIGTERM with us.
+		cmd.SysProcAttr = newDetachedSysProcAttr()
+		if err := cmd.Start(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "failed to start update helper: " + err.Error(),
+			})
+			return
+		}
+		// Release the child so the OS reaps it independently.
+		_ = cmd.Process.Release()
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"status": "update started; the server will restart in a few seconds",
+			"tag":    body.Tag,
+		})
+	}
+}
+
+// looksLikeSemver is the same gate the update helper applies on its
+// --tag argument, mirrored server-side so we don't shell out with a
+// bogus value in the first place.
+func looksLikeSemver(s string) bool {
+	if !strings.HasPrefix(s, "v") {
+		return false
+	}
+	core := s[1:]
+	if i := strings.IndexAny(core, "-+"); i >= 0 {
+		core = core[:i]
+	}
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func handleVersion() http.HandlerFunc {
