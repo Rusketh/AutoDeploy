@@ -50,7 +50,19 @@ type bootFlags struct {
 	site        string
 }
 
+// Version is set at build time via -ldflags
+// "-X main.Version=v0.1.2". The Boot Client logs it on every run so
+// the centralised log search can attribute events to a specific
+// release.
+var Version = "dev"
+
 func main() {
+	for _, a := range os.Args[1:] {
+		if a == "--version" || a == "-version" || a == "-v" {
+			os.Stdout.WriteString(Version + "\n")
+			return
+		}
+	}
 	var f bootFlags
 	flag.StringVar(&f.server, "server", "", "AutoDeploy server base URL")
 	flag.StringVar(&f.sysfs, "sysfs", "/sys/class/dmi/id", "DMI sysfs root")
@@ -90,6 +102,7 @@ func main() {
 		slog.String("product", id.SystemProduct),
 		slog.String("serial", id.SystemSerial),
 		slog.String("cmd", cmd),
+		slog.String("version", Version),
 	)
 
 	switch cmd {

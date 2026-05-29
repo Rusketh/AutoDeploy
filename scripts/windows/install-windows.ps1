@@ -230,6 +230,15 @@ foreach ($name in $candidates) {
                 Copy-Item -LiteralPath $src -Destination $dst -Force
                 Write-Host "    seeded $dst"
             }
+            # Sidecar files (.version, .sha256) drive the agent
+            # auto-update path. Copy them alongside the binary when
+            # they exist in the same release bundle.
+            foreach ($sidecar in @('.version', '.sha256')) {
+                $srcSide = $src + $sidecar
+                if (Test-Path -LiteralPath $srcSide) {
+                    Copy-Item -LiteralPath $srcSide -Destination ($dst + $sidecar) -Force
+                }
+            }
             break
         }
     }

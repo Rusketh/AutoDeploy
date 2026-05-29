@@ -1,0 +1,92 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bolt"/></svg>Updates</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
+<p class="muted" style="max-width:780px;">
+  Compare what's running here against what's published, and see which agent binaries the resident-mode check-in loop will hand to your fleet. Server upgrades are operator-driven (download the new binary and re-run the install script); agents update themselves automatically when a newer version is available in the downloads directory.
+</p>
+
+<div class="section-head"><h3>Server</h3><div class="line"></div></div>
+<div class="card spaced">
+  <div class="flex wrap" style="gap: var(--sp-5); align-items: baseline;">
+    <div>
+      <div class="muted small">Running</div>
+      <div style="font-size: 1.4rem; font-weight: 600;"><code>{{.Data.ServerVersion}}</code></div>
+    </div>
+    <div>
+      <div class="muted small">Latest published</div>
+      {{if .Data.LatestServerVersion}}
+        <div style="font-size: 1.4rem; font-weight: 600;"><code>{{.Data.LatestServerVersion}}</code></div>
+      {{else if .Data.LatestServerError}}
+        <div class="small warn">unknown — {{.Data.LatestServerError}}</div>
+      {{else}}
+        <div class="small muted">no published release yet</div>
+      {{end}}
+    </div>
+    <div class="right">
+      {{if and .Data.LatestServerVersion (ne .Data.LatestServerVersion .Data.ServerVersion)}}
+        <a class="btn" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Open release on GitHub</a>
+      {{else if .Data.LatestServerVersion}}
+        <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
+      {{end}}
+    </div>
+  </div>
+  <p class="hint" style="margin-top:var(--sp-3);">
+    To install a new server build:
+  </p>
+  <ol class="small muted">
+    <li>Download the new <code>autodeploy-server-&lt;os&gt;-&lt;arch&gt;</code> binary from the release page.</li>
+    <li>Place it next to your existing copy and re-run the install script (<code>scripts/install-linux.sh</code> on Linux, <code>scripts/windows/install-windows.ps1</code> on Windows). Both scripts stop the service, swap the binary, and restart -- they're idempotent.</li>
+    <li>The service comes back up on the new version. The portal continues to work.</li>
+  </ol>
+  <p class="small muted">If the install host has no internet access, set <code>AUTODEPLOY_DEV=true</code> on a lab machine to do the download / unpack workflow, then sync the binary to production.</p>
+</div>
+
+<div class="section-head"><h3>Agents</h3><div class="line"></div></div>
+{{if .Data.AgentAvailable}}
+<p class="muted small">Resident-mode agents poll <code>/api/v1/agent/update-info</code> on every check-in. The server compares their reported version against the highest version available below for that <code>os/arch</code> and -- if newer -- hands the agent the download URL and the SHA-256. The agent verifies the hash, swaps the binary in place, and restarts.</p>
+<div class="tablewrap">
+<table data-sortable id="agent-tbl">
+  <thead><tr>
+    <th>File</th>
+    <th>Version</th>
+    <th class="num" data-sort="num">Size</th>
+    <th>SHA-256</th>
+    <th data-sort="num">Modified</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.AgentAvailable}}
+    <tr>
+      <td><code>{{.Filename}}</code></td>
+      <td>{{if .Version}}<span class="badge accent">{{.Version}}</span>{{else}}<span class="badge warn">no .version sidecar</span>{{end}}</td>
+      <td class="num small muted">{{.Size}}</td>
+      <td class="small muted">{{if .SHA256}}<code>{{slice .SHA256 0 12}}…</code><button class="copy" data-copy="{{.SHA256}}" aria-label="Copy SHA-256"><svg><use href="#i-copy"/></svg></button>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{.Modified.Unix}}">{{formatTime .Modified}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-box"/></svg>
+  <h3>No agent binaries staged for distribution</h3>
+  <p>Drop an <code>autodeploy-agent-&lt;os&gt;-&lt;arch&gt;.exe</code> binary plus its <code>.version</code> and <code>.sha256</code> sidecars into the downloads directory and they'll appear here. Agents in resident mode will then auto-update on their next check-in.</p>
+  <p class="small muted">The install scripts seed this directory automatically when the release bundle is unpacked alongside the server binary.</p>
+  <a class="btn" href="/portal/downloads"><svg><use href="#i-box"/></svg>Open Downloads page</a>
+</div>
+{{end}}
+
+<div class="section-head"><h3>How agent self-update works</h3><div class="line"></div></div>
+<ol class="muted">
+  <li>The resident agent calls <code>POST /api/v1/agent/update-info</code> at the end of every check-in, sending its OS, arch and current version.</li>
+  <li>The server scans the downloads directory for <code>autodeploy-agent-&lt;os&gt;-&lt;arch&gt;</code> plus a <code>.version</code> sidecar. If the highest available version is strictly newer than what the agent reports, the response includes a URL and SHA-256.</li>
+  <li>The agent downloads the new binary to a sibling <code>.new</code> file. It refuses to install anything whose SHA-256 doesn't match — the hash is the only authenticator against a tampered binary.</li>
+  <li>The agent writes a small platform-specific updater script (<code>.cmd</code> on Windows, <code>.sh</code> elsewhere) that waits for the agent process to exit, swaps the binary (keeping a <code>.bak</code> for one-step rollback), and relaunches with the same command-line.</li>
+  <li>The agent spawns the updater detached and exits. The script restarts the agent on the new version within seconds.</li>
+  <li>The next agent run cleans up the <code>.bak</code> and the script file.</li>
+</ol>
+<p class="small muted">Pin an agent to its current version by launching it with <code>--no-self-update</code>. Useful for canary testing.</p>
+{{end}}

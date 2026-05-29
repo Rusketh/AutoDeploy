@@ -40,6 +40,9 @@ func init() {
 		// Storage (per-category path overrides)
 		get("/portal/settings/storage", storageForm(r))
 		post("/portal/settings/storage", storageSubmit(r))
+
+		// Updates (server + agent)
+		get("/portal/settings/updates", updatesPage(r))
 	}
 }
 
