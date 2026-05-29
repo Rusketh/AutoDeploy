@@ -1,7 +1,66 @@
 {{define "body"}}
 {{$p := .Data.Pkg}}
 {{$new := .Data.IsNew}}
+{{$files := .Data.Files}}
+{{$hasfiles := gt (len $files) 0}}
 <h2>{{if $new}}New software package{{else}}Edit software package: {{$p.Name}}{{end}}</h2>
+
+{{if not $new}}
+{{/* Payload files sit ABOVE the form because every install-step
+     field below references them by name. Multi-file packages
+     (e.g. setup.exe + config.json + drivers/oem.inf) are first-
+     class -- operators upload each file individually and use bare
+     filenames in install-step paths. The agent downloads every
+     file into a per-package work directory and resolves bare names
+     against it. */}}
+<fieldset style="margin-bottom: var(--sp-4);">
+  <legend>Payload files</legend>
+
+  {{if $hasfiles}}
+  <p class="hint" style="margin-top:0;">
+    The agent downloads <strong>every file below</strong> into a per-package work directory on the target. In your install steps, reference each file by its bare filename (e.g. <code>setup.exe</code>) -- the agent resolves it to the on-disk path automatically.
+  </p>
+  <div class="tablewrap" style="margin-top: var(--sp-3);">
+    <table>
+      <thead><tr><th>Filename</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
+      <tbody>
+        {{range $files}}
+        <tr>
+          <td>
+            <code style="font-size: 0.95rem;">{{.Name}}</code>
+            <button class="copy" data-copy="{{.Name}}" aria-label="Copy filename"><svg><use href="#i-copy"/></svg></button>
+          </td>
+          <td class="num small muted">{{humanBytes .Size}}</td>
+          <td class="small muted">{{relTime .ModTime}}</td>
+          <td class="right">
+            <form method="POST" action="/portal/software/{{int64 $p.ID}}/files/{{.Name}}/delete"
+                  onsubmit="return confirm('Remove {{.Name}} from this package? Detection rules and install steps stay; only this file is deleted.');"
+                  style="display:inline;">
+              <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <form class="std" style="margin-top: var(--sp-3);" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
+    <label><span class="lbl">Add another file</span><input type="file" name="file" required></label>
+    <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
+  </form>
+  {{else}}
+  <div class="empty" style="padding: var(--sp-4) var(--sp-3);">
+    <svg class="empty-icon"><use href="#i-box"/></svg>
+    <h3 style="margin: var(--sp-2) 0;">No files uploaded yet</h3>
+    <p class="small muted">Upload the file (or files) this package needs. Multi-file packages are fine -- upload <code>setup.exe</code>, <code>config.json</code>, drivers, anything. Reference each one by its filename in your install steps below.</p>
+    <form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress style="margin: var(--sp-3) auto 0; max-width: 460px;">
+      <label><input type="file" name="file" required></label>
+      <div class="actions" style="justify-content:center;"><button type="submit"><svg><use href="#i-plus"/></svg>Upload file</button></div>
+    </form>
+  </div>
+  {{end}}
+</fieldset>
+{{end}}
 
 <form class="std" method="POST" action="{{if $new}}/portal/software{{else}}/portal/software/{{int64 $p.ID}}{{end}}">
   <fieldset><legend>Identity</legend>
@@ -10,35 +69,44 @@
   </fieldset>
 
   <fieldset><legend>Detection rules</legend>
-    <p class="hint">A package is considered already installed when <strong>every</strong> rule reports present. Zero rules means re-install every time.</p>
+    <p class="hint">A package counts as <strong>already installed</strong> when <strong>every</strong> rule below reports present. Zero rules = re-install on every deployment.</p>
     <div id="rules">
       {{range $i, $r := .Data.Rules}}{{template "ruleblock" dict "Idx" $i "R" $r}}{{end}}
     </div>
-    <button type="button" class="secondary" onclick="addRule()">Add detection rule</button>
+    <button type="button" class="secondary" onclick="addRule()"><svg><use href="#i-plus"/></svg>Add detection rule</button>
   </fieldset>
 
   <fieldset><legend>Install steps</legend>
-    <p class="hint">Run in order. The literal token <code>{payload}</code> in source / msi / appx / exe paths is replaced with the on-disk path of the downloaded installer at run time.</p>
+    <div class="hint" style="margin-bottom: var(--sp-3);">
+      <p style="margin:0 0 var(--sp-2) 0;">
+        Steps run <strong>in the order shown</strong>. A failed step aborts the package unless its <em>On failure</em> is set to <em>continue</em>.
+      </p>
+      {{if $hasfiles}}
+      <p style="margin:0 0 var(--sp-2) 0;">
+        In any path field, write the <strong>bare filename</strong> of a file you uploaded above (e.g. <code>setup.exe</code>) and the agent resolves it to the on-disk path automatically. You can also use:
+      </p>
+      <ul class="small" style="margin: 0 0 var(--sp-2) 0; padding-left: 1.4rem;">
+        <li><strong>Absolute paths</strong> like <code>C:\Program Files\Acme\foo.exe</code> -- used verbatim.</li>
+        <li><strong>Windows env vars</strong> like <code>%ProgramFiles%\Acme\foo.exe</code> -- expanded by the agent.</li>
+        <li><code>{payload}</code> (legacy single-file token) -- still works when the package has exactly one file; ambiguous otherwise.</li>
+      </ul>
+      {{else}}
+      <p style="margin:0;" class="small">
+        Upload files above first, then reference each by its bare filename (e.g. <code>setup.exe</code>) in your step paths. Absolute paths and <code>%ProgramFiles%</code>-style env vars work too.
+      </p>
+      {{end}}
+    </div>
     <div id="steps">
       {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s}}{{end}}
     </div>
-    <button type="button" class="secondary" onclick="addStep()">Add install step</button>
+    <button type="button" class="secondary" onclick="addStep()"><svg><use href="#i-plus"/></svg>Add install step</button>
   </fieldset>
 
   <div class="actions">
     <a class="btn secondary" href="/portal/software">Cancel</a>
-    <button type="submit">{{if $new}}Create{{else}}Save{{end}}</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save changes{{end}}</button>
   </div>
 </form>
-
-{{if not $new}}
-<h3>Installer payload</h3>
-<form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-  <label><span class="lbl">Installer file (.msi, .exe, .appx, .zip…)</span><input type="file" name="file" required></label>
-  <div class="actions"><button type="submit">Upload</button></div>
-</form>
-<p class="small muted">Current: {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code> ({{$p.SizeBytes}} bytes){{else}}<em>nothing uploaded</em>{{end}}</p>
-{{end}}
 
 <script>
 function ruleTypeChanged(sel){
@@ -50,10 +118,21 @@ function ruleTypeChanged(sel){
 }
 function stepTypeChanged(sel){
   var b = sel.closest('.block');
+  // copy and unzip share the source/destination inputs, so the
+  // shared .step-srcdst div is visible for either type. The hint
+  // text below the inputs tweaks itself to match.
   ['copy','msi','appx','cmd','powershell','exe'].forEach(function(t){
     var d = b.querySelector('.step-'+t);
     if (d) d.style.display = (sel.value===t)?'block':'none';
   });
+  var srcdst = b.querySelector('.step-srcdst');
+  if (srcdst) srcdst.style.display = (sel.value==='copy' || sel.value==='unzip') ? 'block' : 'none';
+  var hint = b.querySelector('.step-srcdst-hint');
+  if (hint) {
+    hint.textContent = (sel.value==='unzip')
+      ? 'Source: the .zip file -- bare filename of an uploaded zip (e.g. bundle.zip) or a full path. Destination: directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).'
+      : 'Copy from Source to Destination. Write a bare filename to refer to a file you uploaded above; absolute paths and %ProgramFiles%-style env vars also work.';
+  }
 }
 var nextRuleIdx = {{len .Data.Rules}};
 function addRule(){
@@ -65,8 +144,8 @@ function addRule(){
       '<option value="file" selected>file</option><option value="registry">registry</option>' +
       '<option value="msi">msi product code</option><option value="script">script</option>' +
     '</select></label>' +
-    '<button type="button" class="danger" onclick="this.closest(\'.block\').remove()" style="align-self:flex-end">Remove rule</button></div>' +
-    '<div class="rule-file"><label><span class="lbl">File path</span><input type="text" name="rule_' + idx + '_file_path"></label>' +
+    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
+    '<div class="rule-file"><label><span class="lbl">File path</span><input type="text" name="rule_' + idx + '_file_path" placeholder="%ProgramFiles%\\Acme\\acme.exe"></label>' +
     '<div class="row"><label><span class="lbl">File version</span><input type="text" name="rule_' + idx + '_file_version"></label>' +
     '<label><span class="lbl">SHA-256</span><input type="text" name="rule_' + idx + '_file_sha256"></label></div></div>' +
     '<div class="rule-registry" style="display:none"><div class="row"><label><span class="lbl">Hive</span>' +
@@ -85,24 +164,31 @@ var nextStepIdx = {{len .Data.Steps}};
 function addStep(){
   var idx = String(nextStepIdx++);
   var html = '<div class="block"><input type="hidden" name="step_index[]" value="' + idx + '">' +
-    '<div class="row"><label><span class="lbl">Type</span>' +
+    '<div class="row"><label><span class="lbl">What does this step do?</span>' +
     '<select name="step_' + idx + '_type" onchange="stepTypeChanged(this)">' +
-    '<option value="copy" selected>copy</option><option value="msi">msi</option>' +
-    '<option value="appx">appx</option><option value="cmd">cmd</option>' +
-    '<option value="powershell">powershell</option><option value="exe">exe</option></select></label>' +
-    '<label><span class="lbl">Description</span><input type="text" name="step_' + idx + '_desc"></label>' +
-    '<button type="button" class="danger" onclick="this.closest(\'.block\').remove()" style="align-self:flex-end">Remove step</button></div>' +
-    '<div class="row"><label><span class="lbl">Success codes</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0,3010"></label>' +
-    '<label><span class="lbl">On failure</span><select name="step_' + idx + '_continue"><option value="">abort package</option><option value="1">continue</option></select></label></div>' +
-    '<div class="step-copy"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="{payload}"></label>' +
-    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path"></label></div>' +
-    '<div class="step-msi" style="display:none"><label><span class="lbl">MSI path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="{payload}"></label>' +
-    '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_msi_args"></label></div>' +
-    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="{payload}"></label></div>' +
-    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C body</span><textarea name="step_' + idx + '_script_body"></textarea></label></div>' +
-    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell body</span><textarea name="step_' + idx + '_script_body"></textarea></label></div>' +
-    '<div class="step-exe" style="display:none"><label><span class="lbl">Exe path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="{payload}"></label>' +
-    '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args"></label></div></div>';
+    '<option value="copy" selected>Copy a file</option>' +
+    '<option value="unzip">Extract a ZIP archive</option>' +
+    '<option value="msi">Install an MSI (msiexec /quiet)</option>' +
+    '<option value="appx">Install an APPX/MSIX package</option>' +
+    '<option value="exe">Run an EXE installer</option>' +
+    '<option value="cmd">Run a cmd.exe script</option>' +
+    '<option value="powershell">Run a PowerShell script</option></select></label>' +
+    '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install VS Code"></label>' +
+    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
+    '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
+    '<label><span class="lbl">If this step fails…</span><select name="step_' + idx + '_continue"><option value="">Abort the whole package</option><option value="1">Continue with the next step</option></select></label></div>' +
+    '<div class="step-srcdst"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="config.json"></label>' +
+    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path" placeholder="C:\\Program Files\\…"></label>' +
+    '<span class="hint step-srcdst-hint">Copy from <strong>Source</strong> to <strong>Destination</strong>. Write a bare filename to refer to a file you uploaded above; absolute paths and <code>%ProgramFiles%</code>-style env vars also work.</span></div>' +
+    '<div class="step-msi" style="display:none"><label><span class="lbl">MSI file path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="setup.msi"></label>' +
+    '<label><span class="lbl">Extra msiexec args</span><input type="text" name="step_' + idx + '_msi_args" placeholder="TARGETDIR=C:\\Foo"></label>' +
+    '<span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. Write the uploaded MSI’s filename here (e.g. <code>setup.msi</code>).</span></div>' +
+    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX / MSIX file path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="app.msix"></label></div>' +
+    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C script body</span><textarea name="step_' + idx + '_script_body" rows="6" placeholder="reg add HKLM\\Software\\Acme /v Installed /t REG_SZ /d 1 /f"></textarea></label></div>' +
+    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell script body</span><textarea name="step_' + idx + '_script_body" rows="6" placeholder="Set-ItemProperty -Path \'HKLM:\\\\…\' -Name X -Value 1"></textarea></label></div>' +
+    '<div class="step-exe" style="display:none"><label><span class="lbl">EXE file path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="setup.exe"></label>' +
+    '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args" placeholder="/S /quiet"></label>' +
+    '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div></div>';
   var wrap = document.createElement('div'); wrap.innerHTML = html;
   document.getElementById('steps').appendChild(wrap.firstChild);
 }
@@ -128,10 +214,12 @@ function addStep(){
         <option value="script"   {{if eq $r.Type "script"}}selected{{end}}>script</option>
       </select>
     </label>
-    <button type="button" class="danger" onclick="this.closest('.block').remove()" style="align-self:flex-end">Remove rule</button>
+    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
   </div>
   <div class="rule-file" {{if ne $r.Type "file"}}style="display:none"{{end}}>
-    <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="C:\Program Files\Acme\acme.exe"></label>
+    <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="%ProgramFiles%\Acme\acme.exe">
+      <span class="hint">Windows env-vars are expanded on the agent: <code>%ProgramFiles%</code>, <code>%ProgramFiles(x86)%</code>, <code>%LOCALAPPDATA%</code>, <code>%SystemRoot%</code>, etc.</span>
+    </label>
     <div class="row">
       <label><span class="lbl">File version (optional, exact match)</span><input type="text" name="rule_{{$i}}_file_version" value="{{$r.FileVersion}}"></label>
       <label><span class="lbl">SHA-256 (optional)</span><input type="text" name="rule_{{$i}}_file_sha256" value="{{$r.FileSHA256}}"></label>
@@ -172,48 +260,55 @@ function addStep(){
 <div class="block">
   <input type="hidden" name="step_index[]" value="{{$i}}">
   <div class="row">
-    <label><span class="lbl">Type</span>
+    <label><span class="lbl">What does this step do?</span>
       <select name="step_{{$i}}_type" onchange="stepTypeChanged(this)">
-        <option value="copy"       {{if eq $s.Type "copy"}}selected{{end}}>copy</option>
-        <option value="msi"        {{if eq $s.Type "msi"}}selected{{end}}>msi</option>
-        <option value="appx"       {{if eq $s.Type "appx"}}selected{{end}}>appx / msix</option>
-        <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>cmd</option>
-        <option value="powershell" {{if eq $s.Type "powershell"}}selected{{end}}>powershell</option>
-        <option value="exe"        {{if eq $s.Type "exe"}}selected{{end}}>exe</option>
+        <option value="copy"       {{if eq $s.Type "copy"}}selected{{end}}>Copy a file</option>
+        <option value="unzip"      {{if eq $s.Type "unzip"}}selected{{end}}>Extract a ZIP archive</option>
+        <option value="msi"        {{if eq $s.Type "msi"}}selected{{end}}>Install an MSI (msiexec /quiet)</option>
+        <option value="appx"       {{if eq $s.Type "appx"}}selected{{end}}>Install an APPX/MSIX package</option>
+        <option value="exe"        {{if eq $s.Type "exe"}}selected{{end}}>Run an EXE installer</option>
+        <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>Run a cmd.exe script</option>
+        <option value="powershell" {{if eq $s.Type "powershell"}}selected{{end}}>Run a PowerShell script</option>
       </select>
     </label>
-    <label><span class="lbl">Description</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}"></label>
-    <button type="button" class="danger" onclick="this.closest('.block').remove()" style="align-self:flex-end">Remove step</button>
+    <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install VS Code"></label>
+    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
   </div>
   <div class="row">
-    <label><span class="lbl">Success codes (comma-sep, default 0)</span><input type="text" name="step_{{$i}}_success_codes" value="{{range $j, $c := $s.SuccessCodes}}{{if $j}},{{end}}{{$c}}{{end}}" placeholder="0,3010"></label>
-    <label><span class="lbl">On failure</span>
+    <label><span class="lbl">Success exit codes <span class="muted small">(comma-sep)</span></span><input type="text" name="step_{{$i}}_success_codes" value="{{range $j, $c := $s.SuccessCodes}}{{if $j}},{{end}}{{$c}}{{end}}" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>
+    <label><span class="lbl">If this step fails…</span>
       <select name="step_{{$i}}_continue">
-        <option value=""  {{if not $s.ContinueOnFailure}}selected{{end}}>abort package</option>
-        <option value="1" {{if $s.ContinueOnFailure}}selected{{end}}>continue</option>
+        <option value=""  {{if not $s.ContinueOnFailure}}selected{{end}}>Abort the whole package</option>
+        <option value="1" {{if $s.ContinueOnFailure}}selected{{end}}>Continue with the next step</option>
       </select>
     </label>
   </div>
-  <div class="step-copy" {{if ne $s.Type "copy"}}style="display:none"{{end}}>
-    <label><span class="lbl">Source path</span><input type="text" name="step_{{$i}}_source_path" value="{{$s.SourcePath}}" placeholder="{payload} or C:\src\…"></label>
-    <label><span class="lbl">Destination path</span><input type="text" name="step_{{$i}}_destination_path" value="{{$s.DestinationPath}}"></label>
+  <div class="step-srcdst" {{if and (ne $s.Type "copy") (ne $s.Type "unzip")}}style="display:none"{{end}}>
+    <label><span class="lbl">Source path</span><input type="text" name="step_{{$i}}_source_path" value="{{$s.SourcePath}}" placeholder="config.json"></label>
+    <label><span class="lbl">Destination path</span><input type="text" name="step_{{$i}}_destination_path" value="{{$s.DestinationPath}}" placeholder="C:\Program Files\…"></label>
+    <span class="hint step-srcdst-hint">{{if eq $s.Type "unzip"}}<strong>Source:</strong> the .zip file -- bare filename of an uploaded zip (e.g. <code>bundle.zip</code>) or a full path. <strong>Destination:</strong> directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).{{else}}Copy from <strong>Source</strong> to <strong>Destination</strong>. Write a bare filename to refer to a file you uploaded above; absolute paths and <code>%ProgramFiles%</code>-style env vars also work.{{end}}</span>
   </div>
   <div class="step-msi" {{if ne $s.Type "msi"}}style="display:none"{{end}}>
-    <label><span class="lbl">MSI path</span><input type="text" name="step_{{$i}}_msi_path" value="{{$s.MSIPath}}" placeholder="{payload}"></label>
-    <label><span class="lbl">Extra args (after /quiet /norestart)</span><input type="text" name="step_{{$i}}_msi_args" value="{{range $j, $a := $s.MSIArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="TARGETDIR=C:\Foo"></label>
+    <label><span class="lbl">MSI file path</span><input type="text" name="step_{{$i}}_msi_path" value="{{$s.MSIPath}}" placeholder="setup.msi"></label>
+    <label><span class="lbl">Extra msiexec args <span class="muted small">(added after /quiet /norestart)</span></span><input type="text" name="step_{{$i}}_msi_args" value="{{range $j, $a := $s.MSIArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="TARGETDIR=C:\Foo"></label>
+    <span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. If you uploaded the .msi above, just write <code>{payload}</code> as the path.</span>
   </div>
   <div class="step-appx" {{if ne $s.Type "appx"}}style="display:none"{{end}}>
-    <label><span class="lbl">APPX / MSIX path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="{payload}"></label>
+    <label><span class="lbl">APPX / MSIX file path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="app.msix"></label>
+    <span class="hint">Runs <code>Add-AppxPackage -Path &lt;path&gt;</code> via PowerShell. If you uploaded the .appx/.msix above, write <code>{payload}</code>.</span>
   </div>
   <div class="step-cmd" {{if ne $s.Type "cmd"}}style="display:none"{{end}}>
-    <label><span class="lbl">cmd /C body</span><textarea name="step_{{$i}}_script_body">{{$s.ScriptBody}}</textarea></label>
+    <label><span class="lbl">cmd /C script body</span><textarea name="step_{{$i}}_script_body" rows="6" placeholder="reg add HKLM\Software\Acme /v Installed /t REG_SZ /d 1 /f">{{$s.ScriptBody}}</textarea></label>
+    <span class="hint">Runs <code>cmd /C &lt;body&gt;</code>. Multi-line bodies work; use <code>&amp;&amp;</code> to chain. Reference the uploaded installer as <code>{payload}</code>.</span>
   </div>
   <div class="step-powershell" {{if ne $s.Type "powershell"}}style="display:none"{{end}}>
-    <label><span class="lbl">PowerShell body (stdin)</span><textarea name="step_{{$i}}_script_body">{{$s.ScriptBody}}</textarea></label>
+    <label><span class="lbl">PowerShell script body</span><textarea name="step_{{$i}}_script_body" rows="6" placeholder="Set-ItemProperty -Path 'HKLM:\…' -Name X -Value 1">{{$s.ScriptBody}}</textarea></label>
+    <span class="hint">Body is piped to <code>powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -</code>. Reference the uploaded installer as <code>{payload}</code>.</span>
   </div>
   <div class="step-exe" {{if ne $s.Type "exe"}}style="display:none"{{end}}>
-    <label><span class="lbl">Exe path</span><input type="text" name="step_{{$i}}_exe_path" value="{{$s.ExePath}}" placeholder="{payload}"></label>
+    <label><span class="lbl">EXE file path</span><input type="text" name="step_{{$i}}_exe_path" value="{{$s.ExePath}}" placeholder="setup.exe"></label>
     <label><span class="lbl">Args</span><input type="text" name="step_{{$i}}_exe_args" value="{{range $j, $a := $s.ExeArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="/S /quiet"></label>
+    <span class="hint">Runs the EXE with the given args. If you uploaded the installer above, just write <code>{payload}</code>; common silent-install flags are <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, or <code>/VERYSILENT</code> depending on the installer.</span>
   </div>
 </div>
 {{end}}

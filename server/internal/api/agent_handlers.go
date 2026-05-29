@@ -24,9 +24,24 @@ type AgentSoftwareItem struct {
 	PackageID     model.ID                 `json:"package_id"`
 	Name          string                   `json:"name"`
 	OrderValue    int64                    `json:"order_value"`
+	// PayloadURL is the legacy single-file payload endpoint. Kept
+	// for backward compat with agents that pre-date multi-file
+	// support; the file-list form (Files) is the new path.
 	PayloadURL    string                   `json:"payload_url"`
+	// Files lists every file the agent should download for this
+	// package, addressed by name relative to a per-package work
+	// directory. install_steps that contain bare filenames are
+	// resolved against this set on the agent.
+	Files          []AgentPackageFile      `json:"files,omitempty"`
 	DetectionRules []swspec.DetectionRule  `json:"detection_rules"`
 	InstallSteps   []swspec.InstallStep    `json:"install_steps"`
+}
+
+// AgentPackageFile is one downloadable file in a multi-file package.
+type AgentPackageFile struct {
+	Name      string `json:"name"`        // the filename the operator uploaded
+	URL       string `json:"url"`         // GET this for the bytes
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 // AgentSoftwareResponse carries the effective ordered software set.
@@ -68,17 +83,52 @@ func handleAgentSoftware(r Repos) http.HandlerFunc {
 			if serr != nil {
 				resp.Warnings = append(resp.Warnings, "package "+pkg.Name+": "+serr.Error())
 			}
+			// Enumerate the per-package files directory. The
+			// portal upload handler writes each operator-uploaded
+			// file under software/<id>/files/<name>; the agent
+			// downloads each by URL and resolves bare filenames
+			// in step paths against the workdir it dropped them
+			// into. No files = pre-upload package; the agent will
+			// just evaluate detection rules and run scriptless
+			// steps.
+			files := listPackageFiles(r, pkg.ID, base)
 			resp.Items = append(resp.Items, AgentSoftwareItem{
 				PackageID:      pkg.ID,
 				Name:           pkg.Name,
 				OrderValue:     link.OrderValue,
 				PayloadURL:     base + idStr(pkg.ID),
+				Files:          files,
 				DetectionRules: det,
 				InstallSteps:   steps,
 			})
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
+}
+
+// listPackageFiles enumerates a software package's files directory
+// and produces AgentPackageFile entries the agent can download. The
+// URL points at the public payload endpoint (served by the payload
+// package); the filename round-trips intact so the agent can save it
+// back under the same name in its workdir.
+func listPackageFiles(r Repos, id model.ID, base string) []AgentPackageFile {
+	if r.Blobs == nil {
+		return nil
+	}
+	rel := "software/" + idStr(id) + "/files"
+	entries, err := r.Blobs.ListDir(rel)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	out := make([]AgentPackageFile, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, AgentPackageFile{
+			Name:      e.Name,
+			URL:       base + idStr(id) + "/files/" + e.Name,
+			SizeBytes: e.Size,
+		})
+	}
+	return out
 }
 
 func idStr(id model.ID) string {

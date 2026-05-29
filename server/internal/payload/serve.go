@@ -65,6 +65,11 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.Handle("GET /payload/iso/{id}/", s.throttleHandler(http.HandlerFunc(s.serveISOContent)))
 	mux.Handle("GET /payload/drivers/{id}", s.throttleHandler(http.HandlerFunc(s.serveDriver)))
 	mux.Handle("GET /payload/software/{id}", s.throttleHandler(http.HandlerFunc(s.serveSoftware)))
+	// Multi-file: agent downloads each file by name from the
+	// per-package files directory the portal upload handler writes
+	// into. {name} is sanitized server-side; BlobStore.Resolve is
+	// the backstop against path traversal.
+	mux.Handle("GET /payload/software/{id}/files/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
 }
 
@@ -349,6 +354,30 @@ func (s *Service) serveSoftware(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveBlob(w, r, pkg.StoragePath)
+}
+
+// serveSoftwareFile streams one named file from a multi-file
+// package. The filename is sanitised (no path separators, no ..) and
+// BlobStore.Resolve is the final containment check; together they
+// prevent a request from reaching anything outside the package's
+// files directory.
+func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		http.Error(w, "bad filename", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Software.Get(r.Context(), id); err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	rel := "software/" + fmt.Sprint(int64(id)) + "/files/" + name
+	s.serveBlob(w, r, rel)
 }
 
 // serveBlob streams the file at relative to the response with range

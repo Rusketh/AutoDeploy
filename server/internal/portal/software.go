@@ -1,15 +1,18 @@
 package portal
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
 )
 
@@ -22,7 +25,48 @@ func init() {
 		post("/portal/software/{id}", softwareUpdate(r))
 		post("/portal/software/{id}/delete", softwareDelete(r))
 		post("/portal/software/{id}/upload", softwareUpload(r))
+		// Legacy single-file delete kept so old in-flight forms
+		// don't 404; new UI uses per-file delete instead.
+		post("/portal/software/{id}/upload/delete", softwareUploadDelete(r))
+		// Multi-file: delete one named file from a package.
+		post("/portal/software/{id}/files/{name}/delete", softwareFileDelete(r))
 	}
+}
+
+// softwarePackageFilesDir returns the BlobStore-relative path under
+// which a package's uploaded files live. Centralised so upload,
+// delete, list and the agent-facing manifest can't drift apart.
+func softwarePackageFilesDir(id model.ID) string {
+	return filepath.ToSlash(filepath.Join("software", fmt.Sprint(int64(id)), "files"))
+}
+
+// sanitizeUploadFilename strips path separators, drive letters and
+// anything resembling a parent-directory reference from the
+// operator-supplied filename. Multipart parts already path-strip on
+// most browsers but the spec doesn't require it; the BlobStore
+// containment check is a backstop, this is the readable error.
+func sanitizeUploadFilename(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("filename is empty")
+	}
+	// Trim Windows / POSIX leading-path noise the browser might
+	// have left in (older IE used to send the full client path).
+	for _, sep := range []string{`\`, "/"} {
+		if i := strings.LastIndex(name, sep); i >= 0 {
+			name = name[i+1:]
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("filename resolves to a special path")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return "", fmt.Errorf("filename contains path separators")
+	}
+	if len(name) > 255 {
+		return "", fmt.Errorf("filename longer than 255 chars")
+	}
+	return name, nil
 }
 
 func softwareList(r Repos) http.HandlerFunc {
@@ -57,10 +101,69 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 		if !isNew {
 			title = "Edit software package: " + p.Name
 		}
+		// Multi-file file list. Driven entirely by what's on disk:
+		// no separate DB table needed since the filesystem is the
+		// source of truth and BlobStore.Resolve already enforces
+		// path containment.
+		var files []storage.DirEntry
+		if !isNew && r.Blobs != nil {
+			// Lazy migration: if the package still references a
+			// legacy single-file payload.bin but no files dir yet
+			// exists, move it under files/<payload_filename> so
+			// the new UI shows it. Best-effort; failure is non-
+			// fatal (the legacy single-file path is still listed
+			// below in a banner so operators aren't blindsided).
+			migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
+			files, _ = r.Blobs.ListDir(softwarePackageFilesDir(p.ID))
+		}
 		render(w, req, r, "software_form.html", title, map[string]any{
 			"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
+			"Files": files,
 		})
 	}
+}
+
+// migrateLegacyPayloadIfNeeded moves a pre-multi-file package's
+// single payload.bin into the new files/ directory under its
+// original filename, then clears the legacy columns. Idempotent: if
+// the files dir already has anything, or storage_path is empty, we
+// no-op. Errors are swallowed -- the UI falls back to a "legacy
+// single-file payload" banner if migration didn't take.
+func migrateLegacyPayloadIfNeeded(ctx context.Context, r Repos, p *model.SoftwarePackage) {
+	if p.StoragePath == "" {
+		return
+	}
+	filesDir := softwarePackageFilesDir(p.ID)
+	if existing, _ := r.Blobs.ListDir(filesDir); len(existing) > 0 {
+		// Already migrated, or operator's already on the new path.
+		return
+	}
+	target := p.PayloadFilename
+	if target == "" {
+		// Pre-migration uploads where part.FileName came up empty.
+		// Use a reasonable default so the legacy file is at least
+		// visible in the new list.
+		target = "payload.bin"
+	}
+	if _, err := sanitizeUploadFilename(target); err != nil {
+		return // refuse to rename into something dodgy
+	}
+	src, err := r.Blobs.Open(p.StoragePath)
+	if err != nil {
+		return
+	}
+	defer src.Close()
+	rel := filepath.ToSlash(filepath.Join(filesDir, target))
+	if _, err := r.Blobs.WriteStream(rel, src); err != nil {
+		return
+	}
+	// Remove the old single-file blob and clear the legacy columns
+	// so subsequent loads skip this whole code path.
+	_ = r.Blobs.Remove(p.StoragePath)
+	p.StoragePath = ""
+	p.PayloadFilename = ""
+	p.SizeBytes = 0
+	_ = r.Software.Update(ctx, *p)
 }
 
 func softwareEdit(r Repos) http.HandlerFunc {
@@ -220,7 +323,11 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 			return
 		}
 		p.ID = id
+		// The form doesn't carry payload fields -- those land via
+		// the upload / delete-upload handlers. Preserve them so a
+		// Save click doesn't blank the displayed filename.
 		p.StoragePath = existing.StoragePath
+		p.PayloadFilename = existing.PayloadFilename
 		p.SizeBytes = existing.SizeBytes
 		if err := r.Software.Update(req.Context(), p); err != nil {
 			flash(w, "err", err.Error())
@@ -243,11 +350,14 @@ func softwareDelete(r Repos) http.HandlerFunc {
 	}
 }
 
+// softwareUpload appends a file to the package's files/ directory
+// (it does NOT replace previously uploaded files). Operators with
+// multi-file installers can upload setup.exe, config.json, drivers/*
+// individually and reference each by its filename in install steps.
 func softwareUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		pkg, err := r.Software.Get(req.Context(), id)
-		if err != nil {
+		if _, err := r.Software.Get(req.Context(), id); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
@@ -256,6 +366,7 @@ func softwareUpload(r Repos) http.HandlerFunc {
 			http.Error(w, "expected multipart upload", http.StatusBadRequest)
 			return
 		}
+		var uploaded int
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
@@ -270,21 +381,94 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				_ = part.Close()
 				continue
 			}
-			rel := filepath.ToSlash(filepath.Join("software", fmt.Sprint(int64(id)), "payload.bin"))
+			name, sanErr := sanitizeUploadFilename(part.FileName())
+			if sanErr != nil {
+				_, _ = io.Copy(io.Discard, part)
+				_ = part.Close()
+				flash(w, "err", "Upload rejected: "+sanErr.Error())
+				continue
+			}
+			rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), name))
 			n, err := r.Blobs.WriteStream(rel, part)
 			_ = part.Close()
 			if err != nil {
 				flash(w, "err", err.Error())
 				break
 			}
-			pkg.StoragePath = rel
-			pkg.SizeBytes = n
-			if err := r.Software.Update(req.Context(), pkg); err != nil {
-				flash(w, "err", err.Error())
-			} else {
-				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes.", n))
-			}
-			break
+			uploaded++
+			flash(w, "ok", fmt.Sprintf("Uploaded %s (%d bytes).", name, n))
+		}
+		if uploaded == 0 {
+			flash(w, "warn", "No file received in the upload.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+	}
+}
+
+// softwareFileDelete removes one named file from a package's files
+// directory. Other files in the package are untouched, the package
+// row stays. URL: POST /portal/software/{id}/files/{name}/delete.
+func softwareFileDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		raw := req.PathValue("name")
+		// PathValue is URL-decoded but we still apply the same
+		// sanitiser the upload side uses so a malicious URL can't
+		// reach a sibling directory.
+		name, sanErr := sanitizeUploadFilename(raw)
+		if sanErr != nil {
+			flash(w, "err", "Bad filename: "+sanErr.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), name))
+		if err := r.Blobs.Remove(rel); err != nil && !os.IsNotExist(err) {
+			flash(w, "err", "Remove "+name+": "+err.Error())
+		} else {
+			flash(w, "ok", "Removed "+name+".")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+	}
+}
+
+// softwareUploadDelete removes the uploaded installer blob without
+// deleting the SoftwarePackage row -- so the detection rules and
+// install steps the operator already authored survive a re-upload.
+// Returning to the edit page leaves the operator one click away
+// from uploading the replacement file.
+func softwareUploadDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		pkg, err := r.Software.Get(req.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if pkg.StoragePath == "" {
+			flash(w, "warn", "No installer uploaded; nothing to delete.")
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		// Wipe the blob first; if the FS remove succeeds but the
+		// row update fails the operator gets an orphaned row that
+		// re-upload will reuse, which is the correct lesser of two
+		// evils (vs. an orphaned blob the portal would never show).
+		if err := r.Blobs.Remove(pkg.StoragePath); err != nil && !os.IsNotExist(err) {
+			flash(w, "err", "Remove blob: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		oldName := pkg.PayloadFilename
+		if oldName == "" {
+			oldName = pkg.StoragePath
+		}
+		pkg.StoragePath = ""
+		pkg.PayloadFilename = ""
+		pkg.SizeBytes = 0
+		if err := r.Software.Update(req.Context(), pkg); err != nil {
+			flash(w, "err", "Clear row: "+err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("Removed installer payload (%s).", oldName))
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 	}

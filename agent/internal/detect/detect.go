@@ -70,12 +70,19 @@ func (e *Evaluator) evaluateRule(ctx context.Context, r swspec.DetectionRule) (b
 }
 
 func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
-	present, err := e.Backend.FileExists(r.FilePath)
+	// Expand %ProgramFiles%, %LOCALAPPDATA%, $HOME, etc once at the
+	// top so the three host APIs below (Stat, FileVersion, SHA-256)
+	// all see the same resolved path. Doing it here instead of inside
+	// each Backend means the backends stay narrowly host-API specific
+	// and the expansion semantics are testable through the fake
+	// backend with no Windows syscall needed.
+	path := expandPath(r.FilePath)
+	present, err := e.Backend.FileExists(path)
 	if err != nil || !present {
 		return false, err
 	}
 	if r.FileVersion != "" {
-		v, err := e.Backend.FileVersion(r.FilePath)
+		v, err := e.Backend.FileVersion(path)
 		if err != nil {
 			return false, err
 		}
@@ -84,7 +91,7 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 		}
 	}
 	if r.FileSHA256 != "" {
-		got, err := sha256File(r.FilePath)
+		got, err := sha256File(path)
 		if err != nil {
 			return false, err
 		}

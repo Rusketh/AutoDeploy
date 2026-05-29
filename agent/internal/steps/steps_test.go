@@ -1,7 +1,11 @@
 package steps
 
 import (
+	"archive/zip"
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,5 +90,122 @@ func TestSuccessCodesAcceptNonZero(t *testing.T) {
 	res := Execute(context.Background(), list, rec)
 	if len(res) != 1 || res[0].Aborted {
 		t.Errorf("3010 (reboot required) should be a success: %+v", res)
+	}
+}
+
+func TestUnzipStepExtractsToDestination(t *testing.T) {
+	// Build a small zip with two entries: a top-level file and a
+	// nested file. Confirm both end up where we expect.
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "in.zip")
+	zf, err := os.Create(zipPath)
+	if err != nil { t.Fatal(err) }
+	zw := zip.NewWriter(zf)
+	for _, e := range []struct{ name, body string }{
+		{"hello.txt", "hi"},
+		{"sub/nested.txt", "ok"},
+	} {
+		w, err := zw.Create(e.name)
+		if err != nil { t.Fatal(err) }
+		if _, err := w.Write([]byte(e.body)); err != nil { t.Fatal(err) }
+	}
+	if err := zw.Close(); err != nil { t.Fatal(err) }
+	if err := zf.Close(); err != nil { t.Fatal(err) }
+	dest := filepath.Join(dir, "out")
+	runner := &OSRunner{}
+	if err := runner.Unzip(context.Background(), zipPath, dest); err != nil {
+		t.Fatalf("unzip: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "hello.txt")); err != nil || string(b) != "hi" {
+		t.Errorf("hello.txt: %q / %v", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "sub", "nested.txt")); err != nil || string(b) != "ok" {
+		t.Errorf("sub/nested.txt: %q / %v", b, err)
+	}
+}
+
+// Zip-slip defence: an entry whose name contains ".." must be
+// rejected before any bytes are written, no matter what the resolved
+// path would be on disk. The whole extraction aborts so a partial
+// state isn't left behind.
+func TestUnzipStepRejectsZipSlip(t *testing.T) {
+	cases := []string{
+		"../escape.txt",
+		"sub/../../etc/passwd",
+		`..\windows\system32\bad.dll`,
+	}
+	for _, entry := range cases {
+		t.Run(entry, func(t *testing.T) {
+			dir := t.TempDir()
+			zipPath := filepath.Join(dir, "in.zip")
+			zf, _ := os.Create(zipPath)
+			zw := zip.NewWriter(zf)
+			w, _ := zw.Create(entry)
+			_, _ = w.Write([]byte("pwn"))
+			_ = zw.Close()
+			_ = zf.Close()
+			dest := filepath.Join(dir, "out")
+			runner := &OSRunner{}
+			err := runner.Unzip(context.Background(), zipPath, dest)
+			if err == nil {
+				t.Errorf("expected zip-slip rejection for %q, got nil error", entry)
+			}
+			if !strings.Contains(err.Error(), "unsafe zip entry") {
+				t.Errorf("expected 'unsafe zip entry' in error, got %v", err)
+			}
+		})
+	}
+}
+
+// Absolute paths in zip entries are likewise unsafe and must be
+// rejected -- they'd skip the destination root entirely.
+func TestUnzipStepRejectsAbsoluteEntry(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "in.zip")
+	zf, _ := os.Create(zipPath)
+	zw := zip.NewWriter(zf)
+	w, _ := zw.Create("/etc/passwd")
+	_, _ = w.Write([]byte("pwn"))
+	_ = zw.Close()
+	_ = zf.Close()
+	dest := filepath.Join(dir, "out")
+	runner := &OSRunner{}
+	err := runner.Unzip(context.Background(), zipPath, dest)
+	if err == nil || !strings.Contains(err.Error(), "unsafe zip entry") {
+		t.Errorf("expected unsafe-entry error for absolute path, got %v", err)
+	}
+}
+
+// Recorder-backed test for the runOne switch: an unzip step records
+// the (src, dst) pair on the recorder, the result has no error, and
+// the next step still runs.
+func TestExecuteUnzipStep(t *testing.T) {
+	rec := &Recorder{}
+	out := Execute(context.Background(), []swspec.InstallStep{
+		{Type: "unzip", SourcePath: `C:\src\bundle.zip`, DestinationPath: `C:\Program Files\App`},
+		{Type: "cmd", ScriptBody: "echo done"},
+	}, rec)
+	if len(out) != 2 {
+		t.Fatalf("want 2 results, got %d", len(out))
+	}
+	if out[0].Error != nil || out[0].ExitCode != 0 || out[0].Aborted {
+		t.Errorf("unzip step: %+v", out[0])
+	}
+	want := `C:\src\bundle.zip -> C:\Program Files\App`
+	if len(rec.Unzips) != 1 || rec.Unzips[0] != want {
+		t.Errorf("Unzips = %v, want [%q]", rec.Unzips, want)
+	}
+}
+
+// If Unzip returns an error the result records the error and the
+// abort flag fires -- subsequent steps don't run.
+func TestExecuteUnzipStepAbortsOnError(t *testing.T) {
+	rec := &Recorder{UnzipError: errors.New("disk full")}
+	out := Execute(context.Background(), []swspec.InstallStep{
+		{Type: "unzip", SourcePath: "a.zip", DestinationPath: "b"},
+		{Type: "cmd", ScriptBody: "should not run"},
+	}, rec)
+	if len(out) != 1 || !out[0].Aborted || out[0].Error == nil {
+		t.Errorf("expected abort with error, got results=%+v", out)
 	}
 }

@@ -7,12 +7,16 @@ import (
 )
 
 // Recorder is a Runner that captures every call. Tests assert against
-// recorder.Calls and recorder.Copies.
+// recorder.Calls / .Copies / .Unzips.
 type Recorder struct {
 	Calls    []string
 	Copies   []string
+	Unzips   []string
 	ExitMap  map[string]int   // name -> exit code (default 0)
 	ErrorMap map[string]error // name -> error
+	// UnzipError, if non-nil, is returned by Unzip. Used to assert
+	// abort-on-error behaviour for unzip steps.
+	UnzipError error
 }
 
 func (r *Recorder) Run(_ context.Context, name string, args []string, stdin string) (int, error) {
@@ -35,9 +39,15 @@ func (r *Recorder) Copy(_ context.Context, src, dst string) error {
 	return nil
 }
 
+func (r *Recorder) Unzip(_ context.Context, src, dst string) error {
+	r.Unzips = append(r.Unzips, fmt.Sprintf("%s -> %s", src, dst))
+	return r.UnzipError
+}
+
 // Dump prints calls for failing-test diagnostics.
 func (r *Recorder) Dump() string {
-	return fmt.Sprintf("calls:\n  - %s\ncopies:\n  - %s",
+	return fmt.Sprintf("calls:\n  - %s\ncopies:\n  - %s\nunzips:\n  - %s",
 		strings.Join(r.Calls, "\n  - "),
-		strings.Join(r.Copies, "\n  - "))
+		strings.Join(r.Copies, "\n  - "),
+		strings.Join(r.Unzips, "\n  - "))
 }

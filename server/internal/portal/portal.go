@@ -391,6 +391,45 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		},
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
+		// humanBytes formats a byte count as a short suffixed string.
+		// Mirrors the JS upload-progress formatter so values match
+		// between live progress and the saved record.
+		"humanBytes": func(n int64) string {
+			switch {
+			case n < 1024:
+				return fmt.Sprintf("%d B", n)
+			case n < 1024*1024:
+				return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+			case n < 1024*1024*1024:
+				return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+			default:
+				return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
+			}
+		},
+		// relTime formats a past timestamp as "just now", "5m ago",
+		// "3h ago", etc. The "uploaded X ago" line in the payload card
+		// uses it so operators see the recency at a glance without
+		// parsing a full ISO timestamp.
+		"relTime": func(t time.Time) string {
+			if t.IsZero() {
+				return "(unknown)"
+			}
+			d := time.Since(t)
+			switch {
+			case d < 0:
+				return "in the future"
+			case d < 90*time.Second:
+				return "just now"
+			case d < time.Hour:
+				return fmt.Sprintf("%dm ago", int(d.Minutes()))
+			case d < 24*time.Hour:
+				return fmt.Sprintf("%dh ago", int(d.Hours()))
+			case d < 30*24*time.Hour:
+				return fmt.Sprintf("%dd ago", int(d.Hours())/24)
+			default:
+				return t.Format("2006-01-02")
+			}
+		},
 	}
 }
 

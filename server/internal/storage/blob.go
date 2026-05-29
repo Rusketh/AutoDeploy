@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // BlobStore is a filesystem-backed payload store rooted at root. It
@@ -177,4 +178,47 @@ func (b *BlobStore) EnsureDir(relative string) (string, error) {
 		return "", err
 	}
 	return abs, nil
+}
+
+// ListDir enumerates the regular files directly under relative,
+// returning their (filename, size, modtime) without recursing. Used
+// by the multi-file software-package UI to surface what's been
+// uploaded; callers join the relative + filename to get the resolved
+// path. Returns an empty slice (not an error) when the directory
+// doesn't exist yet.
+func (b *BlobStore) ListDir(relative string) ([]DirEntry, error) {
+	abs, err := b.Resolve(relative)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		out = append(out, DirEntry{
+			Name:    e.Name(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+	return out, nil
+}
+
+// DirEntry is one row returned by ListDir.
+type DirEntry struct {
+	Name    string
+	Size    int64
+	ModTime time.Time
 }
