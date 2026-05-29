@@ -64,11 +64,17 @@ type SoftwarePackage struct {
 	Name          string    `json:"name"`
 	Description   string    `json:"description"`
 	StoragePath   string    `json:"storage_path"`
-	SizeBytes     int64     `json:"size_bytes"`
-	DetectionJSON string    `json:"detection_json"`
-	StepsJSON     string    `json:"steps_json"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	// PayloadFilename is the original filename the operator uploaded
+	// (e.g. "office-365-installer.exe"). Stored separately so the
+	// portal can show something meaningful when the on-disk blob has
+	// been renamed to a canonical name. Empty for pre-existing rows
+	// uploaded before this column existed.
+	PayloadFilename string    `json:"payload_filename"`
+	SizeBytes       int64     `json:"size_bytes"`
+	DetectionJSON   string    `json:"detection_json"`
+	StepsJSON       string    `json:"steps_json"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Image is a composition object linking an ISO, an unattend and software,

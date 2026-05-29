@@ -222,7 +222,11 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 			return
 		}
 		p.ID = id
+		// The form doesn't carry payload fields -- those land via
+		// the upload / delete-upload handlers. Preserve them so a
+		// Save click doesn't blank the displayed filename.
 		p.StoragePath = existing.StoragePath
+		p.PayloadFilename = existing.PayloadFilename
 		p.SizeBytes = existing.SizeBytes
 		if err := r.Software.Update(req.Context(), p); err != nil {
 			flash(w, "err", err.Error())
@@ -272,6 +276,12 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				_ = part.Close()
 				continue
 			}
+			// part.FileName is the operator's original filename
+			// (already path-stripped by net/textproto). Store it
+			// for display so the edit page can say
+			// "office-365-installer.exe (1.2 GB)" instead of the
+			// opaque on-disk blob name.
+			origName := part.FileName()
 			rel := filepath.ToSlash(filepath.Join("software", fmt.Sprint(int64(id)), "payload.bin"))
 			n, err := r.Blobs.WriteStream(rel, part)
 			_ = part.Close()
@@ -280,11 +290,12 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				break
 			}
 			pkg.StoragePath = rel
+			pkg.PayloadFilename = origName
 			pkg.SizeBytes = n
 			if err := r.Software.Update(req.Context(), pkg); err != nil {
 				flash(w, "err", err.Error())
 			} else {
-				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes.", n))
+				flash(w, "ok", fmt.Sprintf("Uploaded %s (%d bytes).", origName, n))
 			}
 			break
 		}
@@ -319,13 +330,17 @@ func softwareUploadDelete(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 			return
 		}
-		oldPath := pkg.StoragePath
+		oldName := pkg.PayloadFilename
+		if oldName == "" {
+			oldName = pkg.StoragePath
+		}
 		pkg.StoragePath = ""
+		pkg.PayloadFilename = ""
 		pkg.SizeBytes = 0
 		if err := r.Software.Update(req.Context(), pkg); err != nil {
 			flash(w, "err", "Clear row: "+err.Error())
 		} else {
-			flash(w, "ok", fmt.Sprintf("Removed installer payload (%s).", oldPath))
+			flash(w, "ok", fmt.Sprintf("Removed installer payload (%s).", oldName))
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 	}

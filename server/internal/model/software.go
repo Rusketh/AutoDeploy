@@ -23,10 +23,11 @@ func (r *SoftwarePackageRepo) Create(ctx context.Context, in SoftwarePackage) (S
 	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO software_package
-		    (name, description, storage_path, size_bytes, detection_json, steps_json)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		in.Name, in.Description, in.StoragePath, in.SizeBytes,
-		in.DetectionJSON, in.StepsJSON)
+		    (name, description, storage_path, payload_filename,
+		     size_bytes, detection_json, steps_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.Description, in.StoragePath, in.PayloadFilename,
+		in.SizeBytes, in.DetectionJSON, in.StepsJSON)
 	if err != nil {
 		if isUniqueErr(err) {
 			return SoftwarePackage{}, fmt.Errorf("software package %q: %w", in.Name, ErrConflict)
@@ -40,11 +41,11 @@ func (r *SoftwarePackageRepo) Create(ctx context.Context, in SoftwarePackage) (S
 func (r *SoftwarePackageRepo) Get(ctx context.Context, id ID) (SoftwarePackage, error) {
 	var v SoftwarePackage
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, name, description, storage_path, size_bytes,
-		       detection_json, steps_json, created_at, updated_at
+		SELECT id, name, description, storage_path, payload_filename,
+		       size_bytes, detection_json, steps_json, created_at, updated_at
 		FROM software_package WHERE id=?`, id).Scan(
-		&v.ID, &v.Name, &v.Description, &v.StoragePath, &v.SizeBytes,
-		&v.DetectionJSON, &v.StepsJSON, &v.CreatedAt, &v.UpdatedAt)
+		&v.ID, &v.Name, &v.Description, &v.StoragePath, &v.PayloadFilename,
+		&v.SizeBytes, &v.DetectionJSON, &v.StepsJSON, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SoftwarePackage{}, fmt.Errorf("software package %d: %w", id, ErrNotFound)
 	}
@@ -53,8 +54,8 @@ func (r *SoftwarePackageRepo) Get(ctx context.Context, id ID) (SoftwarePackage, 
 
 func (r *SoftwarePackageRepo) List(ctx context.Context) ([]SoftwarePackage, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, description, storage_path, size_bytes,
-		       detection_json, steps_json, created_at, updated_at
+		SELECT id, name, description, storage_path, payload_filename,
+		       size_bytes, detection_json, steps_json, created_at, updated_at
 		FROM software_package ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -64,7 +65,7 @@ func (r *SoftwarePackageRepo) List(ctx context.Context) ([]SoftwarePackage, erro
 	for rows.Next() {
 		var v SoftwarePackage
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.StoragePath,
-			&v.SizeBytes, &v.DetectionJSON, &v.StepsJSON,
+			&v.PayloadFilename, &v.SizeBytes, &v.DetectionJSON, &v.StepsJSON,
 			&v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -79,11 +80,12 @@ func (r *SoftwarePackageRepo) Update(ctx context.Context, in SoftwarePackage) er
 	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE software_package
-		SET name=?, description=?, storage_path=?, size_bytes=?,
-		    detection_json=?, steps_json=?, updated_at=CURRENT_TIMESTAMP
+		SET name=?, description=?, storage_path=?, payload_filename=?,
+		    size_bytes=?, detection_json=?, steps_json=?,
+		    updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
-		in.Name, in.Description, in.StoragePath, in.SizeBytes,
-		in.DetectionJSON, in.StepsJSON, in.ID)
+		in.Name, in.Description, in.StoragePath, in.PayloadFilename,
+		in.SizeBytes, in.DetectionJSON, in.StepsJSON, in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("software package %q: %w", in.Name, ErrConflict)
