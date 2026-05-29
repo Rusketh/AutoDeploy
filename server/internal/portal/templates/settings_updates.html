@@ -87,6 +87,15 @@
 </div>
 
 <script>
+// Both IIFEs are wrapped in DOMContentLoaded because the markup
+// they bind to can sit either above or below this <script> tag
+// depending on which conditional branch the server-rendered
+// template took. The Install-agent button used to live below the
+// script, so getElementById returned null at parse time and the
+// `if (!btn) return` guard exited silently -- the button rendered
+// fine but clicking did nothing. Binding after DOM ready makes
+// position-in-template irrelevant.
+document.addEventListener('DOMContentLoaded', function () {
 (function () {
   var btn = document.getElementById('server-update-btn');
   if (!btn) return;
@@ -192,6 +201,7 @@
     });
   }
 })();
+}); // end DOMContentLoaded
 </script>
 
 <div class="section-head"><h3>Agents</h3><div class="line"></div></div>
