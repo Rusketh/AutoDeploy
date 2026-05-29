@@ -84,7 +84,7 @@ password).
 |---|---|
 | `AUTODEPLOY_HTTP_ADDR` | Cleartext HTTP bind. Permitted on any address; binds non-loopback in production mode log a `http.cleartext_public_bind` WARN at startup. |
 | `AUTODEPLOY_HTTPS_ADDR` | HTTPS bind. Empty = no HTTPS listener. |
-| `AUTODEPLOY_TLS_CERT` / `_KEY` | PEM cert + key. Required only when `AUTODEPLOY_HTTPS_ADDR` is set and `AUTODEPLOY_DEV=false`. With `DEV=true` an auto-generated self-signed cert is written under `$DATA_DIR/tls/`. |
+| `AUTODEPLOY_TLS_CERT` / `_KEY` | PEM cert + key. Optional. When `AUTODEPLOY_HTTPS_ADDR` is set and these are empty, the server auto-generates a self-signed cert under `$DATA_DIR/tls/`; production mode logs a WARN (clients won't trust it without manual intervention). Set to a CA-signed pair to silence the warning. |
 | `AUTODEPLOY_TFTP_ADDR` | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. |
 | `AUTODEPLOY_DATA_DIR` | Persistent state root. |
 | `AUTODEPLOY_DEV` | `false` in production. Turns off the dev TLS-cert auto-generation. HTTP-only deployments are still supported with `DEV=false`. |

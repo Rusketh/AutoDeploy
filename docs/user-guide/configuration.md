@@ -28,7 +28,7 @@ a clearly-marked warning at startup so the choice is on the record.
 |-----------------------------------|----------------------|---------|
 | `AUTODEPLOY_HTTP_ADDR`            | `127.0.0.1:8080`     | Cleartext HTTP bind. Empty disables. Non-loopback binds in production mode log a `http.cleartext_public_bind` WARN at startup — never refused. |
 | `AUTODEPLOY_HTTPS_ADDR`           | `` (empty)           | HTTPS bind. Empty disables. |
-| `AUTODEPLOY_TLS_CERT`             | `` (empty)           | PEM cert path for HTTPS. Required only when `AUTODEPLOY_HTTPS_ADDR` is set and `AUTODEPLOY_DEV=false`. With `DEV=true` a self-signed cert is auto-generated under `$DATA_DIR/tls/`. |
+| `AUTODEPLOY_TLS_CERT`             | `` (empty)           | PEM cert path for HTTPS. Optional. When `AUTODEPLOY_HTTPS_ADDR` is set and this is empty, the server auto-generates a self-signed cert under `$DATA_DIR/tls/`; production mode logs a WARN naming the consequence so the choice is auditable. Set to a CA-signed pair to silence the warning. |
 | `AUTODEPLOY_TLS_KEY`              | `` (empty)           | PEM key path for HTTPS. |
 | `AUTODEPLOY_TFTP_ADDR`            | `` (empty)           | UDP TFTP listener for the iPXE bootstrap (e.g. `:69`). Empty disables. Serves `$DATA_DIR/ipxe/` read-only. |
 | `AUTODEPLOY_DATA_DIR`             | `./data`             | Root for the SQLite database, payload blobs, secrets key, etc. |
@@ -143,13 +143,17 @@ you need. Source: `server/internal/httpx/server.go`.
 **HTTPS listener** (`AUTODEPLOY_HTTPS_ADDR`):
 
 - Empty → no HTTPS listener started.
+- Set + cert/key files supplied → listens with your cert.
 - Set + cert/key empty + `AUTODEPLOY_DEV=true` → auto-generates a
   self-signed cert under `$DATA_DIR/tls/` and listens. Browsers and
-  clients warn; that's expected.
-- Set + cert/key empty + `AUTODEPLOY_DEV=false` → server refuses to
-  start with `AUTODEPLOY_TLS_CERT and AUTODEPLOY_TLS_KEY must be set
-  in production mode`.
-- Set + cert/key files supplied → listens with your cert.
+  clients warn; that's expected. Logged at INFO.
+- Set + cert/key empty + `AUTODEPLOY_DEV=false` → same auto-generation
+  path, but the event is logged at WARN with the consequence spelled
+  out: clients (browsers, agents, boot client) will fail TLS
+  verification unless they trust the self-signed cert. The listener
+  still starts. Set `AUTODEPLOY_TLS_CERT`/`KEY` to a CA-signed pair to
+  silence the warning, or front the server with a reverse proxy that
+  terminates TLS.
 
 Both listeners can run side by side. The common production pattern is
 HTTPS on `0.0.0.0:443` with HTTP loopback-only on `127.0.0.1:8080`
