@@ -53,9 +53,40 @@
 
 <form method="POST" action="/portal/isos/{{int64 $iso.ID}}/extract" class="inline" style="margin-top: var(--sp-3);">
   <button type="submit" class="secondary" {{if not $iso.StoragePath}}disabled{{end}}>
-    <svg><use href="#i-bolt"/></svg>Extract contents
+    <svg><use href="#i-bolt"/></svg>{{if $iso.Extracted}}Re-prepare media{{else}}Extract &amp; prepare{{end}}
   </button>
-  <span class="small muted" style="margin-left: var(--sp-2);">Walks the ISO and writes every file under <code>data/iso/{{int64 $iso.ID}}/files/</code>. Records the install.wim or install.esd path so the resolver can serve it.</span>
+  <span class="small muted" style="margin-left: var(--sp-2);">Walks the ISO into <code>data/iso/{{int64 $iso.ID}}/files/</code> and prepares FAT32 boot media — splitting an oversized <code>install.wim</code> into <code>.swm</code> parts.</span>
 </form>
+
+<div class="section-head"><h3>Boot media</h3><div class="line"></div></div>
+<div class="card" style="margin-top: var(--sp-2);">
+  {{if not $iso.Extracted}}
+    <p class="small muted">Not prepared yet. Upload an ISO (it auto-extracts), or use the button above.</p>
+  {{else}}
+    <p>
+      Status:
+      {{if $iso.PrepError}}<span class="badge bad" title="{{$iso.PrepError}}">needs attention</span>
+      {{else if not $iso.BootloaderPresent}}<span class="badge bad">not UEFI-bootable</span>
+      {{else if $iso.DeployReady}}<span class="badge ok">ready to deploy</span>
+      {{else}}<span class="badge warn">incomplete</span>{{end}}
+    </p>
+    <ul class="small" style="margin-top: var(--sp-2); line-height: 1.7;">
+      <li>Install image:
+        {{if $iso.InstallImageFormat}}<code>{{$iso.InstallImageFormat}}</code>{{else}}<span class="muted">unknown</span>{{end}}
+        {{if $iso.InstallImageBytes}}<span class="muted">({{$iso.InstallImageBytes}} bytes)</span>{{end}}
+      </li>
+      <li>FAT32 split:
+        {{if $iso.SWMParts}}split into <strong>{{$iso.SWMParts}}</strong> <code>.swm</code> part(s) — the oversized original was removed.
+        {{else}}<span class="muted">not needed — install image fits FAT32.</span>{{end}}
+      </li>
+      <li>UEFI bootloader (<code>efi/boot/bootx64.efi</code>):
+        {{if $iso.BootloaderPresent}}<span class="badge ok">present</span>
+        {{else}}<span class="badge bad">missing</span> — this media may not boot under UEFI.{{end}}
+      </li>
+      {{if $iso.PrepError}}<li>Prep error: <code>{{$iso.PrepError}}</code></li>{{end}}
+      {{if $iso.MediaPreparedAt}}<li class="muted">Prepared {{$iso.MediaPreparedAt}}</li>{{end}}
+    </ul>
+  {{end}}
+</div>
 {{end}}
 {{end}}

@@ -19,10 +19,13 @@
 #   - the tools the Boot Client shells out to at runtime:
 #         busybox (sh + core utilities)
 #         modprobe / depmod (kmod)        -- load NIC/disk drivers
-#         sgdisk (gptfdisk)
-#         mkfs.fat (dosfstools)
-#         mkfs.ntfs (ntfs-3g)
-#         wimlib-imagex (wimtools)
+#         sgdisk (gptfdisk)        -- partition the target disk
+#         mkfs.fat (dosfstools)    -- format the FAT32 boot partition
+#         efibootmgr               -- register the boot partition w/ firmware
+#         unzip                    -- expand driver packages onto the media
+# AutoDeploy deploys by staging a bootable copy of the install media onto
+# a single FAT32 partition (boot-the-media); the oversized install.wim is
+# split into .swm parts server-side, so no NTFS/wimlib is needed here.
 #   The script copies whichever it can find from the build host; missing
 #   tools are reported.
 #
@@ -76,8 +79,8 @@ for tool in /bin/busybox \
             /bin/sh /bin/mkdir /bin/mount /bin/umount /bin/cp /bin/sleep /bin/cat \
             /sbin/modprobe /sbin/depmod /sbin/insmod \
             /sbin/ip /sbin/udhcpc \
-            /sbin/sgdisk /sbin/mkfs.fat /sbin/mkfs.ntfs /sbin/reboot \
-            /usr/bin/wimlib-imagex; do
+            /sbin/sgdisk /sbin/mkfs.fat /sbin/efibootmgr /sbin/reboot \
+            /usr/bin/unzip; do
     if ! copy_with_libs "$tool" 2>/dev/null; then
         missing+=("$tool")
     fi
@@ -89,7 +92,7 @@ done
 # available even when no standalone binary was found above.
 if [ -x "$ROOTFS/bin/busybox" ]; then
     for applet in sh mkdir mount umount cp sleep cat ls grep basename sync \
-                  modprobe depmod insmod reboot \
+                  unzip modprobe depmod insmod reboot \
                   ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
     done
@@ -160,6 +163,9 @@ export PATH=/sbin:/usr/sbin:/bin:/usr/bin
 mount -t proc proc /proc 2>/dev/null
 mount -t sysfs sysfs /sys 2>/dev/null
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
+# efivarfs lets efibootmgr register the staged boot partition with the
+# firmware. Absent/failing on legacy-BIOS hosts -- harmless there.
+mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
 
 echo
 echo "=== AutoDeploy Boot Client (initramfs) ==="

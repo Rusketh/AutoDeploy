@@ -1,15 +1,25 @@
-// Package imaging owns the on-disk steps of a deployment: partition the
-// target disk, fetch and apply the WIM/ESD, inject driver packages, place
-// the unattend, and ask the firmware to reboot.
+// Package imaging owns the on-disk steps of a deployment. AutoDeploy
+// deploys by the BOOT-THE-MEDIA model: it stages a bootable copy of the
+// install media onto the target and lets the media's own installer
+// (Windows Setup) run -- it does NOT apply a WIM or hand-build a
+// bootloader. This is OS-agnostic: the same steps boot any bootable ISO.
 //
-// Real hardware work runs external tools (sgdisk, mkfs.fat, wimlib-imagex)
-// via os/exec. To keep this package testable without a target disk, every
-// destructive step funnels through Runner.Exec, which can be replaced with
-// a recorder in tests and a real exec.Command at runtime.
+// The target disk gets a single FAT32 boot partition holding the whole
+// media (an oversized install.wim was already split into <4 GiB .swm
+// parts server-side at ISO ingest, so it fits FAT32 -- no NTSF/GRUB/shim
+// needed). autounattend.xml is dropped at the media root where Setup
+// auto-detects it; driver packages go under $WinPEDriver$\ where WinPE
+// auto-loads them. The partition is registered with the firmware
+// (efibootmgr) and the caller reboots into Setup.
 //
-// FAIL-SAFE: if any step returns an error, Apply does not reboot. The
-// caller (cmd/autodeploy-boot) logs the failure and exits 1; the firmware
-// then falls back to the normal boot device.
+// Real hardware work runs external tools (sgdisk, mkfs.fat, cp,
+// efibootmgr) via os/exec. To keep this package testable without a
+// target disk, every destructive step funnels through Runner.Exec, which
+// is a Recorder in tests and a real exec.Command at runtime.
+//
+// FAIL-SAFE: if any step returns an error, StageMedia does not reboot.
+// The caller logs the failure and exits 1; the firmware then falls back
+// to the normal boot device.
 package imaging
 
 import (
@@ -72,79 +82,137 @@ func (w stderrWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Plan describes one deployment to apply. WIMPath and UnattendPath are local
-// paths the caller has already downloaded; DriverPaths is the list of driver
-// payload paths to inject. TargetDisk is the device node (e.g. /dev/sda).
-type Plan struct {
-	TargetDisk    string
-	WIMPath       string
-	WIMImageIndex int // wimlib image index; 1 for a single-image install.wim
-	UnattendPath  string
-	DriverPaths   []string
-	// WorkDir is a scratch directory the imaging code may use for mount
-	// points and intermediate files.
+// MediaPlan describes one boot-media deployment. MediaDir is a local
+// directory holding the full media tree the caller has already
+// downloaded (setup.exe, sources/, efi/, boot/, ...). UnattendPath is the
+// generated autounattend.xml; DriverPaths are downloaded driver payloads.
+// TargetDisk is the device node (e.g. /dev/sda).
+type MediaPlan struct {
+	TargetDisk   string
+	MediaDir     string
+	MediaBytes   int64 // total media size, for boot-partition sizing
+	UnattendPath string
+	DriverPaths  []string
+	// WorkDir is a scratch directory for the mount point.
 	WorkDir string
 }
 
-// Apply partitions the disk, applies the WIM, injects drivers and writes
-// the unattend. It does NOT reboot — the caller decides whether to do so
+const (
+	// bootPartMinMiB floors the FAT32 boot partition so it always fits a
+	// full Windows media set even if MediaBytes is unknown (0).
+	bootPartMinMiB int64 = 7168 // 7 GiB
+	// bootPartMarginNum/Den add headroom over MediaBytes (here +25%).
+	bootPartMarginNum = 5
+	bootPartMarginDen = 4
+)
+
+// bootPartitionMiB sizes the FAT32 boot partition from the media size
+// plus margin, never below the floor.
+func bootPartitionMiB(mediaBytes int64) int64 {
+	miB := (mediaBytes / (1024 * 1024)) * bootPartMarginNum / bootPartMarginDen
+	if miB < bootPartMinMiB {
+		return bootPartMinMiB
+	}
+	return miB
+}
+
+// StageMedia partitions the disk, copies the media onto a FAT32 boot
+// partition, drops the answer file and drivers, and registers the
+// partition with the firmware. It does NOT reboot -- the caller decides
 // based on whether anything failed.
 //
-// The Windows partition mount is held across applyWIM + injectDrivers
-// + placeUnattend so each subsequent step writes onto the same mounted
-// filesystem the WIM was just laid down on. The previous structure
-// (mount/umount inside applyWIM) silently dropped driver + unattend
-// writes because the mount went away before they ran.
-func Apply(ctx context.Context, plan Plan, r Runner) error {
-	if plan.WIMImageIndex == 0 {
-		plan.WIMImageIndex = 1
+// Disk layout: a single FAT32 boot partition (type ef00) placed at the
+// END of the disk, leaving the front as free space for Windows Setup to
+// install into. Setup's answer file is responsible for installing into
+// that free space without wiping the boot partition; post-install
+// cleanup (delete the boot partition, extend C:) is the agent's job.
+func StageMedia(ctx context.Context, plan MediaPlan, r Runner) error {
+	d := plan.TargetDisk
+	sizeMiB := bootPartitionMiB(plan.MediaBytes)
+
+	if err := r.Exec(ctx, "sgdisk", "--zap-all", d); err != nil {
+		return fmt.Errorf("zap %s: %w", d, err)
 	}
-	if err := partition(ctx, plan, r); err != nil {
-		return fmt.Errorf("partition: %w", err)
+	// Negative start places the partition at the end of the disk; the
+	// remaining space at the front is left free for the OS install.
+	if err := r.Exec(ctx, "sgdisk",
+		fmt.Sprintf("--new=1:-%dM:0", sizeMiB),
+		"--typecode=1:ef00", "--change-name=1:ADBOOT", d); err != nil {
+		return fmt.Errorf("partition %s: %w", d, err)
 	}
-	mount := filepath.Join(plan.WorkDir, "win")
+	boot := partName(d, 1)
+	if err := r.Exec(ctx, "mkfs.fat", "-F32", "-n", "ADBOOT", boot); err != nil {
+		return fmt.Errorf("mkfs.fat %s: %w", boot, err)
+	}
+
+	mount := filepath.Join(plan.WorkDir, "media")
 	if err := r.Exec(ctx, "mkdir", "-p", mount); err != nil {
 		return fmt.Errorf("prepare mount point: %w", err)
 	}
-	if err := r.Exec(ctx, "mount", partName(plan.TargetDisk, 2), mount); err != nil {
-		return fmt.Errorf("mount %s: %w", partName(plan.TargetDisk, 2), err)
+	if err := r.Exec(ctx, "mount", boot, mount); err != nil {
+		return fmt.Errorf("mount %s: %w", boot, err)
 	}
 	defer func() { _ = r.Exec(ctx, "umount", mount) }()
 
-	if err := applyWIM(ctx, plan, r, mount); err != nil {
-		return fmt.Errorf("apply wim: %w", err)
-	}
-	if err := injectDrivers(ctx, plan, r, mount); err != nil {
-		return fmt.Errorf("inject drivers: %w", err)
+	// Copy the whole media tree onto the partition root. The trailing
+	// "/." copies directory CONTENTS, so setup.exe, sources/, efi/, etc.
+	// land at the partition root where Setup and the firmware expect them.
+	if err := r.Exec(ctx, "cp", "-a", plan.MediaDir+"/.", mount); err != nil {
+		return fmt.Errorf("copy media: %w", err)
 	}
 	if err := placeUnattend(ctx, plan, r, mount); err != nil {
 		return fmt.Errorf("place unattend: %w", err)
 	}
-	// Best-effort sync so the umount in the deferred cleanup doesn't
-	// race writeback on a freshly applied 8 GB WIM.
+	if err := stageDrivers(ctx, plan, r, mount); err != nil {
+		return fmt.Errorf("stage drivers: %w", err)
+	}
+	// Flush before the deferred umount so writeback of several GB of media
+	// doesn't race the unmount.
 	_ = r.Exec(ctx, "sync")
+
+	// Register the boot partition so the firmware boots Windows Setup.
+	// The \EFI\BOOT\BOOTX64.EFI fallback path is also present on the
+	// media, so even firmware that ignores added NVRAM entries can boot it.
+	if err := r.Exec(ctx, "efibootmgr", "--create",
+		"--disk", d, "--part", "1",
+		"--loader", `\EFI\BOOT\BOOTX64.EFI`,
+		"--label", "AutoDeploy Setup"); err != nil {
+		return fmt.Errorf("register boot entry: %w", err)
+	}
 	return nil
 }
 
-// partition lays down a UEFI GPT layout: 100 MiB ESP + remainder NTFS for
-// Windows. Resilient choice: clear any existing partition table first so
-// re-imaging a previously deployed machine is reliable.
-func partition(ctx context.Context, plan Plan, r Runner) error {
-	d := plan.TargetDisk
-	if err := r.Exec(ctx, "sgdisk", "--zap-all", d); err != nil {
-		return err
+// placeUnattend drops the answer file at the media root as
+// autounattend.xml, where Windows Setup auto-detects it on the boot
+// media. (This replaces the old capture/apply behaviour of writing
+// Windows\Panther\unattend.xml into an applied image.)
+func placeUnattend(ctx context.Context, plan MediaPlan, r Runner, mount string) error {
+	if plan.UnattendPath == "" {
+		return nil
 	}
-	if err := r.Exec(ctx, "sgdisk",
-		"--new=1:0:+100M", "--typecode=1:ef00", "--change-name=1:ESP",
-		"--new=2:0:0", "--typecode=2:0700", "--change-name=2:Windows",
-		d); err != nil {
-		return err
-	}
-	if err := r.Exec(ctx, "mkfs.fat", "-F32", "-n", "ESP", partName(d, 1)); err != nil {
-		return err
-	}
-	if err := r.Exec(ctx, "mkfs.ntfs", "-Q", "-L", "Windows", partName(d, 2)); err != nil {
-		return err
+	return r.Exec(ctx, "cp", plan.UnattendPath, filepath.Join(mount, "autounattend.xml"))
+}
+
+// stageDrivers places each downloaded driver package under
+// <mount>\$WinPEDriver$\<name>\, the folder WinPE auto-loads during
+// Setup. Each blob is a zip (SCCM-style export the server validates) or,
+// as a legacy fallback, a single opaque file.
+func stageDrivers(ctx context.Context, plan MediaPlan, r Runner, mount string) error {
+	for _, p := range plan.DriverPaths {
+		base := filepath.Base(p)
+		dst := filepath.Join(mount, "$WinPEDriver$", strings.TrimSuffix(base, filepath.Ext(base)))
+		if err := r.Exec(ctx, "mkdir", "-p", dst); err != nil {
+			return err
+		}
+		if isZip(p) {
+			if err := r.Exec(ctx, "unzip", "-o", "-q", p, "-d", dst); err != nil {
+				return err
+			}
+		} else {
+			if err := r.Exec(ctx, "cp", p, dst); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -156,51 +224,6 @@ func partName(disk string, n int) string {
 		return fmt.Sprintf("%sp%d", disk, n)
 	}
 	return fmt.Sprintf("%s%d", disk, n)
-}
-
-func applyWIM(ctx context.Context, plan Plan, r Runner, mount string) error {
-	return r.Exec(ctx, "wimlib-imagex", "apply",
-		plan.WIMPath, fmt.Sprint(plan.WIMImageIndex), mount)
-}
-
-// injectDrivers stages every downloaded driver package into
-// <mount>\Windows\INF\AutoDeploy\<basename>\ so Windows PnP finds the
-// .inf files on first boot via its INF search path. Each downloaded
-// blob is expected to be either a zip archive (SCCM-style driver
-// export -- the server validates this on /api/v1/drivers/{id}/extract)
-// or, as a legacy fallback, a single .inf-shaped file dropped through
-// the older single-file upload path.
-//
-// We unzip locally before copying into the mounted filesystem because
-// extracting through wimlib's update --command="add" did not exist
-// pre-mount and because copying into a live mount is the simplest
-// equivalent of dism /Add-Driver /Recurse for an offline image.
-func injectDrivers(ctx context.Context, plan Plan, r Runner, mount string) error {
-	if len(plan.DriverPaths) == 0 {
-		return nil
-	}
-	for _, p := range plan.DriverPaths {
-		base := filepath.Base(p)
-		dst := filepath.Join(mount, "Windows", "INF", "AutoDeploy", strings.TrimSuffix(base, filepath.Ext(base)))
-		if err := r.Exec(ctx, "mkdir", "-p", dst); err != nil {
-			return err
-		}
-		if isZip(p) {
-			// unzip is present in any reasonable initramfs; ours is
-			// built by scripts/initramfs which pulls it in.
-			if err := r.Exec(ctx, "unzip", "-o", "-q", p, "-d", dst); err != nil {
-				return err
-			}
-		} else {
-			// Legacy: a single opaque file dropped via the old upload
-			// path. Place it inside the package dir and hope Windows
-			// PnP finds it -- the operator should re-upload as a zip.
-			if err := r.Exec(ctx, "cp", p, dst); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // isZip is a cheap header sniff: PK\x03\x04 is the local file header
@@ -216,17 +239,4 @@ func isZip(p string) bool {
 		return false
 	}
 	return hdr[0] == 'P' && hdr[1] == 'K' && hdr[2] == 0x03 && hdr[3] == 0x04
-}
-
-func placeUnattend(ctx context.Context, plan Plan, r Runner, mount string) error {
-	if plan.UnattendPath == "" {
-		return nil
-	}
-	dst := filepath.Join(mount, "Windows", "Panther", "unattend.xml")
-	if err := r.Exec(ctx, "mkdir", "-p", filepath.Dir(dst)); err != nil {
-		return err
-	}
-	// File copy goes through the runner so dry-run logs the intent and the
-	// recorder can assert on it. cp is present in any sane initramfs.
-	return r.Exec(ctx, "cp", plan.UnattendPath, dst)
 }

@@ -11,8 +11,9 @@
 //   identify          Print SMBIOS identity and exit.
 //   menu              Report identity, fetch deployment menu, render and
 //                     wait for an operator selection (interactive).
-//   deploy <image-id> Fetch the manifest for the image, download payloads,
-//                     partition and image the target disk.
+//   deploy <image-id> Fetch the manifest for the image, mirror the install
+//                     media, stage it onto a bootable FAT32 partition and
+//                     reboot into the media's own installer.
 //
 // Flags affecting all sub-commands:
 //
@@ -25,13 +26,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rusketh/autodeploy/boot-client/internal/httpc"
@@ -148,7 +152,18 @@ type menuResponse struct {
 type manifestItem struct {
 	Role string `json:"role"`
 	URL  string `json:"url"`
+	Base string `json:"base,omitempty"`       // iso-media: prefix for index paths
+	Size int64  `json:"size_bytes,omitempty"` // iso-media: total media size
 	Name string `json:"name,omitempty"`
+}
+
+// mediaIndex mirrors the server's /payload/iso/{id}/index.json: every file
+// in the extracted media tree the Boot Client must mirror.
+type mediaIndex struct {
+	Files []struct {
+		Path string `json:"path"`
+		Size int64  `json:"size_bytes"`
+	} `json:"files"`
 }
 
 type manifest struct {
@@ -244,58 +259,65 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		os.Exit(0)
 	}
 
-	var wimPath, unattendPath string
+	var mediaDir, unattendPath string
+	var mediaBytes int64
 	var driverPaths []string
 	for _, it := range m.Items {
-		dst := filepath.Join(f.work, "payload-"+it.Role+"-"+sanitise(it.URL))
-		if err := download(ctx, c, log, it, dst); err != nil {
-			// Software is applied post-OS by the agent, not by the Boot
-			// Client (there is no "software" case below). A software
-			// payload that fails to download must NOT abort imaging --
-			// warn and carry on. Every other role is required to lay the
-			// OS down, so a failure there is still fatal (fail-safe).
-			if it.Role == "software" {
-				log.Warn("download.software.skip",
-					slog.String("url", it.URL),
-					slog.String("error", err.Error()))
-				continue
-			}
-			log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
-			os.Exit(0)
-		}
 		switch it.Role {
-		case "iso-wim":
-			wimPath = dst
+		case "iso-media":
+			// Mirror the whole media tree (boot-the-media deploy). A
+			// failure here is fatal -- there is nothing to boot without it.
+			mediaDir = filepath.Join(f.work, "media-src")
+			if err := downloadMedia(ctx, c, log, it, mediaDir); err != nil {
+				log.Error("download.media",
+					slog.String("url", it.URL), slog.String("error", err.Error()))
+				os.Exit(0)
+			}
+			mediaBytes = it.Size
 		case "unattend":
+			dst := filepath.Join(f.work, "payload-unattend-"+sanitise(it.URL))
+			if err := download(ctx, c, log, it, dst); err != nil {
+				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
+				os.Exit(0)
+			}
 			unattendPath = dst
 		case "driver":
+			dst := filepath.Join(f.work, "payload-driver-"+sanitise(it.URL))
+			if err := download(ctx, c, log, it, dst); err != nil {
+				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
+				os.Exit(0)
+			}
 			driverPaths = append(driverPaths, dst)
+		case "software":
+			// Software is installed post-OS by the agent, not staged onto
+			// the boot media. Skip it here -- no need to pull it pre-OS.
+			continue
 		}
 	}
 
-	if wimPath == "" {
-		log.Error("deploy.no_wim", slog.String("reason", "manifest has no WIM/ESD; fail-safe"))
+	if mediaDir == "" {
+		log.Error("deploy.no_media", slog.String("reason", "manifest has no iso-media; fail-safe"))
 		os.Exit(0)
 	}
 
-	plan := imaging.Plan{
-		TargetDisk:    f.disk,
-		WIMPath:       wimPath,
-		WIMImageIndex: 1,
-		UnattendPath:  unattendPath,
-		DriverPaths:   driverPaths,
-		WorkDir:       f.work,
+	plan := imaging.MediaPlan{
+		TargetDisk:   f.disk,
+		MediaDir:     mediaDir,
+		MediaBytes:   mediaBytes,
+		UnattendPath: unattendPath,
+		DriverPaths:  driverPaths,
+		WorkDir:      f.work,
 	}
 	runner := &imaging.OSRunner{Log: log, DryRun: f.dryRun}
-	log.Info("deploy.apply.start",
+	log.Info("deploy.stage.start",
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk),
 		slog.Bool("dry_run", f.dryRun))
-	if err := imaging.Apply(ctx, plan, runner); err != nil {
-		log.Error("deploy.apply.fail", slog.String("error", err.Error()))
+	if err := imaging.StageMedia(ctx, plan, runner); err != nil {
+		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
 		os.Exit(1) // do NOT reboot: caller's environment can investigate
 	}
-	log.Info("deploy.apply.ok",
+	log.Info("deploy.stage.ok",
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk))
 	if f.dryRun {
@@ -312,6 +334,53 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		log.Error("reboot", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+}
+
+// downloadMedia mirrors an iso-media payload: it fetches the media index
+// (it.URL) then downloads every listed file under destDir, preserving the
+// tree. Each file comes from it.Base + path. Paths are validated to stay
+// within destDir (defence against a malformed index).
+func downloadMedia(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifestItem, destDir string) error {
+	var buf bytes.Buffer
+	if err := c.Download(ctx, it.URL, &buf, nil); err != nil {
+		return fmt.Errorf("fetch index: %w", err)
+	}
+	var idx mediaIndex
+	if err := json.Unmarshal(buf.Bytes(), &idx); err != nil {
+		return fmt.Errorf("parse index: %w", err)
+	}
+	if len(idx.Files) == 0 {
+		return fmt.Errorf("media index lists no files")
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return err
+	}
+	for i, mf := range idx.Files {
+		rel := filepath.FromSlash(mf.Path)
+		out := filepath.Join(destDir, rel)
+		// Reject any path that escapes destDir.
+		if !strings.HasPrefix(out, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("index path escapes media dir: %q", mf.Path)
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		w, err := os.Create(out)
+		if err != nil {
+			return err
+		}
+		derr := c.Download(ctx, it.Base+mf.Path, w, nil)
+		_ = w.Close()
+		if derr != nil {
+			return fmt.Errorf("file %s: %w", mf.Path, derr)
+		}
+		if (i+1)%200 == 0 {
+			log.Info("download.media.progress",
+				slog.Int("done", i+1), slog.Int("total", len(idx.Files)))
+		}
+	}
+	log.Info("download.media.ok", slog.Int("files", len(idx.Files)))
+	return nil
 }
 
 func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifestItem, dst string) error {

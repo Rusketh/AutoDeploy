@@ -62,6 +62,12 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 	// Throttle the download routes; uploads and the lightweight
 	// unattend generator are not in the burst path.
+	// Media index: lists every file in the extracted ISO tree so the
+	// Boot Client can mirror the whole media (boot-the-media deploy),
+	// not just pull a single WIM. Registered BEFORE the {id}/ content
+	// route is fine: ServeMux longest-pattern matching sends
+	// /payload/iso/{id}/index.json here and everything else to content.
+	mux.HandleFunc("GET /payload/iso/{id}/index.json", s.serveISOIndex)
 	mux.Handle("GET /payload/iso/{id}/", s.throttleHandler(http.HandlerFunc(s.serveISOContent)))
 	mux.Handle("GET /payload/drivers/{id}", s.throttleHandler(http.HandlerFunc(s.serveDriver)))
 	mux.Handle("GET /payload/software/{id}", s.throttleHandler(http.HandlerFunc(s.serveSoftware)))
@@ -187,20 +193,43 @@ func (s *Service) uploadISO(w http.ResponseWriter, r *http.Request) {
 		writeModelErr(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	// Auto-extract so the ISO is immediately deployable -- the WIM/ESD
+	// inside is what the Boot Client applies, and the manifest only emits
+	// an iso-wim item once storage_path points inside the extracted tree.
+	// A failure here is non-fatal: the source blob is safely stored and
+	// the operator can re-run POST /api/v1/isos/{id}/extract.
+	prep, exErr := ExtractAndRecord(r.Context(), s.Blobs, s.ISOs, id)
+	resp := map[string]any{
 		"id":           iso.ID,
-		"storage_path": iso.StoragePath,
-		"size_bytes":   iso.SizeBytes,
-	})
+		"storage_path": rel,
+		"size_bytes":   n,
+		"extracted":    exErr == nil && prep.InstallRel != "",
+		"install_path": prep.InstallRel,
+		"swm_parts":    prep.SWMParts,
+		"format":       prep.Format,
+	}
+	if exErr != nil {
+		resp["extract_error"] = exErr.Error()
+	}
+	if prep.Err != "" {
+		resp["prep_error"] = prep.Err
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
-// extractISO unpacks the previously uploaded ISO into data/iso/{id}/files/...
-// On success it sets the ISO row's storage_path to the WIM/ESD path so the
-// resolver can hand it back as a payload URL.
+// extractISO (re-)unpacks the uploaded ISO into data/iso/{id}/files/ and
+// prepares it as FAT32 boot media (splitting an oversized install.wim into
+// .swm parts). It delegates to ExtractAndRecord so the manual Extract and
+// the upload auto-extract share one code path.
 func (s *Service) extractISO(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	prep, err := ExtractAndRecord(r.Context(), s.Blobs, s.ISOs, id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("extract: %v", err), http.StatusInternalServerError)
 		return
 	}
 	iso, err := s.ISOs.Get(r.Context(), id)
@@ -208,37 +237,13 @@ func (s *Service) extractISO(w http.ResponseWriter, r *http.Request) {
 		writeModelErr(w, err)
 		return
 	}
-	srcRel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "source.iso"))
-	srcAbs, err := s.Blobs.Resolve(srcRel)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if _, err := os.Stat(srcAbs); errors.Is(err, os.ErrNotExist) {
-		http.Error(w, "iso not uploaded; PUT /api/v1/isos/{id}/upload first", http.StatusBadRequest)
-		return
-	}
-	destAbs, err := s.Blobs.EnsureDir(filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files")))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	total, wimRel, err := ExtractISO(srcAbs, destAbs)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("extract: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if wimRel != "" {
-		iso.StoragePath = filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files", wimRel))
-	}
-	if err := s.ISOs.Update(r.Context(), iso); err != nil {
-		writeModelErr(w, err)
-		return
-	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"id":           iso.ID,
-		"bytes":        total,
-		"wim_path":     wimRel,
+		"install_path": prep.InstallRel,
+		"format":       prep.Format,
+		"swm_parts":    prep.SWMParts,
+		"bootloader":   prep.BootloaderPresent,
+		"prep_error":   prep.Err,
 		"storage_path": iso.StoragePath,
 	})
 }
@@ -301,6 +306,48 @@ func (s *Service) uploadSoftware(w http.ResponseWriter, r *http.Request) {
 		"storage_path": pkg.StoragePath,
 		"size_bytes":   pkg.SizeBytes,
 	})
+}
+
+// MediaIndex is the JSON the Boot Client fetches to learn every file in
+// an extracted ISO's media tree. Files[].Path is relative to the media
+// root (e.g. "sources/install.wim"); the client fetches each from
+// GET /payload/iso/{id}/{path}.
+type MediaIndex struct {
+	ISOID int64            `json:"iso_id"`
+	Files []MediaIndexFile `json:"files"`
+}
+
+// MediaIndexFile is one file in the media tree.
+type MediaIndexFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size_bytes"`
+}
+
+// serveISOIndex returns the recursive file list of the extracted ISO so
+// the Boot Client can mirror the full media. 404 if the ISO has not been
+// extracted yet (no files/ tree). This is what makes a boot-the-media
+// deploy possible without the client guessing filenames.
+func (s *Service) serveISOIndex(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files"))
+	entries, err := s.Blobs.ListTree(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(entries) == 0 {
+		http.Error(w, "iso not extracted; POST /api/v1/isos/{id}/extract first", http.StatusNotFound)
+		return
+	}
+	idx := MediaIndex{ISOID: int64(id)}
+	for _, e := range entries {
+		idx.Files = append(idx.Files, MediaIndexFile{Path: e.Name, Size: e.Size})
+	}
+	respondJSON(w, http.StatusOK, idx)
 }
 
 func (s *Service) serveISOContent(w http.ResponseWriter, r *http.Request) {

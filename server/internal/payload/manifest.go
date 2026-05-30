@@ -27,11 +27,14 @@ type Manifest struct {
 
 // ManifestItem is one downloadable payload.
 type ManifestItem struct {
-	Role  string `json:"role"`           // "iso-wim", "driver", "software", "unattend"
-	URL   string `json:"url"`            // absolute or root-relative
-	Size  int64  `json:"size_bytes,omitempty"`
-	OS    string `json:"os_type,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Role string `json:"role"` // "iso-media", "driver", "software", "unattend"
+	URL  string `json:"url"`  // absolute or root-relative
+	// Base is set for "iso-media": the URL prefix the client joins with
+	// each relative path from the media index (URL points at index.json).
+	Base string `json:"base,omitempty"`
+	Size int64  `json:"size_bytes,omitempty"`
+	OS   string `json:"os_type,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // ManifestHandler returns the resolver-backed manifest for a given image,
@@ -140,23 +143,22 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 	if site != "" {
 		m.Warnings = append(m.Warnings, "payload site: "+site)
 	}
-	if res.ISO != nil {
-		// If extraction has happened, StoragePath points at the WIM/ESD
-		// inside the extracted tree (iso/{id}/files/...). Serve it from
-		// /payload/iso/{id}/{path-inside-files}.
-		if isExtracted := strings.Contains(res.ISO.StoragePath, "/files/"); isExtracted {
-			afterFiles := res.ISO.StoragePath
-			if i := strings.Index(afterFiles, "/files/"); i >= 0 {
-				afterFiles = afterFiles[i+len("/files/"):]
-			}
-			m.Items = append(m.Items, ManifestItem{
-				Role: "iso-wim",
-				URL:  fmt.Sprintf("%s/payload/iso/%d/%s", payloadBase, int64(res.ISO.ID), afterFiles),
-				Size: res.ISO.SizeBytes,
-				OS:   res.ISO.OSType,
-				Name: res.ISO.Name,
-			})
-		}
+	if res.ISO != nil && res.ISO.DeployReady() {
+		// Boot-the-media deploy: hand the client the whole extracted media
+		// tree. URL is the media index (every file + size); Base is the
+		// prefix to join with each index path. The Boot Client mirrors the
+		// tree onto a FAT32 boot partition and lets Setup run. Gated on
+		// DeployReady so an un-prepared or non-bootable ISO is never
+		// offered.
+		base := fmt.Sprintf("%s/payload/iso/%d/", payloadBase, int64(res.ISO.ID))
+		m.Items = append(m.Items, ManifestItem{
+			Role: "iso-media",
+			URL:  base + "index.json",
+			Base: base,
+			Size: res.ISO.SizeBytes,
+			OS:   res.ISO.OSType,
+			Name: res.ISO.Name,
+		})
 	}
 	// Driver packages matched against reported hardware (Phase 4). The
 	// Boot Client injects each one into the applied image.

@@ -11,15 +11,78 @@
 package payload
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kdomanski/iso9660"
+
+	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/storage"
 )
+
+// ExtractAndRecord runs the ISO extraction for the given ISO id against the
+// canonical on-disk layout (data/iso/{id}/source.iso -> data/iso/{id}/files/)
+// and, when a WIM/ESD is found, updates the ISO row's storage_path to point
+// inside the extracted tree so the resolver hands it back as an iso-wim
+// payload. It is the single place both upload paths (portal multipart + API
+// raw PUT) call so an uploaded ISO is immediately deployable without a
+// separate manual "Extract" step.
+//
+// After extraction it runs PrepareBootMedia over the tree (splitting an
+// oversized install.wim into .swm parts for FAT32 boot media) and records
+// the resulting prep status on the ISO row. storage_path is set to the
+// prepared install image (sources/install.swm after a split, else the
+// original) so it always points at something that exists in the tree.
+//
+// Returns the MediaPrep outcome. A non-nil error means extraction itself
+// failed; the caller decides whether that is fatal (it should not be for
+// an upload — the blob is stored and the operator can re-run Extract).
+// Prep-level problems (oversized split failure, missing bootloader) are
+// not errors here: they are recorded in MediaPrep.Err / the ISO row so the
+// portal can flag "needs attention".
+func ExtractAndRecord(ctx context.Context, blobs *storage.BlobStore, isos *model.ISORepo, id model.ID) (MediaPrep, error) {
+	iso, err := isos.Get(ctx, id)
+	if err != nil {
+		return MediaPrep{}, err
+	}
+	srcRel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "source.iso"))
+	srcAbs, err := blobs.Resolve(srcRel)
+	if err != nil {
+		return MediaPrep{}, err
+	}
+	if _, err := os.Stat(srcAbs); errors.Is(err, os.ErrNotExist) {
+		return MediaPrep{}, fmt.Errorf("iso %d not uploaded", int64(id))
+	}
+	destAbs, err := blobs.EnsureDir(filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files")))
+	if err != nil {
+		return MediaPrep{}, err
+	}
+	if _, _, err := ExtractISO(srcAbs, destAbs); err != nil {
+		return MediaPrep{}, err
+	}
+
+	prep := PrepareBootMedia(ctx, destAbs)
+	now := time.Now().UTC()
+	iso.InstallImageFormat = prep.Format
+	iso.InstallImageBytes = prep.Bytes
+	iso.SWMParts = prep.SWMParts
+	iso.BootloaderPresent = prep.BootloaderPresent
+	iso.PrepError = prep.Err
+	iso.MediaPreparedAt = &now
+	if prep.InstallRel != "" {
+		iso.StoragePath = filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files", prep.InstallRel))
+	}
+	if err := isos.Update(ctx, iso); err != nil {
+		return prep, err
+	}
+	return prep, nil
+}
 
 // ExtractISO walks the ISO at srcPath and writes every file into destDir,
 // preserving the directory layout. Returns the total bytes written and the

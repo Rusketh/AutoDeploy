@@ -180,6 +180,50 @@ func (b *BlobStore) EnsureDir(relative string) (string, error) {
 	return abs, nil
 }
 
+// ListTree recursively enumerates every regular file under relative,
+// returning each one's path RELATIVE TO relative (forward-slashed) plus
+// size and modtime. Used to index an extracted ISO's media tree so a
+// client can mirror the whole tree file-by-file. Returns an empty slice
+// (not an error) when the directory doesn't exist yet. Symlinks are
+// skipped. The walk is confined to the resolved root, so it cannot
+// escape the blob store.
+func (b *BlobStore) ListTree(relative string) ([]DirEntry, error) {
+	root, err := b.Resolve(relative)
+	if err != nil {
+		return nil, err
+	}
+	var out []DirEntry
+	walkErr := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		out = append(out, DirEntry{
+			Name:    filepath.ToSlash(rel),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	return out, nil
+}
+
 // ListDir enumerates the regular files directly under relative,
 // returning their (filename, size, modtime) without recursing. Used
 // by the multi-file software-package UI to surface what's been

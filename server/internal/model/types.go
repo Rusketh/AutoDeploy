@@ -4,7 +4,10 @@
 // reference-count guards, name uniqueness).
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ID is the primary-key type used by all artifact and image rows.
 type ID int64
@@ -20,6 +23,28 @@ type ISO struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+
+	// Boot-media prep status (descriptive; set by PrepareBootMedia at
+	// ingest, reported by the portal). See migration 0010.
+	InstallImageFormat string     `json:"install_image_format"` // wim|esd|swm|""
+	InstallImageBytes  int64      `json:"install_image_bytes"`  // size before any split
+	SWMParts           int        `json:"swm_parts"`            // 0 = not split
+	BootloaderPresent  bool       `json:"bootloader_present"`   // efi/boot/bootx64.efi found
+	PrepError          string     `json:"prep_error,omitempty"` // non-empty => not deploy-ready
+	MediaPreparedAt    *time.Time `json:"media_prepared_at,omitempty"`
+}
+
+// Extracted reports whether the ISO has been unpacked into its files/
+// tree (storage_path points inside it).
+func (i ISO) Extracted() bool {
+	return strings.Contains(i.StoragePath, "/files/")
+}
+
+// DeployReady reports whether the ISO can be staged as boot media: it
+// has been extracted, carries a UEFI bootloader, and prepare hit no
+// error. The portal gates deploy selection on this.
+func (i ISO) DeployReady() bool {
+	return i.Extracted() && i.BootloaderPresent && i.PrepError == ""
 }
 
 // Unattend holds the configured settings from which a complete unattend.xml
