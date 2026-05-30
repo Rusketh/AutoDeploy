@@ -73,41 +73,37 @@ copy_with_libs() {
 }
 
 missing=()
-# Resolve a tool by name: PATH first (command -v), then the common
-# sbin/bin dirs. Distros disagree on where these live (efibootmgr is
-# /usr/sbin on Debian, /sbin elsewhere), so a hardcoded path silently
-# drops the tool from the image -- which is exactly how efibootmgr went
-# missing and broke the boot-entry step.
-resolve_tool() {
-    local name="$1" p
-    p=$(command -v "$name" 2>/dev/null) && { [ -x "$p" ] && { printf '%s\n' "$p"; return 0; }; }
-    for d in /sbin /usr/sbin /bin /usr/bin /usr/local/sbin /usr/local/bin; do
-        [ -x "$d/$name" ] && { printf '%s\n' "$d/$name"; return 0; }
-    done
-    return 1
-}
-
-# busybox first -- it backstops any of the named tools below that the
-# host happens to provide only as a busybox applet.
-for tool in busybox \
-            sh mkdir mount umount cp sleep cat \
-            modprobe depmod insmod \
-            ip udhcpc \
-            sgdisk mkfs.fat efibootmgr reboot \
-            unzip; do
-    if path=$(resolve_tool "$tool") && copy_with_libs "$path" 2>/dev/null; then
-        :
-    else
+# Copy tools from KNOWN, explicit paths. This deliberately mirrors the
+# long-proven layout: busybox + core applets under /bin, kmod
+# (modprobe/depmod/insmod) and the imaging tools under /sbin. An earlier
+# attempt to "resolve by name" pushed these into /usr/bin|/usr/sbin on a
+# usr-merged build host, which broke the /bin/busybox applet links (kernel
+# panic, no /bin/sh) and the kmod module-load path (Invalid ELF magic --
+# the wrong loader ran). Explicit paths avoid all of that.
+#
+# busybox first -- it backstops any named tool the host provides only as a
+# busybox applet.
+for tool in /bin/busybox \
+            /bin/sh /bin/mkdir /bin/mount /bin/umount /bin/cp /bin/sleep /bin/cat \
+            /sbin/modprobe /sbin/depmod /sbin/insmod \
+            /sbin/ip /sbin/udhcpc \
+            /sbin/sgdisk /sbin/mkfs.fat /sbin/reboot \
+            /usr/bin/unzip; do
+    if ! copy_with_libs "$tool" 2>/dev/null; then
         missing+=("$tool")
     fi
 done
 
-# resolve_tool installs each tool at its resolved path, which on a
-# usr-merged build host is /usr/bin/busybox (command -v) rather than
-# /bin/busybox. The relative applet symlinks below (/bin/sh -> busybox)
-# need busybox AT /bin/busybox -- and if /bin/sh is missing the kernel
-# cannot exec /init (#!/bin/sh) and panics with "No working init found".
-# Normalise busybox to /bin/busybox.
+# efibootmgr registers the staged boot partition with the firmware. It
+# lives in /usr/sbin on Debian/Ubuntu but /sbin elsewhere, so try both.
+if ! copy_with_libs /usr/sbin/efibootmgr 2>/dev/null \
+   && ! copy_with_libs /sbin/efibootmgr 2>/dev/null; then
+    missing+=("efibootmgr")
+fi
+
+# Safety net: if busybox somehow landed outside /bin (e.g. a host that
+# only ships it under /usr/bin), put it at /bin/busybox so the applet
+# symlinks below (and /bin/sh) resolve.
 if [ ! -e "$ROOTFS/bin/busybox" ]; then
     for cand in usr/bin/busybox sbin/busybox usr/sbin/busybox; do
         if [ -e "$ROOTFS/$cand" ]; then
