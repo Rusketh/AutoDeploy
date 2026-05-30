@@ -53,13 +53,14 @@ jobs:
           #   its /lib/modules tree into the initramfs and ship its vmlinuz.
           # kmod:                modprobe/depmod for the initramfs.
           # busybox-static:      sh + coreutils inside the initramfs.
-          # gdisk/dosfstools/ntfs-3g/wimtools: the imaging tools the Boot
-          #   Client shells out to (sgdisk, mkfs.fat, mkfs.ntfs, wimlib-imagex).
+          # gdisk/dosfstools:    sgdisk + mkfs.fat (single FAT32 boot part).
+          # efibootmgr:          register the staged partition with firmware.
+          # unzip:               expand driver packages onto the media.
           # cpio/gzip:           pack the initramfs.
           sudo apt-get install -y \
               linux-image-generic \
               kmod busybox-static cpio gzip \
-              gdisk dosfstools ntfs-3g wimtools
+              gdisk dosfstools efibootmgr unzip
 
       - name: Resolve kernel version
         id: kver

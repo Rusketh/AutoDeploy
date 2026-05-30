@@ -80,14 +80,18 @@
       {{else}}<span class="badge warn">incomplete</span>{{end}}
     </p>
     <ul class="small" style="margin-top: var(--sp-2); line-height: 1.7;">
-      <li>Install image:
-        {{if $iso.InstallImageFormat}}<code>{{$iso.InstallImageFormat}}</code>{{else}}<span class="muted">unknown</span>{{end}}
-        {{if $iso.InstallImageBytes}}<span class="muted">({{$iso.InstallImageBytes}} bytes)</span>{{end}}
+      <li>Ingested media: the <strong>full ISO contents</strong> are extracted and staged as the bootable media —
+        {{if $iso.MediaFileCount}}<strong>{{$iso.MediaFileCount}}</strong> files, {{humanBytes $iso.MediaTotalBytes}}{{else}}<span class="muted">size pending re-prepare</span>{{end}}
+        (bootmgr, <code>boot/</code>, <code>efi/</code>, <code>sources/</code>, …). The deploy boots this whole tree, not a single file.
       </li>
-      <li>FAT32 split:
-        {{if $iso.SWMParts}}split into <strong>{{$iso.SWMParts}}</strong> <code>.swm</code> part(s) — the oversized original was removed.
-        {{else if $iso.PrepError}}<span class="badge bad">failed</span> — see prep error below.
-        {{else}}<span class="muted">not needed — install image fits FAT32.</span>{{end}}
+      <li>WinPE (<code>sources/boot.wim</code>):
+        {{if $iso.BootWimPresent}}<span class="badge ok">present</span> — what Windows Setup actually boots into.
+        {{else}}<span class="badge bad">missing</span> — this media can't boot Setup. Re-prepare from a full Windows ISO.{{end}}
+      </li>
+      <li>Install image (<code>sources/install.*</code>):
+        {{if $iso.SWMParts}}split into <strong>{{$iso.SWMParts}}</strong> <code>.swm</code> part(s) so it fits FAT32 — the oversized original was removed.
+        {{else if $iso.PrepError}}<span class="badge bad">split failed</span> — see prep error below.
+        {{else}}<code>{{$iso.InstallImageFormat}}</code>{{if $iso.InstallImageBytes}} ({{humanBytes $iso.InstallImageBytes}}){{end}} — fits FAT32, no split needed.{{end}}
       </li>
       <li>UEFI bootloader (<code>efi/boot/bootx64.efi</code>):
         {{if $iso.BootloaderPresent}}<span class="badge ok">present</span>

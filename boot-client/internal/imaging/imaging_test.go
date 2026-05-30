@@ -27,6 +27,9 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	if err := FinalizeMedia(context.Background(), plan, rec, mount); err != nil {
 		t.Fatal(err)
 	}
+	if err := RegisterBootEntry(context.Background(), plan, rec); err != nil {
+		t.Fatal(err)
+	}
 	mustContain := []string{
 		"sgdisk --zap-all /dev/sda",
 		// Single FAT32 boot partition at the END of the disk (negative

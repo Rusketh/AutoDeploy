@@ -16,8 +16,9 @@ import (
 func renderBody(t *testing.T, page string, data map[string]any) string {
 	t.Helper()
 	funcs := template.FuncMap{
-		"int64": func(id model.ID) int64 { return int64(id) },
-		"list":  func(args ...any) []any { return args },
+		"int64":      func(id model.ID) int64 { return int64(id) },
+		"list":       func(args ...any) []any { return args },
+		"humanBytes": func(n int64) string { return "X" },
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/"+page)
 	if err != nil {
