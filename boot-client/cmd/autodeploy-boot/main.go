@@ -372,6 +372,17 @@ func downloadMedia(ctx context.Context, c *httpc.Client, log *slog.Logger, it ma
 	if len(idx.Files) == 0 {
 		return fmt.Errorf("media index lists no files")
 	}
+	// The boot media is a single FAT32 partition (4 GiB per-file limit).
+	// An oversized install.wim should have been split into .swm parts
+	// server-side; if one slipped through, fail with a clear diagnostic
+	// up front rather than a cryptic ENOSPC partway through the copy.
+	const fat32MaxFile = 4*1024*1024*1024 - 1
+	for _, mf := range idx.Files {
+		if mf.Size > fat32MaxFile {
+			return fmt.Errorf("media file %s is %d bytes, over the FAT32 4 GiB limit; "+
+				"the server-side split did not run -- re-prepare the ISO", mf.Path, mf.Size)
+		}
+	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}

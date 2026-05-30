@@ -166,6 +166,60 @@ func TestPrepareBootMediaNoInstallImage(t *testing.T) {
 	}
 }
 
+// TestPrepareBootMediaDropsStaleOriginalAlongsideSwm reproduces the rig
+// bug: a re-prepare re-extracted the oversized install.wim next to the
+// .swm parts from a prior split, and the idempotency path returned early
+// without dropping it -- so the Boot Client tried to copy the >4 GiB
+// original onto FAT32 and got ENOSPC.
+func TestPrepareBootMediaDropsStaleOriginalAlongsideSwm(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "sources")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Existing split parts from a prior prepare.
+	for _, n := range []string{"install.swm", "install2.swm"} {
+		if err := os.WriteFile(filepath.Join(src, n), []byte("swm"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// And a re-extracted oversized original sitting right beside them.
+	f, err := os.Create(filepath.Join(src, "install.wim"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(swmSplitThresholdBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	mp := PrepareBootMedia(context.Background(), root)
+	if mp.Format != "swm" || mp.SWMParts != 2 {
+		t.Errorf("format=%q parts=%d, want swm/2", mp.Format, mp.SWMParts)
+	}
+	if _, err := os.Stat(filepath.Join(src, "install.wim")); !os.IsNotExist(err) {
+		t.Errorf("oversized install.wim must be removed when .swm parts already exist")
+	}
+}
+
+// TestExtractISOStartsClean verifies ExtractISO wipes the destination
+// first, so a stale file from a previous prepare can't survive into the
+// new media tree.
+func TestExtractISOStartsClean(t *testing.T) {
+	dest := t.TempDir()
+	stale := filepath.Join(dest, "stale-install.wim")
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcISO := buildTinyISO(t, "sources/install.wim", "wim")
+	if _, _, err := ExtractISO(srcISO, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale file should be wiped before re-extract")
+	}
+}
+
 func TestPrepareBootMediaSplitFailureRecorded(t *testing.T) {
 	orig := splitWIM
 	splitWIM = func(context.Context, string, string, int) error {

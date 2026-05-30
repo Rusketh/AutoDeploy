@@ -74,6 +74,13 @@ func PrepareBootMedia(ctx context.Context, filesDir string) MediaPrep {
 		if fi, err := os.Stat(filepath.Join(sourcesDir, first)); err == nil {
 			mp.Bytes = fi.Size()
 		}
+		// Defence: if an oversized original is sitting next to the .swm
+		// parts (e.g. a re-extract re-created it), drop it -- it must not
+		// ship in the FAT32 boot media, where a >4 GiB file can't be
+		// written.
+		if _, abs := findOne(sourcesDir, "install.wim", "install.esd"); abs != "" {
+			_ = os.Remove(abs)
+		}
 		return mp
 	}
 
