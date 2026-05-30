@@ -4,10 +4,11 @@
 // generated unattend file (Phase 5).
 //
 // Reading a Windows install ISO is a real piece of work. AutoDeploy stores
-// the uploaded ISO once, then extracts its files individually so the WIM
-// or ESD can be served by HTTP range request rather than peeled out of a
-// disc image on every client. Extraction uses the pure-Go iso9660 reader
-// so the server has no CGO dependency.
+// the uploaded ISO once, then extracts its files so the media can be served
+// individually over HTTP. Modern Windows ISOs are UDF (install.wim exceeds
+// ISO9660's 4 GiB limit), so extraction prefers an external UDF-capable
+// tool (7z/bsdtar) and falls back to the pure-Go iso9660 reader only for
+// simple/legacy ISO9660 images when no tool is installed.
 package payload
 
 import (
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -68,6 +70,13 @@ func ExtractAndRecord(ctx context.Context, blobs *storage.BlobStore, isos *model
 	}
 
 	prep := PrepareBootMedia(ctx, destAbs)
+	// A "no sources/" or "no install image" failure with no UDF-capable
+	// extractor installed is almost certainly a Windows UDF ISO the pure-Go
+	// fallback couldn't read. Make that actionable rather than cryptic.
+	if prep.Err != "" && !HaveExternalExtractor() &&
+		(strings.Contains(prep.Err, "no sources") || strings.Contains(prep.Err, "no install")) {
+		prep.Err += " — install p7zip-full (or libarchive-tools) on the server: Windows ISOs are UDF and need 7z/bsdtar to extract"
+	}
 	now := time.Now().UTC()
 	iso.InstallImageFormat = prep.Format
 	iso.InstallImageBytes = prep.Bytes
@@ -84,11 +93,108 @@ func ExtractAndRecord(ctx context.Context, blobs *storage.BlobStore, isos *model
 	return prep, nil
 }
 
-// ExtractISO walks the ISO at srcPath and writes every file into destDir,
-// preserving the directory layout. Returns the total bytes written and the
-// relative path of an install.wim or install.esd if either is found, so the
-// caller can record it in the ISO row for the Boot Client to fetch later.
+// errNoExtractor means no external UDF-capable extractor was found on the
+// host, so ExtractISO fell back to the pure-Go ISO9660 reader.
+var errNoExtractor = errors.New("no external ISO extractor (7z/bsdtar) found")
+
+// extractorBins are the binary names extractWithTool probes, in order.
+var extractorBins = []string{"7z", "7zz", "7za", "bsdtar"}
+
+// HaveExternalExtractor reports whether a UDF-capable extractor is
+// installed. Used to turn a "no sources/ in media" prep failure into an
+// actionable "install p7zip" message, since that failure on a Windows ISO
+// almost always means the UDF contents were unreadable without 7z.
+func HaveExternalExtractor() bool {
+	for _, b := range extractorBins {
+		if _, err := exec.LookPath(b); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractISO unpacks the ISO at srcPath into destDir, preserving the
+// directory layout, and returns the total bytes written.
+//
+// Modern Windows 10/11 ISOs are UDF images (because sources/install.wim
+// exceeds ISO9660's 4 GiB per-file limit), and the pure-Go ISO9660 reader
+// can read neither UDF nor >4 GiB files -- on a Windows ISO it would see
+// only the near-empty ISO9660 bridge and miss sources/ and efi/ entirely.
+// So we prefer an external UDF-capable extractor (7z, then bsdtar) and
+// fall back to the pure-Go reader only for simple/legacy ISO9660 images
+// (and the unit tests' tiny synthetic ISOs) when no tool is installed.
+//
+// wimRelPath is left empty here; the caller (ExtractAndRecord) locates the
+// install image via PrepareBootMedia, which walks the extracted tree.
 func ExtractISO(srcPath, destDir string) (totalBytes int64, wimRelPath string, err error) {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return 0, "", err
+	}
+	switch err := extractWithTool(srcPath, destDir); {
+	case err == nil:
+		return treeBytes(destDir), "", nil
+	case errors.Is(err, errNoExtractor):
+		// Fall back to the pure-Go ISO9660 reader (no UDF, <4 GiB).
+		return extractISO9660Native(srcPath, destDir)
+	default:
+		return 0, "", err
+	}
+}
+
+// extractWithTool extracts srcPath into destDir using the first available
+// UDF-capable extractor. Returns errNoExtractor if none is installed.
+func extractWithTool(srcPath, destDir string) error {
+	type extractor struct {
+		bin  string
+		args []string
+	}
+	// 7z (any of its binary names) extracts ISO9660+Joliet+UDF and >4 GiB
+	// files, preserving the tree under -o<dest>. bsdtar (libarchive) is a
+	// solid second choice.
+	candidates := []extractor{
+		{"7z", []string{"x", "-y", "-bd", "-o" + destDir, srcPath}},
+		{"7zz", []string{"x", "-y", "-bd", "-o" + destDir, srcPath}},
+		{"7za", []string{"x", "-y", "-bd", "-o" + destDir, srcPath}},
+		{"bsdtar", []string{"-x", "-f", srcPath, "-C", destDir}},
+	}
+	for _, c := range candidates {
+		bin, lookErr := exec.LookPath(c.bin)
+		if lookErr != nil {
+			continue
+		}
+		out, runErr := exec.Command(bin, c.args...).CombinedOutput()
+		if runErr != nil {
+			return fmt.Errorf("%s extract failed: %w: %s", c.bin, runErr, strings.TrimSpace(string(out)))
+		}
+		// 7z dumps El Torito boot images into a top-level "[BOOT]" dir
+		// that is not part of the real media; drop it so it doesn't bloat
+		// the boot partition.
+		_ = os.RemoveAll(filepath.Join(destDir, "[BOOT]"))
+		return nil
+	}
+	return errNoExtractor
+}
+
+// treeBytes sums the size of every regular file under root.
+func treeBytes(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, e := d.Info(); e == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// extractISO9660Native is the pure-Go fallback: it walks the ISO at
+// srcPath and writes every file into destDir. Used only for simple/legacy
+// ISO9660 images and the unit tests when no external extractor is present.
+// It cannot read UDF or files larger than 4 GiB.
+func extractISO9660Native(srcPath, destDir string) (totalBytes int64, wimRelPath string, err error) {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return 0, "", err

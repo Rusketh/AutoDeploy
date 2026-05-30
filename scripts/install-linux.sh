@@ -53,6 +53,26 @@ fi
 echo "== Installing autodeploy-server =="
 install -m 0755 "$BIN_SRC" /usr/local/bin/autodeploy-server
 
+# Windows 10/11 ISOs are UDF (install.wim exceeds ISO9660's 4 GiB limit),
+# so the server extracts them with 7z. Best-effort install of p7zip; if it
+# fails (air-gapped / unknown distro) the portal surfaces a clear "install
+# p7zip" message when an ISO can't be extracted.
+if ! command -v 7z >/dev/null 2>&1 && ! command -v 7za >/dev/null 2>&1 \
+   && ! command -v bsdtar >/dev/null 2>&1; then
+    echo "== Installing p7zip (ISO extraction) =="
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y p7zip-full >/dev/null 2>&1 || echo "  WARN: 'apt-get install p7zip-full' failed; install it manually." >&2
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y p7zip p7zip-plugins >/dev/null 2>&1 || echo "  WARN: 'dnf install p7zip' failed; install it manually." >&2
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y p7zip p7zip-plugins >/dev/null 2>&1 || echo "  WARN: 'yum install p7zip' failed; install it manually." >&2
+    elif command -v zypper >/dev/null 2>&1; then
+        zypper install -y p7zip >/dev/null 2>&1 || echo "  WARN: 'zypper install p7zip' failed; install it manually." >&2
+    else
+        echo "  WARN: no known package manager; install p7zip-full (or bsdtar) so the server can extract Windows ISOs." >&2
+    fi
+fi
+
 echo "== Creating service account 'autodeploy' =="
 if ! id -u autodeploy >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin autodeploy
