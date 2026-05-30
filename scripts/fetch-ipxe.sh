@@ -162,8 +162,41 @@ for f in "${FILES[@]}"; do
     fi
 done
 
+# Boot Client image: the prebuilt kernel + initramfs that boots straight
+# into autodeploy-boot. These are release-only -- there is no public
+# fallback like boot.ipxe.org -- and are produced by
+# .github/workflows/build-bootimage.yml. Without them, iPXE chainloads
+# but has nothing to boot, so fetch them here too. Missing ones are a
+# soft warning (an operator may build their own with
+# scripts/initramfs/build-initramfs.sh), not a hard failure.
+BOOTIMG=(
+    "autodeploy-kernel"
+    "autodeploy-initrd"
+)
+bootimg_missing=0
+for f in "${BOOTIMG[@]}"; do
+    if [ -n "$TAG" ]; then
+        url="https://github.com/Rusketh/AutoDeploy/releases/download/$TAG/$f"
+        echo "Trying release: $url"
+        if fetch_url "$url" "$f"; then
+            size=$(wc -c < "$f")
+            echo "  OK: $f ($size bytes, source=release)"
+            sha256sum "$f" > "$f.sha256" 2>/dev/null || true
+            continue
+        fi
+    fi
+    echo "  WARN: could not fetch $f (release-only asset)" >&2
+    bootimg_missing=$((bootimg_missing+1))
+done
+if [ "$bootimg_missing" -gt 0 ]; then
+    echo "NOTE: Boot Client image incomplete. The PXE chain will load iPXE" >&2
+    echo "but have nothing to boot until autodeploy-kernel + autodeploy-initrd" >&2
+    echo "are present in $DATA_DIR. Re-run this once a release with those assets" >&2
+    echo "exists, or build them with scripts/initramfs/build-initramfs.sh." >&2
+fi
+
 echo
-echo "iPXE binaries in $DATA_DIR:"
+echo "Boot files in $DATA_DIR:"
 ls -la "$DATA_DIR"
 echo
 if [ "$failed" -gt 0 ]; then

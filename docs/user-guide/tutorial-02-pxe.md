@@ -250,20 +250,32 @@ dhcp-boot=tag:uefi64,ipxe.efi,,192.168.1.5
 dhcp-boot=tag:uefiarm,ipxe-arm64.efi,,192.168.1.5
 ```
 
-## Step 3 — Drop the Boot Client kernel + initramfs in place
+## Step 3 — Confirm the Boot Client kernel + initramfs are present
 
 iPXE chainloads to AutoDeploy's `http://<host>/ipxe/boot.ipxe`,
-which references the kernel + initramfs. Build the initramfs
-once:
+which references a kernel + initramfs (`autodeploy-kernel` and
+`autodeploy-initrd`). These are **prebuilt and fetched
+automatically** by the installer (and `fetch-ipxe.sh`) into the
+iPXE directory — you don't build anything. Just confirm they're
+there:
 
 ```sh
-sudo /etc/autodeploy/scripts/initramfs/build-initramfs.sh
-sudo cp /boot/vmlinuz-$(uname -r) /var/lib/autodeploy/ipxe/autodeploy-kernel
-sudo chown autodeploy:autodeploy /var/lib/autodeploy/ipxe/autodeploy-kernel
+ls -l /var/lib/autodeploy/ipxe/autodeploy-kernel \
+      /var/lib/autodeploy/ipxe/autodeploy-initrd
 ```
 
-For production, build a small specialised kernel — see the
-`scripts/initramfs/` README.
+If they're missing (e.g. you're on a release that predates them),
+re-run the fetch helper:
+
+```sh
+sudo AUTODEPLOY_DATA_DIR=/var/lib/autodeploy fetch-ipxe.sh
+```
+
+The prebuilt image uses an Ubuntu generic kernel with broad NIC +
+disk driver coverage (including Hyper-V `hv_netvsc`/`hv_storvsc`
+and virtio), so it boots on hypervisors and most bare metal
+unchanged. Only if you need different drivers do you build your own
+— see `scripts/initramfs/build-initramfs.sh`.
 
 ## Step 4 — PXE boot a target machine
 

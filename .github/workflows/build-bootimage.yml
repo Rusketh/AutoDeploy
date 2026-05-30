@@ -1,0 +1,118 @@
+name: Build Boot Client image
+
+# Builds the prebuilt Boot Client boot image -- a kernel + an initramfs
+# that boots straight into autodeploy-boot -- so operators never have to
+# build it (or install a toolchain) themselves. The artifacts attach to
+# the release exactly like the iPXE binaries do; scripts/fetch-ipxe.sh
+# and the installer download them into the iPXE directory.
+#
+# Triggers:
+#   - workflow_dispatch    (build on demand)
+#   - release: published   (build when a release goes out, then attach
+#                          the kernel + initrd to it)
+#
+# Outputs:
+#   - autodeploy-kernel        Linux kernel (Ubuntu generic: broad NIC +
+#                              disk coverage incl. Hyper-V hv_netvsc /
+#                              hv_storvsc and virtio)
+#   - autodeploy-initrd        initramfs bundling autodeploy-boot, the
+#                              imaging tools, and the kernel's modules
+#                              (loaded by init at boot)
+#   - <name>.sha256            sha256 sidecar per file
+#
+# x86_64 only for now: the overwhelming majority of imaging targets are
+# UEFI/BIOS x64. arm64 targets would need an arm64 kernel + initrd built
+# on an arm runner; out of scope here.
+
+on:
+  workflow_dispatch: {}
+  release:
+    types: [published]
+
+permissions:
+  contents: write    # to attach the artifacts to the release
+
+jobs:
+  build:
+    name: Build kernel + initramfs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: boot-client/go.sum
+
+      - name: Install build toolchain + kernel
+        run: |
+          sudo apt-get update
+          # linux-image-generic: a kernel whose modules cover Hyper-V,
+          #   virtio, and common bare-metal NIC/disk controllers. We bundle
+          #   its /lib/modules tree into the initramfs and ship its vmlinuz.
+          # kmod:                modprobe/depmod for the initramfs.
+          # busybox-static:      sh + coreutils inside the initramfs.
+          # gdisk/dosfstools/ntfs-3g/wimtools: the imaging tools the Boot
+          #   Client shells out to (sgdisk, mkfs.fat, mkfs.ntfs, wimlib-imagex).
+          # cpio/gzip:           pack the initramfs.
+          sudo apt-get install -y \
+              linux-image-generic \
+              kmod busybox-static cpio gzip \
+              gdisk dosfstools ntfs-3g wimtools
+
+      - name: Resolve kernel version
+        id: kver
+        run: |
+          # Pick the newest installed generic kernel.
+          vmlinuz=$(ls -1 /boot/vmlinuz-*-generic | sort -V | tail -1)
+          kver=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
+          echo "Selected kernel: $kver ($vmlinuz)"
+          echo "kver=$kver" >> "$GITHUB_OUTPUT"
+          echo "vmlinuz=$vmlinuz" >> "$GITHUB_OUTPUT"
+
+      - name: Build initramfs
+        env:
+          KERNEL_VERSION: ${{ steps.kver.outputs.kver }}
+          OUT_DIR: ${{ github.workspace }}/out
+        run: |
+          mkdir -p out
+          scripts/initramfs/build-initramfs.sh
+          ls -la out/
+
+      - name: Stage release artifacts
+        id: stage
+        run: |
+          mkdir -p bootimage
+          # Kernel may be mode 0600 in /boot; sudo to copy then fix perms.
+          sudo cp "${{ steps.kver.outputs.vmlinuz }}" bootimage/autodeploy-kernel
+          sudo chown "$USER" bootimage/autodeploy-kernel
+          chmod 0644 bootimage/autodeploy-kernel
+          cp out/initrd.img bootimage/autodeploy-initrd
+          cd bootimage
+          for f in autodeploy-kernel autodeploy-initrd; do
+              sha256sum "$f" > "$f.sha256"
+          done
+          echo "Kernel:  $(stat -c%s autodeploy-kernel) bytes"
+          echo "Initrd:  $(stat -c%s autodeploy-initrd) bytes"
+          ls -la
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootimage
+          path: bootimage/*
+          if-no-files-found: error
+
+      - name: Attach to release (if this is a release event)
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --clobber so a manual re-build can replace a botched asset
+          # without deleting and re-creating the release.
+          gh release upload "${{ github.event.release.tag_name }}" \
+              bootimage/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          echo "::notice::Attached Boot Client kernel + initrd to release ${{ github.event.release.tag_name }}"

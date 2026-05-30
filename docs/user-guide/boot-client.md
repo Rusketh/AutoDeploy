@@ -63,12 +63,17 @@ only after the operator has explicitly selected a configuration.
 Every step is logged with `who`, `what`, `where`, `when`. Sensitive
 values never appear in any log.
 
-## Building the initramfs
+## The boot image (kernel + initramfs)
 
-A reference build script lives at
-`scripts/initramfs/build-initramfs.sh`. It bundles the statically-
-linked `autodeploy-boot` binary together with the host tools the
-imaging plan calls out to:
+The Boot Client ships as a **prebuilt** kernel + initramfs, attached
+to each GitHub release and fetched automatically by the installer /
+`fetch-ipxe.sh` into `$AUTODEPLOY_DATA_DIR/ipxe/` as
+`autodeploy-kernel` and `autodeploy-initrd`. Operators don't build
+anything.
+
+The initramfs bundles the statically-linked `autodeploy-boot` binary,
+the kernel's modules (loaded at boot to bring up the NIC and disks),
+and the host tools the imaging plan calls out to:
 
 | Tool | Provides |
 |---|---|
@@ -76,13 +81,19 @@ imaging plan calls out to:
 | `mkfs.fat` (dosfstools) | ESP filesystem |
 | `mkfs.ntfs` (ntfs-3g) | Windows partition filesystem |
 | `wimlib-imagex` (wimlib) | WIM/ESD apply |
-| `unzip` | Driver package extraction |
+| `modprobe`/`depmod` (kmod) | Load NIC + disk drivers |
 | `mount`, `umount`, `cp`, `mkdir`, `reboot`, `sync` | busybox / coreutils |
+
+Building your own is only needed for exotic hardware. The reference
+script is `scripts/initramfs/build-initramfs.sh` (run in CI by
+`.github/workflows/build-bootimage.yml` to produce the release
+asset):
 
 ```sh
 ./scripts/initramfs/build-initramfs.sh
 # Writes build/initrd.img — copy to $AUTODEPLOY_DATA_DIR/ipxe/autodeploy-initrd.
-# Supply your own vmlinuz as $AUTODEPLOY_DATA_DIR/ipxe/autodeploy-kernel.
+# Ships the running kernel's modules; pair with that kernel's vmlinuz as
+# $AUTODEPLOY_DATA_DIR/ipxe/autodeploy-kernel.
 ```
 
 ## Delivery via iPXE
