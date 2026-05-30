@@ -259,21 +259,18 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		os.Exit(0)
 	}
 
-	var mediaDir, unattendPath string
-	var mediaBytes int64
+	// Download the small payloads (unattend, drivers) into the work dir,
+	// but only CAPTURE the iso-media item -- the multi-GB media tree is
+	// streamed directly onto the FAT32 boot partition later, never into
+	// the RAM-backed work dir (which a full Windows media would exhaust).
+	var mediaItem *manifestItem
+	var unattendPath string
 	var driverPaths []string
-	for _, it := range m.Items {
+	for i := range m.Items {
+		it := m.Items[i]
 		switch it.Role {
 		case "iso-media":
-			// Mirror the whole media tree (boot-the-media deploy). A
-			// failure here is fatal -- there is nothing to boot without it.
-			mediaDir = filepath.Join(f.work, "media-src")
-			if err := downloadMedia(ctx, c, log, it, mediaDir); err != nil {
-				log.Error("download.media",
-					slog.String("url", it.URL), slog.String("error", err.Error()))
-				os.Exit(0)
-			}
-			mediaBytes = it.Size
+			mediaItem = &m.Items[i]
 		case "unattend":
 			dst := filepath.Join(f.work, "payload-unattend-"+sanitise(it.URL))
 			if err := download(ctx, c, log, it, dst); err != nil {
@@ -295,15 +292,14 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		}
 	}
 
-	if mediaDir == "" {
+	if mediaItem == nil {
 		log.Error("deploy.no_media", slog.String("reason", "manifest has no iso-media; fail-safe"))
 		os.Exit(0)
 	}
 
 	plan := imaging.MediaPlan{
 		TargetDisk:   f.disk,
-		MediaDir:     mediaDir,
-		MediaBytes:   mediaBytes,
+		MediaBytes:   mediaItem.Size,
 		UnattendPath: unattendPath,
 		DriverPaths:  driverPaths,
 		WorkDir:      f.work,
@@ -313,7 +309,22 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk),
 		slog.Bool("dry_run", f.dryRun))
-	if err := imaging.StageMedia(ctx, plan, runner); err != nil {
+
+	// Partition + format + mount the FAT32 boot partition, then stream the
+	// media tree straight onto it (on disk), avoiding a RAM staging copy.
+	mountPath, err := imaging.PreparePartition(ctx, plan, runner)
+	if err != nil {
+		log.Error("deploy.partition.fail", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if !f.dryRun {
+		if err := downloadMedia(ctx, c, log, *mediaItem, mountPath); err != nil {
+			log.Error("download.media",
+				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
+			os.Exit(1) // partition already wiped; do not reboot into a broken disk
+		}
+	}
+	if err := imaging.FinalizeMedia(ctx, plan, runner, mountPath); err != nil {
 		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
 		os.Exit(1) // do NOT reboot: caller's environment can investigate
 	}
