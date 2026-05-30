@@ -28,6 +28,13 @@
     <div class="right" style="display:flex;gap:var(--sp-2);align-items:center;">
       {{if eq .Data.UpdateState "up_to_date"}}
         <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
+        {{if .Data.UpdaterAvailable}}
+        <button type="button" class="btn ghost" id="server-update-btn"
+                data-target-tag="{{.Data.LatestServerVersion}}"
+                data-confirm="Re-run the updater on the current version to repair the install (install any missing OS tools like 7z/wimlib, refresh the boot image, self-update the updater)? Brief downtime expected.">
+          <svg><use href="#i-bolt"/></svg>Re-run updater
+        </button>
+        {{end}}
         <a class="btn ghost" href="{{.Data.LatestServerURL}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Release notes</a>
       {{else if eq .Data.UpdateState "older"}}
         {{if .Data.UpdaterAvailable}}
@@ -67,10 +74,13 @@
   {{else if .Data.UpdaterAvailable}}
   <p class="hint" style="margin-top:var(--sp-3);">
     The <strong>Update</strong> button runs <code>{{.Data.UpdaterPath}}</code> via the
-    narrowly-scoped sudoers rule the install script created. The helper
-    downloads the new binary, verifies its SHA-256, stops the service,
-    swaps the binary, and restarts. Total downtime is typically under 10 seconds.
-    Logs go to <code>journalctl -u autodeploy</code>.
+    narrowly-scoped sudoers rule the install script created. The helper first
+    re-fetches itself for the target release (so it always runs the latest
+    update logic), installs any newly-required OS tools (e.g. <code>7z</code>,
+    <code>wimlib</code>), downloads + SHA-256-verifies the new binary, stops the
+    service, swaps the binary, and restarts. Downtime is typically a few seconds
+    (longer if OS packages are being installed). Logs go to
+    <code>journalctl -u autodeploy</code>.
   </p>
   {{else}}
   <p class="hint warn" style="margin-top:var(--sp-3);">
@@ -99,6 +109,7 @@ document.addEventListener('DOMContentLoaded', function () {
 (function () {
   var btn = document.getElementById('server-update-btn');
   if (!btn) return;
+  btn.dataset.originalText = btn.innerHTML;
   var status = document.getElementById('server-update-status');
   btn.addEventListener('click', function () {
     if (!window.confirm(btn.getAttribute('data-confirm') || 'Update server?')) return;
@@ -106,7 +117,7 @@ document.addEventListener('DOMContentLoaded', function () {
     btn.textContent = 'Starting update…';
     status.hidden = false;
     status.className = 'card';
-    status.innerHTML = '<strong>Update launched.</strong> The server is downloading the new binary, verifying its SHA-256, and restarting. Polling for the new version…';
+    status.innerHTML = '<strong>Update launched.</strong> The updater is refreshing itself to the target release, installing any newly-required tools (7z, wimlib), downloading + SHA-256-verifying the new binary, then restarting. This can take a minute. Polling for the new version…';
     fetch('/api/v1/server/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -128,10 +139,10 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   function pollForNewVersion(targetTag, attempt) {
-    if (attempt > 60) {
-      // 60 * 2s = 2 minutes. If the server isn't back by now, the
-      // update probably failed and the operator needs to check
-      // journalctl.
+    if (attempt > 150) {
+      // 150 * 2s = 5 minutes. The update now also installs OS packages
+      // (7z, wimlib) which can be slow; if the server isn't back by now
+      // the update probably failed and the operator needs journalctl.
       status.innerHTML = '<strong>Update is taking longer than expected.</strong> Check <code>journalctl -u autodeploy</code> on the server. Once it comes back, reload this page.';
       return;
     }
