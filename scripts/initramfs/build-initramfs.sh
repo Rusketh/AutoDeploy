@@ -88,7 +88,7 @@ done
 # udhcpc are busybox applets on most build hosts; the symlinks make them
 # available even when no standalone binary was found above.
 if [ -x "$ROOTFS/bin/busybox" ]; then
-    for applet in sh mkdir mount umount cp sleep cat ls grep \
+    for applet in sh mkdir mount umount cp sleep cat ls grep basename sync \
                   modprobe depmod insmod reboot \
                   ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
@@ -188,7 +188,8 @@ sleep 2
 echo "Bringing up network..."
 mkdir -p /etc/udhcpc
 for dev in /sys/class/net/*; do
-    ifc=$(basename "$dev")
+    [ -e "$dev" ] || continue
+    ifc=${dev##*/}              # basename via shell builtin (no external dep)
     [ "$ifc" = "lo" ] && continue
     ip link set "$ifc" up 2>/dev/null
 done
@@ -197,7 +198,8 @@ done
 GOTNET=0
 for try in 1 2 3; do
     for dev in /sys/class/net/*; do
-        ifc=$(basename "$dev")
+        [ -e "$dev" ] || continue
+        ifc=${dev##*/}
         [ "$ifc" = "lo" ] && continue
         udhcpc -i "$ifc" -n -q -t 5 -T 3 \
             -s /usr/share/udhcpc/default.script >/dev/null 2>&1 && GOTNET=1
