@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ func registerISORoutes(get, post func(string, http.HandlerFunc), r Repos) {
 	post("/portal/isos/{id}/delete", isoDelete(r))
 	post("/portal/isos/{id}/upload", isoUpload(r))
 	post("/portal/isos/{id}/extract", isoExtract(r))
+	get("/portal/isos/{id}/prep-status", isoPrepStatus(r))
 }
 
 func isoList(r Repos) http.HandlerFunc {
@@ -183,29 +185,23 @@ func isoUpload(r Repos) http.HandlerFunc {
 				flash(w, "err", err.Error())
 				break
 			}
-			// Auto-extract so the operator doesn't have to remember a
-			// second step -- the WIM/ESD inside the ISO is what actually
-			// gets deployed. Extraction failure is non-fatal: the upload
-			// succeeded, and the manual Extract button remains available.
-			prep, exErr := payload.ExtractAndRecord(req.Context(), r.Blobs, r.ISOs, id)
-			switch {
-			case exErr != nil:
-				flash(w, "err", fmt.Sprintf("Uploaded %d bytes, but extraction failed: %v. Use the Extract button to retry.", n, exErr))
-			case prep.InstallRel == "":
-				flash(w, "err", fmt.Sprintf("Uploaded %d bytes and extracted, but no install.wim/install.esd was found in the ISO. Is this a Windows install ISO?", n))
-			case prep.Err != "":
-				flash(w, "err", fmt.Sprintf("Uploaded %d bytes and extracted, but boot-media prep needs attention: %s. Use Re-prepare to retry.", n, prep.Err))
-			case prep.SWMParts > 0:
-				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes, extracted, and split the install image into %d FAT32-safe parts. Ready to deploy.", n, prep.SWMParts))
-			default:
-				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes and extracted. Ready to deploy (install image: %s).", n, prep.InstallRel))
-			}
+			// Extract + prepare boot media in the BACKGROUND so a multi-GB
+			// UDF ISO (minutes of 7z + wimlib split) doesn't block the
+			// request. The edit page shows a live progress bar by polling
+			// the prep-status endpoint.
+			payload.StartPrepareAsync(r.Blobs, r.ISOs, id)
+			flash(w, "ok", fmt.Sprintf("Uploaded %d bytes. Preparing boot media (extract + split)…", n))
 			break
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/isos/%d/edit", id), http.StatusFound)
 	}
 }
 
+// isoExtract re-runs extraction + boot-media prep in the background
+// (split oversized install.wim into .swm, record bootloader). It goes
+// through the same StartPrepareAsync path as upload so the install image
+// is actually prepared -- not just extracted -- and the edit page shows a
+// progress bar.
 func isoExtract(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
@@ -213,33 +209,26 @@ func isoExtract(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		iso, err := r.ISOs.Get(req.Context(), id)
-		if err != nil {
+		if _, err := r.ISOs.Get(req.Context(), id); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		srcRel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "source.iso"))
-		srcAbs, err := r.Blobs.Resolve(srcRel)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		destAbs, err := r.Blobs.EnsureDir(filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files")))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_, wim, err := payload.ExtractISO(srcAbs, destAbs)
-		if err != nil {
-			flash(w, "err", "Extract failed: "+err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/isos/%d/edit", id), http.StatusFound)
-			return
-		}
-		if wim != "" {
-			iso.StoragePath = filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files", wim))
-			_ = r.ISOs.Update(req.Context(), iso)
-		}
-		flash(w, "ok", "Extracted. WIM/ESD: "+wim)
+		payload.StartPrepareAsync(r.Blobs, r.ISOs, id)
+		flash(w, "ok", "Re-preparing boot media (extract + split)…")
 		http.Redirect(w, req, fmt.Sprintf("/portal/isos/%d/edit", id), http.StatusFound)
+	}
+}
+
+// isoPrepStatus serves the live background-prepare status as JSON for the
+// edit page's progress poller.
+func isoPrepStatus(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := pathID(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload.PrepareStatus(id))
 	}
 }

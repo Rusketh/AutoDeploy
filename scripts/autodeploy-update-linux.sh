@@ -78,6 +78,46 @@ GH_BASE="https://github.com/Rusketh/AutoDeploy/releases/download/$TAG"
 WORK=$(mktemp -d -t autodeploy-update-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
+# --- Keep the updater itself current ---------------------------------
+# The autodeploy-update script on disk was dropped at the LAST install, so
+# it can predate the release being installed and miss newer update steps
+# (e.g. installing a freshly-required OS package). Pull this release's
+# updater and, if it differs, install it and re-exec so the update always
+# runs the TARGET version's logic. A guard env var prevents a loop.
+RAW_BASE="https://raw.githubusercontent.com/Rusketh/AutoDeploy/$TAG/scripts"
+SELF_DST=/usr/local/sbin/autodeploy-update
+if [ -z "${AUTODEPLOY_UPDATE_REEXEC:-}" ]; then
+    if curl -sSfL --connect-timeout 10 --retry 2 \
+            -o "$WORK/updater.sh" "$RAW_BASE/autodeploy-update-linux.sh" 2>/dev/null \
+       && [ -s "$WORK/updater.sh" ] \
+       && ! cmp -s "$WORK/updater.sh" "$SELF_DST"; then
+        log "Updater is out of date; installing $TAG's updater and re-running..."
+        install -m 0755 "$WORK/updater.sh" "$SELF_DST"
+        AUTODEPLOY_UPDATE_REEXEC=1 exec "$SELF_DST" --tag "$TAG" --data "$DATA_DIR"
+    fi
+fi
+
+# --- Refresh OS dependencies the server needs ------------------------
+# The server ingests Windows ISOs with 7z (UDF) and splits an oversized
+# install.wim with wimlib-imagex. Updating a server that predates these
+# backfills them so ISO prep stops failing with "executable not found".
+# Mirrors install-linux.sh; the self-update above keeps this list current.
+ensure_dep() {
+    # ensure_dep <probe-cmd> <human-name> <apt-pkgs> <dnf/yum-pkgs> <zypper-pkgs>
+    command -v "$1" >/dev/null 2>&1 && return 0
+    log "Installing $2 ..."
+    if command -v apt-get >/dev/null 2>&1; then apt-get install -y $3 >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y $4 >/dev/null 2>&1
+    elif command -v yum >/dev/null 2>&1; then yum install -y $4 >/dev/null 2>&1
+    elif command -v zypper >/dev/null 2>&1; then zypper install -y $5 >/dev/null 2>&1
+    else log "  WARN: unknown package manager; install $2 manually"; return 0; fi
+    command -v "$1" >/dev/null 2>&1 || log "  WARN: $2 still missing after install attempt; install it manually"
+}
+if ! command -v 7z >/dev/null 2>&1 && ! command -v 7za >/dev/null 2>&1 && ! command -v bsdtar >/dev/null 2>&1; then
+    ensure_dep 7z "p7zip (ISO extraction)" "p7zip-full" "p7zip p7zip-plugins" "p7zip"
+fi
+ensure_dep wimlib-imagex "wimlib (install.wim splitting)" "wimtools" "wimlib-utils" "wimlib-tools"
+
 fetch() {
     # fetch <asset>
     # Downloads to $WORK/<asset>. Aborts the whole script on failure.
