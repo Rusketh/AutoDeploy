@@ -62,7 +62,7 @@ set base %s
 echo
 echo AutoDeploy boot - chainloading client from ${base}
 echo
-kernel ${base}/ipxe/static/autodeploy-kernel console=tty1 console=ttyS0,115200 autodeploy.server=${base} autodeploy.uuid=${uuid}
+kernel ${base}/ipxe/static/autodeploy-kernel console=ttyS0,115200 console=tty1 autodeploy.server=${base} autodeploy.uuid=${uuid}
 initrd ${base}/ipxe/static/autodeploy-initrd
 boot || goto fail
 
