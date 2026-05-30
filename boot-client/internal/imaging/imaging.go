@@ -157,10 +157,9 @@ func PreparePartition(ctx context.Context, plan MediaPlan, r Runner) (mountPath 
 }
 
 // FinalizeMedia drops the answer file and drivers onto the already-mounted
-// boot partition, flushes, unmounts, and registers the partition with the
-// firmware. Call it after the media tree has been downloaded onto
-// mountPath. It does NOT reboot -- the caller decides based on whether
-// anything failed.
+// boot partition, flushes, and unmounts. Call it after the media tree has
+// been downloaded onto mountPath. Registering the firmware boot entry is a
+// separate, best-effort step (RegisterBootEntry).
 func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath string) error {
 	if err := placeUnattend(ctx, plan, r, mountPath); err != nil {
 		return fmt.Errorf("place unattend: %w", err)
@@ -174,17 +173,20 @@ func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath stri
 	if err := r.Exec(ctx, "umount", mountPath); err != nil {
 		return fmt.Errorf("umount %s: %w", mountPath, err)
 	}
+	return nil
+}
 
-	// Register the boot partition so the firmware boots Windows Setup.
-	// The \EFI\BOOT\BOOTX64.EFI fallback path is also present on the
-	// media, so even firmware that ignores added NVRAM entries can boot it.
-	if err := r.Exec(ctx, "efibootmgr", "--create",
+// RegisterBootEntry adds a UEFI boot entry pointing at the staged
+// partition's bootloader and makes it first in BootOrder. It is
+// best-effort: the media also carries the firmware fallback path
+// \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that can
+// still boot the staged media even if this fails. The caller logs a
+// warning and reboots anyway rather than stranding a fully-staged disk.
+func RegisterBootEntry(ctx context.Context, plan MediaPlan, r Runner) error {
+	return r.Exec(ctx, "efibootmgr", "--create",
 		"--disk", plan.TargetDisk, "--part", "1",
 		"--loader", `\EFI\BOOT\BOOTX64.EFI`,
-		"--label", "AutoDeploy Setup"); err != nil {
-		return fmt.Errorf("register boot entry: %w", err)
-	}
-	return nil
+		"--label", "AutoDeploy Setup")
 }
 
 // placeUnattend drops the answer file at the media root as

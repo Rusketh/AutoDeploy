@@ -328,6 +328,15 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
 		os.Exit(1) // do NOT reboot: caller's environment can investigate
 	}
+	// Best-effort: register the firmware boot entry. The media is fully
+	// staged by now, and it carries the \EFI\BOOT\BOOTX64.EFI fallback, so
+	// a failure here (e.g. efibootmgr quirks) should warn and still reboot
+	// rather than strand a ready-to-boot disk in a shell.
+	if err := imaging.RegisterBootEntry(ctx, plan, runner); err != nil {
+		log.Warn("deploy.bootentry.fail",
+			slog.String("error", err.Error()),
+			slog.String("note", `relying on \EFI\BOOT\BOOTX64.EFI fallback; if the machine doesn't boot the staged media, add a UEFI boot entry for it manually`))
+	}
 	log.Info("deploy.stage.ok",
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk))

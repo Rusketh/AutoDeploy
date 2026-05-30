@@ -73,15 +73,31 @@ copy_with_libs() {
 }
 
 missing=()
+# Resolve a tool by name: PATH first (command -v), then the common
+# sbin/bin dirs. Distros disagree on where these live (efibootmgr is
+# /usr/sbin on Debian, /sbin elsewhere), so a hardcoded path silently
+# drops the tool from the image -- which is exactly how efibootmgr went
+# missing and broke the boot-entry step.
+resolve_tool() {
+    local name="$1" p
+    p=$(command -v "$name" 2>/dev/null) && { [ -x "$p" ] && { printf '%s\n' "$p"; return 0; }; }
+    for d in /sbin /usr/sbin /bin /usr/bin /usr/local/sbin /usr/local/bin; do
+        [ -x "$d/$name" ] && { printf '%s\n' "$d/$name"; return 0; }
+    done
+    return 1
+}
+
 # busybox first -- it backstops any of the named tools below that the
 # host happens to provide only as a busybox applet.
-for tool in /bin/busybox \
-            /bin/sh /bin/mkdir /bin/mount /bin/umount /bin/cp /bin/sleep /bin/cat \
-            /sbin/modprobe /sbin/depmod /sbin/insmod \
-            /sbin/ip /sbin/udhcpc \
-            /sbin/sgdisk /sbin/mkfs.fat /sbin/efibootmgr /sbin/reboot \
-            /usr/bin/unzip; do
-    if ! copy_with_libs "$tool" 2>/dev/null; then
+for tool in busybox \
+            sh mkdir mount umount cp sleep cat \
+            modprobe depmod insmod \
+            ip udhcpc \
+            sgdisk mkfs.fat efibootmgr reboot \
+            unzip; do
+    if path=$(resolve_tool "$tool") && copy_with_libs "$path" 2>/dev/null; then
+        :
+    else
         missing+=("$tool")
     fi
 done

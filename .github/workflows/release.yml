@@ -109,7 +109,7 @@ jobs:
           sudo apt-get install -y \
               linux-image-generic \
               kmod busybox-static cpio gzip \
-              gdisk dosfstools ntfs-3g wimtools
+              gdisk dosfstools efibootmgr unzip
       - name: Resolve kernel version
         id: kver
         run: |
