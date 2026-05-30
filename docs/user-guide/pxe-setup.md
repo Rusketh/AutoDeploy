@@ -273,10 +273,12 @@ initrd ${base}/ipxe/static/autodeploy-initrd
 boot
 ```
 
-You supply the `autodeploy-kernel` (a Linux vmlinuz) and the
-`autodeploy-initrd` (built with `scripts/initramfs/build-initramfs.sh`)
-under `$AUTODEPLOY_DATA_DIR/ipxe/`. From there, AutoDeploy's HTTP-only
-flow takes over — menu, manifest, payload download, image apply.
+The `autodeploy-kernel` and `autodeploy-initrd` are **prebuilt**,
+attached to each release and fetched automatically by the installer /
+`fetch-ipxe.sh` into `$AUTODEPLOY_DATA_DIR/ipxe/` — no build step.
+(Build your own with `scripts/initramfs/build-initramfs.sh` only for
+exotic hardware.) From there, AutoDeploy's HTTP-only flow takes over —
+menu, manifest, payload download, image apply.
 
 ## Troubleshooting
 

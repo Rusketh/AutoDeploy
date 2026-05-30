@@ -278,41 +278,35 @@ sudo rm /var/lib/autodeploy/admin-bootstrap.txt
 Make a few more accounts if other operators will use the system.
 There's no graded permission model — every account has full access.
 
-## Step 6 — Build the Boot Client initramfs
+## Step 6 — Confirm the Boot Client kernel + initramfs are present
 
 The Boot Client is a small Linux binary that PXE clients chainload
-into. It needs to live in an initramfs alongside the host tools the
-imaging plan uses (`sgdisk`, `mkfs.fat`, `mkfs.ntfs`, `wimlib-imagex`,
-`busybox`).
-
-On a Linux build host (can be the AutoDeploy host itself):
+into. It ships as a **prebuilt** kernel + initramfs (the initramfs
+bundles `autodeploy-boot` plus the imaging tools `sgdisk`,
+`mkfs.fat`, `mkfs.ntfs`, `wimlib-imagex`, `busybox`). The installer
+and `fetch-ipxe.sh` download both from the GitHub release into the
+iPXE directory — **you don't build anything.** Just confirm they're
+there:
 
 ```sh
-sudo apt install -y gdisk dosfstools ntfs-3g wimtools busybox-static cpio
-# Or the equivalent for your distro.
-
-cd ~/autodeploy
-./scripts/initramfs/build-initramfs.sh
-# Writes build/initrd.img
+ls -l /var/lib/autodeploy/ipxe/autodeploy-kernel \
+      /var/lib/autodeploy/ipxe/autodeploy-initrd
 ```
 
-Place the result and a Linux kernel where the Boot Client iPXE script
-looks for them:
+If they're missing (e.g. an older release without these assets),
+re-fetch them:
 
 ```sh
-sudo cp build/initrd.img /var/lib/autodeploy/ipxe/autodeploy-initrd
-
-# A small kernel works fine. Grab the one your distro shipped:
-sudo cp /boot/vmlinuz-$(uname -r) /var/lib/autodeploy/ipxe/autodeploy-kernel
-# OR build/download a minimal one for your hardware.
-
+sudo AUTODEPLOY_DATA_DIR=/var/lib/autodeploy fetch-ipxe.sh
 sudo chown autodeploy:autodeploy /var/lib/autodeploy/ipxe/*
 ```
 
-> **Tip**: most modern distro kernels (Debian, Ubuntu, RHEL, Fedora,
-> Arch generic) have the network and disk drivers you need built in
-> or as modules. Use the same kernel your build host runs unless the
-> target hardware needs something exotic.
+> The prebuilt image uses an Ubuntu generic kernel with broad NIC +
+> disk driver coverage (Hyper-V `hv_netvsc`/`hv_storvsc`, virtio,
+> common bare-metal controllers), so it boots on hypervisors and
+> most bare metal unchanged. Only if your target needs exotic
+> drivers do you build your own — see
+> `scripts/initramfs/build-initramfs.sh`.
 
 ## Step 7 — Configure DHCP
 
@@ -526,7 +520,7 @@ You have an end-to-end deployment working. From here:
 | Symptom | Fix |
 |---------|-----|
 | PXE-booted machine sits at the menu — no images listed | You created the Image but not the ISO link. Edit the image, set ISO. |
-| Deploy starts, then fails at `wimlib-imagex apply` | The initramfs is missing `wimlib-imagex`. Re-run `build-initramfs.sh` and check the script's "missing tools" warning. |
+| Deploy starts, then fails at `wimlib-imagex apply` | The prebuilt initramfs bundles `wimlib-imagex`; this only happens with a hand-built initramfs that's missing it. Re-fetch the prebuilt image with `fetch-ipxe.sh`, or if you built your own, re-run `build-initramfs.sh` and check its "missing tools" warning. |
 | Windows installs but never reboots into OOBE silent | The unattend XML has a typo — open the unattend in the portal and re-check Preview XML. |
 | Agent never reports after Windows installs | Network is up but the agent can't reach the AutoDeploy URL. Check DNS in the deployed image, or set `autodeploy.server=` directly in the unattend's first-logon command. |
 | `Machines` page is empty even after PXE-boot | Boot Client crashed before hitting the API. Add a serial console (already set in the iPXE script: `console=ttyS0,115200`) and watch the boot. |

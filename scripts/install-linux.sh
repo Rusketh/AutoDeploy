@@ -254,20 +254,18 @@ AutoDeploy is installed. Next steps:
      Change the password via Settings → Local accounts, then
      delete the bootstrap file.
 
-  5. Drop a Linux kernel into $DATA_DIR/ipxe/autodeploy-kernel
-     and an initramfs into $DATA_DIR/ipxe/autodeploy-initrd.
-     Build the initramfs with scripts/initramfs/build-initramfs.sh.
+  5. The Boot Client kernel + initramfs were fetched automatically
+     into $DATA_DIR/ipxe/ as autodeploy-kernel + autodeploy-initrd.
+     Verify:
+       ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd
+     If absent (older release), re-run fetch-ipxe.sh.
 
-  6. Configure DHCP to chainload undionly.kpxe (BIOS) or
-     ipxe.efi (UEFI). Best place to start:
+  6. Configure DHCP to hand out one stock iPXE binary: undionly.kpxe
+     (BIOS) or ipxe.efi / snponly.efi (UEFI). The server serves
+     autoexec.ipxe, so no conditional DHCP and no custom-built binary
+     are needed -- just point next-server (option 66) at this host.
+     Best place to start:
        docs/user-guide/tutorial-02-pxe.md
-
-     If your DHCP server can't do conditional bootfile (UniFi,
-     OPNsense, most consumer routers), run:
-       sudo autodeploy-build-embedded-ipxe
-     -- builds iPXE binaries with this server's URL baked in, so
-     DHCP only needs to hand out one boot file. ~3 min build,
-     pulls in build-essential the first time.
 
 Status: systemctl status autodeploy
 Logs:   journalctl -u autodeploy -f
