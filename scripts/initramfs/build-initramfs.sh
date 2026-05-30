@@ -164,9 +164,9 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null
 echo
 echo "=== AutoDeploy Boot Client (initramfs) ==="
 
-# Load the drivers the Boot Client needs to see the NIC and disks.
-# modprobe silently ignores modules that are absent or already built in,
-# so this same list is safe across hypervisors and bare metal.
+# Load the drivers the Boot Client needs to see the NIC, disks, and the
+# keyboard. modprobe silently ignores modules that are absent or already
+# built in, so this same list is safe across hypervisors and bare metal.
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
@@ -174,7 +174,10 @@ for m in \
     bnx2 bnx2x bnxt_en mlx4_en mlx5_core \
     ahci libahci ata_piix nvme nvme_core \
     sd_mod sr_mod usb_storage xhci_pci ehci_pci \
-    vfat nls_cp437 nls_iso8859_1 ntfs3 fuse; do
+    vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
+    hyperv_keyboard hid_hyperv \
+    serio i8042 atkbd libps2 \
+    usbhid hid hid_generic uhci_hcd ohci_hcd xhci_hcd ehci_hcd; do
     modprobe "$m" 2>/dev/null
 done
 
