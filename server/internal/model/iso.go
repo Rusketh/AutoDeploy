@@ -42,17 +42,25 @@ func (r *ISORepo) Create(ctx context.Context, in ISO) (ISO, error) {
 // Get returns the ISO with id, or ErrNotFound.
 func (r *ISORepo) Get(ctx context.Context, id ID) (ISO, error) {
 	var v ISO
+	var prepared sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, os_type, storage_path, size_bytes,
-		       created_at, updated_at
+		       created_at, updated_at,
+		       install_image_format, install_image_bytes, swm_parts,
+		       bootloader_present, prep_error, media_prepared_at
 		FROM iso WHERE id=?`, id).Scan(
 		&v.ID, &v.Name, &v.Description, &v.OSType, &v.StoragePath,
-		&v.SizeBytes, &v.CreatedAt, &v.UpdatedAt)
+		&v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
+		&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
+		&v.BootloaderPresent, &v.PrepError, &prepared)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ISO{}, fmt.Errorf("iso %d: %w", id, ErrNotFound)
 	}
 	if err != nil {
 		return ISO{}, err
+	}
+	if prepared.Valid {
+		v.MediaPreparedAt = &prepared.Time
 	}
 	return v, nil
 }
@@ -61,7 +69,9 @@ func (r *ISORepo) Get(ctx context.Context, id ID) (ISO, error) {
 func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, description, os_type, storage_path, size_bytes,
-		       created_at, updated_at
+		       created_at, updated_at,
+		       install_image_format, install_image_bytes, swm_parts,
+		       bootloader_present, prep_error, media_prepared_at
 		FROM iso ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -70,9 +80,15 @@ func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 	var out []ISO
 	for rows.Next() {
 		var v ISO
+		var prepared sql.NullTime
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.OSType,
-			&v.StoragePath, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.StoragePath, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
+			&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
+			&v.BootloaderPresent, &v.PrepError, &prepared); err != nil {
 			return nil, err
+		}
+		if prepared.Valid {
+			v.MediaPreparedAt = &prepared.Time
 		}
 		out = append(out, v)
 	}
@@ -87,12 +103,20 @@ func (r *ISORepo) Update(ctx context.Context, in ISO) error {
 	if strings.TrimSpace(in.OSType) == "" {
 		return fmt.Errorf("%w: os_type required", ErrValidation)
 	}
+	var prepared sql.NullTime
+	if in.MediaPreparedAt != nil {
+		prepared = sql.NullTime{Time: *in.MediaPreparedAt, Valid: true}
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE iso
 		SET name=?, description=?, os_type=?, storage_path=?, size_bytes=?,
+		    install_image_format=?, install_image_bytes=?, swm_parts=?,
+		    bootloader_present=?, prep_error=?, media_prepared_at=?,
 		    updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
-		in.Name, in.Description, in.OSType, in.StoragePath, in.SizeBytes, in.ID)
+		in.Name, in.Description, in.OSType, in.StoragePath, in.SizeBytes,
+		in.InstallImageFormat, in.InstallImageBytes, in.SWMParts,
+		in.BootloaderPresent, in.PrepError, prepared, in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("iso %q: %w", in.Name, ErrConflict)

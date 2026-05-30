@@ -15,6 +15,7 @@
   <thead><tr>
     <th>Name</th>
     <th>OS type</th>
+    <th>Boot media</th>
     <th class="num" data-sort="num">Size</th>
     <th data-nosort>Storage path</th>
     <th class="num" data-sort="num">Used by</th>
@@ -28,6 +29,14 @@
         {{if .Description}}<br><span class="small muted">{{.Description}}</span>{{end}}
       </td>
       <td><span class="badge">{{.OSType}}</span></td>
+      <td>
+        {{if not .StoragePath}}<span class="badge warn">not uploaded</span>
+        {{else if not .Extracted}}<span class="badge warn">not extracted</span>
+        {{else if .PrepError}}<span class="badge bad" title="{{.PrepError}}">needs attention</span>
+        {{else if not .BootloaderPresent}}<span class="badge bad" title="No efi/boot/bootx64.efi found — media may not be UEFI-bootable">not bootable</span>
+        {{else if .DeployReady}}<span class="badge ok">ready</span>{{if .SWMParts}} <span class="small muted">split ×{{.SWMParts}}</span>{{end}}
+        {{else}}<span class="badge warn">unknown</span>{{end}}
+      </td>
       <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .StoragePath}}<code>{{.StoragePath}}</code><button class="copy" data-copy="{{.StoragePath}}" title="Copy"><svg><use href="#i-copy"/></svg></button>{{else}}<span class="badge warn">not uploaded</span>{{end}}</td>
       <td class="num">{{index $.Data.Refs .ID}}</td>

@@ -79,9 +79,9 @@ func TestISOUploadExtractAndServe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build a tiny ISO whose payload is named install.wim so the extractor
-	// records its path.
-	srcISO := buildTinyISO(t, "install.wim", "this-is-the-fake-wim")
+	// Build a tiny ISO whose payload is sources/install.wim, mirroring real
+	// Windows media (where PrepareBootMedia looks for the install image).
+	srcISO := buildTinyISO(t, "sources/install.wim", "this-is-the-fake-wim")
 
 	// PUT upload.
 	body, err := os.Open(srcISO)
@@ -114,14 +114,16 @@ func TestISOUploadExtractAndServe(t *testing.T) {
 	}
 	var ext map[string]any
 	_ = json.Unmarshal(b, &ext)
-	if !strings.HasSuffix(ext["wim_path"].(string), "install.wim") &&
-		!strings.HasSuffix(ext["wim_path"].(string), "INSTALL.WIM") {
-		t.Errorf("wim_path = %v", ext["wim_path"])
+	// extract now reports the prepared install image via "install_path"
+	// (sources/install.wim for this small fake WIM -- under the split
+	// threshold, so no .swm split).
+	if ip, _ := ext["install_path"].(string); !strings.EqualFold(ip, "sources/install.wim") {
+		t.Errorf("install_path = %v", ext["install_path"])
 	}
 
-	// GET /payload/iso/{id}/install.wim — try both case variants because the
-	// ISO9660 writer may uppercase the name.
-	for _, name := range []string{"install.wim", "INSTALL.WIM"} {
+	// GET the served install image — try case variants because the ISO9660
+	// writer may uppercase path components.
+	for _, name := range []string{"sources/install.wim", "SOURCES/INSTALL.WIM"} {
 		resp, err = http.Get(srv.URL + "/payload/iso/" + itoa(iso.ID) + "/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +138,7 @@ func TestISOUploadExtractAndServe(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-	t.Errorf("could not GET install.wim under either casing")
+	t.Errorf("could not GET sources/install.wim under either casing")
 }
 
 // TestISOMediaIndex verifies the media-index endpoint lists the extracted
@@ -150,7 +152,7 @@ func TestISOMediaIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srcISO := buildTinyISO(t, "install.wim", "fake-wim-bytes")
+	srcISO := buildTinyISO(t, "sources/install.wim", "fake-wim-bytes")
 	body, err := os.Open(srcISO)
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +192,7 @@ func TestISOMediaIndex(t *testing.T) {
 	}
 	found := false
 	for _, f := range idx.Files {
-		if strings.EqualFold(f.Path, "install.wim") {
+		if strings.EqualFold(f.Path, "sources/install.wim") {
 			found = true
 			if f.Size == 0 {
 				t.Errorf("install.wim listed with size 0")
@@ -198,7 +200,7 @@ func TestISOMediaIndex(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("media index missing install.wim: %+v", idx.Files)
+		t.Errorf("media index missing sources/install.wim: %+v", idx.Files)
 	}
 }
 

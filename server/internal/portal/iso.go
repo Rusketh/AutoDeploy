@@ -187,14 +187,18 @@ func isoUpload(r Repos) http.HandlerFunc {
 			// second step -- the WIM/ESD inside the ISO is what actually
 			// gets deployed. Extraction failure is non-fatal: the upload
 			// succeeded, and the manual Extract button remains available.
-			wim, exErr := payload.ExtractAndRecord(req.Context(), r.Blobs, r.ISOs, id)
+			prep, exErr := payload.ExtractAndRecord(req.Context(), r.Blobs, r.ISOs, id)
 			switch {
 			case exErr != nil:
 				flash(w, "err", fmt.Sprintf("Uploaded %d bytes, but extraction failed: %v. Use the Extract button to retry.", n, exErr))
-			case wim == "":
+			case prep.InstallRel == "":
 				flash(w, "err", fmt.Sprintf("Uploaded %d bytes and extracted, but no install.wim/install.esd was found in the ISO. Is this a Windows install ISO?", n))
+			case prep.Err != "":
+				flash(w, "err", fmt.Sprintf("Uploaded %d bytes and extracted, but boot-media prep needs attention: %s. Use Re-prepare to retry.", n, prep.Err))
+			case prep.SWMParts > 0:
+				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes, extracted, and split the install image into %d FAT32-safe parts. Ready to deploy.", n, prep.SWMParts))
 			default:
-				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes and extracted. Ready to deploy (WIM/ESD: %s).", n, wim))
+				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes and extracted. Ready to deploy (install image: %s).", n, prep.InstallRel))
 			}
 			break
 		}
