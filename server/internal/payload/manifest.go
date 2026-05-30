@@ -159,6 +159,19 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 			OS:   res.ISO.OSType,
 			Name: res.ISO.Name,
 		})
+	} else if res.ISO != nil {
+		// Explain WHY no media is offered, so the Boot Client logs a
+		// usable reason instead of a bare "no iso-media".
+		switch {
+		case !res.ISO.Extracted():
+			m.Warnings = append(m.Warnings, fmt.Sprintf("iso %q not extracted; upload or Extract it", res.ISO.Name))
+		case res.ISO.PrepError != "":
+			m.Warnings = append(m.Warnings, fmt.Sprintf("iso %q boot-media prep failed (%s); Re-prepare it", res.ISO.Name, res.ISO.PrepError))
+		case !res.ISO.BootloaderPresent:
+			m.Warnings = append(m.Warnings, fmt.Sprintf("iso %q has no UEFI bootloader recorded; Re-prepare it (it may predate boot-media prep)", res.ISO.Name))
+		default:
+			m.Warnings = append(m.Warnings, fmt.Sprintf("iso %q is not deploy-ready", res.ISO.Name))
+		}
 	}
 	// Driver packages matched against reported hardware (Phase 4). The
 	// Boot Client injects each one into the applied image.

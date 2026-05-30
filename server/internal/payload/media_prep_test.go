@@ -131,6 +131,30 @@ func TestPrepareBootMediaMissingBootloaderFlagged(t *testing.T) {
 	// gates on it; here we just assert the flag.
 }
 
+// TestPrepareBootMediaUppercaseBootloader proves the case-insensitive
+// path walk: real Windows media is often authored as EFI/BOOT/BOOTX64.EFI,
+// which an exact-case check would miss on a case-sensitive filesystem.
+func TestPrepareBootMediaUppercaseBootloader(t *testing.T) {
+	root := t.TempDir()
+	bd := filepath.Join(root, "EFI", "BOOT")
+	if err := os.MkdirAll(bd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bd, "BOOTX64.EFI"), []byte("efi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "SOURCES"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SOURCES", "INSTALL.WIM"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mp := PrepareBootMedia(context.Background(), root)
+	if !mp.BootloaderPresent {
+		t.Errorf("uppercase EFI/BOOT/BOOTX64.EFI should be detected")
+	}
+}
+
 func TestPrepareBootMediaNoInstallImage(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "sources"), 0o755); err != nil {

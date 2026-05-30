@@ -58,7 +58,7 @@ type MediaPrep struct {
 // absolute path to the iso/{id}/files directory.
 func PrepareBootMedia(ctx context.Context, filesDir string) MediaPrep {
 	var mp MediaPrep
-	mp.BootloaderPresent = fileExistsInsensitive(filepath.Join(filesDir, "efi", "boot"), "bootx64.efi")
+	mp.BootloaderPresent = hasPathInsensitive(filesDir, "efi", "boot", "bootx64.efi")
 
 	sourcesDir := caseDir(filesDir, "sources")
 	if sourcesDir == "" {
@@ -175,16 +175,30 @@ func caseDir(parent, name string) string {
 	return ""
 }
 
-// fileExistsInsensitive reports whether dir contains name (case-insensitive).
-func fileExistsInsensitive(dir, name string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.EqualFold(e.Name(), name) {
-			return true
+// hasPathInsensitive reports whether the path formed by joining parts
+// under root exists, matching each component case-insensitively. Windows
+// install media is frequently authored with uppercase directory names
+// (EFI/BOOT/BOOTX64.EFI), and the ISO extractor preserves the on-disc
+// casing, so an exact-case check would miss the bootloader on a
+// case-sensitive filesystem.
+func hasPathInsensitive(root string, parts ...string) bool {
+	cur := root
+	for _, want := range parts {
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return false
 		}
+		next := ""
+		for _, e := range entries {
+			if strings.EqualFold(e.Name(), want) {
+				next = filepath.Join(cur, e.Name())
+				break
+			}
+		}
+		if next == "" {
+			return false
+		}
+		cur = next
 	}
-	return false
+	return true
 }
