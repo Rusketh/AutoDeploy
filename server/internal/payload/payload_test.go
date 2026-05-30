@@ -259,8 +259,12 @@ func TestManifestIncludesPayloadURLs(t *testing.T) {
 	srv, _, isos, software, images := newTestService(t)
 
 	iso, _ := isos.Create(ctx, model.ISO{Name: "Win11", OSType: "windows-11"})
-	// Simulate the result of an extract.
+	// Simulate the result of an extract + boot-media prep: storage path
+	// inside the tree and a bootloader present, so the ISO is DeployReady
+	// and the manifest offers it.
 	iso.StoragePath = "iso/" + itoa(iso.ID) + "/files/sources/install.wim"
+	iso.BootloaderPresent = true
+	iso.InstallImageFormat = "wim"
 	if err := isos.Update(ctx, iso); err != nil {
 		t.Fatal(err)
 	}
@@ -289,17 +293,19 @@ func TestManifestIncludesPayloadURLs(t *testing.T) {
 	if len(m.Items) != 2 {
 		t.Fatalf("expected 2 items, got %+v", m.Items)
 	}
-	var sawWIM, sawSW bool
+	var sawMedia, sawSW bool
 	for _, it := range m.Items {
-		if it.Role == "iso-wim" && strings.HasSuffix(it.URL, "/sources/install.wim") {
-			sawWIM = true
+		if it.Role == "iso-media" &&
+			strings.HasSuffix(it.URL, "/index.json") &&
+			strings.HasSuffix(it.Base, "/payload/iso/"+itoa(iso.ID)+"/") {
+			sawMedia = true
 		}
 		if it.Role == "software" && strings.HasSuffix(it.URL, "/payload/software/"+itoa(swA.ID)) {
 			sawSW = true
 		}
 	}
-	if !sawWIM {
-		t.Error("manifest missing iso-wim item with /sources/install.wim URL")
+	if !sawMedia {
+		t.Errorf("manifest missing iso-media item with index.json URL + base: %+v", m.Items)
 	}
 	if !sawSW {
 		t.Error("manifest missing software item")

@@ -190,15 +190,25 @@ Created → Uploaded → Extracted → Media prepared → Deploy-ready
 
 ## Part 7 — Sequencing (small, reviewable PRs)
 
-1. **Server prepare step + model fields + migration** (`PrepareBootMedia`,
+1. ✅ **Server prepare step + model fields + migration** (`PrepareBootMedia`,
    ISO columns, wired into extract). Tested with a fake oversized WIM.
-2. **Portal status surfacing** (list badge, detail panel, re-prepare,
+2. ✅ **Portal status surfacing** (list badge, detail panel, re-prepare,
    deploy guard). Server-only behaviour already in place from (1).
-3. **Manifest `iso-media`** + Boot Client media-staging rewrite +
-   initramfs `efibootmgr`; remove `iso-wim` and capture/apply. Recorder
+3. ✅ **Manifest `iso-media`** + Boot Client media-staging rewrite +
+   initramfs `efibootmgr`; removed `iso-wim` and capture/apply. Recorder
    tests for the new command sequence.
+   - Boot Client: `StageMedia` builds a single FAT32 boot partition at the
+     END of the disk (front left free for Setup), copies the mirrored
+     media, drops `autounattend.xml` at the root + drivers under
+     `$WinPEDriver$\`, registers the partition with `efibootmgr`.
+   - `main.go` mirrors the media tree via the `iso-media` index.
+   - initramfs: added `efibootmgr` + `unzip`, mounts `efivarfs`; dropped
+     `mkfs.ntfs`/`wimlib` (no NTFS, split is server-side).
 4. **Unattend coexistence** (DiskConfiguration + agent cleanup) — paired
-   with the first real rig boot.
+   with the first real rig boot. NOTE: `StageMedia` places the boot
+   partition at the disk END; the answer file must install Windows into
+   the free space at the FRONT without wiping it, and the agent deletes
+   the boot partition + extends C: post-install.
 5. **Docs**: rewrite Project-Context §2 and roadmap Phase 5 to this model.
 
 ## Testing
