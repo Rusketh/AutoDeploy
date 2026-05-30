@@ -249,6 +249,17 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	for _, it := range m.Items {
 		dst := filepath.Join(f.work, "payload-"+it.Role+"-"+sanitise(it.URL))
 		if err := download(ctx, c, log, it, dst); err != nil {
+			// Software is applied post-OS by the agent, not by the Boot
+			// Client (there is no "software" case below). A software
+			// payload that fails to download must NOT abort imaging --
+			// warn and carry on. Every other role is required to lay the
+			// OS down, so a failure there is still fatal (fail-safe).
+			if it.Role == "software" {
+				log.Warn("download.software.skip",
+					slog.String("url", it.URL),
+					slog.String("error", err.Error()))
+				continue
+			}
 			log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
 			os.Exit(0)
 		}

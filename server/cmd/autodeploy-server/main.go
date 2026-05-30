@@ -193,6 +193,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AD:        adSvc,
 		Inventory: r.Inventory,
 		Unattend:  r.Unattend,
+		Software:  r.Software,
 		Mirrors:   r.Mirrors,
 	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())

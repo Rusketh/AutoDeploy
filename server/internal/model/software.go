@@ -99,15 +99,30 @@ func (r *SoftwarePackageRepo) Update(ctx context.Context, in SoftwarePackage) er
 	return nil
 }
 
+// Delete removes a software package and, in the same transaction, strips
+// every reference to it from images and loadouts. Cascade-cleaning here
+// (rather than refusing while referenced) means an operator can delete a
+// package without first hunting down every image/loadout that links it,
+// and -- crucially -- it can never leave a dangling reference that would
+// later resolve into a manifest pointing at a package that no longer
+// exists. RefCount remains available for the portal to warn before the
+// operator confirms.
 func (r *SoftwarePackageRepo) Delete(ctx context.Context, id ID) error {
-	refs, err := r.RefCount(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if refs > 0 {
-		return fmt.Errorf("software package %d: %w (linked by %d images)", id, ErrInUse, refs)
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM image_software_package WHERE software_package_id=?`, id); err != nil {
+		return err
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM software_package WHERE id=?`, id)
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM software_loadout_package WHERE software_package_id=?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM software_package WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -115,7 +130,7 @@ func (r *SoftwarePackageRepo) Delete(ctx context.Context, id ID) error {
 	if n == 0 {
 		return fmt.Errorf("software package %d: %w", id, ErrNotFound)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RefCount counts direct image links and loadout memberships referencing
