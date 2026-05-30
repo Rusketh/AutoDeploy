@@ -13,19 +13,21 @@
 # convention, so an operator can point a TFTP server's root directly
 # at the directory.
 #
-# Files fetched (in priority order):
-#   1. AutoDeploy release assets    (built by .github/workflows/build-ipxe.yml,
-#                                    embedded with a universal chainloader
-#                                    script that uses DHCP option 66 to find
-#                                    the AutoDeploy server -- works on UniFi
-#                                    and any other DHCP that can't do
-#                                    conditional bootfiles)
-#   2. boot.ipxe.org                (vanilla iPXE, no embedded script --
-#                                    requires conditional DHCP to chainload
-#                                    to AutoDeploy)
+# Either source works out of the box: the AutoDeploy server serves an
+# autoexec.ipxe bootstrap (over TFTP and HTTP) that any stock iPXE
+# binary fetches and runs on its own. No embedded build, no conditional
+# DHCP -- just point DHCP's next-server (option 66) at the AutoDeploy
+# host and hand out one of these binaries.
 #
-# AutoDeploy's bundled binaries are the recommended path. The boot.ipxe.org
-# fallback exists for releases that pre-date the iPXE build workflow.
+# Files fetched (in priority order):
+#   1. AutoDeploy release assets    (built by .github/workflows/build-ipxe.yml.
+#                                    These also carry a universal embedded
+#                                    chainloader as a belt-and-braces fallback,
+#                                    but it's redundant now that the server
+#                                    serves autoexec.ipxe.)
+#   2. boot.ipxe.org                (vanilla upstream iPXE. Works exactly the
+#                                    same -- it fetches the server's
+#                                    autoexec.ipxe on boot.)
 set -euo pipefail
 
 TAG=""

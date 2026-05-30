@@ -253,6 +253,94 @@ func TestServeRefusesWrite(t *testing.T) {
 	}
 }
 
+// startConfiguredServer starts an already-built server on a free port,
+// mirroring startTestServer's bind dance but letting the caller set
+// fields like Synth.
+func startConfiguredServer(t *testing.T, s *Server) (string, context.CancelFunc) {
+	t.Helper()
+	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	_ = conn.Close()
+	s.Addr = "127.0.0.1:" + strconv.Itoa(port)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = s.ListenAndServe(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	return s.Addr, cancel
+}
+
+func TestSynthServedWhenFileAbsent(t *testing.T) {
+	dir := t.TempDir()
+	want := []byte("#!ipxe\nsynth body\n")
+	s := &Server{
+		Root: dir,
+		Synth: func(name string) ([]byte, bool) {
+			if name == "autoexec.ipxe" {
+				return want, true
+			}
+			return nil, false
+		},
+	}
+	addr, cancel := startConfiguredServer(t, s)
+	defer cancel()
+
+	// Both the bare name and a leading-slash form must hit the synth —
+	// stock iPXE probes "autoexec.ipxe" then "/autoexec.ipxe".
+	for _, name := range []string{"autoexec.ipxe", "/autoexec.ipxe"} {
+		got, err := tinyTFTPGet(t, addr, name, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: got %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestSynthDoesNotShadowRealFile(t *testing.T) {
+	dir := t.TempDir()
+	onDisk := []byte("#!ipxe\noperator override\n")
+	_ = os.WriteFile(filepath.Join(dir, "autoexec.ipxe"), onDisk, 0o644)
+	s := &Server{
+		Root: dir,
+		Synth: func(name string) ([]byte, bool) {
+			return []byte("synth should not win"), true
+		},
+	}
+	addr, cancel := startConfiguredServer(t, s)
+	defer cancel()
+
+	got, err := tinyTFTPGet(t, addr, "autoexec.ipxe", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, onDisk) {
+		t.Errorf("on-disk file should win: got %q, want %q", got, onDisk)
+	}
+}
+
+func TestSynthMissFallsThroughToNotFound(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{
+		Root:  dir,
+		Synth: func(name string) ([]byte, bool) { return nil, false },
+	}
+	addr, cancel := startConfiguredServer(t, s)
+	defer cancel()
+
+	_, err := tinyTFTPGet(t, addr, "missing.bin", 0)
+	if err == nil {
+		t.Fatal("expected file-not-found")
+	}
+	var ce *tftpClientError
+	if !errorsAs(err, &ce) || ce.code != errFileNotFound {
+		t.Fatalf("expected file-not-found, got %v", err)
+	}
+}
+
 // errorsAs is a tiny helper so the test file doesn't have to import
 // errors just for one call.
 func errorsAs(err error, target any) bool {
@@ -264,7 +352,7 @@ func errorsAs(err error, target any) bool {
 	if !ok {
 		return false
 	}
-	for ; err != nil; {
+	for err != nil {
 		if ce, ok := err.(*tftpClientError); ok {
 			*tt = ce
 			return true

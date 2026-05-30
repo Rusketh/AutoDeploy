@@ -8,6 +8,7 @@ import (
 	base64URLpkg "encoding/base64"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -213,8 +214,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Images: r.Images, Inventory: r.Inventory,
 		BitLocker: r.BitLocker, Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
-		Mirrors:    r.Mirrors,
-		Runtime:    rt,
+		Mirrors:       r.Mirrors,
+		Runtime:       rt,
 		Resolver:      r.Resolver,
 		Blobs:         blobs,
 		AD:            adSvc,
@@ -279,10 +280,28 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		// CAP_NET_BIND_SERVICE. RootFunc consults the live BlobStore
 		// router so a portal-driven storage relocation takes effect
 		// without a restart.
+		// httpPort lets the synthesised autoexec.ipxe chain to the right
+		// HTTP port without baking the full URL — the script resolves
+		// the host from DHCP option 66 (${next-server}) at boot time.
+		httpPort := ""
+		if _, p, err := net.SplitHostPort(cfg.HTTPAddr); err == nil {
+			httpPort = p
+		}
 		ts := &tftp.Server{
 			Addr:     cfg.TFTPAddr,
 			RootFunc: func() string { return blobs.CategoryRoot("ipxe") },
-			Logger:   logger,
+			// Hand stock iPXE binaries a bootstrap script the instant
+			// they probe for autoexec.ipxe — no embedded-build step and
+			// no file to drop on disk. A real autoexec.ipxe placed in
+			// the iPXE dir still wins (the synth only fires when the
+			// name matches and nothing else has claimed it).
+			Synth: func(name string) ([]byte, bool) {
+				if name == "autoexec.ipxe" {
+					return []byte(api.IPXEAutoexecNextServer(httpPort)), true
+				}
+				return nil, false
+			},
+			Logger: logger,
 		}
 		wg.Add(1)
 		go func() {
