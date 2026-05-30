@@ -172,25 +172,40 @@ sudo curl -sSfL -o /var/lib/autodeploy/ipxe/snponly.efi http://boot.ipxe.org/x86
 sudo chown autodeploy:autodeploy /var/lib/autodeploy/ipxe/{ipxe.efi,snponly.efi}
 ```
 
-**Or build them with the AutoDeploy URL embedded** (recommended
-for UniFi / OPNsense / consumer routers that can't do conditional
-DHCP):
-
-```sh
-sudo /etc/autodeploy/scripts/build-embedded-ipxe.sh
-```
+Any stock iPXE binary works — AutoDeploy serves the `autoexec.ipxe`
+bootstrap, so nothing needs to be baked into the binary. (The
+`build-embedded-ipxe.sh` helper still exists for unusual setups
+where you'd rather embed the URL, but it's no longer the
+recommended path and requires a build toolchain.)
 
 ### iPXE loads but loops or sits silent after DHCP
 
-Your DHCP can't differentiate firmware-PXE clients from iPXE
-clients. Both get the same bootfile, iPXE asks again, gets sent
-its own filename, infinite loop (or silent stall).
+You'll usually see `autoexec.ipxe... Not found` followed by iPXE
+stalling at `Configuring (net0...)`. iPXE came up but couldn't
+fetch its bootstrap script, so it has nowhere to go.
 
-**Fix:** use embedded iPXE — see [tutorial 2 step
-2A](tutorial-02-pxe.md#step-2a---embedded-ipxe). Build with
-`sudo /etc/autodeploy/scripts/build-embedded-ipxe.sh`. After
-that, iPXE ignores DHCP's bootfile entirely and chains to the
-embedded URL.
+AutoDeploy serves `autoexec.ipxe` automatically (over TFTP and
+HTTP) precisely so any stock iPXE binary self-bootstraps — no
+embedded build, no conditional DHCP. If you're hitting this:
+
+1. **`next-server` / option 66 must point at the AutoDeploy host.**
+   iPXE fetches `autoexec.ipxe` from there. Without it, iPXE has
+   no server to ask.
+2. **Confirm the server actually serves it:**
+   ```sh
+   tftp <autodeploy-ip>
+   tftp> get autoexec.ipxe
+   ```
+   It should return a small `#!ipxe` script. (`autoexec.ipxe` is
+   generated on demand — there's no file by that name on disk.)
+3. **Check your AutoDeploy version.** Served `autoexec.ipxe`
+   landed in a specific release; older servers don't synthesise
+   it. On an older server either upgrade, or drop a static
+   `autoexec.ipxe` into `/var/lib/autodeploy/ipxe/` by hand that
+   chains to `http://<host>:8080/ipxe/boot.ipxe`.
+
+The old workaround — building a custom iPXE with the URL embedded
+(`build-embedded-ipxe.sh`) — is no longer needed for this.
 
 ### `iPXE: No more network devices`
 

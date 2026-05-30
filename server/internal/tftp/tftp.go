@@ -26,6 +26,7 @@
 package tftp
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -82,6 +83,15 @@ type Server struct {
 	// RootFunc, when non-nil, is consulted on every request to obtain
 	// the current root. Use this when the path is operator-managed.
 	RootFunc func() string
+	// Synth, when non-nil, is consulted before the filesystem on every
+	// read request. If it returns ok, the returned bytes are served
+	// directly from memory and no file is opened. This lets the server
+	// hand back generated content — e.g. an autoexec.ipxe bootstrap
+	// script — without the operator having to drop a file on disk. The
+	// name passed is the cleaned base name of the request (no leading
+	// path), so "autoexec.ipxe" and "/autoexec.ipxe" both arrive as
+	// "autoexec.ipxe".
+	Synth func(name string) (content []byte, ok bool)
 	// Logger receives structured events.
 	Logger *slog.Logger
 
@@ -163,7 +173,10 @@ func (s *Server) handleRRQ(ctx context.Context, client *net.UDPAddr, body []byte
 	}
 	_ = mode // octet or netascii both treated as raw bytes
 
-	path, err := s.resolve(filename)
+	var src io.Reader
+	var size int64
+
+	abs, err := s.resolve(filename)
 	if err != nil {
 		s.log("tftp.access_violation",
 			slog.String("client", client.String()),
@@ -172,23 +185,44 @@ func (s *Server) handleRRQ(ctx context.Context, client *net.UDPAddr, body []byte
 		s.replyError(client, errAccessViolation, "access denied")
 		return
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			s.replyError(client, errFileNotFound, "not found")
-		} else {
-			s.replyError(client, errNotDefined, err.Error())
+	f, err := os.Open(abs)
+	switch {
+	case err == nil:
+		// A real file on disk always wins, so an operator can drop a
+		// custom autoexec.ipxe (or any other file) and have it served
+		// verbatim.
+		defer f.Close()
+		info, serr := f.Stat()
+		if serr != nil {
+			s.replyError(client, errNotDefined, serr.Error())
+			return
 		}
+		src = f
+		size = info.Size()
+	case errors.Is(err, os.ErrNotExist):
+		// No file — fall back to synthesised content (e.g. the
+		// autoexec.ipxe bootstrap) when the server provides it.
+		content, ok := s.synth(filename)
+		if !ok {
+			s.replyError(client, errFileNotFound, "not found")
+			s.log("tftp.read.miss",
+				slog.String("client", client.String()),
+				slog.String("filename", filename),
+				slog.String("error", err.Error()))
+			return
+		}
+		src = bytes.NewReader(content)
+		size = int64(len(content))
+		s.log("tftp.read.synth",
+			slog.String("client", client.String()),
+			slog.String("filename", filename),
+			slog.Int64("size", size))
+	default:
+		s.replyError(client, errNotDefined, err.Error())
 		s.log("tftp.read.miss",
 			slog.String("client", client.String()),
 			slog.String("filename", filename),
 			slog.String("error", err.Error()))
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		s.replyError(client, errNotDefined, err.Error())
 		return
 	}
 
@@ -203,8 +237,8 @@ func (s *Server) handleRRQ(ctx context.Context, client *net.UDPAddr, body []byte
 	tx := &transfer{
 		conn:      xferConn,
 		client:    client,
-		file:      f,
-		size:      info.Size(),
+		src:       src,
+		size:      size,
 		blockSize: defaultBlockSize,
 		timeout:   defaultTimeoutSec * time.Second,
 		log:       s.Logger,
@@ -214,7 +248,7 @@ func (s *Server) handleRRQ(ctx context.Context, client *net.UDPAddr, body []byte
 	s.log("tftp.read.start",
 		slog.String("client", client.String()),
 		slog.String("filename", filename),
-		slog.Int64("size", info.Size()),
+		slog.Int64("size", size),
 		slog.Int("block_size", tx.blockSize))
 
 	if err := tx.run(ctx); err != nil {
@@ -227,7 +261,7 @@ func (s *Server) handleRRQ(ctx context.Context, client *net.UDPAddr, body []byte
 	s.log("tftp.read.ok",
 		slog.String("client", client.String()),
 		slog.String("filename", filename),
-		slog.Int64("size", info.Size()))
+		slog.Int64("size", size))
 }
 
 func (s *Server) log(action string, attrs ...slog.Attr) {
@@ -236,6 +270,15 @@ func (s *Server) log(action string, attrs ...slog.Attr) {
 	}
 	all := append([]slog.Attr{slog.String("actor", "tftp"), slog.String("target", "")}, attrs...)
 	s.Logger.LogAttrs(context.Background(), slog.LevelInfo, action, all...)
+}
+
+// synth consults the Synth hook (if set) using the request's cleaned
+// base name, so "autoexec.ipxe" and "/autoexec.ipxe" both match.
+func (s *Server) synth(filename string) ([]byte, bool) {
+	if s.Synth == nil {
+		return nil, false
+	}
+	return s.Synth(filepath.Base(filepath.Clean("/" + filename)))
 }
 
 // resolve cleans and confines path to the server's current root.
@@ -287,7 +330,7 @@ func parseRequest(body []byte) (filename, mode string, opts map[string]string, e
 type transfer struct {
 	conn      *net.UDPConn
 	client    *net.UDPAddr
-	file      *os.File
+	src       io.Reader
 	size      int64
 	blockSize int
 	timeout   time.Duration
@@ -342,7 +385,7 @@ func (t *transfer) run(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		n, err := io.ReadFull(t.file, buf)
+		n, err := io.ReadFull(t.src, buf)
 		// io.ReadFull returns ErrUnexpectedEOF when fewer than len(buf)
 		// bytes remain — that's the final short block.
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
