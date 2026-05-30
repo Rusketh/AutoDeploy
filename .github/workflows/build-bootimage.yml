@@ -2,16 +2,18 @@ name: Build Boot Client image
 
 # Builds the prebuilt Boot Client boot image -- a kernel + an initramfs
 # that boots straight into autodeploy-boot -- so operators never have to
-# build it (or install a toolchain) themselves. The artifacts attach to
-# the release exactly like the iPXE binaries do; scripts/fetch-ipxe.sh
-# and the installer download them into the iPXE directory.
+# build it (or install a toolchain) themselves.
 #
-# Triggers:
-#   - workflow_dispatch    (build on demand)
-#   - release: published   (build when a release goes out, then attach
-#                          the kernel + initrd to it)
+# NOTE: the actual RELEASE attachment of the kernel + initrd happens in
+# release.yml's `bootimage` job, NOT here. A `release: published` trigger
+# would never fire for our releases, because they're published by
+# GITHUB_TOKEN (via auto-tag.yml's `gh workflow run`), and GitHub
+# suppresses workflow runs triggered by GITHUB_TOKEN events. This file is
+# kept ONLY for `workflow_dispatch` -- a manual, on-demand build that
+# produces the kernel + initrd as a downloadable workflow artifact (handy
+# for testing a boot-image change without cutting a release).
 #
-# Outputs:
+# Outputs (as a `bootimage` workflow artifact):
 #   - autodeploy-kernel        Linux kernel (Ubuntu generic: broad NIC +
 #                              disk coverage incl. Hyper-V hv_netvsc /
 #                              hv_storvsc and virtio)
@@ -26,8 +28,6 @@ name: Build Boot Client image
 
 on:
   workflow_dispatch: {}
-  release:
-    types: [published]
 
 permissions:
   contents: write    # to attach the artifacts to the release
@@ -103,16 +103,3 @@ jobs:
           name: bootimage
           path: bootimage/*
           if-no-files-found: error
-
-      - name: Attach to release (if this is a release event)
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # --clobber so a manual re-build can replace a botched asset
-          # without deleting and re-creating the release.
-          gh release upload "${{ github.event.release.tag_name }}" \
-              bootimage/* \
-              --repo "${GITHUB_REPOSITORY}" \
-              --clobber
-          echo "::notice::Attached Boot Client kernel + initrd to release ${{ github.event.release.tag_name }}"

@@ -85,6 +85,66 @@ jobs:
             ${{ matrix.component }}/bin/*
           if-no-files-found: error
 
+  # Build the prebuilt Boot Client boot image (kernel + initramfs) and
+  # upload it as a workflow artifact named like the other release assets
+  # so the `release` job's `autodeploy-*` glob picks it up. This lives in
+  # release.yml (not a standalone release-triggered workflow) because a
+  # release published by GITHUB_TOKEN does NOT fire `release: published`
+  # triggers -- so a separate workflow keyed on that event would never
+  # run. Folding it into the tag-dispatched release flow is the only path
+  # that actually attaches the files.
+  bootimage:
+    name: Build Boot Client image (kernel + initramfs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: boot-client/go.sum
+      - name: Install toolchain + kernel
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+              linux-image-generic \
+              kmod busybox-static cpio gzip \
+              gdisk dosfstools ntfs-3g wimtools
+      - name: Resolve kernel version
+        id: kver
+        run: |
+          vmlinuz=$(ls -1 /boot/vmlinuz-*-generic | sort -V | tail -1)
+          kver=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
+          echo "Selected kernel: $kver ($vmlinuz)"
+          echo "kver=$kver" >> "$GITHUB_OUTPUT"
+          echo "vmlinuz=$vmlinuz" >> "$GITHUB_OUTPUT"
+      - name: Build initramfs
+        env:
+          KERNEL_VERSION: ${{ steps.kver.outputs.kver }}
+          OUT_DIR: ${{ github.workspace }}/bootimage-build
+        run: |
+          mkdir -p bootimage-build
+          scripts/initramfs/build-initramfs.sh
+          ls -la bootimage-build/
+      - name: Stage boot image assets
+        run: |
+          mkdir -p bootimage
+          sudo cp "${{ steps.kver.outputs.vmlinuz }}" bootimage/autodeploy-kernel
+          sudo chown "$USER" bootimage/autodeploy-kernel
+          chmod 0644 bootimage/autodeploy-kernel
+          cp bootimage-build/initrd.img bootimage/autodeploy-initrd
+          cd bootimage
+          for f in autodeploy-kernel autodeploy-initrd; do
+              sha256sum "$f" > "$f.sha256"
+          done
+          ls -la
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootimage
+          path: bootimage/*
+          if-no-files-found: error
+
   # Bundle the initramfs build script + an example boot.ipxe and the
   # operator-facing scripts so a downloaded release is self-contained.
   package-extras:
@@ -114,7 +174,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, package-extras]
+    needs: [build, bootimage, package-extras]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
