@@ -94,10 +94,19 @@ for tool in /bin/busybox \
     fi
 done
 
-# efibootmgr registers the staged boot partition with the firmware. It
-# lives in /usr/sbin on Debian/Ubuntu but /sbin elsewhere, so try both.
-if ! copy_with_libs /usr/sbin/efibootmgr 2>/dev/null \
-   && ! copy_with_libs /sbin/efibootmgr 2>/dev/null; then
+# efibootmgr registers the staged boot partition with the firmware. Its
+# location varies a lot -- /usr/sbin on older Debian, /usr/bin on
+# sbin-merged systems (incl. recent GitHub runners), sometimes /sbin. Find
+# it via PATH (command -v), with explicit dirs as a fallback. (command -v
+# is safe here -- unlike busybox, efibootmgr is a single standalone binary,
+# so there's no /bin/busybox-placement concern.)
+EFIBOOTMGR="$(command -v efibootmgr 2>/dev/null || true)"
+if [ -z "$EFIBOOTMGR" ]; then
+    for d in /usr/sbin /sbin /usr/bin /bin /usr/local/sbin /usr/local/bin; do
+        [ -x "$d/efibootmgr" ] && { EFIBOOTMGR="$d/efibootmgr"; break; }
+    done
+fi
+if [ -z "$EFIBOOTMGR" ] || ! copy_with_libs "$EFIBOOTMGR" 2>/dev/null; then
     missing+=("efibootmgr")
 fi
 
