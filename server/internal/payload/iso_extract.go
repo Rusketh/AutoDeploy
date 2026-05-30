@@ -153,6 +153,14 @@ func HaveExternalExtractor() bool {
 // wimRelPath is left empty here; the caller (ExtractAndRecord) locates the
 // install image via PrepareBootMedia, which walks the extracted tree.
 func ExtractISO(srcPath, destDir string) (totalBytes int64, wimRelPath string, err error) {
+	// Start from a clean tree. A re-prepare otherwise extracts ON TOP of
+	// the previous run: the freshly re-extracted oversized install.wim
+	// ends up sitting alongside the install.swm parts a prior split
+	// produced, and the Boot Client then tries (and fails) to copy that
+	// >4 GiB original onto FAT32 ("no space left on device").
+	if err := os.RemoveAll(destDir); err != nil {
+		return 0, "", err
+	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return 0, "", err
 	}
