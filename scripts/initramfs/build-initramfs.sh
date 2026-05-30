@@ -136,6 +136,22 @@ if [ ! -e "$ROOTFS/bin/sh" ]; then
     exit 1
 fi
 
+# Critical imaging tools. Without these a deploy cannot partition (sgdisk),
+# format (mkfs.fat) or make the disk bootable (efibootmgr) -- it would run
+# all the way to the end and then die on the rig. Fail the BUILD instead,
+# loudly, if any wasn't bundled (e.g. the build host lacked the package).
+for need in sgdisk mkfs.fat efibootmgr; do
+    found=""
+    for d in bin sbin usr/bin usr/sbin; do
+        [ -x "$ROOTFS/$d/$need" ] && { found=1; break; }
+    done
+    if [ -z "$found" ]; then
+        echo "FATAL: required tool '$need' was not bundled into the initramfs." >&2
+        echo "       Install it on the build host: apt-get install -y gdisk dosfstools efibootmgr" >&2
+        exit 1
+    fi
+done
+
 # busybox udhcpc needs a "default.script" to apply the lease it gets
 # (set the IP, routes, DNS). Without it udhcpc obtains a lease but never
 # configures the interface. This is the minimal script from busybox's
