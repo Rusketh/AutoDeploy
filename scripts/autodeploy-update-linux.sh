@@ -8,8 +8,10 @@
 #
 # Default tag is "latest" (resolved via the GitHub releases API).
 # Stops the autodeploy.service, downloads + SHA-256-verifies the new
-# server binary plus the Windows agent + Linux boot client, swaps the
-# server binary, refreshes the downloads directory, restarts.
+# server binary plus the Windows agent, swaps the server binary,
+# refreshes the downloads directory AND the Boot Client image (kernel +
+# initramfs) in the iPXE dir, then restarts. The kernel/initrd refresh
+# is best-effort so a pinned older release without them still updates.
 #
 # This script is installed to /usr/local/sbin/ by install-linux.sh
 # and granted passwordless sudo via /etc/sudoers.d/autodeploy-update,
@@ -115,6 +117,30 @@ for a in autodeploy-agent-windows-amd64.exe \
          autodeploy-agent-windows-amd64.exe.version; do
     if [ -f "$WORK/$a" ]; then
         install -m 0644 -o autodeploy -g autodeploy "$WORK/$a" "$DATA_DIR/downloads/$a"
+    fi
+done
+
+# Refresh the Boot Client image (kernel + initramfs) in the iPXE dir so
+# the PXE chain has something to boot -- the same auto-acquire the
+# installer does via fetch-ipxe.sh, but on every update too. Best-effort:
+# these are large and a deliberately-pinned older release may not carry
+# them, so a miss is a warning, never a reason to abort the server swap.
+# We SHA-256-verify any we do fetch and only swap a file in once verified,
+# so a partial download can't leave a corrupt kernel/initrd on disk.
+log "Refreshing Boot Client image in $DATA_DIR/ipxe/..."
+install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/ipxe"
+for img in autodeploy-kernel autodeploy-initrd; do
+    if curl -sSfL --connect-timeout 10 --retry 2 \
+            -o "$WORK/$img" "$GH_BASE/$img" 2>/dev/null \
+       && curl -sSfL --connect-timeout 10 --retry 2 \
+            -o "$WORK/$img.sha256" "$GH_BASE/$img.sha256" 2>/dev/null \
+       && ( cd "$WORK" && sha256sum -c "$img.sha256" --quiet >/dev/null 2>&1 ); then
+        install -m 0644 -o autodeploy -g autodeploy "$WORK/$img" "$DATA_DIR/ipxe/$img"
+        install -m 0644 -o autodeploy -g autodeploy "$WORK/$img.sha256" "$DATA_DIR/ipxe/$img.sha256"
+        log "  updated $img"
+    else
+        log "  WARN: could not fetch/verify $img for $TAG -- leaving existing file in place"
+        rm -f "$WORK/$img" "$WORK/$img.sha256"
     fi
 done
 
