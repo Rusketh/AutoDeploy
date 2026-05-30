@@ -102,6 +102,21 @@ for tool in busybox \
     fi
 done
 
+# resolve_tool installs each tool at its resolved path, which on a
+# usr-merged build host is /usr/bin/busybox (command -v) rather than
+# /bin/busybox. The relative applet symlinks below (/bin/sh -> busybox)
+# need busybox AT /bin/busybox -- and if /bin/sh is missing the kernel
+# cannot exec /init (#!/bin/sh) and panics with "No working init found".
+# Normalise busybox to /bin/busybox.
+if [ ! -e "$ROOTFS/bin/busybox" ]; then
+    for cand in usr/bin/busybox sbin/busybox usr/sbin/busybox; do
+        if [ -e "$ROOTFS/$cand" ]; then
+            install -D -m 0755 "$ROOTFS/$cand" "$ROOTFS/bin/busybox"
+            break
+        fi
+    done
+fi
+
 # If busybox is present, symlink the core applets we rely on so the init
 # script works even when the host didn't ship standalone binaries. ip and
 # udhcpc are busybox applets on most build hosts; the symlinks make them
@@ -112,6 +127,17 @@ if [ -x "$ROOTFS/bin/busybox" ]; then
                   ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
     done
+fi
+
+# Hard requirement: /init starts with #!/bin/sh, so /bin/sh MUST exist or
+# the kernel panics at boot with "Failed to execute /init (error -2) ...
+# No working init found". Guarantee it, and fail the BUILD loudly if we
+# somehow can't -- a build error is far cheaper than a panic on the rig.
+[ -e "$ROOTFS/bin/sh" ] || ln -sf busybox "$ROOTFS/bin/sh"
+if [ ! -e "$ROOTFS/bin/sh" ]; then
+    echo "FATAL: /bin/sh is missing from the initramfs; /init would not exec." >&2
+    echo "       busybox was not bundled at $ROOTFS/bin/busybox." >&2
+    exit 1
 fi
 
 # busybox udhcpc needs a "default.script" to apply the lease it gets
