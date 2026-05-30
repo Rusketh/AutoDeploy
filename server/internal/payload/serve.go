@@ -187,11 +187,23 @@ func (s *Service) uploadISO(w http.ResponseWriter, r *http.Request) {
 		writeModelErr(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	// Auto-extract so the ISO is immediately deployable -- the WIM/ESD
+	// inside is what the Boot Client applies, and the manifest only emits
+	// an iso-wim item once storage_path points inside the extracted tree.
+	// A failure here is non-fatal: the source blob is safely stored and
+	// the operator can re-run POST /api/v1/isos/{id}/extract.
+	wim, exErr := ExtractAndRecord(r.Context(), s.Blobs, s.ISOs, id)
+	resp := map[string]any{
 		"id":           iso.ID,
-		"storage_path": iso.StoragePath,
-		"size_bytes":   iso.SizeBytes,
-	})
+		"storage_path": rel,
+		"size_bytes":   n,
+		"extracted":    exErr == nil && wim != "",
+		"wim_path":     wim,
+	}
+	if exErr != nil {
+		resp["extract_error"] = exErr.Error()
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // extractISO unpacks the previously uploaded ISO into data/iso/{id}/files/...
