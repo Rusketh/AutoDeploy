@@ -109,6 +109,10 @@ func applyPrep(ctx context.Context, isos *model.ISORepo, id model.ID, destAbs st
 	if prep.InstallRel != "" {
 		iso.StoragePath = filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files", prep.InstallRel))
 	}
+	// Media summary so the portal can show the whole tree was ingested,
+	// not just the install image.
+	iso.MediaFileCount, iso.MediaTotalBytes = treeStats(destAbs)
+	iso.BootWimPresent = hasPathInsensitive(destAbs, "sources", "boot.wim")
 	if err := isos.Update(ctx, iso); err != nil {
 		return prep, err
 	}
@@ -199,17 +203,23 @@ func extractWithTool(srcPath, destDir string) error {
 
 // treeBytes sums the size of every regular file under root.
 func treeBytes(root string) int64 {
-	var total int64
+	_, b := treeStats(root)
+	return b
+}
+
+// treeStats counts the regular files under root and sums their size.
+func treeStats(root string) (count int, total int64) {
 	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
+		count++
 		if info, e := d.Info(); e == nil {
 			total += info.Size()
 		}
 		return nil
 	})
-	return total
+	return count, total
 }
 
 // extractISO9660Native is the pure-Go fallback: it walks the ISO at

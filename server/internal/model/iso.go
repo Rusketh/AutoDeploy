@@ -47,12 +47,14 @@ func (r *ISORepo) Get(ctx context.Context, id ID) (ISO, error) {
 		SELECT id, name, description, os_type, storage_path, size_bytes,
 		       created_at, updated_at,
 		       install_image_format, install_image_bytes, swm_parts,
-		       bootloader_present, prep_error, media_prepared_at
+		       bootloader_present, prep_error, media_prepared_at,
+		       media_file_count, media_total_bytes, boot_wim_present
 		FROM iso WHERE id=?`, id).Scan(
 		&v.ID, &v.Name, &v.Description, &v.OSType, &v.StoragePath,
 		&v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 		&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
-		&v.BootloaderPresent, &v.PrepError, &prepared)
+		&v.BootloaderPresent, &v.PrepError, &prepared,
+		&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ISO{}, fmt.Errorf("iso %d: %w", id, ErrNotFound)
 	}
@@ -71,7 +73,8 @@ func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 		SELECT id, name, description, os_type, storage_path, size_bytes,
 		       created_at, updated_at,
 		       install_image_format, install_image_bytes, swm_parts,
-		       bootloader_present, prep_error, media_prepared_at
+		       bootloader_present, prep_error, media_prepared_at,
+		       media_file_count, media_total_bytes, boot_wim_present
 		FROM iso ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -84,7 +87,8 @@ func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.OSType,
 			&v.StoragePath, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 			&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
-			&v.BootloaderPresent, &v.PrepError, &prepared); err != nil {
+			&v.BootloaderPresent, &v.PrepError, &prepared,
+			&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent); err != nil {
 			return nil, err
 		}
 		if prepared.Valid {
@@ -112,11 +116,13 @@ func (r *ISORepo) Update(ctx context.Context, in ISO) error {
 		SET name=?, description=?, os_type=?, storage_path=?, size_bytes=?,
 		    install_image_format=?, install_image_bytes=?, swm_parts=?,
 		    bootloader_present=?, prep_error=?, media_prepared_at=?,
+		    media_file_count=?, media_total_bytes=?, boot_wim_present=?,
 		    updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.Name, in.Description, in.OSType, in.StoragePath, in.SizeBytes,
 		in.InstallImageFormat, in.InstallImageBytes, in.SWMParts,
-		in.BootloaderPresent, in.PrepError, prepared, in.ID)
+		in.BootloaderPresent, in.PrepError, prepared,
+		in.MediaFileCount, in.MediaTotalBytes, in.BootWimPresent, in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("iso %q: %w", in.Name, ErrConflict)

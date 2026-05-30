@@ -32,6 +32,13 @@ type ISO struct {
 	BootloaderPresent  bool       `json:"bootloader_present"`   // efi/boot/bootx64.efi found
 	PrepError          string     `json:"prep_error,omitempty"` // non-empty => not deploy-ready
 	MediaPreparedAt    *time.Time `json:"media_prepared_at,omitempty"`
+
+	// Media summary (descriptive): the whole extracted ISO tree, so the
+	// portal can show the full media was ingested, not just the install
+	// image. See migration 0011.
+	MediaFileCount  int   `json:"media_file_count"`
+	MediaTotalBytes int64 `json:"media_total_bytes"`
+	BootWimPresent  bool  `json:"boot_wim_present"` // sources/boot.wim (WinPE)
 }
 
 // Extracted reports whether the ISO has been unpacked into its files/
