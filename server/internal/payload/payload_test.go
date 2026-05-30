@@ -139,6 +139,69 @@ func TestISOUploadExtractAndServe(t *testing.T) {
 	t.Errorf("could not GET install.wim under either casing")
 }
 
+// TestISOMediaIndex verifies the media-index endpoint lists the extracted
+// tree so the Boot Client can mirror the whole media (boot-the-media
+// deploy). Upload now auto-extracts, so no explicit extract call is made.
+func TestISOMediaIndex(t *testing.T) {
+	ctx := context.Background()
+	srv, _, isos, _, _ := newTestService(t)
+
+	iso, err := isos.Create(ctx, model.ISO{Name: "Media", OSType: "windows-11"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcISO := buildTinyISO(t, "install.wim", "fake-wim-bytes")
+	body, err := os.Open(srcISO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer body.Close()
+	req, _ := http.NewRequest(http.MethodPut,
+		srv.URL+"/api/v1/isos/"+itoa(iso.ID)+"/upload", body)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", resp.StatusCode, b)
+	}
+	// Upload auto-extracts; assert the response says so.
+	var up map[string]any
+	_ = json.Unmarshal(b, &up)
+	if ex, _ := up["extracted"].(bool); !ex {
+		t.Fatalf("expected auto-extract on upload; got %s", b)
+	}
+
+	// Media index should list at least the install.wim file.
+	resp, err = http.Get(srv.URL + "/payload/iso/" + itoa(iso.ID) + "/index.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ib, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("index status=%d body=%s", resp.StatusCode, ib)
+	}
+	var idx MediaIndex
+	if err := json.Unmarshal(ib, &idx); err != nil {
+		t.Fatalf("decode index: %v (%s)", err, ib)
+	}
+	found := false
+	for _, f := range idx.Files {
+		if strings.EqualFold(f.Path, "install.wim") {
+			found = true
+			if f.Size == 0 {
+				t.Errorf("install.wim listed with size 0")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("media index missing install.wim: %+v", idx.Files)
+	}
+}
+
 func TestSoftwareUploadAndRangeServe(t *testing.T) {
 	ctx := context.Background()
 	srv, _, _, software, _ := newTestService(t)

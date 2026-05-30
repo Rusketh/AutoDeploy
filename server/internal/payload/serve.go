@@ -62,6 +62,12 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 	// Throttle the download routes; uploads and the lightweight
 	// unattend generator are not in the burst path.
+	// Media index: lists every file in the extracted ISO tree so the
+	// Boot Client can mirror the whole media (boot-the-media deploy),
+	// not just pull a single WIM. Registered BEFORE the {id}/ content
+	// route is fine: ServeMux longest-pattern matching sends
+	// /payload/iso/{id}/index.json here and everything else to content.
+	mux.HandleFunc("GET /payload/iso/{id}/index.json", s.serveISOIndex)
 	mux.Handle("GET /payload/iso/{id}/", s.throttleHandler(http.HandlerFunc(s.serveISOContent)))
 	mux.Handle("GET /payload/drivers/{id}", s.throttleHandler(http.HandlerFunc(s.serveDriver)))
 	mux.Handle("GET /payload/software/{id}", s.throttleHandler(http.HandlerFunc(s.serveSoftware)))
@@ -313,6 +319,48 @@ func (s *Service) uploadSoftware(w http.ResponseWriter, r *http.Request) {
 		"storage_path": pkg.StoragePath,
 		"size_bytes":   pkg.SizeBytes,
 	})
+}
+
+// MediaIndex is the JSON the Boot Client fetches to learn every file in
+// an extracted ISO's media tree. Files[].Path is relative to the media
+// root (e.g. "sources/install.wim"); the client fetches each from
+// GET /payload/iso/{id}/{path}.
+type MediaIndex struct {
+	ISOID int64            `json:"iso_id"`
+	Files []MediaIndexFile `json:"files"`
+}
+
+// MediaIndexFile is one file in the media tree.
+type MediaIndexFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size_bytes"`
+}
+
+// serveISOIndex returns the recursive file list of the extracted ISO so
+// the Boot Client can mirror the full media. 404 if the ISO has not been
+// extracted yet (no files/ tree). This is what makes a boot-the-media
+// deploy possible without the client guessing filenames.
+func (s *Service) serveISOIndex(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files"))
+	entries, err := s.Blobs.ListTree(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(entries) == 0 {
+		http.Error(w, "iso not extracted; POST /api/v1/isos/{id}/extract first", http.StatusNotFound)
+		return
+	}
+	idx := MediaIndex{ISOID: int64(id)}
+	for _, e := range entries {
+		idx.Files = append(idx.Files, MediaIndexFile{Path: e.Name, Size: e.Size})
+	}
+	respondJSON(w, http.StatusOK, idx)
 }
 
 func (s *Service) serveISOContent(w http.ResponseWriter, r *http.Request) {
