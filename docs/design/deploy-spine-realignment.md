@@ -1,97 +1,221 @@
-# Deploy Spine Realignment: Boot-the-Media, not Capture/Apply
+# Deploy Spine Realignment — Implementation Plan (SWM / boot-the-media)
 
-Status: PROPOSED — implementation in progress on the partition path.
+Status: PLAN — awaiting approval before implementation.
+Supersedes the layout sketch previously in this file.
 
-## Why
+## Decision
 
-The Boot Client today (`boot-client/internal/imaging/imaging.go`) deploys
-Windows by `wimlib-imagex apply` of the `install.wim` extracted from the
-ISO, then injects drivers and drops the unattend into the applied image.
-It never makes the disk bootable (the ESP is formatted but never
-populated) — so a deployed disk does not UEFI-boot.
+Deploy by **staging a bootable copy of the install media** onto the
+target and letting the media's own installer run — not `wimlib apply`.
 
-More importantly, **capture/apply is the wrong model for AutoDeploy.** It
-is Windows-specific (it understands WIMs and would need to hand-build a
-BCD), and it diverges from the intended design: AutoDeploy should stage a
-*bootable copy of the install media* and let the media's own installer
-run. That is OS-agnostic — it boots any bootable ISO, which is what the
-roadmap's future Linux support needs.
+The FAT32 4 GiB limit is solved by **splitting an oversized
+`sources/install.wim` (or `.esd`) into `<4 GiB` `install.swm` parts**,
+which Windows Setup reads natively. This means:
 
-Note: the written design docs themselves currently describe the
-capture/apply model (`AutoDeploy_Project_Context.txt` §2 steps 7–8;
-`roadmap.txt` Phase 5). Those sections are corrected as part of this work
-so future contributions don't drift back.
+- **One plain FAT32 partition** for the whole media — no NTFS, no GRUB,
+  no UEFI:NTFS shim, no third-party EFI binaries.
+- The split runs **once, server-side, at ISO ingest** — the operator
+  configures nothing and downloads nothing extra (`wimlib` is already
+  bundled server-side).
+- The **Boot Client stays generic**: make a FAT32 partition, copy the
+  media tree, boot `\EFI\BOOT\BOOTX64.EFI`. The same path will boot a
+  Linux ISO later; the only Windows-specific step (the WIM split) lives
+  in server ingest, off the generic boot path.
 
-## The intended flow
+Rejected alternatives and why: all-NTFS + GRUB (chainload OOM risk,
+per-OS grub.cfg); all-NTFS + UEFI:NTFS shim (ships niche GPLv3 EFI
+binaries); FAT32-boot + NTFS-`install.wim` (Setup does not reliably find
+`install.wim` across volumes). See git history of this file.
 
-1. Operator selects an image.
-2. The Boot Client creates an on-disk **boot partition** on the target:
-   shrink an existing partition to make room; if it cannot shrink, erase
-   the disk (the operator is warned, in the portal and at the boot menu,
-   that a failed deploy may leave the previous OS removed).
-3. The Boot Client downloads the **full extracted ISO contents** onto the
-   boot partition (not just the WIM).
-4. It adds the answer file (`autounattend.xml`) and any driver packages
-   onto the boot partition.
-5. It makes the partition UEFI-bootable and reboots into it.
-6. **The media's own setup loads** from the partition (Windows Setup;
-   later, a Linux installer).
-7. Setup runs the unattend if one is present.
+---
 
-The Boot Client never runs `wimlib apply` and never hand-builds a BCD.
-Control is transferred to the media's installer.
+## Part 1 — Server: split oversized install image at ingest
 
-(RAM-disk boot was considered and dropped: a running Linux kernel cannot
-hand off to Windows in RAM — that is an iPXE/`wimboot` firmware trick, a
-separate stage entirely. Scope here is the on-disk boot partition only.)
+**Where.** `server/internal/payload/serve.go`, in the extract path that
+already runs (upload auto-extracts; `extractISO` calls `ExtractISO`).
+After extraction succeeds, run a new prepare step over the extracted
+`files/sources/` directory.
 
-## Hard constraints
+**New function** (`payload` package, e.g. `media_prep.go`):
 
-### FAT32 4 GiB file limit
-UEFI firmware boots from FAT32, but a modern `sources\install.wim` /
-`install.esd` is frequently larger than FAT32's 4 GiB per-file limit, so
-the media cannot live on a single FAT32 volume. The Rufus-proven layout:
+```
+PrepareBootMedia(filesDir string) (MediaPrep, error)
+```
 
-- A small **FAT32 ESP** carrying only the bootloader
-  (`\EFI\BOOT\bootx64.efi` = the media's `bootmgfw.efi`) and `\boot\`.
-- A larger **NTFS/exFAT partition** carrying `sources\` (the big WIM) and
-  the rest of the media.
-- The EFI bootloader and Windows Setup both read across to the second
-  partition by volume label, exactly as Windows install media does.
+- Look for `sources/install.wim`, else `sources/install.esd`.
+- If it is `>= 4000 MiB` (safe margin under FAT32's 4 GiB-1):
+  - `wimlib-imagex split <img> sources/install.swm 3800`
+    → produces `install.swm`, `install2.swm`, …
+  - Remove the original `install.wim`/`.esd` (Setup must see *only* the
+    `.swm` set, or it may prefer the oversized original).
+- Idempotent: if `install.swm` already exists and the original is gone,
+  it's already prepared — skip.
+- Returns: format (`wim`/`esd`/`swm`), original byte size, part count,
+  and whether a UEFI bootloader (`efi/boot/bootx64.efi`) is present
+  (surfaced as a portal warning if missing).
 
-The Boot Client's initramfs already bundles `mkfs.fat` and `mkfs.ntfs`.
+**Threshold/chunk constants** live next to `fat32MaxFileBytes`.
 
-### Shrink-or-erase
-Making room on a target that already has an OS:
-- Attempt a non-destructive shrink of the last/largest existing
-  partition (NTFS via `ntfsresize`, ext via `resize2fs`) to free a few
-  GiB at the end.
-- If no partition can be shrunk safely, fall back to wiping the disk
-  (`sgdisk --zap-all`) and using the whole disk — destructive.
-- Either way the operator was warned before the deploy started.
+**Failure handling.** A split failure does not fail the upload; it is
+recorded on the ISO row (`PrepError`) and surfaced in the portal so the
+operator can re-prepare. The ISO is simply "not deploy-ready".
 
-## Component changes
+---
 
-| Area | Change |
-|---|---|
-| `boot-client/internal/imaging` | Replace capture/apply with **media staging**: build boot partition(s), copy the downloaded media tree, drop `autounattend.xml` at the media root + drivers under `$WinPEDriver$\`, set the EFI boot entry (`efibootmgr`), reboot. |
-| `boot-client` main | Download the **media tree** (manifest `iso-media` items) instead of a single `iso-wim`. |
-| `server/internal/payload/manifest.go` | Emit the extracted media as a tree the client can mirror — either a manifest listing every file under `iso/{id}/files/` (via `BlobStore.ListDir`) or a single base + recursive fetch. New role `iso-media`. Keep `iso-wim` until the client switches. |
-| `server/internal/payload/serve.go` | Already serves `/payload/iso/{id}/{path...}` file-by-file — reused. Add a media index endpoint if the client mirrors by manifest. |
-| docs | Rewrite `AutoDeploy_Project_Context.txt` §2 steps 7–8 and `roadmap.txt` Phase 5 to the boot-the-media model. |
+## Part 2 — ISO model + persistence
 
-## Sequencing
+Extend `model.ISO` (`server/internal/model/types.go`) with prep status so
+the portal can report it (no operator-set fields — purely descriptive):
 
-1. **This plan doc** (here) — agree the model.
-2. **Server: media index + `iso-media` manifest role.** Additive; does not
-   break the existing `iso-wim` path.
-3. **Boot Client: media-staging imaging** (the on-disk partition path),
-   replacing capture/apply. New focused tests against the Recorder for the
-   exact command sequence (partition → mkfs → copy media → autounattend →
-   drivers → efibootmgr → reboot).
-4. **Docs rewrite.**
-5. **Validate on the Hyper-V rig.**
+```
+InstallImageFormat string  // "wim" | "esd" | "swm" | ""  (pre-extract)
+InstallImageBytes  int64   // size of the install image before any split
+SWMParts           int     // 0 = not split (fit FAT32); N = split into N
+BootloaderPresent  bool    // efi/boot/bootx64.efi found in the media
+PrepError          string  // non-empty => not deploy-ready
+MediaPreparedAt    *time.Time
+```
 
-The on-disk partition path is fully achievable end-to-end with tools the
-initramfs already carries (sgdisk, mkfs.fat, mkfs.ntfs, cp) plus
-`efibootmgr` + `ntfsresize` (to be added to the initramfs tool list).
+- DB migration adds the columns (follow the existing migration pattern in
+  `internal/model`).
+- `ISORepo.Update` already persists the row; the extract handler sets
+  these fields from `PrepareBootMedia` and calls `Update`.
+
+**Deploy-readiness** becomes a derived predicate:
+`PrepError == "" && BootloaderPresent && extracted`.
+
+---
+
+## Part 3 — Manifest: `iso-wim` → `iso-media`
+
+`server/internal/payload/manifest.go`: replace the single `iso-wim` item
+with an **`iso-media`** item that hands the Boot Client the whole media
+tree, using the index endpoint already built:
+
+```
+ManifestItem{
+  Role: "iso-media",
+  URL:  "{base}/payload/iso/{id}/index.json",   // full file list
+  Base: "{base}/payload/iso/{id}/",             // join with each rel path
+  OS, Name, Size(total),
+}
+```
+
+- Keep emitting only when the ISO is extracted **and** deploy-ready.
+- `iso-wim` is removed once the Boot Client no longer consumes it (same
+  PR as the Boot Client rewrite, to avoid a dangling role).
+
+---
+
+## Part 4 — Boot Client: media staging (replaces capture/apply)
+
+Rewrite `boot-client/internal/imaging`:
+
+1. **Download** the media tree: fetch `index.json`, then mirror every
+   listed file under a local staging dir (reuse the existing mirror/HTTP
+   fetch with the same retry/backoff the client already uses).
+2. **Partition** the target: GPT, a **single FAT32 partition** typed as
+   ESP, sized = media total + margin (it does *not* need the whole disk —
+   see single-disk note). Replace the now-wrong `bootmedia.go` two-part
+   primitive with this single-FAT32 layout (keep the tested `partName`
+   nvme handling and the Recorder-based command-sequence tests).
+3. **Copy** the media tree onto the partition.
+4. **Place** `autounattend.xml` at the partition root (Setup auto-detects
+   it there) and driver packages under `$WinPEDriver$\<pkg>\` (WinPE
+   auto-loads that folder).
+5. **Register boot**: `efibootmgr` entry → the FAT32 partition's
+   `\EFI\BOOT\BOOTX64.EFI`, set `BootNext`; rely on the EFI fallback path
+   as backstop. `sync`, reboot.
+
+The `wimlib apply` / driver-injection-into-applied-image / ESP-format
+code is deleted.
+
+**Initramfs tools:** add `efibootmgr`. `mkfs.fat`, `sgdisk` already
+present. `wimlib` is no longer needed on the client (split is
+server-side) and can be dropped from the client image.
+
+---
+
+## Part 5 — The single-disk coexistence problem (cross-cutting)
+
+The media now lives on the **same disk** Windows installs to. If the
+answer file wipes disk 0, it destroys its own boot media mid-install.
+This is independent of SWM and must be handled in the **unattend
+generator**, which must agree with the Boot Client's disk layout:
+
+- Boot Client creates the FAT32 media partition; the generated
+  `<DiskConfiguration>` installs Windows into the **remaining free
+  space**, explicitly **not** wiping the media partition.
+- **Post-install cleanup**: the agent's first-logon step deletes the
+  media partition and extends `C:` (the media partition is transient
+  scaffolding).
+- The generator therefore needs to know the layout the Boot Client
+  produced — captured as a small shared contract (partition index /
+  label) rather than duplicated constants.
+
+This is the highest-risk item end-to-end and gets its own validation pass
+on the rig.
+
+---
+
+## Part 6 — Portal handling
+
+No new operator-set options (the SWM split is automatic). The portal's
+job is to **report boot-media readiness** transparently.
+
+**ISO lifecycle shown to the operator:**
+
+```
+Created → Uploaded → Extracted → Media prepared → Deploy-ready
+                                   (split if >4 GiB)
+```
+
+- **`iso_list.html`** — add a **Status** column rendering a badge from
+  the derived state: `Uploading…` / `Extracted` / `Preparing…` /
+  `Ready` / `Needs attention` (when `PrepError` or no bootloader).
+- **ISO detail/edit (`iso_form.html`, `iso.go`)** — a **Boot media**
+  panel showing:
+  - install image format + original size,
+  - “Split into N parts for FAT32 boot media” (or “Fits FAT32 — no split
+    needed”),
+  - “UEFI-bootable: yes/no” (from `BootloaderPresent`),
+  - any `PrepError`.
+- **Action**: a **Re-prepare media** button (re-runs extract+split) for
+  recovery, mirroring the existing `/portal/isos/{id}/extract` route.
+- **Deploy guards**: surfaces (image edit, deploy menu) that reference an
+  ISO show a clear "not deploy-ready" note when the derived predicate is
+  false, so an un-prepared ISO can't silently be selected.
+
+---
+
+## Part 7 — Sequencing (small, reviewable PRs)
+
+1. **Server prepare step + model fields + migration** (`PrepareBootMedia`,
+   ISO columns, wired into extract). Tested with a fake oversized WIM.
+2. **Portal status surfacing** (list badge, detail panel, re-prepare,
+   deploy guard). Server-only behaviour already in place from (1).
+3. **Manifest `iso-media`** + Boot Client media-staging rewrite +
+   initramfs `efibootmgr`; remove `iso-wim` and capture/apply. Recorder
+   tests for the new command sequence.
+4. **Unattend coexistence** (DiskConfiguration + agent cleanup) — paired
+   with the first real rig boot.
+5. **Docs**: rewrite Project-Context §2 and roadmap Phase 5 to this model.
+
+## Testing
+
+- Server: unit test `PrepareBootMedia` with a synthetic >4 GiB file
+  (sparse) to assert split+remove+idempotency and status fields.
+- Manifest: assert `iso-media` URL/Base and deploy-ready gating.
+- Boot Client: Recorder asserts partition→format→copy→autounattend→
+  drivers→efibootmgr→reboot, incl. nvme part naming.
+- Portal: render tests for each badge state.
+- End-to-end: Hyper-V rig — the only place the boot chain and the
+  single-disk coexistence can be truly validated.
+
+## Open risks
+
+- **Single-disk coexistence** (Part 5) — most likely to need iteration.
+- **`.esd` splitting** — confirm `wimlib-imagex split` handles solid ESD
+  the same way; if not, convert/handle separately.
+- **efibootmgr vs fallback path** — some firmware ignores added NVRAM
+  entries; the `\EFI\BOOT\BOOTX64.EFI` fallback is the backstop.
