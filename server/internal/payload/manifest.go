@@ -47,6 +47,12 @@ type ManifestHandler struct {
 	AD        *addomain.Service
 	Inventory *model.InventoryRepo
 	Unattend  *model.UnattendRepo
+	// Software lets the handler check whether a resolved software package
+	// actually has a servable payload before emitting a manifest item for
+	// it. Without this a deleted/empty package would resolve into a URL
+	// that 404s and aborts the Boot Client's deploy. Nil disables the
+	// check (every resolved package is emitted unconditionally).
+	Software *model.SoftwarePackageRepo
 	// Mirrors lets the handler rewrite payload URLs to a site-local
 	// mirror. Nil disables mirror routing.
 	Mirrors *model.PayloadMirrorRepo
@@ -167,8 +173,27 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 		})
 	}
 	// Software items. Loadout resolution (Phase 7) extends res.Software;
-	// the manifest just turns the resolved list into URLs.
+	// the manifest turns the resolved list into URLs -- but only for
+	// packages that actually have a servable single-blob payload. A
+	// package with no payload (never uploaded, or a multi-file package
+	// whose files the agent fetches by name post-OS) must NOT appear as a
+	// boot-time download: the Boot Client would 404 and abort the deploy.
+	// This mirrors the driver handling above (skip + warn).
 	for _, link := range res.Software {
+		if h.Software != nil {
+			pkg, err := h.Software.Get(ctx, link.PackageID)
+			if err != nil {
+				m.Warnings = append(m.Warnings,
+					fmt.Sprintf("software package %d referenced but missing; skipped", int64(link.PackageID)))
+				continue
+			}
+			if pkg.StoragePath == "" {
+				m.Warnings = append(m.Warnings,
+					fmt.Sprintf("software package %q (%d) has no uploaded payload; skipped",
+						pkg.Name, int64(link.PackageID)))
+				continue
+			}
+		}
 		m.Items = append(m.Items, ManifestItem{
 			Role: "software",
 			URL:  fmt.Sprintf("%s/payload/software/%d", payloadBase, int64(link.PackageID)),
