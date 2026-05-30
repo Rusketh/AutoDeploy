@@ -75,6 +75,7 @@ missing=()
 for tool in /bin/busybox \
             /bin/sh /bin/mkdir /bin/mount /bin/umount /bin/cp /bin/sleep /bin/cat \
             /sbin/modprobe /sbin/depmod /sbin/insmod \
+            /sbin/ip /sbin/udhcpc \
             /sbin/sgdisk /sbin/mkfs.fat /sbin/mkfs.ntfs /sbin/reboot \
             /usr/bin/wimlib-imagex; do
     if ! copy_with_libs "$tool" 2>/dev/null; then
@@ -83,17 +84,52 @@ for tool in /bin/busybox \
 done
 
 # If busybox is present, symlink the core applets we rely on so the init
-# script works even when the host didn't ship standalone binaries.
+# script works even when the host didn't ship standalone binaries. ip and
+# udhcpc are busybox applets on most build hosts; the symlinks make them
+# available even when no standalone binary was found above.
 if [ -x "$ROOTFS/bin/busybox" ]; then
-    for applet in sh mkdir mount umount cp sleep cat ls \
-                  modprobe depmod insmod reboot; do
+    for applet in sh mkdir mount umount cp sleep cat ls grep \
+                  modprobe depmod insmod reboot \
+                  ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
     done
 fi
 
+# busybox udhcpc needs a "default.script" to apply the lease it gets
+# (set the IP, routes, DNS). Without it udhcpc obtains a lease but never
+# configures the interface. This is the minimal script from busybox's
+# examples, trimmed to what the Boot Client needs (address + gateway +
+# resolv.conf).
+install -d -m 0755 "$ROOTFS/usr/share/udhcpc"
+cat > "$ROOTFS/usr/share/udhcpc/default.script" <<'DHCPSCRIPT'
+#!/bin/sh
+# busybox udhcpc callback. $1 is the phase: deconfig | bound | renew.
+RESOLV=/etc/resolv.conf
+case "$1" in
+    deconfig)
+        ip addr flush dev "$interface" 2>/dev/null
+        ip link set "$interface" up 2>/dev/null
+        ;;
+    bound|renew)
+        ip addr add "$ip/${mask:-24}" dev "$interface" 2>/dev/null || \
+            ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}" 2>/dev/null
+        if [ -n "$router" ]; then
+            ip route del default 2>/dev/null
+            ip route add default via "$router" dev "$interface" 2>/dev/null || \
+                route add default gw "$router" 2>/dev/null
+        fi
+        : > "$RESOLV"
+        [ -n "$domain" ] && echo "search $domain" >> "$RESOLV"
+        for d in $dns; do echo "nameserver $d" >> "$RESOLV"; done
+        ;;
+esac
+exit 0
+DHCPSCRIPT
+chmod 0755 "$ROOTFS/usr/share/udhcpc/default.script"
+
 # Bundle kernel modules so the image can actually see the target's NIC
-# and disks. The Boot Client does its own DHCP in pure Go, but it can't
-# do that until the NIC driver is loaded -- that's this section's job.
+# and disks. The driver has to be loaded before we can DHCP the NIC --
+# that's what init does below; this section just ships the modules.
 #
 # We copy the whole modules tree (minus the build/source dev symlinks)
 # and re-run depmod against the staged root so modprobe can resolve
@@ -143,8 +179,42 @@ for m in \
 done
 
 # Synthetic NICs (Hyper-V, virtio) can take a moment to enumerate after
-# the driver loads; give the link a beat before the Boot Client looks.
-sleep 3
+# the driver loads; give them a beat before we look for an interface.
+sleep 2
+
+# Bring up networking. The Boot Client speaks HTTP to the server but does
+# NOT configure the interface itself, so init must DHCP a lease first --
+# otherwise every server call fails and the menu never appears.
+echo "Bringing up network..."
+mkdir -p /etc/udhcpc
+for dev in /sys/class/net/*; do
+    ifc=$(basename "$dev")
+    [ "$ifc" = "lo" ] && continue
+    ip link set "$ifc" up 2>/dev/null
+done
+# DHCP on the first non-loopback link that comes up. -n: give up if no
+# lease (don't background-retry forever); we then loop over interfaces.
+GOTNET=0
+for try in 1 2 3; do
+    for dev in /sys/class/net/*; do
+        ifc=$(basename "$dev")
+        [ "$ifc" = "lo" ] && continue
+        udhcpc -i "$ifc" -n -q -t 5 -T 3 \
+            -s /usr/share/udhcpc/default.script >/dev/null 2>&1 && GOTNET=1
+        # An interface with an IPv4 address is good enough to proceed.
+        ip addr show "$ifc" 2>/dev/null | grep -q 'inet ' && GOTNET=1
+    done
+    [ "$GOTNET" = "1" ] && break
+    echo "  no lease yet (attempt $try/3); retrying..."
+    sleep 2
+done
+if [ "$GOTNET" != "1" ]; then
+    echo "  WARNING: no DHCP lease obtained; the Boot Client will likely"
+    echo "  fail to reach the server. Check the VM is on a bridged/external"
+    echo "  switch that can reach AutoDeploy."
+fi
+echo "Network state:"
+ip -4 addr show 2>/dev/null | grep -E 'inet |^[0-9]+:' || true
 
 # Kernel command line carries autodeploy.server=... and autodeploy.uuid=...
 # from the iPXE script; convert to flags.
@@ -155,6 +225,7 @@ for arg in $(cat /proc/cmdline); do
     esac
 done
 
+echo "Server: ${SERVER:-<unset>}"
 /sbin/autodeploy-boot --server "${SERVER:-}" menu
 
 # If the Boot Client returns (error, or operator quit), don't panic as
