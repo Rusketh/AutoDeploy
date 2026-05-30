@@ -82,15 +82,15 @@ func (w stderrWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// MediaPlan describes one boot-media deployment. MediaDir is a local
-// directory holding the full media tree the caller has already
-// downloaded (setup.exe, sources/, efi/, boot/, ...). UnattendPath is the
-// generated autounattend.xml; DriverPaths are downloaded driver payloads.
-// TargetDisk is the device node (e.g. /dev/sda).
+// MediaPlan describes one boot-media deployment. The media tree is
+// downloaded directly onto the mounted boot partition by the caller
+// (between PreparePartition and FinalizeMedia), so there is no local
+// staging dir. UnattendPath is the generated autounattend.xml;
+// DriverPaths are downloaded driver payloads. TargetDisk is the device
+// node (e.g. /dev/sda); MediaBytes sizes the boot partition.
 type MediaPlan struct {
 	TargetDisk   string
-	MediaDir     string
-	MediaBytes   int64 // total media size, for boot-partition sizing
+	MediaBytes   int64
 	UnattendPath string
 	DriverPaths  []string
 	// WorkDir is a scratch directory for the mount point.
@@ -116,65 +116,70 @@ func bootPartitionMiB(mediaBytes int64) int64 {
 	return miB
 }
 
-// StageMedia partitions the disk, copies the media onto a FAT32 boot
-// partition, drops the answer file and drivers, and registers the
-// partition with the firmware. It does NOT reboot -- the caller decides
-// based on whether anything failed.
+// PreparePartition zaps the disk, creates and formats the single FAT32
+// boot partition, mounts it, and returns the mount path. The caller then
+// downloads the media tree DIRECTLY onto the returned path (not via a
+// RAM-backed staging dir -- a multi-GB Windows media tree would exhaust
+// the initramfs tmpfs) and finishes with FinalizeMedia.
 //
-// Disk layout: a single FAT32 boot partition (type ef00) placed at the
-// END of the disk, leaving the front as free space for Windows Setup to
-// install into. Setup's answer file is responsible for installing into
-// that free space without wiping the boot partition; post-install
-// cleanup (delete the boot partition, extend C:) is the agent's job.
-func StageMedia(ctx context.Context, plan MediaPlan, r Runner) error {
+// Disk layout: a single FAT32 boot partition (type ef00) at the END of
+// the disk, leaving the front free for Windows Setup to install into.
+// The answer file is responsible for installing into that free space
+// without wiping the boot partition; post-install cleanup (delete the
+// boot partition, extend C:) is the agent's job.
+func PreparePartition(ctx context.Context, plan MediaPlan, r Runner) (mountPath string, err error) {
 	d := plan.TargetDisk
 	sizeMiB := bootPartitionMiB(plan.MediaBytes)
 
 	if err := r.Exec(ctx, "sgdisk", "--zap-all", d); err != nil {
-		return fmt.Errorf("zap %s: %w", d, err)
+		return "", fmt.Errorf("zap %s: %w", d, err)
 	}
 	// Negative start places the partition at the end of the disk; the
 	// remaining space at the front is left free for the OS install.
 	if err := r.Exec(ctx, "sgdisk",
 		fmt.Sprintf("--new=1:-%dM:0", sizeMiB),
 		"--typecode=1:ef00", "--change-name=1:ADBOOT", d); err != nil {
-		return fmt.Errorf("partition %s: %w", d, err)
+		return "", fmt.Errorf("partition %s: %w", d, err)
 	}
 	boot := partName(d, 1)
 	if err := r.Exec(ctx, "mkfs.fat", "-F32", "-n", "ADBOOT", boot); err != nil {
-		return fmt.Errorf("mkfs.fat %s: %w", boot, err)
+		return "", fmt.Errorf("mkfs.fat %s: %w", boot, err)
 	}
 
 	mount := filepath.Join(plan.WorkDir, "media")
 	if err := r.Exec(ctx, "mkdir", "-p", mount); err != nil {
-		return fmt.Errorf("prepare mount point: %w", err)
+		return "", fmt.Errorf("prepare mount point: %w", err)
 	}
 	if err := r.Exec(ctx, "mount", boot, mount); err != nil {
-		return fmt.Errorf("mount %s: %w", boot, err)
+		return "", fmt.Errorf("mount %s: %w", boot, err)
 	}
-	defer func() { _ = r.Exec(ctx, "umount", mount) }()
+	return mount, nil
+}
 
-	// Copy the whole media tree onto the partition root. The trailing
-	// "/." copies directory CONTENTS, so setup.exe, sources/, efi/, etc.
-	// land at the partition root where Setup and the firmware expect them.
-	if err := r.Exec(ctx, "cp", "-a", plan.MediaDir+"/.", mount); err != nil {
-		return fmt.Errorf("copy media: %w", err)
-	}
-	if err := placeUnattend(ctx, plan, r, mount); err != nil {
+// FinalizeMedia drops the answer file and drivers onto the already-mounted
+// boot partition, flushes, unmounts, and registers the partition with the
+// firmware. Call it after the media tree has been downloaded onto
+// mountPath. It does NOT reboot -- the caller decides based on whether
+// anything failed.
+func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath string) error {
+	if err := placeUnattend(ctx, plan, r, mountPath); err != nil {
 		return fmt.Errorf("place unattend: %w", err)
 	}
-	if err := stageDrivers(ctx, plan, r, mount); err != nil {
+	if err := stageDrivers(ctx, plan, r, mountPath); err != nil {
 		return fmt.Errorf("stage drivers: %w", err)
 	}
-	// Flush before the deferred umount so writeback of several GB of media
-	// doesn't race the unmount.
+	// Flush before unmount so writeback of several GB of media doesn't race
+	// the unmount.
 	_ = r.Exec(ctx, "sync")
+	if err := r.Exec(ctx, "umount", mountPath); err != nil {
+		return fmt.Errorf("umount %s: %w", mountPath, err)
+	}
 
 	// Register the boot partition so the firmware boots Windows Setup.
 	// The \EFI\BOOT\BOOTX64.EFI fallback path is also present on the
 	// media, so even firmware that ignores added NVRAM entries can boot it.
 	if err := r.Exec(ctx, "efibootmgr", "--create",
-		"--disk", d, "--part", "1",
+		"--disk", plan.TargetDisk, "--part", "1",
 		"--loader", `\EFI\BOOT\BOOTX64.EFI`,
 		"--label", "AutoDeploy Setup"); err != nil {
 		return fmt.Errorf("register boot entry: %w", err)

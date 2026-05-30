@@ -10,13 +10,21 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	rec := &Recorder{}
 	plan := MediaPlan{
 		TargetDisk:   "/dev/sda",
-		MediaDir:     "/tmp/work/media-src",
 		MediaBytes:   6 * 1024 * 1024 * 1024, // 6 GiB media
 		UnattendPath: "/tmp/unattend.xml",
 		DriverPaths:  []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
 		WorkDir:      "/tmp/work",
 	}
-	if err := StageMedia(context.Background(), plan, rec); err != nil {
+	// Prepare partition first; the caller streams media onto the returned
+	// mount path (not exercised here), then finalizes.
+	mount, err := PreparePartition(context.Background(), plan, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mount != "/tmp/work/media" {
+		t.Fatalf("mount path = %q", mount)
+	}
+	if err := FinalizeMedia(context.Background(), plan, rec, mount); err != nil {
 		t.Fatal(err)
 	}
 	mustContain := []string{
@@ -25,9 +33,9 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		// start), leaving the front free for Windows Setup.
 		"--new=1:-7680M:0 --typecode=1:ef00 --change-name=1:ADBOOT /dev/sda",
 		"mkfs.fat -F32 -n ADBOOT /dev/sda1",
+		// Partition is mounted BEFORE the media download (which streams
+		// straight onto it, avoiding a RAM staging copy).
 		"mount /dev/sda1 /tmp/work/media",
-		// Whole media tree copied onto the partition root.
-		"cp -a /tmp/work/media-src/. /tmp/work/media",
 		// Answer file at the media root where Setup auto-detects it.
 		"cp /tmp/unattend.xml /tmp/work/media/autounattend.xml",
 		// Drivers under $WinPEDriver$ (cp path for non-zip fixtures).
@@ -45,10 +53,10 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 			t.Errorf("missing call containing %q\n%s", want, rec.Dump())
 		}
 	}
-	// The old capture/apply model must be gone.
-	for _, gone := range []string{"wimlib-imagex", "mkfs.ntfs", "Windows/Panther"} {
+	// No RAM staging copy, and the old capture/apply model must be gone.
+	for _, gone := range []string{"media-src", "cp -a", "wimlib-imagex", "mkfs.ntfs", "Windows/Panther"} {
 		if rec.Has(gone) {
-			t.Errorf("unexpected capture/apply leftover %q\n%s", gone, rec.Dump())
+			t.Errorf("unexpected leftover %q\n%s", gone, rec.Dump())
 		}
 	}
 }
@@ -77,10 +85,10 @@ func TestPartitionNamingNVMe(t *testing.T) {
 	}
 }
 
-func TestStageMediaStopsOnFirstError(t *testing.T) {
+func TestPreparePartitionStopsOnFirstError(t *testing.T) {
 	rec := &failAfter{Recorder: &Recorder{}, failAt: 1}
-	plan := MediaPlan{TargetDisk: "/dev/sda", MediaDir: "/tmp/m", WorkDir: "/tmp/work"}
-	err := StageMedia(context.Background(), plan, rec)
+	plan := MediaPlan{TargetDisk: "/dev/sda", WorkDir: "/tmp/work"}
+	_, err := PreparePartition(context.Background(), plan, rec)
 	if err == nil || !strings.Contains(err.Error(), "zap") {
 		t.Fatalf("expected zap error, got %v", err)
 	}
