@@ -349,8 +349,12 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// lost. The main()'s deferred shipLogs covers the failure paths
 	// above where we exit cleanly without rebooting.
 	shipLogs(log, shipper, f.server, f.insecureTLS)
-	// Reboot into the freshly applied OS.
-	if err := runner.Exec(ctx, "reboot"); err != nil {
+	// Reboot into the staged media. "-f" forces an immediate reboot via the
+	// reboot() syscall WITHOUT contacting an init system -- required here
+	// because the bundled /sbin/reboot may be systemd's, which otherwise
+	// fails in the initramfs with "Failed to talk to init daemon". Works
+	// the same for busybox's reboot applet.
+	if err := runner.Exec(ctx, "reboot", "-f"); err != nil {
 		log.Error("reboot", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
