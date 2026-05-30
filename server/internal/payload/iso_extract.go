@@ -49,26 +49,43 @@ import (
 // not errors here: they are recorded in MediaPrep.Err / the ISO row so the
 // portal can flag "needs attention".
 func ExtractAndRecord(ctx context.Context, blobs *storage.BlobStore, isos *model.ISORepo, id model.ID) (MediaPrep, error) {
-	iso, err := isos.Get(ctx, id)
-	if err != nil {
-		return MediaPrep{}, err
-	}
-	srcRel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "source.iso"))
-	srcAbs, err := blobs.Resolve(srcRel)
-	if err != nil {
-		return MediaPrep{}, err
-	}
-	if _, err := os.Stat(srcAbs); errors.Is(err, os.ErrNotExist) {
-		return MediaPrep{}, fmt.Errorf("iso %d not uploaded", int64(id))
-	}
-	destAbs, err := blobs.EnsureDir(filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files")))
+	srcAbs, destAbs, err := prepPaths(blobs, id)
 	if err != nil {
 		return MediaPrep{}, err
 	}
 	if _, _, err := ExtractISO(srcAbs, destAbs); err != nil {
 		return MediaPrep{}, err
 	}
+	return applyPrep(ctx, isos, id, destAbs)
+}
 
+// prepPaths resolves the canonical source.iso and files/ paths for an ISO,
+// erroring if the source has not been uploaded.
+func prepPaths(blobs *storage.BlobStore, id model.ID) (srcAbs, destAbs string, err error) {
+	srcRel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "source.iso"))
+	srcAbs, err = blobs.Resolve(srcRel)
+	if err != nil {
+		return "", "", err
+	}
+	if _, statErr := os.Stat(srcAbs); errors.Is(statErr, os.ErrNotExist) {
+		return "", "", fmt.Errorf("iso %d not uploaded", int64(id))
+	}
+	destAbs, err = blobs.EnsureDir(filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files")))
+	if err != nil {
+		return "", "", err
+	}
+	return srcAbs, destAbs, nil
+}
+
+// applyPrep runs PrepareBootMedia over the extracted tree at destAbs,
+// makes a missing-tool failure actionable, writes the result onto the ISO
+// row and returns it. Shared by the synchronous ExtractAndRecord and the
+// async StartPrepareAsync.
+func applyPrep(ctx context.Context, isos *model.ISORepo, id model.ID, destAbs string) (MediaPrep, error) {
+	iso, err := isos.Get(ctx, id)
+	if err != nil {
+		return MediaPrep{}, err
+	}
 	prep := PrepareBootMedia(ctx, destAbs)
 	// A "no sources/" or "no install image" failure with no UDF-capable
 	// extractor installed is almost certainly a Windows UDF ISO the pure-Go
@@ -76,6 +93,11 @@ func ExtractAndRecord(ctx context.Context, blobs *storage.BlobStore, isos *model
 	if prep.Err != "" && !HaveExternalExtractor() &&
 		(strings.Contains(prep.Err, "no sources") || strings.Contains(prep.Err, "no install")) {
 		prep.Err += " — install p7zip-full (or libarchive-tools) on the server: Windows ISOs are UDF and need 7z/bsdtar to extract"
+	}
+	// The oversized-WIM split needs wimlib-imagex on the server. Make a
+	// missing-binary failure actionable.
+	if strings.Contains(prep.Err, "wimlib-imagex") && strings.Contains(prep.Err, "not found") {
+		prep.Err += " — install wimtools (Debian/Ubuntu) or wimlib-utils (Fedora/RHEL) on the server"
 	}
 	now := time.Now().UTC()
 	iso.InstallImageFormat = prep.Format

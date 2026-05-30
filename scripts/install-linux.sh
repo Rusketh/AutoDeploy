@@ -73,6 +73,24 @@ if ! command -v 7z >/dev/null 2>&1 && ! command -v 7za >/dev/null 2>&1 \
     fi
 fi
 
+# An install.wim larger than FAT32's 4 GiB limit is split into .swm parts
+# with wimlib-imagex at ISO ingest. Best-effort install; the portal Boot
+# media panel surfaces a clear "install wimtools" message if it's missing.
+if ! command -v wimlib-imagex >/dev/null 2>&1; then
+    echo "== Installing wimlib (install.wim splitting) =="
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y wimtools >/dev/null 2>&1 || echo "  WARN: 'apt-get install wimtools' failed; install it manually." >&2
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y wimlib-utils >/dev/null 2>&1 || echo "  WARN: 'dnf install wimlib-utils' failed; install it manually." >&2
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y wimlib-utils >/dev/null 2>&1 || echo "  WARN: 'yum install wimlib-utils' failed; install it manually." >&2
+    elif command -v zypper >/dev/null 2>&1; then
+        zypper install -y wimlib-tools >/dev/null 2>&1 || echo "  WARN: 'zypper install wimlib-tools' failed; install it manually." >&2
+    else
+        echo "  WARN: no known package manager; install wimtools/wimlib-utils so the server can split large install.wim files." >&2
+    fi
+fi
+
 echo "== Creating service account 'autodeploy' =="
 if ! id -u autodeploy >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin autodeploy

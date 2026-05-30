@@ -550,6 +550,48 @@
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
   }
 
+  // ---- ISO boot-media prepare progress ------------------------------
+  // On the ISO edit page a background extract+split may be running. Poll
+  // prep-status, drive the .prep-progress bar, and reload the page once
+  // it finishes so the Boot media panel shows the result. We only reload
+  // if we actually observed an active phase, so a page that loads after
+  // the job already finished doesn't loop.
+  (function initPrepProgress() {
+    const box = document.querySelector('.prep-progress[data-iso-id]');
+    if (!box) return;
+    const id = box.getAttribute('data-iso-id');
+    const bar = box.querySelector('.prep-bar');
+    const phaseEl = box.querySelector('.prep-phase');
+    const pctEl = box.querySelector('.prep-pct');
+    let sawActive = false;
+
+    function schedule() { setTimeout(tick, 1500); }
+
+    function tick() {
+      fetch('/portal/isos/' + id + '/prep-status', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (s) {
+          if (!s) { schedule(); return; }
+          const active = s.phase === 'extracting' || s.phase === 'splitting';
+          if (active) {
+            sawActive = true;
+            box.hidden = false;
+            if (phaseEl) phaseEl.textContent = s.phase === 'splitting' ? 'Splitting install image…' : 'Extracting ISO…';
+            if (bar) bar.value = s.percent || 0;
+            if (pctEl) {
+              pctEl.textContent = (s.percent || 0) + '%' +
+                (s.total_bytes ? ' of ' + formatBytes(s.total_bytes) : '');
+            }
+            schedule();
+          } else if (s.finished && sawActive) {
+            window.location.reload();
+          }
+        })
+        .catch(function () { schedule(); });
+    }
+    tick();
+  })();
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
