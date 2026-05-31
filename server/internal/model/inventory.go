@@ -340,6 +340,44 @@ func (r *InventoryRepo) CompleteDeployment(ctx context.Context, id ID, outcome, 
 	return nil
 }
 
+// UpdateLatestDeployment sets the outcome/notes on the machine's most
+// recent deployment row. Used by the Boot Client to update a staging row
+// it opened (staged -> note, failed -> failed). No open row is a no-op.
+func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID, outcome, notes string) error {
+	completed := "completed_at=CURRENT_TIMESTAMP"
+	if outcome == "in_progress" {
+		completed = "completed_at=NULL"
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE deployment_history SET outcome=?, notes=?, `+completed+`
+		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
+		            ORDER BY started_at DESC LIMIT 1)`,
+		outcome, notes, machineID)
+	return err
+}
+
+// Delete removes a machine and all rows that reference it (binding,
+// deployment history, detected state, deploy tokens, bitlocker). Done in
+// one transaction so inventory can never be left with dangling references.
+func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{
+		`DELETE FROM machine_binding WHERE machine_id=?`,
+		`DELETE FROM deployment_history WHERE machine_id=?`,
+		`DELETE FROM machine_detected_state WHERE machine_id=?`,
+		`DELETE FROM machine_record WHERE id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // HistoryFor returns dated deployment rows for the machine, newest first.
 func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]DeploymentRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `

@@ -282,6 +282,10 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// Report collected hardware once per process run (the WMI sweep is
 	// relatively expensive; specs change rarely). Best-effort.
 	reportHardwareOnce(ctx, log, c, f)
+	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
+	// autounattend.xml with the admin password in plaintext, so this must
+	// happen on the deployed machine. Also extends C: into the freed space.
+	cleanupMediaOnce(log)
 	if len(resp.Software) > 0 {
 		installPackages(ctx, log, c, f, resp.Software)
 	}
@@ -319,6 +323,30 @@ func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, 
 	}
 	hardwareReported = true
 	log.Info("hardware.reported")
+}
+
+// mediaCleaned guards cleanupMediaOnce so the partition removal is attempted
+// at most once per process. "absent" (already gone) and success both latch
+// it; a transient error leaves it unset so a later poll retries.
+var mediaCleaned bool
+
+// cleanupMediaOnce removes the ADBOOT boot-media partition (which carries
+// autounattend.xml with the admin password in plaintext) and extends C:
+// into the freed space, the first time it succeeds. Best-effort.
+func cleanupMediaOnce(log *slog.Logger) {
+	if mediaCleaned {
+		return
+	}
+	status := cleanupMedia()
+	switch {
+	case status == "": // non-Windows stub
+		mediaCleaned = true
+	case strings.HasPrefix(status, "error"):
+		log.Warn("media.cleanup", slog.String("status", status)) // retry next poll
+	default:
+		mediaCleaned = true
+		log.Info("media.cleanup", slog.String("status", status))
+	}
 }
 
 // runSelfLoop polls runSelfOnce immediately and then every interval until

@@ -6,14 +6,22 @@
     <svg><use href="#i-search"/></svg>
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
-  <div class="right small muted">
-    {{if $page}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{else}}<span data-filter-count="tbl">{{len .Data.Rows}}</span> machines{{end}}
+  <div class="right">
+    <a class="btn secondary sm" href="/portal/machines.csv"><svg><use href="#i-download"/></svg>Export CSV</a>
+    <span class="small muted">
+      {{if $page}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{else}}<span data-filter-count="tbl">{{len .Data.Rows}}</span> machines{{end}}
+    </span>
   </div>
 </div>
 {{if .Data.Rows}}
+<form method="post" action="/portal/machines/delete" id="bulk-del" onsubmit="return confirm('Delete the selected machines from inventory? This removes their binding, history and detection state.');">
+<div class="actions" style="margin-bottom: var(--sp-2);">
+  <button type="submit" class="danger sm"><svg><use href="#i-trash"/></svg>Delete selected (<span id="del-count">0</span>)</button>
+</div>
 <div class="tablewrap">
 <table id="tbl" data-sortable>
   <thead><tr>
+    <th data-nosort><input type="checkbox" onclick="toggleAllMachines(this)" aria-label="Select all"></th>
     <th>UUID</th>
     <th>Make / model</th>
     <th>Serial</th>
@@ -26,9 +34,10 @@
   <tbody>
     {{range .Data.Rows}}
     <tr>
+      <td><input type="checkbox" name="machine_ids" value="{{int64 .Machine.ID}}" class="m-check" onclick="updateDelCount()"></td>
       <td>
         <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
-        <button class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
+        <button type="button" class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
       </td>
       <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
       <td class="small">{{.Machine.SystemSerial}}</td>
@@ -42,6 +51,11 @@
   </tbody>
 </table>
 </div>
+</form>
+<script>
+function toggleAllMachines(src){document.querySelectorAll('.m-check').forEach(function(c){c.checked=src.checked;});updateDelCount();}
+function updateDelCount(){document.getElementById('del-count').textContent=document.querySelectorAll('.m-check:checked').length;}
+</script>
 {{template "pagination" $page}}
 {{else}}
 <div class="empty">

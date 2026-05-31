@@ -3,7 +3,12 @@
 {{$b := .Data.Binding}}
 <div class="toolbar">
   <h2>Machine <code style="font-size:0.7em;">{{slice $m.SystemUUID 0 8}}…</code></h2>
-  <div class="right"><a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a></div>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a>
+    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" style="display:inline" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
+      <button type="submit" class="btn danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
+    </form>
+  </div>
 </div>
 
 <dl class="kv">
@@ -50,6 +55,35 @@
   </label>
   <div class="actions"><button type="submit"><svg><use href="#i-check"/></svg>Save binding</button></div>
 </form>
+
+<div class="section-head"><h3>Run an action on this machine</h3><div class="line"></div></div>
+<form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
+  <label><span class="lbl">Action</span>
+    <select name="action" onchange="mActionChanged(this)">
+      <option value="rename">Rename</option>
+      <option value="script">Run a script (cmd / powershell)</option>
+      <option value="software_push">Push software</option>
+    </select>
+  </label>
+  <div id="m-rename">
+    <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-01"></label>
+    <p class="hint">Renames this machine and reboots it. AD coordination happens server-side before the local rename job is queued.</p>
+  </div>
+  <div id="m-script" style="display:none">
+    <label><span class="lbl">Shell</span><select name="script_shell"><option value="powershell">powershell</option><option value="cmd">cmd</option></select></label>
+    <label><span class="lbl">Body</span><textarea name="script_body" rows="5" placeholder="Get-Service"></textarea></label>
+  </div>
+  <div id="m-software_push" style="display:none">
+    <label><span class="lbl">Package</span>
+      <select name="software_package_id"><option value="">— choose a package —</option>{{range .Data.Packages}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+    </label>
+    <p class="hint">Installs the package and its dependencies; detection rules skip what's already present.</p>
+  </div>
+  <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
+</form>
+<script>
+function mActionChanged(sel){['rename','script','software_push'].forEach(function(a){document.getElementById('m-'+a).style.display=(sel.value===a)?'':'none';});}
+</script>
 
 <div class="section-head"><h3>BitLocker</h3><div class="line"></div></div>
 <p>Current state:

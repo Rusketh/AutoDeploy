@@ -18,8 +18,61 @@ func init() {
 		get("/portal/machines/{id}", machineDetail(r))
 		post("/portal/machines/{id}/binding", machineBindingSubmit(r))
 		post("/portal/machines/{id}/action", machineAction(r))
+		post("/portal/machines/{id}/delete", machineDelete(r))
+		post("/portal/machines/delete", machineBulkDelete(r))
 		post("/portal/machines/{id}/bitlocker/pin", machineBLPin(r))
 	}
+}
+
+// machineDelete removes a single machine from inventory.
+func machineDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := pathID(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := r.Inventory.Delete(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+			return
+		}
+		flash(w, "ok", "Machine deleted from inventory.")
+		http.Redirect(w, req, "/portal/machines", http.StatusFound)
+	}
+}
+
+// machineBulkDelete removes every checked machine from the list page.
+func machineBulkDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if err := req.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		n := 0
+		for _, s := range req.Form["machine_ids"] {
+			id, err := strconv.ParseInt(s, 10, 64)
+			if err != nil || id <= 0 {
+				continue
+			}
+			if err := r.Inventory.Delete(req.Context(), model.ID(id)); err == nil {
+				n++
+			}
+		}
+		if n == 0 {
+			flash(w, "err", "No machines selected.")
+		} else {
+			flash(w, "ok", fmt.Sprintf("Deleted %d machine%s.", n, plural(n)))
+		}
+		http.Redirect(w, req, "/portal/machines", http.StatusFound)
+	}
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // machineCSV streams the full machine inventory as a CSV download.

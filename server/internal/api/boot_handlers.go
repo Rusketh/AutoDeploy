@@ -22,8 +22,8 @@ type BootMenuRequest struct {
 // images. Reimage (Phase 9) will be set on a future revision when the
 // machine matches an inventory record.
 type BootMenuResponse struct {
-	Items    []BootMenuItem `json:"items"`
-	Reimage  *BootMenuItem  `json:"reimage,omitempty"`
+	Items    []BootMenuItem  `json:"items"`
+	Reimage  *BootMenuItem   `json:"reimage,omitempty"`
 	Identity BootMenuRequest `json:"identity_echo"`
 }
 
@@ -38,6 +38,67 @@ type BootMenuItem struct {
 // boot path is colocated with the rest of the JSON API.
 func RegisterBoot(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/clients/menu", handleBootMenu(r))
+	mux.HandleFunc("POST /api/v1/clients/deploy-status", handleDeployStatus(r))
+}
+
+// DeployStatusRequest is what the Boot Client posts during a deploy so the
+// dashboard sees a machine before its OS (and agent) ever come up: at
+// staging start, on a staging failure, and when the media is staged and
+// it's about to reboot into Setup. The agent reports the final "ok" once
+// the installed OS boots.
+type DeployStatusRequest struct {
+	Identity match.Identity `json:"identity"`
+	ImageID  *model.ID      `json:"image_id,omitempty"`
+	// Status: "staging" (open a row), "staged" (media ready, rebooting),
+	// or "failed". Mapped to deployment_history outcomes.
+	Status string `json:"status"`
+	Notes  string `json:"notes,omitempty"`
+}
+
+func handleDeployStatus(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in DeployStatusRequest
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		m, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		switch in.Status {
+		case "staging":
+			// Open an in-progress deployment row the dashboard can show.
+			id, err := r.Inventory.RecordDeployment(req.Context(), m.ID, in.ImageID)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID, "deployment_id": id})
+			return
+		case "staged", "failed":
+			// Close the latest open row for this machine. "staged" stays
+			// in_progress conceptually (the OS install continues), but we
+			// record a note; "failed" marks it failed.
+			outcome := "in_progress"
+			if in.Status == "failed" {
+				outcome = "failed"
+			}
+			notes := in.Notes
+			if notes == "" && in.Status == "staged" {
+				notes = "media staged; rebooting into Setup"
+			}
+			if err := r.Inventory.UpdateLatestDeployment(req.Context(), m.ID, outcome, notes); err != nil {
+				writeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
+			return
+		default:
+			http.Error(w, "status must be staging|staged|failed", http.StatusBadRequest)
+		}
+	}
 }
 
 func handleBootMenu(r Repos) http.HandlerFunc {

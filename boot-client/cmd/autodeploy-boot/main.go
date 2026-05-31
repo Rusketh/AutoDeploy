@@ -238,14 +238,33 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	runDeploy(log, f, id, resp.Items[n-1].ImageID, shipper)
 }
 
+// reportDeployStatus tells the server a deploy is staging / staged /
+// failed, so the dashboard shows a machine before its OS (and agent) come
+// up. Best-effort: a reporting failure never blocks or fails the deploy.
+func reportDeployStatus(ctx context.Context, c *httpc.Client, log *slog.Logger, id smbios.Identity, imageID int64, status, notes string) {
+	body := map[string]any{
+		"identity": identityBody(id),
+		"image_id": imageID,
+		"status":   status,
+		"notes":    notes,
+	}
+	if err := c.PostJSON(ctx, "/api/v1/clients/deploy-status", body, nil); err != nil {
+		log.Warn("deploy.status.report", slog.String("status", status), slog.String("error", err.Error()))
+	}
+}
+
 func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64, shipper *logging.Shipper) {
 	ctx := context.Background()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
+	// Open a deployment row right away so a machine that fails before its
+	// OS ever boots is still visible on the dashboard.
+	reportDeployStatus(ctx, c, log, id, imageID, "staging", "")
 	var m manifest
 	// POST identity so the server can match driver packages.
 	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
 		identityBody(id), &m); err != nil {
 		log.Error("manifest.fetch", slog.String("error", err.Error()))
+		reportDeployStatus(ctx, c, log, id, imageID, "failed", "manifest fetch failed: "+err.Error())
 		os.Exit(0)
 	}
 	log.Info("manifest.received",
@@ -295,6 +314,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 
 	if mediaItem == nil {
 		log.Error("deploy.no_media", slog.String("reason", "manifest has no iso-media; fail-safe"))
+		reportDeployStatus(ctx, c, log, id, imageID, "failed", "manifest has no deployable media")
 		os.Exit(0)
 	}
 
@@ -334,17 +354,20 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	mountPath, err := imaging.PreparePartition(ctx, plan, runner)
 	if err != nil {
 		log.Error("deploy.partition.fail", slog.String("error", err.Error()))
+		reportDeployStatus(ctx, c, log, id, imageID, "failed", "partition failed: "+err.Error())
 		os.Exit(1)
 	}
 	if !f.dryRun {
 		if err := downloadMedia(ctx, c, log, *mediaItem, mountPath); err != nil {
 			log.Error("download.media",
 				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
+			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media download failed: "+err.Error())
 			os.Exit(1) // partition already wiped; do not reboot into a broken disk
 		}
 	}
 	if err := imaging.FinalizeMedia(ctx, plan, runner, mountPath); err != nil {
 		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
+		reportDeployStatus(ctx, c, log, id, imageID, "failed", "media staging failed: "+err.Error())
 		os.Exit(1) // do NOT reboot: caller's environment can investigate
 	}
 	// Best-effort: register the firmware boot entry. The media is fully
@@ -359,6 +382,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	log.Info("deploy.stage.ok",
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk))
+	reportDeployStatus(ctx, c, log, id, imageID, "staged", "")
 	if f.dryRun {
 		log.Info("deploy.reboot.skip", slog.String("reason", "dry run"))
 		return
