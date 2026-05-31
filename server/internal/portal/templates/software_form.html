@@ -68,6 +68,17 @@
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$p.Description}}" maxlength="200"></label>
   </fieldset>
 
+  <fieldset><legend>Dependencies</legend>
+    <p class="hint">Packages this one requires. They're installed <strong>before</strong> this package and are pulled in automatically even if not directly assigned to an image. Ctrl/Cmd-click to select multiple.</p>
+    {{if .Data.AllPackages}}
+    <select name="depends_on" multiple size="6" style="width:100%;">
+      {{range .Data.AllPackages}}<option value="{{.ID}}" {{if index $.Data.DepSelected .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+    {{else}}
+    <p class="hint">No other packages exist yet.</p>
+    {{end}}
+  </fieldset>
+
   <fieldset><legend>Detection rules</legend>
     <p class="hint">A package counts as <strong>already installed</strong> when <strong>every</strong> rule below reports present. Zero rules = re-install on every deployment.</p>
     <div id="rules">

@@ -116,9 +116,22 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 			migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
 			files, _ = r.Blobs.ListDir(softwarePackageFilesDir(p.ID))
 		}
+		// Other packages, for the dependency picker, plus a set of the
+		// currently-selected dependency IDs so the template can mark them.
+		all, _ := r.Software.List(req.Context())
+		others := make([]model.SoftwarePackage, 0, len(all))
+		for _, pk := range all {
+			if pk.ID != p.ID {
+				others = append(others, pk)
+			}
+		}
+		depSel := make(map[model.ID]bool, len(p.DependsOn))
+		for _, d := range p.DependsOn {
+			depSel[d] = true
+		}
 		render(w, req, r, "software_form.html", title, map[string]any{
 			"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
-			"Files": files,
+			"Files": files, "AllPackages": others, "DepSelected": depSel,
 		})
 	}
 }
@@ -257,6 +270,17 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 	if len(steps) == 0 {
 		pkg.StepsJSON = "[]"
 	}
+
+	// Dependencies: other packages this one requires. Resolving this
+	// package will auto-include them (transitively) and install them first.
+	// A package can't depend on itself.
+	var deps []model.ID
+	for _, s := range req.Form["depends_on"] {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
+			deps = append(deps, model.ID(n))
+		}
+	}
+	pkg.DependsOn = deps
 
 	return pkg, nil
 }

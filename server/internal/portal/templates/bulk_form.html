@@ -55,9 +55,13 @@
       <p class="small muted">Highest-risk action; every script run is fully audited.</p>
     </div>
     <div id="act-software_push" {{if ne .Data.Action "software_push"}}style="display:none"{{end}}>
-      <label><span class="lbl">InstallStep JSON (array or single step)</span>
-        <textarea name="payload_raw" rows="8" placeholder='[{"type":"msi","msi_path":"C:\\install.msi","success_codes":[0,3010]}]'></textarea>
+      <label><span class="lbl">Software package</span>
+        <select name="software_package_id">
+          <option value="">— choose a package —</option>
+          {{range .Data.Packages}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select>
       </label>
+      <p class="hint">The agent installs this package and its dependencies (deps first), evaluating detection rules so already-installed packages are skipped.</p>
     </div>
   </fieldset>
   <div class="actions">
