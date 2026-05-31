@@ -60,6 +60,9 @@ func TestGenerateDrivesUnattendedInstall(t *testing.T) {
 		`<DiskConfiguration>`,
 		`<WillWipeDisk>false</WillWipeDisk>`, // coexist with the media partition
 		`<ImageInstall>`,
+		// ESP must be formatted FAT32 or BFSVC fails at finalize with
+		// 0x800703ED (unrecognized volume) when servicing boot files.
+		`<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>`,
 		`<Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value>`,
 		`<InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>`,
 	} {

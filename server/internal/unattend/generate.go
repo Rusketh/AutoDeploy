@@ -100,6 +100,13 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 // partition 3; the media partition (4) is reclaimed post-install by the
 // agent.
 //
+// ModifyPartitions formats the created partitions: the ESP as FAT32 and
+// the OS partition as NTFS. This is NOT optional -- CreatePartition only
+// carves the geometry; without a Format the ESP is left raw and Windows
+// Setup's boot-file servicing (BFSVC) fails at finalize with 0x800703ED
+// (ERROR_UNRECOGNIZED_VOLUME). (ImageInstall happens to format its own
+// target, which is why apply succeeds even so, but the ESP needs this.)
+//
 // NOTE: PartitionID=3 assumes the standard EFI+MSR+Windows triplet ahead
 // of the trailing media partition. If a future layout changes the number
 // of partitions before the OS partition, this is the knob to adjust.
@@ -118,6 +125,10 @@ func writeDiskAndImage(b *bytes.Buffer, s Settings) {
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
           </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
+          </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
       <ImageInstall>
