@@ -27,17 +27,50 @@ type MachineRecord struct {
 	// (migration 0012). It is the stable object id the agent stores in the
 	// registry and polls with -- the BIOS UUID is not trusted for
 	// uniqueness across a bulk fleet.
-	AgentID            string    `json:"agent_id"`
-	SystemSerial       string    `json:"system_serial"`
-	SystemManufacturer string    `json:"system_manufacturer"`
-	SystemProduct      string    `json:"system_product"`
-	BIOSVendor         string    `json:"bios_vendor"`
-	BIOSVersion        string    `json:"bios_version"`
-	BoardManufacturer  string    `json:"board_manufacturer"`
-	BoardProduct       string    `json:"board_product"`
-	BoardSerial        string    `json:"board_serial"`
-	FirstSeen          time.Time `json:"first_seen"`
-	LastSeen           time.Time `json:"last_seen"`
+	AgentID            string `json:"agent_id"`
+	SystemSerial       string `json:"system_serial"`
+	SystemManufacturer string `json:"system_manufacturer"`
+	SystemProduct      string `json:"system_product"`
+	BIOSVendor         string `json:"bios_vendor"`
+	BIOSVersion        string `json:"bios_version"`
+	BoardManufacturer  string `json:"board_manufacturer"`
+	BoardProduct       string `json:"board_product"`
+	BoardSerial        string `json:"board_serial"`
+	// Hardware is the full spec set the agent collects (CPU/RAM/disks/
+	// GPU/NICs), reported on each poll. Empty until the agent reports.
+	Hardware  *Hardware `json:"hardware,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// Hardware is the machine's reported hardware inventory. The agent
+// collects it (WMI/CIM on Windows) and posts it; the server stores it as
+// a JSON blob in machine_record.hardware_json (migration 0014). Fields are
+// best-effort -- whatever the agent could read.
+type Hardware struct {
+	CPUModel    string         `json:"cpu_model,omitempty"`
+	CPUCores    int            `json:"cpu_cores,omitempty"`
+	CPUThreads  int            `json:"cpu_threads,omitempty"`
+	MemoryBytes int64          `json:"memory_bytes,omitempty"`
+	Disks       []HardwareDisk `json:"disks,omitempty"`
+	GPUs        []string       `json:"gpus,omitempty"`
+	NICs        []HardwareNIC  `json:"nics,omitempty"`
+	OSCaption   string         `json:"os_caption,omitempty"`
+	OSVersion   string         `json:"os_version,omitempty"`
+	ReportedAt  time.Time      `json:"reported_at,omitempty"`
+}
+
+// HardwareDisk is one physical disk.
+type HardwareDisk struct {
+	Model     string `json:"model,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+}
+
+// HardwareNIC is one network adapter.
+type HardwareNIC struct {
+	Name string   `json:"name,omitempty"`
+	MAC  string   `json:"mac,omitempty"`
+	IPs  []string `json:"ips,omitempty"`
 }
 
 // MachineBinding is what the machine is assigned to: its image, AD
@@ -128,18 +161,44 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 // Get returns the machine record by primary key.
 func (r *InventoryRepo) Get(ctx context.Context, id ID) (MachineRecord, error) {
 	var v MachineRecord
+	var hw sql.NullString
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
-		       first_seen, last_seen
+		       hardware_json, first_seen, last_seen
 		FROM machine_record WHERE id=?`, id).Scan(
 		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
 		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
-		&v.FirstSeen, &v.LastSeen)
+		&hw, &v.FirstSeen, &v.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MachineRecord{}, fmt.Errorf("machine %d: %w", id, ErrNotFound)
 	}
+	v.Hardware = parseHardware(hw.String)
 	return v, err
+}
+
+// parseHardware decodes a hardware_json blob; empty/bad JSON yields nil so
+// a machine that hasn't reported (or reported garbage) just shows no specs.
+func parseHardware(s string) *Hardware {
+	if s == "" {
+		return nil
+	}
+	var h Hardware
+	if err := json.Unmarshal([]byte(s), &h); err != nil {
+		return nil
+	}
+	return &h
+}
+
+// UpdateHardware stores the agent-reported hardware spec for a machine.
+func (r *InventoryRepo) UpdateHardware(ctx context.Context, machineID ID, h Hardware) error {
+	b, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`UPDATE machine_record SET hardware_json=? WHERE id=?`, string(b), machineID)
+	return err
 }
 
 // GetByUUID looks up a machine by SMBIOS UUID.

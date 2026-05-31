@@ -10,11 +10,25 @@
   <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
   <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
   <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
+  <dt>AutoDeploy ID</dt><dd><code>{{$m.AgentID}}</code></dd>
   <dt>BIOS</dt><dd>{{$m.BIOSVendor}} {{$m.BIOSVersion}}</dd>
   <dt>Board</dt><dd>{{$m.BoardManufacturer}} {{$m.BoardProduct}} ({{$m.BoardSerial}})</dd>
   <dt>First seen</dt><dd>{{formatTime $m.FirstSeen}}</dd>
   <dt>Last seen</dt><dd>{{formatTime $m.LastSeen}}</dd>
 </dl>
+
+{{with $m.Hardware}}
+<div class="section-head"><h3>Hardware</h3><div class="line"></div></div>
+<dl class="kv">
+  {{if .CPUModel}}<dt>CPU</dt><dd>{{.CPUModel}}{{if .CPUCores}} — {{.CPUCores}} cores / {{.CPUThreads}} threads{{end}}</dd>{{end}}
+  {{if .MemoryDisplay}}<dt>Memory</dt><dd>{{.MemoryDisplay}}</dd>{{end}}
+  {{if .Disks}}<dt>Disks</dt><dd>{{range .Disks}}{{.Model}}{{if .SizeDisplay}} ({{.SizeDisplay}}){{end}}<br>{{end}}</dd>{{end}}
+  {{if .GPUs}}<dt>GPU</dt><dd>{{range .GPUs}}{{.}}<br>{{end}}</dd>{{end}}
+  {{if .NICs}}<dt>Network</dt><dd>{{range .NICs}}{{.Name}} — {{.MAC}}{{if .IPs}} ({{range $i, $ip := .IPs}}{{if $i}}, {{end}}{{$ip}}{{end}}){{end}}<br>{{end}}</dd>{{end}}
+  {{if .OSCaption}}<dt>OS</dt><dd>{{.OSCaption}} {{.OSVersion}}</dd>{{end}}
+  {{if not .ReportedAt.IsZero}}<dt>Reported</dt><dd>{{formatTime .ReportedAt}}</dd>{{end}}
+</dl>
+{{end}}
 
 <div class="section-head"><h3>Binding</h3><div class="line"></div></div>
 <form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding">

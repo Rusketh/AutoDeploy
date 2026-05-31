@@ -279,6 +279,9 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	for _, w := range resp.Warnings {
 		log.Warn("self.warning", slog.String("message", w))
 	}
+	// Report collected hardware once per process run (the WMI sweep is
+	// relatively expensive; specs change rarely). Best-effort.
+	reportHardwareOnce(ctx, log, c, f)
 	if len(resp.Software) > 0 {
 		installPackages(ctx, log, c, f, resp.Software)
 	}
@@ -291,6 +294,31 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				map[string]any{"status": status, "result_json": result}, nil)
 		}
 	}
+}
+
+// hardwareReported guards reportHardwareOnce so the WMI sweep runs at most
+// once per agent process (specs rarely change; a service restart re-reports).
+var hardwareReported bool
+
+// reportHardwareOnce collects and posts the machine's hardware spec the
+// first time it's called in this process. Needs the agent_id (the server
+// keys hardware by it). All failures are logged and swallowed.
+func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	if hardwareReported || f.agentID == "" {
+		return
+	}
+	hw := collectHardware()
+	if hw == nil {
+		hardwareReported = true // non-Windows / unsupported: don't retry
+		return
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/hardware",
+		map[string]any{"agent_id": f.agentID, "hardware": hw}, nil); err != nil {
+		log.Warn("hardware.report", slog.String("error", err.Error()))
+		return // leave the guard unset so the next poll retries
+	}
+	hardwareReported = true
+	log.Info("hardware.reported")
 }
 
 // runSelfLoop polls runSelfOnce immediately and then every interval until
