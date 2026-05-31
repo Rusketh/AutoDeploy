@@ -18,7 +18,7 @@ func TestActionPayloadFromForm(t *testing.T) {
 	// Regex find/replace rename (the fleet-rename case).
 	p, err := actionPayloadFromForm(mk(url.Values{
 		"action": {"rename"}, "rename_find": {"^LAB-A-"}, "rename_replace": {"LAB-B-"},
-	}), Repos{})
+	}))
 	if err != nil || !strings.Contains(p, `"rename_find":"^LAB-A-"`) || !strings.Contains(p, `"rename_replace":"LAB-B-"`) {
 		t.Errorf("find/replace payload = %q err=%v", p, err)
 	}
@@ -26,7 +26,7 @@ func TestActionPayloadFromForm(t *testing.T) {
 	// Literal rename takes precedence when both are present.
 	p, _ = actionPayloadFromForm(mk(url.Values{
 		"action": {"rename"}, "rename_new_name": {"LAB-01"}, "rename_find": {"x"},
-	}), Repos{})
+	}))
 	if !strings.Contains(p, `"new_name":"LAB-01"`) {
 		t.Errorf("literal rename = %q", p)
 	}
@@ -34,7 +34,7 @@ func TestActionPayloadFromForm(t *testing.T) {
 	// Software push references a package by id.
 	p, err = actionPayloadFromForm(mk(url.Values{
 		"action": {"software_push"}, "software_package_id": {"7"},
-	}), Repos{})
+	}))
 	if err != nil || !strings.Contains(p, `"package_id":7`) {
 		t.Errorf("software push payload = %q err=%v", p, err)
 	}
