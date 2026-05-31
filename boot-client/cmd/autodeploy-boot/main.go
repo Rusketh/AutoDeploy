@@ -705,6 +705,7 @@ func bytesFields(b []byte) [][]byte {
 type brandResp struct {
 	ProductName      string `json:"product_name"`
 	OrganisationName string `json:"organisation_name"`
+	PrimaryColor     string `json:"primary_color"`
 }
 
 // fetchBrand reads the operator's branding from the server so the
