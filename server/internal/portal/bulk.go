@@ -110,23 +110,20 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		var payload string
 		switch action {
 		case model.BulkActionRename:
-			name := strings.TrimSpace(req.FormValue("rename_new_name"))
+			// Bulk rename is fleet-only: a regex find/replace applied to
+			// each machine's current name. Renaming one machine to a
+			// literal name is done from that machine's own page.
 			find := strings.TrimSpace(req.FormValue("rename_find"))
-			switch {
-			case name != "":
-				b, _ := json.Marshal(map[string]string{"new_name": name})
-				payload = string(b)
-			case find != "":
-				b, _ := json.Marshal(map[string]string{
-					"rename_find":    find,
-					"rename_replace": req.FormValue("rename_replace"),
-				})
-				payload = string(b)
-			default:
-				flash(w, "err", "Rename requires either a new name or a find pattern.")
+			if find == "" {
+				flash(w, "err", "Bulk rename requires a find pattern. To rename one machine to a literal name, use its machine page.")
 				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 				return
 			}
+			b, _ := json.Marshal(map[string]string{
+				"rename_find":    find,
+				"rename_replace": req.FormValue("rename_replace"),
+			})
+			payload = string(b)
 		case model.BulkActionScript:
 			shell := req.FormValue("script_shell")
 			body := req.FormValue("script_body")

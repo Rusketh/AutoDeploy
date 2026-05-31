@@ -6,15 +6,15 @@
 
 <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
 <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. The filter is just a search tool — the action runs on your selection, not on whatever currently matches.</p>
-<div class="std">
+<form class="std" onsubmit="runSearch(); return false;">
   <label><span class="lbl">Name regex</span><input type="text" id="f_name" placeholder="^LAB-"></label>
   <label><span class="lbl">OU (DN)</span><input type="text" id="f_ou" placeholder="OU=Lab,DC=corp,DC=example"></label>
   <label><span class="lbl">AD group</span><input type="text" id="f_group" placeholder="Lab-Computers"></label>
   <div class="actions">
-    <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
+    <button type="submit" class="secondary"><svg><use href="#i-search"/></svg>Search</button>
     <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
   </div>
-</div>
+</form>
 
 <div id="results-wrap" style="display:none;">
   <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
@@ -45,8 +45,7 @@
       </select>
     </label>
     <div id="act-rename">
-      <label><span class="lbl">New name (single machine)</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
-      <p class="hint">Or rename a fleet by find/replace (regex) on each machine's current name — leave "New name" blank to use this. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code>.</p>
+      <p class="hint">Fleet rename by find/replace (regex) on each machine's current name. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code> renames LAB-A-01 → LAB-B-01, LAB-A-02 → LAB-B-02. To rename a <em>single</em> machine to a literal name, use the action on that machine's page instead.</p>
       <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" placeholder="^LAB-A-"></label>
       <label><span class="lbl">Replace</span><input type="text" name="rename_replace" placeholder="LAB-B-"></label>
       <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens server-side via the Domain Integration Service before the local rename job is queued for the agent.</p>
