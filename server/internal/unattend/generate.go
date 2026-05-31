@@ -59,14 +59,12 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
       <UserLocale>`+esc(s.Locale)+`</UserLocale>
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <UserData>
-        <AcceptEula>true</AcceptEula>
 `)
-	if s.ProductKey != "" {
-		fmt.Fprintf(b, `        <ProductKey><Key>%s</Key><WillShowUI>OnError</WillShowUI></ProductKey>`+"\n", esc(s.ProductKey))
-	}
-	fmt.Fprint(b, `      </UserData>
-`)
+	// DiskConfiguration + ImageInstall make Setup run UNATTENDED. Without
+	// them Setup falls back to the interactive "where to install / load
+	// driver" screens. Element order inside the component matters:
+	// DiskConfiguration, ImageInstall, RunSynchronous, UserData.
+	writeDiskAndImage(b, s)
 	if IsWindows11Family(s.TargetOS) && s.BypassWin11Reqs {
 		fmt.Fprint(b, `      <RunSynchronous>
         <RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Bypass Win11: TPM</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
@@ -77,9 +75,58 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
       </RunSynchronous>
 `)
 	}
-	fmt.Fprint(b, `    </component>
+	fmt.Fprint(b, `      <UserData>
+        <AcceptEula>true</AcceptEula>
+`)
+	if s.ProductKey != "" {
+		fmt.Fprintf(b, `        <ProductKey><Key>%s</Key><WillShowUI>OnError</WillShowUI></ProductKey>`+"\n", esc(s.ProductKey))
+	}
+	fmt.Fprint(b, `      </UserData>
+    </component>
   </settings>
 `)
+}
+
+// writeDiskAndImage emits the DiskConfiguration + ImageInstall that drive
+// an unattended install in the boot-the-media model.
+//
+// Layout (single-disk coexistence): the Boot Client created the FAT32
+// AutoDeploy media partition as partition 1 at the END of the disk and
+// left the front free. WillWipeDisk=false preserves that media partition;
+// Setup creates ESP+MSR+Windows in the free space (becoming partitions
+// 2, 3, 4), and Windows installs to partition 4. The media partition is
+// reclaimed post-install by the agent.
+//
+// NOTE: the InstallTo PartitionID (4) assumes the Boot Client's media
+// partition is partition 1 -- validated against the rig; if Setup numbers
+// the created partitions differently this is the knob to adjust.
+func writeDiskAndImage(b *bytes.Buffer, s Settings) {
+	edition := s.Edition
+	if edition == "" {
+		edition = "Windows 11 Pro"
+	}
+	fmt.Fprintf(b, `      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>%d</DiskID>
+          <WillWipeDisk>false</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>384</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>%s</Value></MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>%d</DiskID><PartitionID>4</PartitionID></InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+`, s.DiskID, esc(edition), s.DiskID)
 }
 
 // rsCmd is one RunSynchronousCommand row.
