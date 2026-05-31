@@ -174,11 +174,18 @@ func writeSpecialize(b *bytes.Buffer, s Settings) {
 		fmt.Fprint(b, `      <ComputerName>*</ComputerName>`+"\n")
 	}
 	fmt.Fprintf(b, `      <TimeZone>%s</TimeZone>`+"\n", esc(s.TimeZone))
-	if s.SkipAutoActivation {
-		fmt.Fprint(b, `      <SkipAutoActivation>true</SkipAutoActivation>`+"\n")
-	}
 	fmt.Fprint(b, `    </component>
 `)
+	// SkipAutoActivation is a Microsoft-Windows-Security-SPP-UX setting, NOT
+	// a Shell-Setup one. Emitting it under Shell-Setup made Setup reject the
+	// WHOLE answer file (0x80220001 -> specialize abort). Emit it in its own
+	// valid component.
+	if s.SkipAutoActivation {
+		fmt.Fprint(b, `    <component name="Microsoft-Windows-Security-SPP-UX" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SkipAutoActivation>true</SkipAutoActivation>
+    </component>
+`)
+	}
 
 	cmds := buildSpecializeCommands(s)
 	if len(cmds) > 0 {
