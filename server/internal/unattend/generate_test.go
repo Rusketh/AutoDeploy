@@ -200,10 +200,28 @@ func TestGenerateAutoLogonOmittedWhenUnset(t *testing.T) {
 	}
 }
 
-func TestGenerateAlwaysIncludesAgentBootstrap(t *testing.T) {
+func TestGenerateDoesNotBootstrapAgentInUnattend(t *testing.T) {
+	// The agent is no longer started via a first-logon command; it's
+	// injected into the OS via the media's $OEM$ tree and installed by
+	// SetupComplete.cmd. The unattend must not reference it (the old
+	// path/var were broken anyway).
 	x, _ := Generate(Defaults())
-	if !strings.Contains(string(x), "autodeploy-agent") {
-		t.Errorf("expected agent bootstrap in FirstLogonCommands; got\n%s", x)
+	if strings.Contains(string(x), "autodeploy-agent") {
+		t.Errorf("unattend should no longer reference the agent; got\n%s", x)
+	}
+	// With no operator-defined first-logon commands, the block is omitted
+	// entirely rather than left empty.
+	if strings.Contains(string(x), "<FirstLogonCommands>") {
+		t.Errorf("empty FirstLogonCommands block should be omitted; got\n%s", x)
+	}
+}
+
+func TestGenerateKeepsOperatorFirstLogonCommands(t *testing.T) {
+	s := Defaults()
+	s.FirstLogonCommands = []FirstLogonCommand{{Order: 1, Description: "op", CommandLine: "cmd /c echo hi"}}
+	x, _ := Generate(s)
+	if !strings.Contains(string(x), "<FirstLogonCommands>") || !strings.Contains(string(x), "echo hi") {
+		t.Errorf("operator first-logon command should be emitted; got\n%s", x)
 	}
 }
 

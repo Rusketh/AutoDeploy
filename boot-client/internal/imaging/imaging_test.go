@@ -11,9 +11,11 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	plan := MediaPlan{
 		TargetDisk:   "/dev/sda",
 		MediaBytes:   6 * 1024 * 1024 * 1024, // 6 GiB media
-		UnattendPath: "/tmp/unattend.xml",
-		DriverPaths:  []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
-		WorkDir:      "/tmp/work",
+		UnattendPath:      "/tmp/unattend.xml",
+		DriverPaths:       []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
+		AgentPath:         "/tmp/payload-agent.exe",
+		SetupCompletePath: "/tmp/SetupComplete.cmd",
+		WorkDir:           "/tmp/work",
 	}
 	// Prepare partition first; the caller streams media onto the returned
 	// mount path (not exercised here), then finalizes.
@@ -48,6 +50,11 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		"cp /tmp/drv1 /tmp/work/media/$WinPEDriver$/drv1",
 		"mkdir -p /tmp/work/media/$WinPEDriver$/drv2",
 		"cp /tmp/drv2 /tmp/work/media/$WinPEDriver$/drv2",
+		// Agent + SetupComplete.cmd injected via the $OEM$ tree ($$=%WINDIR%).
+		"mkdir -p /tmp/work/media/sources/$OEM$/$$/AutoDeploy",
+		"cp /tmp/payload-agent.exe /tmp/work/media/sources/$OEM$/$$/AutoDeploy/autodeploy-agent.exe",
+		"mkdir -p /tmp/work/media/sources/$OEM$/$$/Setup/Scripts",
+		"cp /tmp/SetupComplete.cmd /tmp/work/media/sources/$OEM$/$$/Setup/Scripts/SetupComplete.cmd",
 		"sync",
 		"umount /tmp/work/media",
 		// Firmware boot entry for Windows Setup.
