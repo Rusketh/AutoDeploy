@@ -154,6 +154,21 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 	if h.Inventory != nil && identity.SystemUUID != "" {
 		if rec, uerr := h.Inventory.UpsertFromIdentity(ctx, identity); uerr == nil {
 			m.AgentID = rec.AgentID
+			// Bind the machine to the image being deployed so the agent's
+			// /self can resolve this image's software set post-OS. A
+			// menu-driven deploy otherwise leaves the machine unbound and
+			// the agent finds nothing to install. Preserve any
+			// operator-set binding fields (name/OU/groups); only set the
+			// image.
+			binding, berr := h.Inventory.GetBinding(ctx, rec.ID)
+			if berr != nil {
+				binding = model.MachineBinding{MachineID: rec.ID}
+			}
+			imgID := id
+			binding.ImageID = &imgID
+			if err := h.Inventory.UpsertBinding(ctx, binding); err != nil {
+				m.Warnings = append(m.Warnings, "image binding: "+err.Error())
+			}
 		} else {
 			m.Warnings = append(m.Warnings, "agent provisioning: "+uerr.Error())
 		}
