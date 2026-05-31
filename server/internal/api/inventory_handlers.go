@@ -22,6 +22,36 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 	// Agent-facing report endpoint: open a deployment row, record final
 	// outcome, replace detected state for the packages it just ran.
 	mux.HandleFunc("POST /api/v1/agent/report", handleAgentReport(r))
+
+	// Agent-facing hardware report: store the collected spec set.
+	mux.HandleFunc("POST /api/v1/agent/hardware", handleAgentHardware(r))
+}
+
+// AgentHardwareRequest is the body the agent POSTs with its collected
+// hardware spec. Identified by agent_id (the server-minted object id).
+type AgentHardwareRequest struct {
+	AgentID  string         `json:"agent_id"`
+	Hardware model.Hardware `json:"hardware"`
+}
+
+func handleAgentHardware(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in AgentHardwareRequest
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		m, err := r.Inventory.GetByAgentID(req.Context(), in.AgentID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := r.Inventory.UpdateHardware(req.Context(), m.ID, in.Hardware); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
+	}
 }
 
 func handleListMachines(r Repos) http.HandlerFunc {
@@ -134,11 +164,11 @@ func handleDetectedState(r Repos) http.HandlerFunc {
 // (or after a check-in run in Phase 13). Carries identity (so the server
 // can find or create the machine record) and per-package outcomes.
 type AgentReportRequest struct {
-	Identity     match.Identity      `json:"identity"`
-	ImageID      *model.ID           `json:"image_id,omitempty"`
-	DeploymentID *model.ID           `json:"deployment_id,omitempty"`
-	Outcome      string              `json:"outcome"` // ok | failed | in_progress
-	Notes        string              `json:"notes,omitempty"`
+	Identity     match.Identity       `json:"identity"`
+	ImageID      *model.ID            `json:"image_id,omitempty"`
+	DeploymentID *model.ID            `json:"deployment_id,omitempty"`
+	Outcome      string               `json:"outcome"` // ok | failed | in_progress
+	Notes        string               `json:"notes,omitempty"`
 	Packages     []AgentPackageReport `json:"packages,omitempty"`
 }
 

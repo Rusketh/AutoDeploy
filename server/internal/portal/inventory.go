@@ -1,6 +1,8 @@
 package portal
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,10 +14,109 @@ import (
 func init() {
 	registerInventoryRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 		get("/portal/machines", machineList(r))
+		get("/portal/machines.csv", machineCSV(r))
 		get("/portal/machines/{id}", machineDetail(r))
 		post("/portal/machines/{id}/binding", machineBindingSubmit(r))
+		post("/portal/machines/{id}/action", machineAction(r))
 		post("/portal/machines/{id}/bitlocker/pin", machineBLPin(r))
 	}
+}
+
+// machineCSV streams the full machine inventory as a CSV download.
+func machineCSV(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		machines, err := r.Inventory.List(req.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"id", "name", "agent_id", "manufacturer", "product", "serial",
+			"system_uuid", "bios_vendor", "bios_version", "board_manufacturer", "board_product",
+			"image_id", "first_seen", "last_seen"})
+		for _, m := range machines {
+			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+			imageID := ""
+			if b.ImageID != nil {
+				imageID = strconv.FormatInt(int64(*b.ImageID), 10)
+			}
+			_ = cw.Write([]string{
+				strconv.FormatInt(int64(m.ID), 10), b.MachineName, m.AgentID,
+				m.SystemManufacturer, m.SystemProduct, m.SystemSerial, m.SystemUUID,
+				m.BIOSVendor, m.BIOSVersion, m.BoardManufacturer, m.BoardProduct,
+				imageID, m.FirstSeen.Format("2006-01-02 15:04:05"), m.LastSeen.Format("2006-01-02 15:04:05"),
+			})
+		}
+		cw.Flush()
+	}
+}
+
+// machineAction runs a single-machine bulk action (rename / script /
+// software push) straight from the machine's page, reusing the bulk
+// machinery with a machine-id target.
+func machineAction(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := pathID(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		action := req.FormValue("action")
+		payload, perr := actionPayloadFromForm(req)
+		if perr != nil {
+			flash(w, "err", perr.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+			return
+		}
+		user, _ := sessionUser(req, r)
+		if _, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
+			Action:    action,
+			Payload:   payload,
+			Target:    model.BulkTarget{MachineIDs: []model.ID{id}},
+			CreatedBy: user.Username,
+		}); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Action queued for this machine.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+	}
+}
+
+// actionPayloadFromForm builds a bulk-op payload from the shared action
+// form fields (used by both the bulk page and per-machine actions).
+func actionPayloadFromForm(req *http.Request) (string, error) {
+	switch req.FormValue("action") {
+	case model.BulkActionRename:
+		name := strings.TrimSpace(req.FormValue("rename_new_name"))
+		find := strings.TrimSpace(req.FormValue("rename_find"))
+		switch {
+		case name != "":
+			b, _ := json.Marshal(map[string]string{"new_name": name})
+			return string(b), nil
+		case find != "":
+			b, _ := json.Marshal(map[string]string{"rename_find": find, "rename_replace": req.FormValue("rename_replace")})
+			return string(b), nil
+		}
+		return "", fmt.Errorf("rename requires a new name or a find pattern")
+	case model.BulkActionScript:
+		body := req.FormValue("script_body")
+		if strings.TrimSpace(body) == "" {
+			return "", fmt.Errorf("script body required")
+		}
+		b, _ := json.Marshal(map[string]string{"shell": req.FormValue("script_shell"), "body": body})
+		return string(b), nil
+	case model.BulkActionSoftwarePush:
+		pid, err := strconv.ParseInt(req.FormValue("software_package_id"), 10, 64)
+		if err != nil || pid <= 0 {
+			return "", fmt.Errorf("choose a software package")
+		}
+		b, _ := json.Marshal(map[string]int64{"package_id": pid})
+		return string(b), nil
+	}
+	return "", fmt.Errorf("unknown action")
 }
 
 func machineList(r Repos) http.HandlerFunc {

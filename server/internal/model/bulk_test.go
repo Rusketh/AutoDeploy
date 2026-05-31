@@ -49,6 +49,22 @@ func TestBulkPreviewAndCreate(t *testing.T) {
 		t.Errorf("expected FIN-01 only, got %+v", hits)
 	}
 
+	// Explicit machine-id selection (the new "selection basket" path)
+	// targets exactly those machines, regardless of name/OU/group.
+	fin, _ := inv.GetByUUID(ctx, "u3")
+	lab1, _ := inv.GetByUUID(ctx, "u1")
+	sel, _ := bulk.PreviewTargets(ctx, BulkTarget{MachineIDs: []ID{fin.ID, lab1.ID}})
+	if len(sel) != 2 {
+		t.Errorf("expected 2 explicitly-selected machines, got %d", len(sel))
+	}
+	got := map[ID]bool{}
+	for _, m := range sel {
+		got[m.ID] = true
+	}
+	if !got[fin.ID] || !got[lab1.ID] {
+		t.Errorf("selection should contain exactly the chosen machines, got %+v", sel)
+	}
+
 	// Create script operation targeting lab machines.
 	_, jobs, err := bulk.CreateOperation(ctx, BulkOperation{
 		Action:  BulkActionScript,

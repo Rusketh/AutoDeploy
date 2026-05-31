@@ -15,9 +15,9 @@ import (
 
 // BulkAction is the discriminator on a bulk operation's payload.
 const (
-	BulkActionRename        = "rename"
-	BulkActionSoftwarePush  = "software_push"
-	BulkActionScript        = "script"
+	BulkActionRename       = "rename"
+	BulkActionSoftwarePush = "software_push"
+	BulkActionScript       = "script"
 )
 
 // BulkTarget is the AD-centric selection. Empty fields are ignored.
@@ -25,16 +25,20 @@ type BulkTarget struct {
 	NameRegex string `json:"name_regex,omitempty"`
 	OU        string `json:"ou,omitempty"`
 	Group     string `json:"group,omitempty"`
+	// MachineIDs selects specific machines directly (used by the
+	// per-machine "run on this machine" actions). When set, only these
+	// machines are considered (AND-combined with any other filters).
+	MachineIDs []ID `json:"machine_ids,omitempty"`
 }
 
 // BulkOperation is the operator's intent.
 type BulkOperation struct {
-	ID         ID        `json:"id"`
-	Action     string    `json:"action"`
-	Payload    string    `json:"payload"`
-	Target     BulkTarget `json:"target"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        ID         `json:"id"`
+	Action    string     `json:"action"`
+	Payload   string     `json:"payload"`
+	Target    BulkTarget `json:"target"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // BulkJob is one queued unit of work, per-machine.
@@ -78,8 +82,17 @@ func (r *BulkRepo) PreviewTargets(ctx context.Context, t BulkTarget) ([]MachineR
 			return nil, fmt.Errorf("%w: name_regex: %v", ErrValidation, err)
 		}
 	}
+	// Explicit machine-id selection (the "selection basket"): when set,
+	// only these machines are considered (AND-combined with any filters).
+	idSet := map[ID]bool{}
+	for _, id := range t.MachineIDs {
+		idSet[id] = true
+	}
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
+		if len(idSet) > 0 && !idSet[m.ID] {
+			continue
+		}
 		bind, _ := r.Inventory.GetBinding(ctx, m.ID)
 		if re != nil && !re.MatchString(bind.MachineName) {
 			continue

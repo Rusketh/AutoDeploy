@@ -14,10 +14,21 @@ func init() {
 	registerBulkRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 		get("/portal/bulk", bulkList(r))
 		get("/portal/bulk/new", bulkFormNew(r))
-		post("/portal/bulk/preview", bulkPreview(r))
+		get("/portal/bulk/search", bulkSearch(r))
 		post("/portal/bulk", bulkCreate(r))
 		get("/portal/bulk/{id}", bulkDetail(r))
 	}
+}
+
+func writeJSONResp(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONErr(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func bulkList(r Repos) http.HandlerFunc {
@@ -35,37 +46,43 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		pkgs, _ := r.Software.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Target": model.BulkTarget{}, "Preview": nil, "Packages": pkgs,
+			"Packages": pkgs,
 		})
 	}
 }
 
-// bulkPreview resolves the target selection from the form and re-renders
-// the form with the resolved machines listed.
-func bulkPreview(r Repos) http.HandlerFunc {
+// bulkSearch returns machines matching the filter as JSON, for the
+// "build a selection" UI. The filter is a SEARCH TOOL -- the operator adds
+// individual results to a selection basket; the basket (machine_ids) is
+// what the action actually runs against, not the filter itself.
+func bulkSearch(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		t := model.BulkTarget{
-			NameRegex: strings.TrimSpace(req.FormValue("name_regex")),
-			OU:        strings.TrimSpace(req.FormValue("ou")),
-			Group:     strings.TrimSpace(req.FormValue("group")),
+			NameRegex: strings.TrimSpace(req.URL.Query().Get("name_regex")),
+			OU:        strings.TrimSpace(req.URL.Query().Get("ou")),
+			Group:     strings.TrimSpace(req.URL.Query().Get("group")),
 		}
 		machines, err := r.Bulk.PreviewTargets(req.Context(), t)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
+			writeJSONErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		pkgs, _ := r.Software.List(req.Context())
-		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Target":   t,
-			"Action":   req.FormValue("action"),
-			"Preview":  machines,
-			"Packages": pkgs,
-		})
+		type item struct {
+			ID      int64  `json:"id"`
+			Name    string `json:"name"`
+			UUID    string `json:"uuid"`
+			Make    string `json:"make"`
+			Product string `json:"product"`
+		}
+		out := make([]item, 0, len(machines))
+		for _, m := range machines {
+			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+			out = append(out, item{
+				ID: int64(m.ID), Name: b.MachineName, UUID: m.SystemUUID,
+				Make: m.SystemManufacturer, Product: m.SystemProduct,
+			})
+		}
+		writeJSONResp(w, out)
 	}
 }
 
@@ -75,23 +92,41 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		t := model.BulkTarget{
-			NameRegex: strings.TrimSpace(req.FormValue("name_regex")),
-			OU:        strings.TrimSpace(req.FormValue("ou")),
-			Group:     strings.TrimSpace(req.FormValue("group")),
+		// The operator built an explicit selection basket (machine_ids);
+		// that -- not the search filter -- is what the action runs on.
+		var ids []model.ID
+		for _, s := range req.Form["machine_ids"] {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
+				ids = append(ids, model.ID(n))
+			}
 		}
+		if len(ids) == 0 {
+			flash(w, "err", "Add at least one machine to the selection.")
+			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
+			return
+		}
+		t := model.BulkTarget{MachineIDs: ids}
 		action := req.FormValue("action")
 		var payload string
 		switch action {
 		case model.BulkActionRename:
 			name := strings.TrimSpace(req.FormValue("rename_new_name"))
-			if name == "" {
-				flash(w, "err", "Rename requires a new name.")
+			find := strings.TrimSpace(req.FormValue("rename_find"))
+			switch {
+			case name != "":
+				b, _ := json.Marshal(map[string]string{"new_name": name})
+				payload = string(b)
+			case find != "":
+				b, _ := json.Marshal(map[string]string{
+					"rename_find":    find,
+					"rename_replace": req.FormValue("rename_replace"),
+				})
+				payload = string(b)
+			default:
+				flash(w, "err", "Rename requires either a new name or a find pattern.")
 				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 				return
 			}
-			b, _ := json.Marshal(map[string]string{"new_name": name})
-			payload = string(b)
 		case model.BulkActionScript:
 			shell := req.FormValue("script_shell")
 			body := req.FormValue("script_body")

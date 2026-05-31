@@ -1,60 +1,64 @@
 {{define "body"}}
-{{$t := .Data.Target}}
 <div class="toolbar">
   <h2>New bulk operation</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
 </div>
 
-<form class="std" method="POST" action="/portal/bulk/preview">
-  <fieldset><legend>Target selection (combinable)</legend>
-    <label><span class="lbl">Name regex</span><input type="text" name="name_regex" value="{{$t.NameRegex}}" placeholder="^LAB-"></label>
-    <label><span class="lbl">OU (DN)</span><input type="text" name="ou" value="{{$t.OU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
-    <label><span class="lbl">AD group</span><input type="text" name="group" value="{{$t.Group}}" placeholder="Lab-Computers"></label>
-    <div class="actions"><button type="submit"><svg><use href="#i-eye"/></svg>Preview targets</button></div>
-  </fieldset>
-</form>
-
-{{if .Data.Preview}}
-<div class="section-head"><h3>Target preview ({{len .Data.Preview}} machine{{if ne (len .Data.Preview) 1}}s{{end}})</h3><div class="line"></div></div>
-
-<div class="tablewrap" style="max-height: 320px; overflow-y: auto;">
-<table>
-  <thead><tr><th>UUID</th><th>Make / model</th></tr></thead>
-  <tbody>
-    {{range .Data.Preview}}
-    <tr>
-      <td><code>{{.SystemUUID}}</code></td>
-      <td><strong>{{.SystemManufacturer}}</strong> <span class="muted">{{.SystemProduct}}</span></td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+<div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
+<p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. The filter is just a search tool — the action runs on your selection, not on whatever currently matches.</p>
+<div class="std">
+  <label><span class="lbl">Name regex</span><input type="text" id="f_name" placeholder="^LAB-"></label>
+  <label><span class="lbl">OU (DN)</span><input type="text" id="f_ou" placeholder="OU=Lab,DC=corp,DC=example"></label>
+  <label><span class="lbl">AD group</span><input type="text" id="f_group" placeholder="Lab-Computers"></label>
+  <div class="actions">
+    <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
+    <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
+  </div>
 </div>
 
-<form class="std" method="POST" action="/portal/bulk" data-confirm="Queue this operation against {{len .Data.Preview}} machines?" style="margin-top: var(--sp-4);">
-  <input type="hidden" name="name_regex" value="{{$t.NameRegex}}">
-  <input type="hidden" name="ou" value="{{$t.OU}}">
-  <input type="hidden" name="group" value="{{$t.Group}}">
-  <fieldset><legend>Action</legend>
+<div id="results-wrap" style="display:none;">
+  <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
+  <div class="tablewrap" style="max-height: 260px; overflow-y: auto;">
+    <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<form class="std" method="POST" action="/portal/bulk" id="bulk-form" onsubmit="return onSubmit()" style="margin-top: var(--sp-4);">
+  <div class="section-head"><h3>2. Selection (<span id="sel-count">0</span> machine<span id="sel-plural">s</span>)</h3><div class="line"></div></div>
+  <div id="sel-empty" class="muted">No machines selected yet. Search above and add some.</div>
+  <div class="tablewrap" id="sel-wrap" style="display:none; max-height: 260px; overflow-y: auto;">
+    <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
+      <tbody id="sel-body"></tbody>
+    </table>
+  </div>
+  <div id="sel-inputs"></div>
+
+  <div class="section-head"><h3>3. Action</h3><div class="line"></div></div>
+  <fieldset>
     <label><span class="lbl">Action type</span>
       <select name="action" id="action" onchange="actionChanged(this)">
-        <option value="rename" {{if eq .Data.Action "rename"}}selected{{end}}>Rename machine</option>
-        <option value="script" {{if eq .Data.Action "script"}}selected{{end}}>Run a script (cmd / powershell)</option>
-        <option value="software_push" {{if eq .Data.Action "software_push"}}selected{{end}}>Push a software step (advanced JSON)</option>
+        <option value="rename">Rename machine</option>
+        <option value="script">Run a script (cmd / powershell)</option>
+        <option value="software_push">Push software</option>
       </select>
     </label>
-    <div id="act-rename" {{if ne .Data.Action "rename"}}style="display:none"{{end}}>
-      <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
+    <div id="act-rename">
+      <label><span class="lbl">New name (single machine)</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
+      <p class="hint">Or rename a fleet by find/replace (regex) on each machine's current name — leave "New name" blank to use this. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code>.</p>
+      <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" placeholder="^LAB-A-"></label>
+      <label><span class="lbl">Replace</span><input type="text" name="rename_replace" placeholder="LAB-B-"></label>
       <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens server-side via the Domain Integration Service before the local rename job is queued for the agent.</p>
     </div>
-    <div id="act-script" {{if ne .Data.Action "script"}}style="display:none"{{end}}>
+    <div id="act-script" style="display:none">
       <label><span class="lbl">Shell</span>
         <select name="script_shell"><option value="powershell">powershell</option><option value="cmd">cmd</option></select>
       </label>
       <label><span class="lbl">Body</span><textarea name="script_body" rows="6" placeholder="Get-Service"></textarea></label>
       <p class="small muted">Highest-risk action; every script run is fully audited.</p>
     </div>
-    <div id="act-software_push" {{if ne .Data.Action "software_push"}}style="display:none"{{end}}>
+    <div id="act-software_push" style="display:none">
       <label><span class="lbl">Software package</span>
         <select name="software_package_id">
           <option value="">— choose a package —</option>
@@ -71,11 +75,69 @@
 </form>
 
 <script>
+var selection = {}; // id -> {name, make, product}
+
 function actionChanged(sel){
   ['rename','script','software_push'].forEach(function(a){
     document.getElementById('act-'+a).style.display = (sel.value===a)?'block':'none';
   });
 }
+
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+
+var lastResults = [];
+function runSearch(){
+  var q = new URLSearchParams({
+    name_regex: document.getElementById('f_name').value,
+    ou: document.getElementById('f_ou').value,
+    group: document.getElementById('f_group').value
+  });
+  fetch('/portal/bulk/search?'+q.toString(), {credentials:'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      lastResults = Array.isArray(rows) ? rows : [];
+      document.getElementById('results-wrap').style.display = '';
+      document.getElementById('results-count').textContent = lastResults.length;
+      var b = document.getElementById('results-body');
+      b.innerHTML = '';
+      lastResults.forEach(function(m){
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td><td><code>'+esc((m.uuid||'').slice(0,8))+'…</code></td>'+
+          '<td class="actions"><button type="button" class="ghost sm" onclick="addOne('+m.id+')">Add</button></td>';
+        b.appendChild(tr);
+      });
+    })
+    .catch(function(){ alert('Search failed.'); });
+}
+
+function addOne(id){
+  var m = lastResults.find(function(x){ return x.id===id; });
+  if(m){ selection[id] = m; renderSelection(); }
+}
+function addAllResults(){ lastResults.forEach(function(m){ selection[m.id]=m; }); renderSelection(); }
+function removeOne(id){ delete selection[id]; renderSelection(); }
+
+function renderSelection(){
+  var ids = Object.keys(selection);
+  document.getElementById('sel-count').textContent = ids.length;
+  document.getElementById('sel-plural').style.display = ids.length===1 ? 'none' : '';
+  document.getElementById('sel-empty').style.display = ids.length ? 'none' : '';
+  document.getElementById('sel-wrap').style.display = ids.length ? '' : 'none';
+  var body = document.getElementById('sel-body'); body.innerHTML='';
+  var inputs = document.getElementById('sel-inputs'); inputs.innerHTML='';
+  ids.forEach(function(id){
+    var m = selection[id];
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td>'+
+      '<td class="actions"><button type="button" class="ghost sm" onclick="removeOne('+id+')">Remove</button></td>';
+    body.appendChild(tr);
+    var inp = document.createElement('input'); inp.type='hidden'; inp.name='machine_ids'; inp.value=id; inputs.appendChild(inp);
+  });
+}
+
+function onSubmit(){
+  if(Object.keys(selection).length===0){ alert('Add at least one machine to the selection.'); return false; }
+  return confirm('Queue this operation against '+Object.keys(selection).length+' machine(s)?');
+}
 </script>
-{{end}}
 {{end}}

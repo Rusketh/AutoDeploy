@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -278,6 +279,9 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	for _, w := range resp.Warnings {
 		log.Warn("self.warning", slog.String("message", w))
 	}
+	// Report collected hardware once per process run (the WMI sweep is
+	// relatively expensive; specs change rarely). Best-effort.
+	reportHardwareOnce(ctx, log, c, f)
 	if len(resp.Software) > 0 {
 		installPackages(ctx, log, c, f, resp.Software)
 	}
@@ -290,6 +294,31 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				map[string]any{"status": status, "result_json": result}, nil)
 		}
 	}
+}
+
+// hardwareReported guards reportHardwareOnce so the WMI sweep runs at most
+// once per agent process (specs rarely change; a service restart re-reports).
+var hardwareReported bool
+
+// reportHardwareOnce collects and posts the machine's hardware spec the
+// first time it's called in this process. Needs the agent_id (the server
+// keys hardware by it). All failures are logged and swallowed.
+func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	if hardwareReported || f.agentID == "" {
+		return
+	}
+	hw := collectHardware()
+	if hw == nil {
+		hardwareReported = true // non-Windows / unsupported: don't retry
+		return
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/hardware",
+		map[string]any{"agent_id": f.agentID, "hardware": hw}, nil); err != nil {
+		log.Warn("hardware.report", slog.String("error", err.Error()))
+		return // leave the guard unset so the next poll retries
+	}
+	hardwareReported = true
+	log.Info("hardware.reported")
 }
 
 // runSelfLoop polls runSelfOnce immediately and then every interval until
@@ -784,19 +813,39 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		// operator creates the bulk operation (Phase 10 + 13).
 		var p struct {
 			NewName string `json:"new_name"`
+			Find    string `json:"rename_find"`
+			Replace string `json:"rename_replace"`
 		}
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
 			return "failed", `{"error":"invalid payload"}`
 		}
+		newName := p.NewName
+		if p.Find != "" {
+			// Regex find/replace against this machine's CURRENT hostname,
+			// so one operation renames a whole fleet consistently
+			// (LAB-A-01 -> LAB-B-01, LAB-A-02 -> LAB-B-02, ...).
+			re, rerr := regexp.Compile(p.Find)
+			if rerr != nil {
+				return "failed", fmt.Sprintf(`{"error":"bad rename regex: %s"}`, errString(rerr))
+			}
+			host, _ := os.Hostname()
+			newName = re.ReplaceAllString(host, p.Replace)
+			if newName == "" || newName == host {
+				return "ok", fmt.Sprintf(`{"skipped":true,"host":%q}`, host)
+			}
+		}
+		if newName == "" {
+			return "failed", `{"error":"no new name"}`
+		}
 		body := fmt.Sprintf(`Rename-Computer -NewName '%s' -Force -Restart`,
-			ps1Escape(p.NewName))
+			ps1Escape(newName))
 		code, err := runner.Run(ctx, "powershell",
 			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body},
 			"")
 		if err != nil || code != 0 {
 			return "failed", fmt.Sprintf(`{"exit_code":%d,"error":%q}`, code, errString(err))
 		}
-		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, p.NewName)
+		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, newName)
 
 	case "software_push":
 		// Payload: {"package_id": N}. The agent fetches that package's
