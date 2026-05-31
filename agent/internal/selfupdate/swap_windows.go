@@ -13,10 +13,14 @@ import (
 // Swap performs the in-place upgrade on Windows. newExe must already
 // be downloaded and SHA-256-verified by the caller. relaunchArgs are
 // the command-line args that the freshly-installed agent should be
-// started with (typically os.Args from the running process). The
-// function writes a .cmd updater, spawns it detached, and returns;
-// the caller is expected to exit immediately afterward.
-func Swap(newExe string, relaunchArgs []string) error {
+// started with (typically os.Args from the running process). When
+// serviceName is non-empty the agent is running under the SCM, so the
+// updater restarts it via `sc start <serviceName>` (after the SCM has
+// stopped the process) instead of launching a detached console process
+// -- otherwise the upgraded agent would run outside the service. The
+// function writes a .cmd updater, spawns it detached, and returns; the
+// caller is expected to exit immediately afterward.
+func Swap(newExe string, relaunchArgs []string, serviceName string) error {
 	cur, err := CurrentExe()
 	if err != nil {
 		return err
@@ -54,14 +58,21 @@ func Swap(newExe string, relaunchArgs []string) error {
 	fmt.Fprintf(&b, "  move /Y \"%s.bak\" \"%s\" >NUL\r\n", cur, cur)
 	fmt.Fprintf(&b, "  goto :abort\r\n")
 	fmt.Fprintf(&b, ")\r\n")
-	// Relaunch with the same command-line.
-	b.WriteString("start \"\" ")
-	b.WriteString(quoteForCmd(cur))
-	for _, a := range relaunchArgs[1:] { // skip argv[0]
-		b.WriteString(" ")
-		b.WriteString(quoteForCmd(a))
+	// Relaunch. As a service: let the SCM start the upgraded binary, so it
+	// runs under the service again (a console relaunch would detach it from
+	// the SCM and isWindowsService() would be false). As a console process:
+	// start the new exe directly with the same command line.
+	if serviceName != "" {
+		fmt.Fprintf(&b, "sc start %s >NUL 2>&1\r\n", quoteForCmd(serviceName))
+	} else {
+		b.WriteString("start \"\" ")
+		b.WriteString(quoteForCmd(cur))
+		for _, a := range relaunchArgs[1:] { // skip argv[0]
+			b.WriteString(" ")
+			b.WriteString(quoteForCmd(a))
+		}
+		b.WriteString("\r\n")
 	}
-	b.WriteString("\r\n")
 	// Self-delete the updater script and the .bak after a short
 	// settle time so a quick re-update doesn't overwrite the .bak
 	// before the agent has stabilised.

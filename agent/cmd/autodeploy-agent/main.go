@@ -356,8 +356,22 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
+	// When running under the SCM, self-update must restart the SERVICE
+	// (not relaunch a detached console process), or the upgraded agent
+	// would run outside the service. Empty in console mode.
+	svc := ""
+	if isWindowsService() {
+		svc = serviceName
+	}
 	runSelfOnce(ctx, log, c, f)
 	shipLogs(log, shipper, f.server, f.insecureTLS)
+	// Apply a pending self-update after the first poll, so a freshly
+	// uploaded agent version is picked up without waiting a full interval.
+	if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
+		log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
+		shipLogs(log, shipper, f.server, f.insecureTLS)
+		return
+	}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
@@ -367,6 +381,11 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		case <-tick.C:
 			runSelfOnce(ctx, log, c, f)
 			shipLogs(log, shipper, f.server, f.insecureTLS)
+			if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
+				log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
+				shipLogs(log, shipper, f.server, f.insecureTLS)
+				return
+			}
 		}
 	}
 }
@@ -744,7 +763,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		// true when an update was successfully launched -- the
 		// updater script is now running and will restart us, so
 		// the agent process must exit promptly.
-		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f) {
+		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, "") {
 			log.Info("selfupdate.exiting",
 				slog.String("note", "updater script spawned; exiting so the swap can complete"))
 			shipLogs(log, shipper, f.server, f.insecureTLS)
@@ -763,7 +782,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 // updater script. Returns true when the updater has been launched
 // (so the caller should exit). All failure paths return false so a
 // transient network glitch doesn't break the check-in loop.
-func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
+func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, serviceName string) bool {
 	var info selfupdate.UpdateInfo
 	body := map[string]string{
 		"os":              runtime.GOOS,
@@ -796,7 +815,7 @@ func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		slog.String("path", dst),
 		slog.String("sha256", info.SHA256),
 	)
-	if err := selfupdate.Swap(dst, os.Args); err != nil {
+	if err := selfupdate.Swap(dst, os.Args, serviceName); err != nil {
 		log.Warn("selfupdate.swap", slog.String("error", err.Error()))
 		return false
 	}
