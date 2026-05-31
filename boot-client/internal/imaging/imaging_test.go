@@ -33,8 +33,10 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	mustContain := []string{
 		"sgdisk --zap-all /dev/sda",
 		// Single FAT32 boot partition at the END of the disk (negative
-		// start), leaving the front free for Windows Setup.
-		"--new=1:-7680M:0 --typecode=1:ef00 --change-name=1:ADBOOT /dev/sda",
+		// start), leaving the front free for Windows Setup. Type 0700
+		// (basic data) NOT ef00 (ESP) so Windows gives it a drive letter
+		// and Setup can find sources\install.swm on it.
+		"--new=1:-7680M:0 --typecode=1:0700 --change-name=1:ADBOOT /dev/sda",
 		"mkfs.fat -F32 -n ADBOOT /dev/sda1",
 		// Partition is mounted BEFORE the media download (which streams
 		// straight onto it, avoiding a RAM staging copy).
