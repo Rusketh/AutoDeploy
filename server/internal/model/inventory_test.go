@@ -94,13 +94,30 @@ func TestUpsertFromIdentityCreatesThenUpdates(t *testing.T) {
 	if a.ID == 0 || a.SystemUUID != "uuid-aaaa" {
 		t.Errorf("create wrong: %+v", a)
 	}
-	// Second upsert with same UUID returns same record.
+	// A server-minted agent_id is assigned at creation and is a distinct,
+	// non-empty value (NOT the BIOS UUID).
+	if a.AgentID == "" || a.AgentID == a.SystemUUID {
+		t.Errorf("agent_id not minted distinctly: %+v", a)
+	}
+	// Second upsert with same UUID returns same record AND keeps the same
+	// agent_id (never re-minted).
 	b, err := repo.UpsertFromIdentity(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.ID != a.ID {
 		t.Errorf("expected same id on second upsert, got %d -> %d", a.ID, b.ID)
+	}
+	if b.AgentID != a.AgentID {
+		t.Errorf("agent_id changed across upserts: %q -> %q", a.AgentID, b.AgentID)
+	}
+	// GetByAgentID resolves the same machine; empty never matches.
+	got, err := repo.GetByAgentID(ctx, a.AgentID)
+	if err != nil || got.ID != a.ID {
+		t.Errorf("GetByAgentID(%q) = %+v, %v", a.AgentID, got, err)
+	}
+	if _, err := repo.GetByAgentID(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("empty agent_id should not match, got %v", err)
 	}
 	if _, err := repo.UpsertFromIdentity(ctx, match.Identity{}); !errors.Is(err, ErrValidation) {
 		t.Errorf("expected validation error for empty UUID, got %v", err)
@@ -118,7 +135,7 @@ func TestBindingAndHistory(t *testing.T) {
 	imgID := i.ID
 	if err := inv.UpsertBinding(ctx, MachineBinding{
 		MachineID: m.ID, ImageID: &imgID, MachineName: "LAB-01",
-		TargetOU: "OU=Lab,DC=corp,DC=example",
+		TargetOU:         "OU=Lab,DC=corp,DC=example",
 		GroupMemberships: []string{"Lab-Computers", "All-Workstations"},
 	}); err != nil {
 		t.Fatal(err)

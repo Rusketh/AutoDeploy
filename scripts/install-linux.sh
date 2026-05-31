@@ -101,6 +101,38 @@ install -d -m 0750 -o autodeploy -g autodeploy "$DATA_DIR"
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/ipxe"
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/downloads"
 
+# Build the latest Windows agent from THIS source tree (when the installer
+# runs from a checkout with a Go toolchain) and install it into downloads,
+# so the server always serves an agent matching this build. The boot-the-
+# media deploy injects that binary (via $OEM$/SetupComplete) and installs
+# it as the resident service. Release-tarball installs (no source tree or
+# no Go) fall through to the seed + GitHub-fetch logic below; that logic
+# skips the agent when the file already exists, so a successful build here
+# always wins.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if command -v go >/dev/null 2>&1 && [ -f "$REPO_ROOT/agent/go.mod" ]; then
+    echo "== Building latest Windows agent from source =="
+    AGENT_VER="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || true)"
+    [ -n "$AGENT_VER" ] || AGENT_VER="dev"
+    AGENT_BIN="$DATA_DIR/downloads/autodeploy-agent-windows-amd64.exe"
+    if ( cd "$REPO_ROOT/agent" && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w -X main.Version=$AGENT_VER" \
+            -o "$AGENT_BIN" ./cmd/autodeploy-agent ); then
+        # Sidecars the server reads: .version drives self-update decisions,
+        # .sha256 is verified before the agent swaps its binary. Write the
+        # .sha256 from inside downloads so `sha256sum -c` resolves it.
+        printf '%s\n' "$AGENT_VER" > "$AGENT_BIN.version"
+        ( cd "$DATA_DIR/downloads" \
+            && sha256sum autodeploy-agent-windows-amd64.exe > autodeploy-agent-windows-amd64.exe.sha256 )
+        chown autodeploy:autodeploy "$AGENT_BIN" "$AGENT_BIN.version" "$AGENT_BIN.sha256"
+        chmod 0644 "$AGENT_BIN" "$AGENT_BIN.version" "$AGENT_BIN.sha256"
+        echo "    installed $AGENT_BIN ($AGENT_VER)"
+    else
+        echo "  WARN: agent build failed; falling back to seeded/fetched binary." >&2
+        rm -f "$AGENT_BIN"
+    fi
+fi
+
 # Seed the downloads directory with any agent / boot client binaries
 # that travelled in the same release tarball, so the portal's
 # Downloads page works out of the box.

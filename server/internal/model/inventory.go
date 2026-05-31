@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -20,8 +21,13 @@ import (
 // MachineRecord is a known machine in inventory, keyed on its stable
 // hardware identity (SMBIOS UUID).
 type MachineRecord struct {
-	ID                 ID        `json:"id"`
-	SystemUUID         string    `json:"system_uuid"`
+	ID         ID     `json:"id"`
+	SystemUUID string `json:"system_uuid"`
+	// AgentID is AutoDeploy's own per-machine UUID, minted server-side
+	// (migration 0012). It is the stable object id the agent stores in the
+	// registry and polls with -- the BIOS UUID is not trusted for
+	// uniqueness across a bulk fleet.
+	AgentID            string    `json:"agent_id"`
 	SystemSerial       string    `json:"system_serial"`
 	SystemManufacturer string    `json:"system_manufacturer"`
 	SystemProduct      string    `json:"system_product"`
@@ -81,16 +87,20 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 	existing, err := r.GetByUUID(ctx, id.SystemUUID)
 	if err == nil {
 		// Update identity fields (a firmware update can change vendor
-		// strings) and last_seen.
+		// strings) and last_seen. Backfill agent_id if this is a row that
+		// predates migration 0012 (still empty); never overwrite an id
+		// already minted.
 		_, err := r.db.ExecContext(ctx, `
 			UPDATE machine_record
 			SET system_serial=?, system_manufacturer=?, system_product=?,
 			    bios_vendor=?, bios_version=?, board_manufacturer=?, board_product=?, board_serial=?,
+			    agent_id=CASE WHEN agent_id='' THEN ? ELSE agent_id END,
 			    last_seen=CURRENT_TIMESTAMP
 			WHERE id=?`,
 			id.SystemSerial, id.SystemManufacturer, id.SystemProduct,
 			id.BIOSVendor, id.BIOSVersion,
 			id.BoardManufacturer, id.BoardProduct, id.BoardSerial,
+			uuid.NewString(),
 			existing.ID)
 		if err != nil {
 			return MachineRecord{}, err
@@ -102,10 +112,10 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO machine_record
-		    (system_uuid, system_serial, system_manufacturer, system_product,
+		    (system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		     bios_vendor, bios_version, board_manufacturer, board_product, board_serial)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id.SystemUUID, id.SystemSerial, id.SystemManufacturer, id.SystemProduct,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id.SystemUUID, uuid.NewString(), id.SystemSerial, id.SystemManufacturer, id.SystemProduct,
 		id.BIOSVendor, id.BIOSVersion,
 		id.BoardManufacturer, id.BoardProduct, id.BoardSerial)
 	if err != nil {
@@ -119,11 +129,11 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 func (r *InventoryRepo) Get(ctx context.Context, id ID) (MachineRecord, error) {
 	var v MachineRecord
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, system_uuid, system_serial, system_manufacturer, system_product,
+		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
 		       first_seen, last_seen
 		FROM machine_record WHERE id=?`, id).Scan(
-		&v.ID, &v.SystemUUID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
+		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
 		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
 		&v.FirstSeen, &v.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -136,15 +146,37 @@ func (r *InventoryRepo) Get(ctx context.Context, id ID) (MachineRecord, error) {
 func (r *InventoryRepo) GetByUUID(ctx context.Context, uuid string) (MachineRecord, error) {
 	var v MachineRecord
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, system_uuid, system_serial, system_manufacturer, system_product,
+		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
 		       first_seen, last_seen
 		FROM machine_record WHERE system_uuid=?`, uuid).Scan(
-		&v.ID, &v.SystemUUID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
+		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
 		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
 		&v.FirstSeen, &v.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MachineRecord{}, fmt.Errorf("machine uuid %s: %w", uuid, ErrNotFound)
+	}
+	return v, err
+}
+
+// GetByAgentID looks up a machine by AutoDeploy's server-minted agent_id
+// (the object id the agent identifies itself with). Empty agentID never
+// matches -- it's the transient default for un-backfilled rows.
+func (r *InventoryRepo) GetByAgentID(ctx context.Context, agentID string) (MachineRecord, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return MachineRecord{}, fmt.Errorf("agent_id: %w", ErrNotFound)
+	}
+	var v MachineRecord
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
+		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
+		       first_seen, last_seen
+		FROM machine_record WHERE agent_id=?`, agentID).Scan(
+		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
+		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
+		&v.FirstSeen, &v.LastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MachineRecord{}, fmt.Errorf("machine agent_id %s: %w", agentID, ErrNotFound)
 	}
 	return v, err
 }

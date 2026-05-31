@@ -19,10 +19,15 @@ import (
 // fetch, with each entry's role and intended on-disk path. The Boot Client
 // is a fact reporter and a step executor — it does not compute any of this.
 type Manifest struct {
-	ImageID  model.ID      `json:"image_id"`
-	BaseURL  string        `json:"base_url"`
+	ImageID model.ID `json:"image_id"`
+	BaseURL string   `json:"base_url"`
+	// AgentID is the machine's server-minted object id. The Boot Client
+	// writes it (with the server URL) into the registry at deploy time so
+	// the resident agent can identify itself without trusting the BIOS
+	// UUID. Empty on the identity-less GET path.
+	AgentID  string         `json:"agent_id,omitempty"`
 	Items    []ManifestItem `json:"items"`
-	Warnings []string      `json:"warnings,omitempty"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 // ManifestItem is one downloadable payload.
@@ -142,6 +147,16 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 	m := Manifest{ImageID: id, BaseURL: base, Warnings: res.Diagnostics}
 	if site != "" {
 		m.Warnings = append(m.Warnings, "payload site: "+site)
+	}
+	// Ensure the machine record exists and carries a server-minted agent_id,
+	// then hand it to the client for deploy-time registry provisioning.
+	// Best-effort: a failure must not break the deploy.
+	if h.Inventory != nil && identity.SystemUUID != "" {
+		if rec, uerr := h.Inventory.UpsertFromIdentity(ctx, identity); uerr == nil {
+			m.AgentID = rec.AgentID
+		} else {
+			m.Warnings = append(m.Warnings, "agent provisioning: "+uerr.Error())
+		}
 	}
 	if res.ISO != nil && res.ISO.DeployReady() {
 		// Boot-the-media deploy: hand the client the whole extracted media

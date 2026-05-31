@@ -36,6 +36,9 @@ import (
 // Real deployments use OSRunner; tests use Recorder.
 type Runner interface {
 	Exec(ctx context.Context, name string, args ...string) error
+	// Output runs a read-only command and returns its stdout. Used to read
+	// the current efibootmgr entries so stale ones can be pruned.
+	Output(ctx context.Context, name string, args ...string) (string, error)
 }
 
 // OSRunner runs commands via os/exec, streaming stdout/stderr to log.
@@ -62,6 +65,20 @@ func (r *OSRunner) Exec(ctx context.Context, name string, args ...string) error 
 	cmd.Stdout = stdoutWriter{r.Log}
 	cmd.Stderr = stderrWriter{r.Log}
 	return cmd.Run()
+}
+
+// Output runs a read-only command and returns its stdout. Unlike Exec it
+// runs even under DryRun -- listing state is harmless and lets the dry run
+// log what it would prune.
+func (r *OSRunner) Output(ctx context.Context, name string, args ...string) (string, error) {
+	if r.Log != nil {
+		r.Log.Info("imaging.exec.output",
+			slog.String("actor", "boot-client"),
+			slog.String("target", name),
+			slog.String("args", fmt.Sprintf("%q", args)))
+	}
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	return string(out), err
 }
 
 type stdoutWriter struct{ log *slog.Logger }
@@ -195,17 +212,68 @@ func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath stri
 	return nil
 }
 
+// bootEntryLabel is the UEFI boot-entry description AutoDeploy creates and
+// prunes. Kept as one constant so create and cleanup never drift.
+const bootEntryLabel = "AutoDeploy Setup"
+
 // RegisterBootEntry adds a UEFI boot entry pointing at the staged
 // partition's bootloader and makes it first in BootOrder. It is
 // best-effort: the media also carries the firmware fallback path
 // \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that can
 // still boot the staged media even if this fails. The caller logs a
 // warning and reboots anyway rather than stranding a fully-staged disk.
+//
+// It first prunes any AutoDeploy entries left by previous deploys --
+// without this the firmware boot list accumulates a BOOTX64.EFI entry on
+// every run.
 func RegisterBootEntry(ctx context.Context, plan MediaPlan, r Runner) error {
+	if out, err := r.Output(ctx, "efibootmgr"); err == nil {
+		for _, num := range parseAutoDeployBootNums(out) {
+			// -b NNNN -B selects and deletes that boot entry. Best-effort:
+			// a stale entry we can't remove shouldn't block the new one.
+			_ = r.Exec(ctx, "efibootmgr", "-b", num, "-B")
+		}
+	}
 	return r.Exec(ctx, "efibootmgr", "--create",
 		"--disk", plan.TargetDisk, "--part", "1",
 		"--loader", `\EFI\BOOT\BOOTX64.EFI`,
-		"--label", "AutoDeploy Setup")
+		"--label", bootEntryLabel)
+}
+
+// parseAutoDeployBootNums extracts the 4-hex bootnums of every existing
+// AutoDeploy entry from efibootmgr's listing, e.g. a line
+// "Boot0003* AutoDeploy Setup\tHD(...)" yields "0003".
+func parseAutoDeployBootNums(efibootmgrOutput string) []string {
+	var nums []string
+	for _, line := range strings.Split(efibootmgrOutput, "\n") {
+		rest, ok := strings.CutPrefix(line, "Boot")
+		if !ok || len(rest) < 4 {
+			continue
+		}
+		num := rest[:4]
+		if !isHex4(num) {
+			continue
+		}
+		// After the 4-digit bootnum comes an optional '*' (active flag)
+		// then a space then the description.
+		desc := strings.TrimSpace(strings.TrimPrefix(rest[4:], "*"))
+		if strings.HasPrefix(desc, bootEntryLabel) {
+			nums = append(nums, num)
+		}
+	}
+	return nums
+}
+
+func isHex4(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // placeUnattend drops the answer file at the media root as
