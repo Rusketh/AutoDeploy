@@ -68,6 +68,11 @@ type Framebuffer struct {
 	// channel bit offsets/lengths for packing.
 	rOff, gOff, bOff uint32
 	rLen, gLen, bLen uint32
+	// vt holds the console put into graphics mode for the GUI's lifetime
+	// (so the kernel text console / fbcon stops drawing over us). nil if
+	// VT control couldn't be acquired -- the GUI still works, but console
+	// text may flicker through, which is the pre-fix behaviour.
+	vt *vtGuard
 }
 
 // Open opens the given framebuffer device (use "" for /dev/fb0) and maps it.
@@ -111,6 +116,9 @@ func Open(dev string) (*Framebuffer, error) {
 		lineLength: int(finfo.LineLength),
 		rOff:       vinfo.RedOffset, gOff: vinfo.GreenOffset, bOff: vinfo.BlueOffset,
 		rLen: vinfo.RedLength, gLen: vinfo.GreenLen, bLen: vinfo.BlueLen,
+		// Take the console into graphics mode so the kernel text console
+		// (fbcon) stops painting over the GUI. Best-effort: nil on failure.
+		vt: acquireVT(),
 	}, nil
 }
 
