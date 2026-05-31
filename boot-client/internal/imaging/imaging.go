@@ -136,9 +136,19 @@ func PreparePartition(ctx context.Context, plan MediaPlan, r Runner) (mountPath 
 	}
 	// Negative start places the partition at the end of the disk; the
 	// remaining space at the front is left free for the OS install.
+	//
+	// Type 0700 (Microsoft basic data), NOT ef00 (EFI System Partition):
+	// an ESP is hidden by Windows and never gets a drive letter, so
+	// Windows Setup won't scan it for sources\install.swm and dead-ends at
+	// "a media driver is missing". A basic-data FAT32 partition gets a
+	// letter in WinPE, so Setup finds the install source. It still boots:
+	// RegisterBootEntry adds an explicit UEFI boot entry that loads
+	// \EFI\BOOT\BOOTX64.EFI by partition GUID, which firmware honours
+	// regardless of partition type (ESP type only gates *automatic*
+	// removable-media fallback discovery).
 	if err := r.Exec(ctx, "sgdisk",
 		fmt.Sprintf("--new=1:-%dM:0", sizeMiB),
-		"--typecode=1:ef00", "--change-name=1:ADBOOT", d); err != nil {
+		"--typecode=1:0700", "--change-name=1:ADBOOT", d); err != nil {
 		return "", fmt.Errorf("partition %s: %w", d, err)
 	}
 	boot := partName(d, 1)
