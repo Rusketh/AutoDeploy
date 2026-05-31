@@ -8,21 +8,21 @@
 //
 // Sub-commands:
 //
-//   identify          Print SMBIOS identity and exit.
-//   menu              Report identity, fetch deployment menu, render and
-//                     wait for an operator selection (interactive).
-//   deploy <image-id> Fetch the manifest for the image, mirror the install
-//                     media, stage it onto a bootable FAT32 partition and
-//                     reboot into the media's own installer.
+//	identify          Print SMBIOS identity and exit.
+//	menu              Report identity, fetch deployment menu, render and
+//	                  wait for an operator selection (interactive).
+//	deploy <image-id> Fetch the manifest for the image, mirror the install
+//	                  media, stage it onto a bootable FAT32 partition and
+//	                  reboot into the media's own installer.
 //
 // Flags affecting all sub-commands:
 //
-//   -server <url>     AutoDeploy server base URL (required for menu/deploy).
-//   -sysfs <path>     DMI sysfs root (override for testing).
-//   -insecure-tls     Skip TLS cert verification (dev only).
-//   -disk <device>    Target disk device for deploy (default /dev/sda).
-//   -work <dir>       Scratch directory (default /run/autodeploy).
-//   -dry-run          Log destructive steps without executing them.
+//	-server <url>     AutoDeploy server base URL (required for menu/deploy).
+//	-sysfs <path>     DMI sysfs root (override for testing).
+//	-insecure-tls     Skip TLS cert verification (dev only).
+//	-disk <device>    Target disk device for deploy (default /dev/sda).
+//	-work <dir>       Scratch directory (default /run/autodeploy).
+//	-dry-run          Log destructive steps without executing them.
 package main
 
 import (
@@ -145,8 +145,8 @@ type MenuItem struct {
 }
 
 type menuResponse struct {
-	Items    []MenuItem `json:"items"`
-	Reimage  *MenuItem  `json:"reimage,omitempty"`
+	Items   []MenuItem `json:"items"`
+	Reimage *MenuItem  `json:"reimage,omitempty"`
 }
 
 type manifestItem struct {
@@ -297,12 +297,27 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		os.Exit(0)
 	}
 
+	// Fetch the agent and render its SetupComplete.cmd. Best-effort: if no
+	// agent is served, the deploy still proceeds (just without an agent).
+	agentPath := fetchAgent(ctx, c, log, f.work)
+	setupCompletePath := ""
+	if agentPath != "" {
+		if scp, err := writeSetupComplete(f.work, f.server); err != nil {
+			log.Warn("agent.setupcomplete", slog.String("error", err.Error()))
+			agentPath = "" // no installer script -> don't strand a copied-but-uninstalled binary
+		} else {
+			setupCompletePath = scp
+		}
+	}
+
 	plan := imaging.MediaPlan{
-		TargetDisk:   f.disk,
-		MediaBytes:   mediaItem.Size,
-		UnattendPath: unattendPath,
-		DriverPaths:  driverPaths,
-		WorkDir:      f.work,
+		TargetDisk:        f.disk,
+		MediaBytes:        mediaItem.Size,
+		UnattendPath:      unattendPath,
+		DriverPaths:       driverPaths,
+		AgentPath:         agentPath,
+		SetupCompletePath: setupCompletePath,
+		WorkDir:           f.work,
 	}
 	runner := &imaging.OSRunner{Log: log, DryRun: f.dryRun}
 	log.Info("deploy.stage.start",
@@ -430,6 +445,67 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 			slog.String("url", it.URL),
 			slog.Int64("bytes", n))
 	})
+}
+
+// agentUpdateInfo mirrors the server's /api/v1/agent/update-info response.
+type agentUpdateInfo struct {
+	URL string `json:"url"`
+}
+
+// fetchAgent downloads the Windows agent binary the server serves (if any)
+// into work and returns its path. Best-effort: an empty return means no
+// agent is available, and the deploy proceeds without one rather than
+// failing -- a machine with no agent is still a successfully imaged
+// machine.
+func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work string) string {
+	var info agentUpdateInfo
+	if err := c.GetJSON(ctx, "/api/v1/agent/update-info", &info); err != nil {
+		log.Warn("agent.update_info", slog.String("error", err.Error()))
+		return ""
+	}
+	if info.URL == "" {
+		log.Warn("agent.unavailable", slog.String("reason", "server serves no agent binary"))
+		return ""
+	}
+	dst := filepath.Join(work, "payload-agent.exe")
+	out, err := os.Create(dst)
+	if err != nil {
+		log.Warn("agent.create", slog.String("error", err.Error()))
+		return ""
+	}
+	defer out.Close()
+	if err := c.Download(ctx, info.URL, out, nil); err != nil {
+		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
+		return ""
+	}
+	log.Info("agent.fetched", slog.String("url", info.URL))
+	return dst
+}
+
+// setupCompleteTemplate is the SetupComplete.cmd Windows Setup runs as
+// SYSTEM at the end of installation. It copies the agent (staged by the
+// $OEM$ tree into C:\Windows\AutoDeploy) into Program Files and registers
+// an on-start scheduled task that runs it as SYSTEM on every boot. The
+// server URL is baked in at stage time -- no env-var expansion at logon.
+const setupCompleteTemplate = "@echo off\r\n" +
+	"rem Generated by AutoDeploy. Runs once as SYSTEM at the end of Setup.\r\n" +
+	"set \"SRC=%WINDIR%\\AutoDeploy\\autodeploy-agent.exe\"\r\n" +
+	"set \"DEST=%ProgramFiles%\\AutoDeploy\"\r\n" +
+	"if not exist \"%DEST%\" mkdir \"%DEST%\"\r\n" +
+	"copy /y \"%SRC%\" \"%DEST%\\autodeploy-agent.exe\" >nul\r\n" +
+	"schtasks /create /tn \"AutoDeploy Agent\" /tr \"\\\"%DEST%\\autodeploy-agent.exe\\\" --server {{SERVER}}\" /sc onstart /ru SYSTEM /rl HIGHEST /f\r\n" +
+	"schtasks /run /tn \"AutoDeploy Agent\"\r\n" +
+	"exit /b 0\r\n"
+
+// writeSetupComplete renders SetupComplete.cmd with the server URL baked
+// in and writes it to work, returning its path.
+func writeSetupComplete(work, serverURL string) (string, error) {
+	content := strings.ReplaceAll(setupCompleteTemplate, "{{SERVER}}", serverURL)
+	dst := filepath.Join(work, "SetupComplete.cmd")
+	if err := os.WriteFile(dst, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
 // runAccessPIN prompts the operator for the global access PIN (if the

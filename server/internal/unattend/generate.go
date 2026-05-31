@@ -9,11 +9,6 @@ import (
 	"strings"
 )
 
-// AgentInstallCommand is the synchronous first-logon command that bootstraps
-// the AutoDeploy agent on the freshly imaged machine. It is appended to the
-// operator's first-logon list automatically by Generate.
-const AgentInstallCommand = `cmd /c start /b "" \\Windows\\AutoDeploy\\autodeploy-agent.exe --server %AUTODEPLOY_SERVER%`
-
 // PowerSchemeHighPerformance is the well-known Windows GUID for the
 // High Performance scheme.
 const PowerSchemeHighPerformance = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
@@ -374,26 +369,30 @@ func writeOOBE(b *bytes.Buffer, s Settings) {
 `, esc(s.AutoLogon.Username), esc(s.AutoLogon.Password), s.AutoLogon.Count)
 	}
 
-	// First-logon commands: sort by Order, append the agent bootstrap.
+	// First-logon commands: operator-defined only, sorted by Order. The
+	// AutoDeploy agent is NOT bootstrapped here anymore -- it's injected
+	// into the installed OS via the boot media's $OEM$ tree and installed
+	// by SetupComplete.cmd, which runs as SYSTEM at the end of Setup with
+	// no network/first-logon dependency. Omit the block entirely when the
+	// operator defined no commands (an empty <FirstLogonCommands> is
+	// pointless and some Setup builds dislike it).
 	cmds := append([]FirstLogonCommand(nil), s.FirstLogonCommands...)
 	sort.SliceStable(cmds, func(i, j int) bool { return cmds[i].Order < cmds[j].Order })
-	cmds = append(cmds, FirstLogonCommand{
-		Order:       lastOrder(cmds) + 10,
-		Description: "Start AutoDeploy agent",
-		CommandLine: AgentInstallCommand,
-	})
-	fmt.Fprint(b, `      <FirstLogonCommands>
+	if len(cmds) > 0 {
+		fmt.Fprint(b, `      <FirstLogonCommands>
 `)
-	for i, c := range cmds {
-		fmt.Fprintf(b, `        <SynchronousCommand wcm:action="add">
+		for i, c := range cmds {
+			fmt.Fprintf(b, `        <SynchronousCommand wcm:action="add">
           <Order>%d</Order>
           <Description>%s</Description>
           <CommandLine>%s</CommandLine>
         </SynchronousCommand>
 `, i+1, esc(c.Description), esc(c.CommandLine))
+		}
+		fmt.Fprint(b, `      </FirstLogonCommands>
+`)
 	}
-	fmt.Fprint(b, `      </FirstLogonCommands>
-    </component>
+	fmt.Fprint(b, `    </component>
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <InputLocale>`+esc(s.Keyboard)+`</InputLocale>
       <SystemLocale>`+esc(s.Locale)+`</SystemLocale>
@@ -476,13 +475,6 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-func lastOrder(cmds []FirstLogonCommand) int {
-	if len(cmds) == 0 {
-		return 0
-	}
-	return cmds[len(cmds)-1].Order
 }
 
 // XMLContainsSecret reports whether x mentions one of the supplied secret

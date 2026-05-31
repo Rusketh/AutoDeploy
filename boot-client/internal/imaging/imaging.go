@@ -93,6 +93,12 @@ type MediaPlan struct {
 	MediaBytes   int64
 	UnattendPath string
 	DriverPaths  []string
+	// AgentPath is the AutoDeploy agent binary to inject into the
+	// installed OS via the media's $OEM$ tree (empty = no agent).
+	// SetupCompletePath is the generated SetupComplete.cmd that installs
+	// it post-Setup. Both empty = deploy without an agent.
+	AgentPath         string
+	SetupCompletePath string
 	// WorkDir is a scratch directory for the mount point.
 	WorkDir string
 }
@@ -177,6 +183,9 @@ func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath stri
 	if err := stageDrivers(ctx, plan, r, mountPath); err != nil {
 		return fmt.Errorf("stage drivers: %w", err)
 	}
+	if err := stageAgent(ctx, plan, r, mountPath); err != nil {
+		return fmt.Errorf("stage agent: %w", err)
+	}
 	// Flush before unmount so writeback of several GB of media doesn't race
 	// the unmount.
 	_ = r.Exec(ctx, "sync")
@@ -229,6 +238,44 @@ func stageDrivers(ctx context.Context, plan MediaPlan, r Runner, mount string) e
 			if err := r.Exec(ctx, "cp", p, dst); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// stageAgent injects the AutoDeploy agent and its SetupComplete.cmd into
+// the installed OS using Windows Setup's $OEM$ mechanism. Files under
+// sources\$OEM$\$$\ are copied to %WINDIR% (C:\Windows) during install:
+//
+//	sources\$OEM$\$$\AutoDeploy\autodeploy-agent.exe -> C:\Windows\AutoDeploy\...
+//	sources\$OEM$\$$\Setup\Scripts\SetupComplete.cmd -> C:\Windows\Setup\Scripts\...
+//
+// Windows runs SetupComplete.cmd as SYSTEM at the end of Setup; it copies
+// the agent into Program Files and registers an on-start task. This
+// replaces the old (broken) first-logon \\Windows\... bootstrap, which
+// used a bad UNC path, an unset %AUTODEPLOY_SERVER%, and a binary that was
+// never actually placed on the machine.
+func stageAgent(ctx context.Context, plan MediaPlan, r Runner, mount string) error {
+	if plan.AgentPath == "" {
+		return nil
+	}
+	// $$ maps to %WINDIR%. The literal "$OEM$"/"$$" names are passed as
+	// exec args (no shell), so the dollar signs are not expanded.
+	oemWin := filepath.Join(mount, "sources", "$OEM$", "$$")
+	agentDir := filepath.Join(oemWin, "AutoDeploy")
+	if err := r.Exec(ctx, "mkdir", "-p", agentDir); err != nil {
+		return err
+	}
+	if err := r.Exec(ctx, "cp", plan.AgentPath, filepath.Join(agentDir, "autodeploy-agent.exe")); err != nil {
+		return err
+	}
+	if plan.SetupCompletePath != "" {
+		scriptsDir := filepath.Join(oemWin, "Setup", "Scripts")
+		if err := r.Exec(ctx, "mkdir", "-p", scriptsDir); err != nil {
+			return err
+		}
+		if err := r.Exec(ctx, "cp", plan.SetupCompletePath, filepath.Join(scriptsDir, "SetupComplete.cmd")); err != nil {
+			return err
 		}
 	}
 	return nil
