@@ -62,8 +62,33 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/version", handleVersion())
 	mux.HandleFunc("POST /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
+	mux.HandleFunc("GET /api/v1/agent/download/{name}", handleAgentDownload(r))
 	mux.HandleFunc("POST /api/v1/server/update", handleServerUpdate(r))
 	mux.HandleFunc("POST /api/v1/server/install-agent", handleInstallAgent(r))
+}
+
+// handleAgentDownload serves an agent binary (or its .sha256/.version
+// sidecar) from the downloads directory over a PUBLIC route. The Boot
+// Client and the agent's self-update fetch it UNAUTHENTICATED -- the
+// portal's /portal/downloads/file path is session-gated, so pointing
+// clients there returned the login-page HTML (a ~10 KB "corrupt" .exe).
+// Only clean basenames with the agent prefix are served, so this can't be
+// used to read arbitrary files.
+func handleAgentDownload(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		name := req.PathValue("name")
+		if name == "" || name != filepath.Base(name) ||
+			strings.Contains(name, "..") || !strings.HasPrefix(name, "autodeploy-agent-") {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		dir := downloadsDirFor(r)
+		if dir == "" {
+			http.Error(w, "downloads not configured", http.StatusNotFound)
+			return
+		}
+		http.ServeFile(w, req, filepath.Join(dir, name))
+	}
 }
 
 // handleInstallAgent downloads the requested agent binary + sidecars
@@ -423,9 +448,9 @@ type agentUpdateRequest struct {
 	// OS / Arch let one server serve agents for multiple platforms.
 	// Empty defaults to "windows" / "amd64" since that's the
 	// supported deployment target.
-	OS              string `json:"os"`
-	Arch            string `json:"arch"`
-	CurrentVersion  string `json:"current_version"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	CurrentVersion string `json:"current_version"`
 }
 
 func handleAgentUpdateInfo(r Repos) http.HandlerFunc {
@@ -443,7 +468,10 @@ func handleAgentUpdateInfo(r Repos) http.HandlerFunc {
 		filename, version, sha, size := agentBinaryForArch(r, in.OS, in.Arch)
 		info := AgentUpdateInfo{Current: version}
 		if filename != "" && version != "" {
-			info.URL = baseURLFromRequest(req) + "/portal/downloads/file/" + filename
+			// Public, unauthenticated download route -- NOT the session-gated
+			// /portal/downloads/file path (which would hand clients a login
+			// page instead of the binary).
+			info.URL = baseURLFromRequest(req) + "/api/v1/agent/download/" + filename
 			info.SHA256 = sha
 			info.Size = size
 			info.UpdateAvailable = isOlderVersion(in.CurrentVersion, version)

@@ -477,13 +477,38 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 		log.Warn("agent.create", slog.String("error", err.Error()))
 		return ""
 	}
-	defer out.Close()
 	if err := c.Download(ctx, info.URL, out, nil); err != nil {
+		_ = out.Close()
 		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
+		return ""
+	}
+	_ = out.Close()
+	// Guard against a non-binary body (e.g. an auth redirect's login-page
+	// HTML) being injected as the agent. A Windows PE starts with "MZ".
+	if !looksLikePE(dst) {
+		log.Warn("agent.invalid",
+			slog.String("url", info.URL),
+			slog.String("reason", "downloaded agent is not a PE binary; refusing to inject it"))
 		return ""
 	}
 	log.Info("agent.fetched", slog.String("url", info.URL))
 	return dst
+}
+
+// looksLikePE reports whether the file at path begins with the DOS/PE
+// "MZ" magic. Cheap sanity check so a server error page never ships as the
+// agent.
+func looksLikePE(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var hdr [2]byte
+	if _, err := f.Read(hdr[:]); err != nil {
+		return false
+	}
+	return hdr[0] == 'M' && hdr[1] == 'Z'
 }
 
 // setupCompleteTemplate is the SetupComplete.cmd Windows Setup runs as
