@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -22,26 +24,26 @@ type AgentSoftwareRequest struct {
 
 // AgentSoftwareItem is one software package the agent should evaluate.
 type AgentSoftwareItem struct {
-	PackageID     model.ID                 `json:"package_id"`
-	Name          string                   `json:"name"`
-	OrderValue    int64                    `json:"order_value"`
+	PackageID  model.ID `json:"package_id"`
+	Name       string   `json:"name"`
+	OrderValue int64    `json:"order_value"`
 	// PayloadURL is the legacy single-file payload endpoint. Kept
 	// for backward compat with agents that pre-date multi-file
 	// support; the file-list form (Files) is the new path.
-	PayloadURL    string                   `json:"payload_url"`
+	PayloadURL string `json:"payload_url"`
 	// Files lists every file the agent should download for this
 	// package, addressed by name relative to a per-package work
 	// directory. install_steps that contain bare filenames are
 	// resolved against this set on the agent.
-	Files          []AgentPackageFile      `json:"files,omitempty"`
-	DetectionRules []swspec.DetectionRule  `json:"detection_rules"`
-	InstallSteps   []swspec.InstallStep    `json:"install_steps"`
+	Files          []AgentPackageFile     `json:"files,omitempty"`
+	DetectionRules []swspec.DetectionRule `json:"detection_rules"`
+	InstallSteps   []swspec.InstallStep   `json:"install_steps"`
 }
 
 // AgentPackageFile is one downloadable file in a multi-file package.
 type AgentPackageFile struct {
-	Name      string `json:"name"`        // the filename the operator uploaded
-	URL       string `json:"url"`         // GET this for the bytes
+	Name      string `json:"name"` // the filename the operator uploaded
+	URL       string `json:"url"`  // GET this for the bytes
 	SizeBytes int64  `json:"size_bytes"`
 }
 
@@ -69,6 +71,23 @@ type AgentSelfResponse struct {
 func RegisterAgent(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/software", handleAgentSoftware(r))
 	mux.HandleFunc("GET /api/v1/agent/self", handleAgentSelf(r))
+	mux.HandleFunc("GET /api/v1/agent/package-items", handleAgentPackageItems(r))
+}
+
+// handleAgentPackageItems expands a single software package (plus its
+// transitive dependencies, deps first) into install items. Used by the
+// agent when it runs a bulk "software_push" job, which references a
+// package by id rather than carrying raw steps.
+func handleAgentPackageItems(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		pid, err := strconv.ParseInt(req.URL.Query().Get("package"), 10, 64)
+		if err != nil || pid <= 0 {
+			http.Error(w, "package query parameter required", http.StatusBadRequest)
+			return
+		}
+		items, warnings := expandSoftwareItems(req.Context(), r, []model.ID{model.ID(pid)})
+		writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
+	}
 }
 
 func handleAgentSoftware(r Repos) http.HandlerFunc {
@@ -134,18 +153,30 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 }
 
 // buildSoftwareItems resolves an image's effective software set into agent
-// items. The returned error is the hard resolver failure; per-package
-// issues are returned as warnings.
+// items, expanding package dependencies. The returned error is the hard
+// resolver failure; per-package issues are returned as warnings.
 func buildSoftwareItems(req *http.Request, r Repos, imageID model.ID) ([]AgentSoftwareItem, []string, error) {
 	res, err := r.Resolver.Resolve(req.Context(), imageID)
 	if err != nil {
 		return nil, nil, err
 	}
-	warnings := res.Diagnostics
-	items := make([]AgentSoftwareItem, 0, len(res.Software))
-	base := "/payload/software/"
+	seeds := make([]model.ID, 0, len(res.Software))
 	for _, link := range res.Software {
-		pkg, err := r.Software.Get(req.Context(), link.PackageID)
+		seeds = append(seeds, link.PackageID)
+	}
+	items, warnings := expandSoftwareItems(req.Context(), r, seeds)
+	return items, append(res.Diagnostics, warnings...), nil
+}
+
+// expandSoftwareItems turns seed package IDs into ordered install items:
+// every seed plus its transitive dependencies (deps first), built into the
+// agent's AgentSoftwareItem shape. The slice order is the install order.
+func expandSoftwareItems(ctx context.Context, r Repos, seeds []model.ID) ([]AgentSoftwareItem, []string) {
+	ordered, warnings := r.Software.ResolveOrder(ctx, seeds)
+	base := "/payload/software/"
+	items := make([]AgentSoftwareItem, 0, len(ordered))
+	for i, id := range ordered {
+		pkg, err := r.Software.Get(ctx, id)
 		if err != nil {
 			warnings = append(warnings, err.Error())
 			continue
@@ -158,20 +189,20 @@ func buildSoftwareItems(req *http.Request, r Repos, imageID model.ID) ([]AgentSo
 		if serr != nil {
 			warnings = append(warnings, "package "+pkg.Name+": "+serr.Error())
 		}
-		// Per-package files: software/<id>/files/<name>, downloaded by
-		// the agent and resolved against its workdir. None = scriptless.
+		// Per-package files: software/<id>/files/<name>, downloaded by the
+		// agent and resolved against its workdir. None = scriptless.
 		files := listPackageFiles(r, pkg.ID, base)
 		items = append(items, AgentSoftwareItem{
 			PackageID:      pkg.ID,
 			Name:           pkg.Name,
-			OrderValue:     link.OrderValue,
+			OrderValue:     int64(i), // dependency-aware install order
 			PayloadURL:     base + idStr(pkg.ID),
 			Files:          files,
 			DetectionRules: det,
 			InstallSteps:   steps,
 		})
 	}
-	return items, warnings, nil
+	return items, warnings
 }
 
 // listPackageFiles enumerates a software package's files directory

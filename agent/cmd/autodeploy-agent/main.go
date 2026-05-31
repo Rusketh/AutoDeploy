@@ -284,7 +284,7 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 		for _, j := range resp.Jobs {
-			status, result := executeBulkJob(ctx, log, runner, j.Action, j.Payload)
+			status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
 			_ = c.PostJSON(ctx,
 				fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
 				map[string]any{"status": status, "result_json": result}, nil)
@@ -673,7 +673,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Warn("checkin.fetch", slog.String("error", err.Error()))
 		} else {
 			for _, j := range resp.Jobs {
-				status, result := executeBulkJob(ctx, log, runner, j.Action, j.Payload)
+				status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
 				_ = c.PostJSON(ctx,
 					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
 					map[string]any{"status": status, "result_json": result}, nil)
@@ -748,7 +748,7 @@ func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 
 // executeBulkJob dispatches on action and returns (status, result JSON).
 // Result JSON is bounded so the server can store it.
-func executeBulkJob(ctx context.Context, log *slog.Logger, runner steps.Runner, action, payload string) (string, string) {
+func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, action, payload string) (string, string) {
 	log.Info("bulk.start", slog.String("action", action))
 	switch action {
 	case "script":
@@ -799,28 +799,29 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, runner steps.Runner, 
 		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, p.NewName)
 
 	case "software_push":
-		// Payload: a full swspec.InstallStep object or list to execute
-		// in order. We accept a JSON array for symmetry with Phase 6.
-		var list []swspec.InstallStep
-		if err := json.Unmarshal([]byte(payload), &list); err != nil {
-			// Maybe a single step:
-			var single swspec.InstallStep
-			if err2 := json.Unmarshal([]byte(payload), &single); err2 == nil {
-				list = []swspec.InstallStep{single}
-			} else {
-				return "failed", `{"error":"invalid payload"}`
-			}
+		// Payload: {"package_id": N}. The agent fetches that package's
+		// install items -- plus its transitive dependencies, deps first --
+		// from the server and installs them like any other software set.
+		var p struct {
+			PackageID int64 `json:"package_id"`
 		}
-		results := steps.Execute(ctx, list, runner)
-		ok := true
-		for _, r := range results {
-			if r.Aborted {
-				ok = false
-				break
-			}
+		if err := json.Unmarshal([]byte(payload), &p); err != nil || p.PackageID <= 0 {
+			return "failed", `{"error":"software_push payload must be {\"package_id\":N}"}`
 		}
-		out, _ := json.Marshal(results)
-		if !ok {
+		var resp struct {
+			Items    []softwareItem `json:"items"`
+			Warnings []string       `json:"warnings"`
+		}
+		if err := c.GetJSON(ctx,
+			fmt.Sprintf("/api/v1/agent/package-items?package=%d", p.PackageID), &resp); err != nil {
+			return "failed", fmt.Sprintf(`{"error":%q}`, err.Error())
+		}
+		for _, wn := range resp.Warnings {
+			log.Warn("software_push.warning", slog.String("message", wn))
+		}
+		reports, failed := installPackages(ctx, log, c, f, resp.Items)
+		out, _ := json.Marshal(reports)
+		if failed {
 			return "failed", string(out)
 		}
 		return "ok", string(out)

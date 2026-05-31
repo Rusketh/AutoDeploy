@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -32,8 +33,9 @@ func bulkList(r Repos) http.HandlerFunc {
 
 func bulkFormNew(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		pkgs, _ := r.Software.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Target": model.BulkTarget{}, "Preview": nil,
+			"Target": model.BulkTarget{}, "Preview": nil, "Packages": pkgs,
 		})
 	}
 }
@@ -57,11 +59,12 @@ func bulkPreview(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 			return
 		}
+		pkgs, _ := r.Software.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Target":  t,
-			"Action":  req.FormValue("action"),
-			"Payload": req.FormValue("payload_raw"),
-			"Preview": machines,
+			"Target":   t,
+			"Action":   req.FormValue("action"),
+			"Preview":  machines,
+			"Packages": pkgs,
 		})
 	}
 }
@@ -100,15 +103,16 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			b, _ := json.Marshal(map[string]string{"shell": shell, "body": body})
 			payload = string(b)
 		case model.BulkActionSoftwarePush:
-			// Operator pastes a swspec.InstallStep JSON (advanced). The
-			// structured-steps editor lives on the SoftwarePackage page;
-			// a dedicated bulk-push composer is a future enhancement.
-			payload = strings.TrimSpace(req.FormValue("payload_raw"))
-			if payload == "" {
-				flash(w, "err", "Software push payload required.")
+			// Operator picks a software package; the agent fetches its
+			// install items (plus dependencies) and runs them.
+			pid, err := strconv.ParseInt(req.FormValue("software_package_id"), 10, 64)
+			if err != nil || pid <= 0 {
+				flash(w, "err", "Choose a software package to push.")
 				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 				return
 			}
+			b, _ := json.Marshal(map[string]int64{"package_id": pid})
+			payload = string(b)
 		default:
 			flash(w, "err", "Unknown action.")
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
