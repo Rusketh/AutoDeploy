@@ -9,8 +9,8 @@ import (
 func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	rec := &Recorder{}
 	plan := MediaPlan{
-		TargetDisk:   "/dev/sda",
-		MediaBytes:   6 * 1024 * 1024 * 1024, // 6 GiB media
+		TargetDisk:        "/dev/sda",
+		MediaBytes:        6 * 1024 * 1024 * 1024, // 6 GiB media
 		UnattendPath:      "/tmp/unattend.xml",
 		DriverPaths:       []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
 		AgentPath:         "/tmp/payload-agent.exe",
@@ -69,6 +69,39 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	for _, gone := range []string{"media-src", "cp -a", "wimlib-imagex", "mkfs.ntfs", "Windows/Panther"} {
 		if rec.Has(gone) {
 			t.Errorf("unexpected leftover %q\n%s", gone, rec.Dump())
+		}
+	}
+}
+
+func TestRegisterBootEntryPrunesStaleAutoDeployEntries(t *testing.T) {
+	// Two prior AutoDeploy entries plus the firmware's own should be
+	// pruned down to nothing before the fresh one is created -- otherwise
+	// the boot list grows a BOOTX64.EFI entry every deploy.
+	rec := &Recorder{OutputResult: `BootCurrent: 0001
+Timeout: 0 seconds
+BootOrder: 0003,0004,0000,0001
+Boot0000* Windows Boot Manager	HD(1,GPT,...)
+Boot0001* UEFI Network	BBS(Network,...)
+Boot0003* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
+Boot0004* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
+`}
+	plan := MediaPlan{TargetDisk: "/dev/sda"}
+	if err := RegisterBootEntry(context.Background(), plan, rec); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"efibootmgr -b 0003 -B",
+		"efibootmgr -b 0004 -B",
+		`efibootmgr --create --disk /dev/sda --part 1 --loader \EFI\BOOT\BOOTX64.EFI --label AutoDeploy Setup`,
+	} {
+		if !rec.Has(want) {
+			t.Errorf("missing %q\n%s", want, rec.Dump())
+		}
+	}
+	// Must NOT delete unrelated entries.
+	for _, gone := range []string{"-b 0000 -B", "-b 0001 -B"} {
+		if rec.Has(gone) {
+			t.Errorf("pruned an unrelated boot entry: %q\n%s", gone, rec.Dump())
 		}
 	}
 }
