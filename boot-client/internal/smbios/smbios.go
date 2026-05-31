@@ -21,6 +21,10 @@ type Identity struct {
 	SystemProduct      string `json:"system_product"`
 	SystemSerial       string `json:"system_serial"`
 	SystemUUID         string `json:"system_uuid"`
+	// SystemSKU is the SMBIOS Type 1 SKU Number. Dell/HP/Lenovo encode a
+	// precise model/SKU code here that's ideal for driver-package matching.
+	SystemSKU    string `json:"system_sku"`
+	SystemFamily string `json:"system_family"`
 
 	// Type 0 — BIOS.
 	BIOSVendor      string `json:"bios_vendor"`
@@ -51,6 +55,8 @@ func ReadFromSysfs(root string) (Identity, error) {
 		SystemProduct:      read("product_name"),
 		SystemSerial:       read("product_serial"),
 		SystemUUID:         read("product_uuid"),
+		SystemSKU:          read("product_sku"),
+		SystemFamily:       read("product_family"),
 		BIOSVendor:         read("bios_vendor"),
 		BIOSVersion:        read("bios_version"),
 		BIOSReleaseDate:    read("bios_date"),

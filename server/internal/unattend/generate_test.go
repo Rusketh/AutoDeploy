@@ -47,6 +47,35 @@ func decodeB64(s string) (string, error) {
 	return string(dec), nil
 }
 
+func TestGenerateDrivesUnattendedInstall(t *testing.T) {
+	s := Defaults()
+	s.Edition = "Windows 11 Pro"
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(x)
+	// Without these, Setup drops to the interactive disk/driver screens.
+	for _, want := range []string{
+		`<DiskConfiguration>`,
+		`<WillWipeDisk>false</WillWipeDisk>`, // coexist with the media partition
+		`<ImageInstall>`,
+		`<Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value>`,
+		`<InstallTo><DiskID>0</DiskID><PartitionID>4</PartitionID></InstallTo>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated unattend missing %q", want)
+		}
+	}
+	// Must still be valid XML.
+	var root struct {
+		XMLName xml.Name
+	}
+	if err := xml.Unmarshal(x, &root); err != nil {
+		t.Fatalf("invalid XML: %v\n%s", err, out)
+	}
+}
+
 func TestGenerateDefaultsIsValidXML(t *testing.T) {
 	x, err := Generate(Defaults())
 	if err != nil {

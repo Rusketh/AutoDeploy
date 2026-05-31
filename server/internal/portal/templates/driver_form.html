@@ -34,7 +34,7 @@
           <div class="rep">
             <select name="filter_keys_{{$i}}[]">
               {{$cur := .Key}}
-              {{range $.Data.AllowedKeys}}<option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>{{end}}
+              {{range $.Data.AllowedKeys}}<option value="{{.Key}}" {{if eq .Key $cur}}selected{{end}}>{{.Label}}</option>{{end}}
             </select>
             <input type="text" name="filter_vals_{{$i}}[]" value="{{.Value}}" placeholder="value or *">
             <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove constraint">−</button>
@@ -152,7 +152,7 @@
 {{end}}
 
 <script>
-var allowedKeys = [{{range $i, $k := .Data.AllowedKeys}}{{if $i}},{{end}}"{{$k}}"{{end}}];
+var allowedKeys = [{{range $i, $k := .Data.AllowedKeys}}{{if $i}},{{end}}{"key":"{{$k.Key}}","label":"{{$k.Label}}"}{{end}}];
 function buildConstraintRow(idx, k, v) {
   var d = document.createElement('div');
   d.className = 'rep';
@@ -160,8 +160,8 @@ function buildConstraintRow(idx, k, v) {
   sel.name = 'filter_keys_' + idx + '[]';
   for (var i = 0; i < allowedKeys.length; i++) {
     var o = document.createElement('option');
-    o.value = allowedKeys[i]; o.textContent = allowedKeys[i];
-    if (k === allowedKeys[i]) o.selected = true;
+    o.value = allowedKeys[i].key; o.textContent = allowedKeys[i].label;
+    if (k === allowedKeys[i].key) o.selected = true;
     sel.appendChild(o);
   }
   var inp = document.createElement('input');
