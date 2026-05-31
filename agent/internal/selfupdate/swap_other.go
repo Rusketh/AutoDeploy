@@ -14,7 +14,9 @@ import (
 // runs on Linux during testing; production Windows targets use
 // swap_windows.go. The mechanic is the same: write a sh updater that
 // waits for the agent process to exit, swaps the binary, relaunches.
-func Swap(newExe string, relaunchArgs []string) error {
+// serviceName is ignored off Windows (there's no SCM); the signature
+// matches swap_windows.go so callers don't need build tags.
+func Swap(newExe string, relaunchArgs []string, serviceName string) error {
 	cur, err := CurrentExe()
 	if err != nil {
 		return err
