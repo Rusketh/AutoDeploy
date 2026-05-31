@@ -147,6 +147,9 @@ type MenuItem struct {
 type menuResponse struct {
 	Items   []MenuItem `json:"items"`
 	Reimage *MenuItem  `json:"reimage,omitempty"`
+	// AutoDeployImageID is set when the server has flagged this machine for
+	// remote re-image. Non-zero means deploy it immediately, no menu.
+	AutoDeployImageID int64 `json:"auto_deploy_image_id,omitempty"`
 }
 
 type manifestItem struct {
@@ -178,13 +181,6 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	defer cancel()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 
-	// Access PIN gate. Three attempts; on the third failure or lock-out,
-	// fail-safe to a normal boot. The Boot Client never decides whether
-	// a PIN is correct — every attempt is server-validated.
-	if !runAccessPIN(ctx, log, c, id) {
-		return
-	}
-
 	var resp menuResponse
 	if err := c.PostJSON(ctx, "/api/v1/clients/menu", map[string]any{
 		"system_uuid":         id.SystemUUID,
@@ -194,6 +190,26 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	}, &resp); err != nil {
 		log.Error("menu.fetch", slog.String("error", err.Error()))
 		os.Exit(0) // fail-safe
+	}
+	// Remote re-image: the server flagged this machine to auto-deploy. Skip
+	// BOTH the access-PIN gate and the interactive menu -- the operator
+	// already authorised this re-image server-side, and there's no human at
+	// the console to type a PIN or pick an image. The server clears the
+	// flag when runDeploy reports "staging", so this fires exactly once.
+	if resp.AutoDeployImageID != 0 {
+		log.Info("menu.auto_reimage",
+			slog.String("actor", id.SystemUUID),
+			slog.Int64("image_id", resp.AutoDeployImageID))
+		runDeploy(log, f, id, resp.AutoDeployImageID, shipper)
+		return
+	}
+
+	// Interactive path: the access PIN gates the operator menu. Three
+	// attempts; on the third failure or lock-out, fail-safe to a normal
+	// boot. The Boot Client never decides whether a PIN is correct -- every
+	// attempt is server-validated.
+	if !runAccessPIN(ctx, log, c, id) {
+		return
 	}
 	if len(resp.Items) == 0 && resp.Reimage == nil {
 		log.Info("menu.empty", slog.String("reason", "no deployable images; fail-safe to normal boot"))

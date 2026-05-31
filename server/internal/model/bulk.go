@@ -18,6 +18,11 @@ const (
 	BulkActionRename       = "rename"
 	BulkActionSoftwarePush = "software_push"
 	BulkActionScript       = "script"
+	// BulkActionReimage flags the machine to re-image and reboots it. The
+	// flag is set on the machine record (SetReimagePending) when the
+	// operation is created, not carried in the job payload; the job just
+	// tells the agent to reboot. Payload is "{}".
+	BulkActionReimage = "reimage"
 )
 
 // BulkTarget is the AD-centric selection. Empty fields are ignored.
@@ -39,6 +44,11 @@ type BulkOperation struct {
 	Target    BulkTarget `json:"target"`
 	CreatedBy string     `json:"created_by"`
 	CreatedAt time.Time  `json:"created_at"`
+	// ReimageImageID is the image to deploy for a reimage operation; 0
+	// means "use each machine's existing binding". Set by the caller for
+	// BulkActionReimage; not persisted on the operation row (it's applied
+	// to each target's machine_record flag).
+	ReimageImageID ID `json:"reimage_image_id,omitempty"`
 }
 
 // BulkJob is one queued unit of work, per-machine.
@@ -121,7 +131,7 @@ func (r *BulkRepo) PreviewTargets(ctx context.Context, t BulkTarget) ([]MachineR
 // one bulk_job per targeted machine.
 func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkOperation, []BulkJob, error) {
 	switch op.Action {
-	case BulkActionRename, BulkActionSoftwarePush, BulkActionScript:
+	case BulkActionRename, BulkActionSoftwarePush, BulkActionScript, BulkActionReimage:
 	default:
 		return BulkOperation{}, nil, fmt.Errorf("%w: unknown action %q", ErrValidation, op.Action)
 	}
@@ -153,6 +163,15 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 			`INSERT INTO bulk_job (operation_id, machine_id) VALUES (?, ?)`,
 			opID, m.ID); err != nil {
 			return BulkOperation{}, nil, err
+		}
+		// Reimage: flag the machine so the boot client auto-deploys on its
+		// next network boot. imageID 0 in the payload means "use binding".
+		if op.Action == BulkActionReimage {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE machine_record SET reimage_pending=1, reimage_image_id=? WHERE id=?`,
+				op.ReimageImageID, m.ID); err != nil {
+				return BulkOperation{}, nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
