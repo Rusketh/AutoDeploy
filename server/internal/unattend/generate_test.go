@@ -492,3 +492,35 @@ func TestGenerateSkipProductKey(t *testing.T) {
 		}
 	}
 }
+
+func TestSkipAutoActivationNotInShellSetup(t *testing.T) {
+	// Regression: SkipAutoActivation is a Microsoft-Windows-Security-SPP-UX
+	// setting, NOT a Shell-Setup one. Emitting it under Shell-Setup made
+	// Setup reject the WHOLE answer file (0x80220001 -> specialize abort).
+	s := Defaults()
+	s.SkipAutoActivation = true
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xs := string(x)
+	// Check ONLY within the specialize Shell-Setup component (up to its
+	// </component>), not up to the next component -- the SPP-UX component
+	// that legitimately holds SkipAutoActivation sits right after it.
+	shellStart := strings.Index(xs, `<component name="Microsoft-Windows-Shell-Setup`)
+	if shellStart < 0 {
+		t.Fatal("expected a Shell-Setup component")
+	}
+	shellEnd := strings.Index(xs[shellStart:], "</component>")
+	if shellEnd < 0 {
+		t.Fatal("Shell-Setup component not closed")
+	}
+	shellComponent := xs[shellStart : shellStart+shellEnd]
+	if strings.Contains(shellComponent, "SkipAutoActivation") {
+		t.Errorf("SkipAutoActivation must not be in Shell-Setup; got\n%s", shellComponent)
+	}
+	if !strings.Contains(xs, "Microsoft-Windows-Security-SPP-UX") ||
+		!strings.Contains(xs, "<SkipAutoActivation>true</SkipAutoActivation>") {
+		t.Errorf("SkipAutoActivation should be in Security-SPP-UX; got\n%s", xs)
+	}
+}
