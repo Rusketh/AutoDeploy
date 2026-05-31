@@ -178,6 +178,7 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 	s.TimeZone = formStr(req, "time_zone", s.TimeZone)
 	s.Edition = formStr(req, "edition", s.Edition)
 	s.ProductKey = formStr(req, "product_key", "")
+	s.SkipProductKey = formBool(req, "skip_product_key")
 	s.AdminUser = formStr(req, "admin_user", s.AdminUser)
 	s.AdminPassword = formStr(req, "admin_password", "")
 	s.HideAdmin = formBool(req, "hide_admin")

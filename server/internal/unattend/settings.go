@@ -38,6 +38,10 @@ type Settings struct {
 	// --- OS edition ---
 	Edition    string `json:"edition"`
 	ProductKey string `json:"product_key"` // legacy single-edition key
+	// SkipProductKey emits an empty <ProductKey> with a no-UI flag so Setup
+	// does not stop on the "enter your product key" screen when no key is
+	// supplied (e.g. volume/KMS or "I'll activate later" deployments).
+	SkipProductKey bool `json:"skip_product_key"`
 
 	// --- Licensing (new in this catalog expansion) ---
 	// KMSServer activates the OS against a private KMS host instead of

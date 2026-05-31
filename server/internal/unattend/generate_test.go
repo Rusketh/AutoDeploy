@@ -450,3 +450,29 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("ComputerName lost: %+v", s)
 	}
 }
+
+func TestGenerateSkipProductKey(t *testing.T) {
+	// No key + SkipProductKey: emit a no-UI empty ProductKey so Setup
+	// doesn't stop on the key screen.
+	s := Defaults()
+	s.ProductKey = ""
+	s.SkipProductKey = true
+	x, _ := Generate(s)
+	if !strings.Contains(string(x), "<ProductKey><WillShowUI>Never</WillShowUI></ProductKey>") {
+		t.Errorf("expected skip-key ProductKey block; got\n%s", x)
+	}
+	// A real key still wins and is emitted with its value.
+	s2 := Defaults()
+	s2.ProductKey = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
+	s2.SkipProductKey = true
+	x2, _ := Generate(s2)
+	if !strings.Contains(string(x2), "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE") ||
+		strings.Contains(string(x2), "<WillShowUI>Never</WillShowUI>") {
+		t.Errorf("a supplied key should be used verbatim; got\n%s", x2)
+	}
+	// Neither key nor skip: no ProductKey element at all.
+	x3, _ := Generate(Defaults())
+	if strings.Contains(string(x3), "<ProductKey>") {
+		t.Errorf("no key and no skip should emit no ProductKey; got\n%s", x3)
+	}
+}

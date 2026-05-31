@@ -86,6 +86,9 @@
     <label><span class="lbl">Product key (optional — leave blank for KMS / volume-licensed)</span>
       <input type="text" name="product_key" value="{{$s.ProductKey}}" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX">
     </label>
+    <label class="check"><input type="checkbox" name="skip_product_key" {{if $s.SkipProductKey}}checked{{end}}>
+      <span>Skip the product-key screen when no key is supplied (unattended; activate later via KMS / digital licence)</span>
+    </label>
   </fieldset>
 
   <fieldset id="sec-licensing"><legend>5. Licensing (KMS / AVMA)</legend>

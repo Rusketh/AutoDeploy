@@ -3,7 +3,12 @@
 {{$b := .Data.Binding}}
 <div class="toolbar">
   <h2>Machine <code style="font-size:0.7em;">{{slice $m.SystemUUID 0 8}}…</code></h2>
-  <div class="right"><a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a></div>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a>
+    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" style="display:inline" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
+      <button type="submit" class="btn danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
+    </form>
+  </div>
 </div>
 
 <dl class="kv">

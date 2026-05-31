@@ -75,6 +75,12 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 `)
 	if s.ProductKey != "" {
 		fmt.Fprintf(b, `        <ProductKey><Key>%s</Key><WillShowUI>OnError</WillShowUI></ProductKey>`+"\n", esc(s.ProductKey))
+	} else if s.SkipProductKey {
+		// No key supplied: WillShowUI=Never with no <Key> suppresses Setup's
+		// "enter your product key" page so the install stays unattended. The
+		// edition comes from ImageInstall (/IMAGE/NAME); activation is left
+		// to KMS / digital licence / "activate later".
+		fmt.Fprint(b, `        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>`+"\n")
 	}
 	fmt.Fprint(b, `      </UserData>
     </component>

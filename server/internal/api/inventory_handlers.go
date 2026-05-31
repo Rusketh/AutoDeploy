@@ -18,6 +18,7 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/machines/{id}/binding", handleGetBinding(r))
 	mux.HandleFunc("PUT /api/v1/machines/{id}/binding", handlePutBinding(r))
 	mux.HandleFunc("GET /api/v1/machines/{id}/detected", handleDetectedState(r))
+	mux.HandleFunc("DELETE /api/v1/machines/{id}", handleDeleteMachine(r))
 
 	// Agent-facing report endpoint: open a deployment row, record final
 	// outcome, replace detected state for the packages it just ran.
@@ -138,6 +139,21 @@ func handlePutBinding(r Repos) http.HandlerFunc {
 		}
 		b, _ := r.Inventory.GetBinding(req.Context(), id)
 		writeJSON(w, http.StatusOK, b)
+	}
+}
+
+func handleDeleteMachine(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := parseID(req)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := r.Inventory.Delete(req.Context(), id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": int64(id)})
 	}
 }
 
