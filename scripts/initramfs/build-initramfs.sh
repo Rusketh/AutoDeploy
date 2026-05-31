@@ -246,7 +246,10 @@ for m in \
     vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
     hyperv_keyboard hid_hyperv \
     serio i8042 atkbd libps2 \
-    usbhid hid hid_generic uhci_hcd ohci_hcd xhci_hcd ehci_hcd; do
+    usbhid hid hid_generic uhci_hcd ohci_hcd xhci_hcd ehci_hcd \
+    evdev vmmouse usbmouse \
+    efifb simpledrm vesafb \
+    vmwgfx hyperv_fb bochs_drm cirrus qxl virtio_gpu; do
     modprobe "$m" 2>/dev/null
 done
 
@@ -300,10 +303,19 @@ for arg in $(cat /proc/cmdline); do
 done
 
 echo "Server: ${SERVER:-<unset>}"
+# Hide the console from the user so the graphical UI owns the display:
+# silence kernel log messages to the screen and blank the blinking text
+# cursor. The GUI repaints the whole framebuffer; these stop kernel
+# messages / the cursor bleeding through before it starts. All best-effort.
+echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
+printf '\033[2J\033[H\033[?25l' > /dev/console 2>/dev/null || true
 /sbin/autodeploy-boot --server "${SERVER:-}" menu
 
 # If the Boot Client returns (error, or operator quit), don't panic as
 # PID 1 -- drop to a shell so the screen stays up and is debuggable.
+# Restore the cursor + kernel messages for the fallback shell.
+printf '\033[?25h' > /dev/console 2>/dev/null || true
+echo 7 > /proc/sys/kernel/printk 2>/dev/null || true
 echo
 echo "autodeploy-boot exited; dropping to a shell."
 exec /bin/sh

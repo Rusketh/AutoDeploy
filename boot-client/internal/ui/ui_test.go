@@ -1,0 +1,151 @@
+package ui
+
+import (
+	"image"
+	"image/color"
+	"testing"
+
+	"github.com/rusketh/autodeploy/boot-client/internal/input"
+)
+
+// testTheme builds a real theme (exercises font loading + colour parse).
+func testTheme(t *testing.T) *Theme {
+	t.Helper()
+	th, err := NewTheme("#0b65c2", 1.0)
+	if err != nil {
+		t.Fatalf("NewTheme: %v", err)
+	}
+	return th
+}
+
+func TestParseHexColor(t *testing.T) {
+	got := parseHexColor("#ff8800", color.RGBA{})
+	if got != (color.RGBA{0xff, 0x88, 0x00, 0xff}) {
+		t.Errorf("parseHexColor = %v", got)
+	}
+	def := color.RGBA{1, 2, 3, 4}
+	if parseHexColor("nope", def) != def {
+		t.Error("invalid hex should return default")
+	}
+	if parseHexColor("0b65c2", def) != (color.RGBA{0x0b, 0x65, 0xc2, 0xff}) {
+		t.Error("no-hash form should parse")
+	}
+}
+
+// drawInto renders a screen into a fresh image so Draw is exercised (must
+// not panic, and must put SOME non-background pixels down).
+func drawInto(t *testing.T, scr Screen, th *Theme) *image.RGBA {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1024, 768))
+	scr.Draw(img, th, img.Bounds())
+	return img
+}
+
+func TestMenuKeyboardNavigation(t *testing.T) {
+	th := testTheme(t)
+	m := NewMenuScreen("Deploy", "pick one", []MenuItem{
+		{Title: "Win11 Lab"}, {Title: "Win11 Office"}, {Title: "Server 2022"},
+	})
+	drawInto(t, m, th) // compute row rects
+	if m.Selected() != 0 {
+		t.Fatalf("initial sel = %d", m.Selected())
+	}
+	m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyDown})
+	m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyDown})
+	if m.Selected() != 2 {
+		t.Errorf("after 2x down sel = %d, want 2", m.Selected())
+	}
+	// Can't go past the end.
+	if a := m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyDown}); a != ActionNone {
+		t.Errorf("down at end = %v, want None", a)
+	}
+	// Enter chooses.
+	if a := m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyEnter}); a != ActionDone {
+		t.Errorf("enter = %v, want Done", a)
+	}
+	if m.Chosen != 2 {
+		t.Errorf("chosen = %d, want 2", m.Chosen)
+	}
+}
+
+func TestMenuMouseClick(t *testing.T) {
+	th := testTheme(t)
+	m := NewMenuScreen("Deploy", "", []MenuItem{{Title: "A"}, {Title: "B"}})
+	img := drawInto(t, m, th)
+	_ = img
+	// Click inside the second row's rect.
+	r := m.rowRects[1]
+	a := m.Handle(input.Event{Type: input.PointerDown, X: (r.Min.X + r.Max.X) / 2, Y: (r.Min.Y + r.Max.Y) / 2})
+	if a != ActionDone || m.Chosen != 1 {
+		t.Errorf("click row 1: action=%v chosen=%d", a, m.Chosen)
+	}
+}
+
+func TestMenuEscapeCancels(t *testing.T) {
+	m := NewMenuScreen("X", "", []MenuItem{{Title: "A"}})
+	if a := m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyEscape}); a != ActionCancel || !m.Cancelled {
+		t.Errorf("escape: action=%v cancelled=%v", a, m.Cancelled)
+	}
+}
+
+func TestPINEntryAndMasking(t *testing.T) {
+	th := testTheme(t)
+	p := NewPINScreen("Locked")
+	p.Handle(input.Event{Type: input.Rune, Rune: '1'})
+	p.Handle(input.Event{Type: input.Rune, Rune: '2'})
+	p.Handle(input.Event{Type: input.Rune, Rune: '3'})
+	if p.Value() != "123" {
+		t.Fatalf("value = %q", p.Value())
+	}
+	p.Handle(input.Event{Type: input.KeyPress, Key: input.KeyBackspace})
+	if p.Value() != "12" {
+		t.Errorf("after backspace = %q", p.Value())
+	}
+	// Draw must show dots, never the digits.
+	img := drawInto(t, p, th)
+	_ = img
+	a := p.Handle(input.Event{Type: input.KeyPress, Key: input.KeyEnter})
+	if a != ActionDone || !p.Submitted || p.Entered != "12" {
+		t.Errorf("submit: action=%v submitted=%v entered=%q", a, p.Submitted, p.Entered)
+	}
+}
+
+func TestPINEmptySubmitIgnored(t *testing.T) {
+	p := NewPINScreen("Locked")
+	if a := p.Handle(input.Event{Type: input.KeyPress, Key: input.KeyEnter}); a != ActionNone {
+		t.Errorf("empty submit = %v, want None", a)
+	}
+}
+
+func TestPINMouseKeypad(t *testing.T) {
+	th := testTheme(t)
+	p := NewPINScreen("Locked")
+	drawInto(t, p, th) // compute keypad rects
+	r := p.padRects["7"]
+	p.Handle(input.Event{Type: input.PointerDown, X: (r.Min.X + r.Max.X) / 2, Y: (r.Min.Y + r.Max.Y) / 2})
+	if p.Value() != "7" {
+		t.Errorf("keypad click = %q, want 7", p.Value())
+	}
+	// Submit button.
+	a := p.Handle(input.Event{Type: input.PointerDown, X: (p.submitR.Min.X + p.submitR.Max.X) / 2, Y: (p.submitR.Min.Y + p.submitR.Max.Y) / 2})
+	if a != ActionDone || p.Entered != "7" {
+		t.Errorf("submit click: action=%v entered=%q", a, p.Entered)
+	}
+}
+
+func TestProgressDrawAndUpdate(t *testing.T) {
+	th := testTheme(t)
+	p := NewProgressScreen("Deploying")
+	p.Set("Downloading media", "install.swm (2/3)", 66)
+	st, det, pct := p.snapshot()
+	if st != "Downloading media" || det != "install.swm (2/3)" || pct != 66 {
+		t.Fatalf("snapshot = %q %q %d", st, det, pct)
+	}
+	drawInto(t, p, th) // determinate
+	p.Set("Working", "", -1)
+	drawInto(t, p, th) // indeterminate must also not panic
+	// Input is ignored during progress.
+	if a := p.Handle(input.Event{Type: input.KeyPress, Key: input.KeyEnter}); a != ActionNone {
+		t.Errorf("progress input = %v, want None", a)
+	}
+}
