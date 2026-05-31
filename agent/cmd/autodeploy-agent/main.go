@@ -34,6 +34,7 @@ import (
 
 type agentFlags struct {
 	server          string
+	agentID         string
 	imageID         int64
 	uuid            string
 	insecureTLS     bool
@@ -80,6 +81,37 @@ func main() {
 	if f.uuid == "" {
 		f.uuid = readSystemUUID()
 	}
+
+	// Service management subcommands (invoked by SetupComplete.cmd at
+	// deploy time, or manually).
+	switch flag.Arg(0) {
+	case "install-service":
+		if err := installService(); err != nil {
+			log.Error("service.install", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		log.Info("service.install.ok")
+		return
+	case "uninstall-service":
+		if err := uninstallService(); err != nil {
+			log.Error("service.uninstall", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		log.Info("service.uninstall.ok")
+		return
+	}
+
+	// Registry-provisioned config (server URL + agent_id, written by the
+	// Boot Client's SetupComplete) fills in anything not given on the CLI.
+	if rs, ra := loadConfig(); true {
+		if f.server == "" {
+			f.server = rs
+		}
+		if f.agentID == "" {
+			f.agentID = ra
+		}
+	}
+
 	log.Info("agent.start",
 		slog.String("actor", "system"),
 		slog.String("target", "self"),
@@ -87,13 +119,46 @@ func main() {
 		slog.String("arch", runtime.GOARCH),
 		slog.String("server", f.server),
 		slog.String("uuid", f.uuid),
+		slog.String("agent_id", f.agentID),
 		slog.Int64("image_id", f.imageID),
 		slog.Bool("dry_run", f.dryRun),
 	)
 
+	// New model: identify by the server-minted agent_id and poll
+	// /api/v1/agent/self for desired state. This is how the deployed agent
+	// runs -- as a Windows service, polling forever; the SCM Stop handler
+	// cancels the loop.
+	if f.server != "" && f.agentID != "" {
+		if err := os.MkdirAll(f.workDir, 0o755); err != nil {
+			log.Error("workdir.create", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		c := httpc.New(f.server, f.uuid, f.insecureTLS)
+		if isWindowsService() {
+			if err := runService(func(sctx context.Context) {
+				runSelfLoop(sctx, log, c, f, shipper, f.checkInInterval)
+			}); err != nil {
+				log.Error("service.run", slog.String("error", err.Error()))
+				os.Exit(1)
+			}
+			return
+		}
+		// Console: a one-shot poll, or a foreground loop with --check-in.
+		ctx := context.Background()
+		if f.checkInInterval > 0 {
+			runSelfLoop(ctx, log, c, f, shipper, f.checkInInterval)
+		} else {
+			runSelfOnce(ctx, log, c, f)
+		}
+		return
+	}
+
+	// Legacy deploy-time path (--server + --image-id). Retained for manual
+	// runs and tests; the provisioned deployment uses the agent_id path
+	// above.
 	if f.server == "" || f.imageID == 0 {
 		log.Info("agent.idle",
-			slog.String("reason", "server or image-id not configured; nothing to do"))
+			slog.String("reason", "no registry config (server+agent_id) and no --server/--image-id; nothing to do"))
 		return
 	}
 
@@ -107,20 +172,8 @@ func main() {
 
 	// Fetch the effective software set.
 	var resp struct {
-		Items []struct {
-			PackageID      int64                  `json:"package_id"`
-			Name           string                 `json:"name"`
-			OrderValue     int64                  `json:"order_value"`
-			PayloadURL     string                 `json:"payload_url"`
-			Files          []struct {
-				Name      string `json:"name"`
-				URL       string `json:"url"`
-				SizeBytes int64  `json:"size_bytes"`
-			} `json:"files,omitempty"`
-			DetectionRules []swspec.DetectionRule `json:"detection_rules"`
-			InstallSteps   []swspec.InstallStep   `json:"install_steps"`
-		} `json:"items"`
-		Warnings []string `json:"warnings,omitempty"`
+		Items    []softwareItem `json:"items"`
+		Warnings []string       `json:"warnings,omitempty"`
 	}
 	if err := c.PostJSON(ctx, "/api/v1/agent/software", map[string]any{
 		"image_id": f.imageID,
@@ -133,18 +186,7 @@ func main() {
 		log.Warn("software.warning", slog.String("message", w))
 	}
 
-	eval := &detect.Evaluator{Backend: detect.DefaultBackend()}
-	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
-
 	// Report opening so the server can record an in-progress deployment.
-	type pkgReport struct {
-		PackageID int64  `json:"package_id"`
-		Detected  bool   `json:"detected"`
-		Installed bool   `json:"installed"`
-		Skipped   bool   `json:"skipped"`
-		Failed    bool   `json:"failed"`
-		Message   string `json:"message,omitempty"`
-	}
 	var openResp struct {
 		MachineID    int64  `json:"machine_id"`
 		DeploymentID int64  `json:"deployment_id"`
@@ -166,10 +208,152 @@ func main() {
 	// Kept in memory only; never written to disk; never logged.
 	c.DeployToken = openResp.DeployToken
 
+	packageReports, failed := installPackages(ctx, log, c, f, resp.Items)
+
+	// BitLocker (Phase 12): if the server has a PIN configured for this
+	// machine, enable encryption and escrow the recovery key. Off-Windows
+	// or on a host without TPM/PowerShell, the agent logs and skips.
+	maybeEnableBitLocker(ctx, log, c, f, identityBody)
+
+	// Branding (Phase 15 / design §12): write the operator's OEM
+	// identity to HKLM\...\OEMInformation so System Properties shows
+	// the right manufacturer / support URL. Best-effort: failures are
+	// logged but do not break the deployment.
+	applyOEMBranding(ctx, log, c, f)
+
+	// Final report: mark the deployment ok/failed and ship per-package
+	// detection state.
+	outcome := "ok"
+	if failed {
+		outcome = "failed"
+	}
+	if depID != 0 {
+		var ignore struct{}
+		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
+			"identity":      identityBody,
+			"image_id":      f.imageID,
+			"deployment_id": depID,
+			"outcome":       outcome,
+			"packages":      packageReports,
+		}, &ignore); err != nil {
+			log.Warn("report.close", slog.String("error", err.Error()))
+		}
+	}
+
+	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
+
+	// Resident check-in mode (Phase 13). Run forever, polling for queued
+	// bulk jobs and executing them.
+	if f.checkInInterval > 0 {
+		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
+	}
+	_ = time.Now // placeholder for resident-mode timing in Phase 13
+}
+
+// selfResponse mirrors the server's AgentSelfResponse from
+// GET /api/v1/agent/self?id=<agent_id>.
+type selfResponse struct {
+	MachineID int64          `json:"machine_id"`
+	ImageID   int64          `json:"image_id"`
+	Software  []softwareItem `json:"software"`
+	Jobs      []struct {
+		ID      int64  `json:"id"`
+		Action  string `json:"action"`
+		Payload string `json:"payload"`
+	} `json:"jobs"`
+	Warnings []string `json:"warnings"`
+}
+
+// runSelfOnce polls the server for this machine's desired state (by its
+// server-minted agent_id) and acts on it: installs the bound image's
+// software set and runs any queued bulk jobs. Best-effort -- a poll that
+// fails is logged and retried on the next tick.
+func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	var resp selfResponse
+	// agent_id is a UUID (URL-safe), so no escaping needed.
+	if err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp); err != nil {
+		log.Warn("self.fetch", slog.String("error", err.Error()))
+		return
+	}
+	for _, w := range resp.Warnings {
+		log.Warn("self.warning", slog.String("message", w))
+	}
+	if len(resp.Software) > 0 {
+		installPackages(ctx, log, c, f, resp.Software)
+	}
+	if len(resp.Jobs) > 0 {
+		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+		for _, j := range resp.Jobs {
+			status, result := executeBulkJob(ctx, log, runner, j.Action, j.Payload)
+			_ = c.PostJSON(ctx,
+				fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
+				map[string]any{"status": status, "result_json": result}, nil)
+		}
+	}
+}
+
+// runSelfLoop polls runSelfOnce immediately and then every interval until
+// ctx is cancelled (the service Stop handler cancels it). This is the
+// resident heartbeat: the agent only needs the server URL + its agent_id.
+func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	runSelfOnce(ctx, log, c, f)
+	shipLogs(log, shipper, f.server, f.insecureTLS)
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			runSelfOnce(ctx, log, c, f)
+			shipLogs(log, shipper, f.server, f.insecureTLS)
+		}
+	}
+}
+
+// packageFile is one downloadable file in a software package.
+type packageFile struct {
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
+// softwareItem mirrors the server's AgentSoftwareItem, shared by the
+// /software (legacy, by image-id) and /self (by agent-id) responses.
+type softwareItem struct {
+	PackageID      int64                  `json:"package_id"`
+	Name           string                 `json:"name"`
+	OrderValue     int64                  `json:"order_value"`
+	PayloadURL     string                 `json:"payload_url"`
+	Files          []packageFile          `json:"files,omitempty"`
+	DetectionRules []swspec.DetectionRule `json:"detection_rules"`
+	InstallSteps   []swspec.InstallStep   `json:"install_steps"`
+}
+
+// pkgReport is one package's deploy-time outcome, posted back to the server.
+type pkgReport struct {
+	PackageID int64  `json:"package_id"`
+	Detected  bool   `json:"detected"`
+	Installed bool   `json:"installed"`
+	Skipped   bool   `json:"skipped"`
+	Failed    bool   `json:"failed"`
+	Message   string `json:"message,omitempty"`
+}
+
+// installPackages evaluates detection, downloads files, and runs install
+// steps for each package not already present. Shared by the legacy
+// deploy-time flow and the resident /self loop. Returns per-package
+// reports and whether any package failed.
+func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, items []softwareItem) ([]pkgReport, bool) {
+	eval := &detect.Evaluator{Backend: detect.DefaultBackend()}
+	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	var packageReports []pkgReport
 	failed := false
 
-	for _, pkg := range resp.Items {
+	for _, pkg := range items {
 		// Detection first — skip already-installed.
 		installed, err := eval.EvaluatePackage(ctx, pkg.DetectionRules)
 		if err != nil {
@@ -193,12 +377,10 @@ func main() {
 				slog.String("note", "no detection rules; package will install every time"))
 		}
 
-		// Multi-file packages: download every file the server
-		// advertises into a per-package work directory, then
-		// resolve bare filenames in install-step paths against
-		// that directory. Legacy single-file packages (no Files
-		// list) fall back to the {payload} -> pkg-N.bin path so
-		// existing rules don't break.
+		// Multi-file packages: download every file the server advertises
+		// into a per-package work directory, then resolve bare filenames in
+		// install-step paths against it. Legacy single-file packages (no
+		// Files list) fall back to the {payload} -> pkg-N.bin path.
 		pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
 		filesDir := filepath.Join(pkgDir, "files")
 		var legacyPayloadPath string
@@ -243,17 +425,10 @@ func main() {
 			if !downloadOK {
 				continue
 			}
-			// {payload} is only meaningful when there's exactly
-			// one file; multi-file packages should reference each
-			// file by name. Set legacyPayloadPath only for the
-			// single-file case so rewriteSteps' substitution
-			// behaviour stays backward compat.
 			if len(pkg.Files) == 1 {
 				legacyPayloadPath = filepath.Join(filesDir, pkg.Files[0].Name)
 			}
 		} else if pkg.PayloadURL != "" {
-			// Legacy single-file path: server didn't advertise a
-			// Files list, fall back to the old single-blob URL.
 			legacyPayloadPath = filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
 			url := pkg.PayloadURL
 			if len(url) > 0 && url[0] == '/' {
@@ -279,8 +454,8 @@ func main() {
 				slog.String("path", legacyPayloadPath))
 		}
 
-		// Two-phase rewrite: substitute the legacy {payload}
-		// token, then resolve bare filenames against filesDir.
+		// Two-phase rewrite: substitute the legacy {payload} token, then
+		// resolve bare filenames against filesDir.
 		rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
 		if len(pkg.Files) > 0 {
 			knownFiles := make(map[string]string, len(pkg.Files))
@@ -329,45 +504,7 @@ func main() {
 			failed = true
 		}
 	}
-
-	// BitLocker (Phase 12): if the server has a PIN configured for this
-	// machine, enable encryption and escrow the recovery key. Off-Windows
-	// or on a host without TPM/PowerShell, the agent logs and skips.
-	maybeEnableBitLocker(ctx, log, c, f, identityBody)
-
-	// Branding (Phase 15 / design §12): write the operator's OEM
-	// identity to HKLM\...\OEMInformation so System Properties shows
-	// the right manufacturer / support URL. Best-effort: failures are
-	// logged but do not break the deployment.
-	applyOEMBranding(ctx, log, c, f)
-
-	// Final report: mark the deployment ok/failed and ship per-package
-	// detection state.
-	outcome := "ok"
-	if failed {
-		outcome = "failed"
-	}
-	if depID != 0 {
-		var ignore struct{}
-		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
-			"identity":      identityBody,
-			"image_id":      f.imageID,
-			"deployment_id": depID,
-			"outcome":       outcome,
-			"packages":      packageReports,
-		}, &ignore); err != nil {
-			log.Warn("report.close", slog.String("error", err.Error()))
-		}
-	}
-
-	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
-
-	// Resident check-in mode (Phase 13). Run forever, polling for queued
-	// bulk jobs and executing them.
-	if f.checkInInterval > 0 {
-		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
-	}
-	_ = time.Now // placeholder for resident-mode timing in Phase 13
+	return packageReports, failed
 }
 
 // maybeEnableBitLocker fetches the assigned PIN (if any) and enables

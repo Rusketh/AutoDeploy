@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -50,9 +51,24 @@ type AgentSoftwareResponse struct {
 	Warnings []string            `json:"warnings,omitempty"`
 }
 
+// AgentSelfResponse is the machine's desired state, resolved server-side
+// from its AutoDeploy agent_id. The resident agent polls GET
+// /api/v1/agent/self?id=<agent_id> for this -- it carries everything the
+// machine should act on (software set for its bound image + pending jobs),
+// so the agent needs nothing but the server address and its own id.
+type AgentSelfResponse struct {
+	MachineID model.ID            `json:"machine_id"`
+	AgentID   string              `json:"agent_id"`
+	ImageID   model.ID            `json:"image_id,omitempty"`
+	Software  []AgentSoftwareItem `json:"software"`
+	Jobs      []model.BulkJob     `json:"jobs"`
+	Warnings  []string            `json:"warnings,omitempty"`
+}
+
 // RegisterAgent mounts the agent endpoints.
 func RegisterAgent(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/software", handleAgentSoftware(r))
+	mux.HandleFunc("GET /api/v1/agent/self", handleAgentSelf(r))
 }
 
 func handleAgentSoftware(r Repos) http.HandlerFunc {
@@ -62,48 +78,100 @@ func handleAgentSoftware(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		res, err := r.Resolver.Resolve(req.Context(), in.ImageID)
+		items, warnings, err := buildSoftwareItems(req, r, in.ImageID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		resp := AgentSoftwareResponse{Warnings: res.Diagnostics}
-		base := "/payload/software/"
-		for _, link := range res.Software {
-			pkg, err := r.Software.Get(req.Context(), link.PackageID)
-			if err != nil {
-				resp.Warnings = append(resp.Warnings, err.Error())
-				continue
-			}
-			det, derr := swspec.ParseDetection(pkg.DetectionJSON)
-			if derr != nil {
-				resp.Warnings = append(resp.Warnings, "package "+pkg.Name+": "+derr.Error())
-			}
-			steps, serr := swspec.ParseSteps(pkg.StepsJSON)
+		writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
+	}
+}
+
+// handleAgentSelf resolves a machine's full desired state from its
+// server-minted agent_id: the software set for its bound image plus any
+// pending bulk jobs. This is the single endpoint the resident agent polls.
+func handleAgentSelf(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		agentID := strings.TrimSpace(req.URL.Query().Get("id"))
+		if agentID == "" {
+			http.Error(w, "id query parameter required", http.StatusBadRequest)
+			return
+		}
+		m, err := r.Inventory.GetByAgentID(req.Context(), agentID)
+		if err != nil {
+			writeError(w, err) // 404 for an unknown id
+			return
+		}
+		resp := AgentSelfResponse{
+			MachineID: m.ID,
+			AgentID:   m.AgentID,
+			Software:  []AgentSoftwareItem{},
+			Jobs:      []model.BulkJob{},
+		}
+		// Software comes from the machine's bound image. No binding (or no
+		// image) just means "nothing to install" -- not an error.
+		if b, berr := r.Inventory.GetBinding(req.Context(), m.ID); berr == nil && b.ImageID != nil {
+			resp.ImageID = *b.ImageID
+			items, warnings, serr := buildSoftwareItems(req, r, *b.ImageID)
 			if serr != nil {
-				resp.Warnings = append(resp.Warnings, "package "+pkg.Name+": "+serr.Error())
+				resp.Warnings = append(resp.Warnings, serr.Error())
+			} else {
+				resp.Software = items
+				resp.Warnings = append(resp.Warnings, warnings...)
 			}
-			// Enumerate the per-package files directory. The
-			// portal upload handler writes each operator-uploaded
-			// file under software/<id>/files/<name>; the agent
-			// downloads each by URL and resolves bare filenames
-			// in step paths against the workdir it dropped them
-			// into. No files = pre-upload package; the agent will
-			// just evaluate detection rules and run scriptless
-			// steps.
-			files := listPackageFiles(r, pkg.ID, base)
-			resp.Items = append(resp.Items, AgentSoftwareItem{
-				PackageID:      pkg.ID,
-				Name:           pkg.Name,
-				OrderValue:     link.OrderValue,
-				PayloadURL:     base + idStr(pkg.ID),
-				Files:          files,
-				DetectionRules: det,
-				InstallSteps:   steps,
-			})
+		}
+		// Pending jobs, claimed the same way checkin does.
+		jobs, jerr := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
+		if jerr != nil {
+			writeError(w, jerr)
+			return
+		}
+		if jobs != nil {
+			resp.Jobs = jobs
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
+}
+
+// buildSoftwareItems resolves an image's effective software set into agent
+// items. The returned error is the hard resolver failure; per-package
+// issues are returned as warnings.
+func buildSoftwareItems(req *http.Request, r Repos, imageID model.ID) ([]AgentSoftwareItem, []string, error) {
+	res, err := r.Resolver.Resolve(req.Context(), imageID)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings := res.Diagnostics
+	items := make([]AgentSoftwareItem, 0, len(res.Software))
+	base := "/payload/software/"
+	for _, link := range res.Software {
+		pkg, err := r.Software.Get(req.Context(), link.PackageID)
+		if err != nil {
+			warnings = append(warnings, err.Error())
+			continue
+		}
+		det, derr := swspec.ParseDetection(pkg.DetectionJSON)
+		if derr != nil {
+			warnings = append(warnings, "package "+pkg.Name+": "+derr.Error())
+		}
+		steps, serr := swspec.ParseSteps(pkg.StepsJSON)
+		if serr != nil {
+			warnings = append(warnings, "package "+pkg.Name+": "+serr.Error())
+		}
+		// Per-package files: software/<id>/files/<name>, downloaded by
+		// the agent and resolved against its workdir. None = scriptless.
+		files := listPackageFiles(r, pkg.ID, base)
+		items = append(items, AgentSoftwareItem{
+			PackageID:      pkg.ID,
+			Name:           pkg.Name,
+			OrderValue:     link.OrderValue,
+			PayloadURL:     base + idStr(pkg.ID),
+			Files:          files,
+			DetectionRules: det,
+			InstallSteps:   steps,
+		})
+	}
+	return items, warnings, nil
 }
 
 // listPackageFiles enumerates a software package's files directory
