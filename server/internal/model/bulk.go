@@ -82,8 +82,17 @@ func (r *BulkRepo) PreviewTargets(ctx context.Context, t BulkTarget) ([]MachineR
 			return nil, fmt.Errorf("%w: name_regex: %v", ErrValidation, err)
 		}
 	}
+	// Explicit machine-id selection (the "selection basket"): when set,
+	// only these machines are considered (AND-combined with any filters).
+	idSet := map[ID]bool{}
+	for _, id := range t.MachineIDs {
+		idSet[id] = true
+	}
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
+		if len(idSet) > 0 && !idSet[m.ID] {
+			continue
+		}
 		bind, _ := r.Inventory.GetBinding(ctx, m.ID)
 		if re != nil && !re.MatchString(bind.MachineName) {
 			continue
