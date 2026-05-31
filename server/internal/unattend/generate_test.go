@@ -457,7 +457,10 @@ func TestGenerateSkipProductKey(t *testing.T) {
 	s := Defaults()
 	s.ProductKey = ""
 	s.SkipProductKey = true
-	x, _ := Generate(s)
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatalf("skip-key generate failed validation: %v", err)
+	}
 	if !strings.Contains(string(x), "<ProductKey><WillShowUI>Never</WillShowUI></ProductKey>") {
 		t.Errorf("expected skip-key ProductKey block; got\n%s", x)
 	}
@@ -465,7 +468,10 @@ func TestGenerateSkipProductKey(t *testing.T) {
 	s2 := Defaults()
 	s2.ProductKey = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
 	s2.SkipProductKey = true
-	x2, _ := Generate(s2)
+	x2, err := Generate(s2)
+	if err != nil {
+		t.Fatalf("real-key generate failed validation: %v", err)
+	}
 	if !strings.Contains(string(x2), "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE") ||
 		strings.Contains(string(x2), "<WillShowUI>Never</WillShowUI>") {
 		t.Errorf("a supplied key should be used verbatim; got\n%s", x2)
@@ -474,5 +480,15 @@ func TestGenerateSkipProductKey(t *testing.T) {
 	x3, _ := Generate(Defaults())
 	if strings.Contains(string(x3), "<ProductKey>") {
 		t.Errorf("no key and no skip should emit no ProductKey; got\n%s", x3)
+	}
+
+	// Schema ordering: inside <UserData>, ProductKey MUST come before
+	// AcceptEula, or Setup aborts at specialize.
+	for _, xx := range [][]byte{x, x2} {
+		pk := strings.Index(string(xx), "<ProductKey>")
+		eula := strings.Index(string(xx), "<AcceptEula>")
+		if pk < 0 || eula < 0 || pk > eula {
+			t.Errorf("ProductKey must precede AcceptEula (pk=%d eula=%d)\n%s", pk, eula, xx)
+		}
 	}
 }

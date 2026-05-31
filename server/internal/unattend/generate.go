@@ -41,7 +41,13 @@ func Generate(s Settings) ([]byte, error) {
 	writeOOBE(&b, s)
 
 	b.WriteString(`</unattend>` + "\n")
-	return b.Bytes(), nil
+	out := b.Bytes()
+	// Catch structural mistakes (malformed XML, wrong child ordering) at
+	// generation time rather than on real hardware at specialize.
+	if err := Validate(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func writeWindowsPE(b *bytes.Buffer, s Settings) {
@@ -71,8 +77,11 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 `)
 	}
 	fmt.Fprint(b, `      <UserData>
-        <AcceptEula>true</AcceptEula>
 `)
+	// Element order inside <UserData> is fixed by the schema: ProductKey
+	// MUST precede AcceptEula. The wrong order fails validation and Setup
+	// aborts at specialize ("computer restarted unexpectedly"). The
+	// Validate() pass in Generate guards this.
 	if s.ProductKey != "" {
 		fmt.Fprintf(b, `        <ProductKey><Key>%s</Key><WillShowUI>OnError</WillShowUI></ProductKey>`+"\n", esc(s.ProductKey))
 	} else if s.SkipProductKey {
@@ -82,7 +91,8 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 		// to KMS / digital licence / "activate later".
 		fmt.Fprint(b, `        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>`+"\n")
 	}
-	fmt.Fprint(b, `      </UserData>
+	fmt.Fprint(b, `        <AcceptEula>true</AcceptEula>
+      </UserData>
     </component>
   </settings>
 `)
