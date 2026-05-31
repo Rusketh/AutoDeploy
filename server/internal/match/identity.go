@@ -31,6 +31,8 @@ type Identity struct {
 	SystemProduct      string `json:"system_product"`
 	SystemSerial       string `json:"system_serial"`
 	SystemUUID         string `json:"system_uuid"`
+	SystemSKU          string `json:"system_sku"`
+	SystemFamily       string `json:"system_family"`
 	BIOSVendor         string `json:"bios_vendor"`
 	BIOSVersion        string `json:"bios_version"`
 	BoardManufacturer  string `json:"board_manufacturer"`
@@ -45,6 +47,8 @@ var AllowedKeys = map[string]bool{
 	"system_product":      true,
 	"system_serial":       true,
 	"system_uuid":         true,
+	"system_sku":          true,
+	"system_family":       true,
 	"bios_vendor":         true,
 	"bios_version":        true,
 	"board_manufacturer":  true,
@@ -111,6 +115,10 @@ func identityField(id Identity, key string) string {
 		return id.SystemSerial
 	case "system_uuid":
 		return id.SystemUUID
+	case "system_sku":
+		return id.SystemSKU
+	case "system_family":
+		return id.SystemFamily
 	case "bios_vendor":
 		return id.BIOSVendor
 	case "bios_version":

@@ -503,6 +503,8 @@ func identityBody(id smbios.Identity) map[string]any {
 		"system_product":      id.SystemProduct,
 		"system_serial":       id.SystemSerial,
 		"system_uuid":         id.SystemUUID,
+		"system_sku":          id.SystemSKU,
+		"system_family":       id.SystemFamily,
 		"bios_vendor":         id.BIOSVendor,
 		"bios_version":        id.BIOSVersion,
 		"board_manufacturer":  id.BoardManufacturer,

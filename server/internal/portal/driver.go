@@ -119,16 +119,57 @@ func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model
 	})
 }
 
-func allowedKeysList() []string {
-	out := make([]string, 0, len(match.AllowedKeys))
-	for k := range match.AllowedKeys {
-		out = append(out, k)
+// filterKey is one selectable filter attribute with a human label so the
+// operator recognises it (e.g. "Model" for the raw key system_product).
+type filterKey struct {
+	Key   string
+	Label string
+}
+
+// filterKeyLabels maps raw SMBIOS keys to the names operators think in
+// (make/model/serial/SKU), big vendors populate these well.
+var filterKeyLabels = map[string]string{
+	"system_manufacturer": "Make (manufacturer)",
+	"system_product":      "Model",
+	"system_serial":       "Serial number",
+	"system_sku":          "SKU / product code",
+	"system_family":       "Product family",
+	"system_uuid":         "System UUID",
+	"bios_vendor":         "BIOS vendor",
+	"bios_version":        "BIOS version",
+	"board_manufacturer":  "Board manufacturer",
+	"board_product":       "Board model",
+	"board_serial":        "Board serial",
+}
+
+// allowedKeysList returns the filter keys with friendly labels, ordered
+// with the commonly-used identity fields (make/model/serial/SKU) first.
+func allowedKeysList() []filterKey {
+	order := []string{
+		"system_manufacturer", "system_product", "system_serial",
+		"system_sku", "system_family", "system_uuid",
+		"board_manufacturer", "board_product", "board_serial",
+		"bios_vendor", "bios_version",
 	}
-	// deterministic order
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1] > out[j]; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
+	out := make([]filterKey, 0, len(match.AllowedKeys))
+	seen := map[string]bool{}
+	add := func(k string) {
+		if !match.AllowedKeys[k] || seen[k] {
+			return
 		}
+		seen[k] = true
+		label := filterKeyLabels[k]
+		if label == "" {
+			label = k
+		}
+		out = append(out, filterKey{Key: k, Label: label})
+	}
+	for _, k := range order {
+		add(k)
+	}
+	// Any keys not in the explicit order (future additions) still appear.
+	for k := range match.AllowedKeys {
+		add(k)
 	}
 	return out
 }
