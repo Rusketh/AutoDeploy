@@ -37,7 +37,10 @@ func TestBootMenuAutoDeployWhenReimageFlagged(t *testing.T) {
 
 	menu := func() BootMenuResponse {
 		body, _ := json.Marshal(map[string]any{"system_uuid": "auto-1"})
-		resp, _ := http.Post(srv.URL+"/api/v1/clients/menu", "application/json", bytes.NewReader(body))
+		resp, err := http.Post(srv.URL+"/api/v1/clients/menu", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer resp.Body.Close()
 		var out BootMenuResponse
 		_ = json.NewDecoder(resp.Body).Decode(&out)
