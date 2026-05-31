@@ -93,13 +93,16 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 // Layout (single-disk coexistence): the Boot Client created the FAT32
 // AutoDeploy media partition as partition 1 at the END of the disk and
 // left the front free. WillWipeDisk=false preserves that media partition;
-// Setup creates ESP+MSR+Windows in the free space (becoming partitions
-// 2, 3, 4), and Windows installs to partition 4. The media partition is
-// reclaimed post-install by the agent.
+// Setup creates ESP+MSR+Windows in the free space. Windows numbers
+// partitions by on-disk OFFSET, and our media partition sits at the END,
+// so the front partitions get the low numbers (EFI=1, MSR=2, Windows=3)
+// and the media partition is the highest (4). Windows installs to
+// partition 3; the media partition (4) is reclaimed post-install by the
+// agent.
 //
-// NOTE: the InstallTo PartitionID (4) assumes the Boot Client's media
-// partition is partition 1 -- validated against the rig; if Setup numbers
-// the created partitions differently this is the knob to adjust.
+// NOTE: PartitionID=3 assumes the standard EFI+MSR+Windows triplet ahead
+// of the trailing media partition. If a future layout changes the number
+// of partitions before the OS partition, this is the knob to adjust.
 func writeDiskAndImage(b *bytes.Buffer, s Settings) {
 	edition := s.Edition
 	if edition == "" {
@@ -122,7 +125,7 @@ func writeDiskAndImage(b *bytes.Buffer, s Settings) {
           <InstallFrom>
             <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>%s</Value></MetaData>
           </InstallFrom>
-          <InstallTo><DiskID>%d</DiskID><PartitionID>4</PartitionID></InstallTo>
+          <InstallTo><DiskID>%d</DiskID><PartitionID>3</PartitionID></InstallTo>
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
