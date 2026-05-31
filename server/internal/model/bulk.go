@@ -25,6 +25,10 @@ type BulkTarget struct {
 	NameRegex string `json:"name_regex,omitempty"`
 	OU        string `json:"ou,omitempty"`
 	Group     string `json:"group,omitempty"`
+	// MachineIDs selects specific machines directly (used by the
+	// per-machine "run on this machine" actions). When set, only these
+	// machines are considered (AND-combined with any other filters).
+	MachineIDs []ID `json:"machine_ids,omitempty"`
 }
 
 // BulkOperation is the operator's intent.

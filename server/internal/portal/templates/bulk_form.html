@@ -44,7 +44,10 @@
       </select>
     </label>
     <div id="act-rename" {{if ne .Data.Action "rename"}}style="display:none"{{end}}>
-      <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
+      <label><span class="lbl">New name (single machine)</span><input type="text" name="rename_new_name" placeholder="LAB-NEW"></label>
+      <p class="hint">Or rename a fleet by find/replace (regex) on each machine's current name — leave "New name" blank to use this. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code>.</p>
+      <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" placeholder="^LAB-A-"></label>
+      <label><span class="lbl">Replace</span><input type="text" name="rename_replace" placeholder="LAB-B-"></label>
       <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens server-side via the Domain Integration Service before the local rename job is queued for the agent.</p>
     </div>
     <div id="act-script" {{if ne .Data.Action "script"}}style="display:none"{{end}}>

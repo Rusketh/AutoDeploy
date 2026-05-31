@@ -40,10 +40,10 @@ func TestActionPayloadFromForm(t *testing.T) {
 	}
 
 	// Missing required fields error out.
-	if _, err := actionPayloadFromForm(mk(url.Values{"action": {"rename"}}), Repos{}); err == nil {
+	if _, err := actionPayloadFromForm(mk(url.Values{"action": {"rename"}})); err == nil {
 		t.Error("empty rename should error")
 	}
-	if _, err := actionPayloadFromForm(mk(url.Values{"action": {"software_push"}}), Repos{}); err == nil {
+	if _, err := actionPayloadFromForm(mk(url.Values{"action": {"software_push"}})); err == nil {
 		t.Error("software push without a package should error")
 	}
 }
