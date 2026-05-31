@@ -22,9 +22,13 @@ type BootMenuRequest struct {
 // images. Reimage (Phase 9) will be set on a future revision when the
 // machine matches an inventory record.
 type BootMenuResponse struct {
-	Items    []BootMenuItem  `json:"items"`
-	Reimage  *BootMenuItem   `json:"reimage,omitempty"`
-	Identity BootMenuRequest `json:"identity_echo"`
+	Items   []BootMenuItem `json:"items"`
+	Reimage *BootMenuItem  `json:"reimage,omitempty"`
+	// AutoDeployImageID is set (non-zero) when the machine has been flagged
+	// for remote re-image. The boot client deploys this image immediately,
+	// skipping the interactive menu. Zero means show the menu as usual.
+	AutoDeployImageID model.ID        `json:"auto_deploy_image_id,omitempty"`
+	Identity          BootMenuRequest `json:"identity_echo"`
 }
 
 // BootMenuItem is one deployable configuration.
@@ -75,6 +79,10 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
+			// Clear any remote-reimage flag now the deploy has begun, so it
+			// fires exactly once and the machine doesn't re-image on every
+			// subsequent network boot.
+			_ = r.Inventory.ClearReimagePending(req.Context(), m.ID)
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID, "deployment_id": id})
 			return
 		case "staged", "failed":
@@ -151,6 +159,17 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 					// Other errors are intentionally swallowed — a menu
 					// without a re-image option is still a useful menu.
 					_ = err
+				}
+				// Remote re-image: if the machine is flagged, tell the boot
+				// client to auto-deploy without waiting at the menu. The
+				// flagged image (0 => the binding's image) wins.
+				if pending, imgID, perr := r.Inventory.ReimagePending(req.Context(), in.SystemUUID); perr == nil && pending {
+					if imgID == 0 && b.ImageID != nil {
+						imgID = *b.ImageID
+					}
+					if imgID != 0 {
+						resp.AutoDeployImageID = imgID
+					}
 				}
 			}
 		}

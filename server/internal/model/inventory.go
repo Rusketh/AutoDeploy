@@ -218,6 +218,43 @@ func (r *InventoryRepo) GetByUUID(ctx context.Context, uuid string) (MachineReco
 	return v, err
 }
 
+// SetReimagePending flags a machine to re-image on its next network boot.
+// imageID 0 means "use the machine's existing binding". The running agent
+// reboots the machine; the boot client auto-deploys the flagged image.
+func (r *InventoryRepo) SetReimagePending(ctx context.Context, machineID, imageID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE machine_record SET reimage_pending=1, reimage_image_id=? WHERE id=?`,
+		int64(imageID), machineID)
+	return err
+}
+
+// ClearReimagePending clears the flag. Called when the boot client reports
+// the deploy has started, so the re-image fires exactly once.
+func (r *InventoryRepo) ClearReimagePending(ctx context.Context, machineID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE machine_record SET reimage_pending=0, reimage_image_id=0 WHERE id=?`,
+		machineID)
+	return err
+}
+
+// ReimagePending reports whether the machine (by UUID) is flagged, and the
+// image to deploy (0 => use its binding). Used by the boot menu to decide
+// whether to auto-deploy.
+func (r *InventoryRepo) ReimagePending(ctx context.Context, uuid string) (pending bool, imageID ID, err error) {
+	var p int
+	var img int64
+	e := r.db.QueryRowContext(ctx,
+		`SELECT reimage_pending, reimage_image_id FROM machine_record WHERE system_uuid=?`,
+		uuid).Scan(&p, &img)
+	if errors.Is(e, sql.ErrNoRows) {
+		return false, 0, nil
+	}
+	if e != nil {
+		return false, 0, e
+	}
+	return p != 0, ID(img), nil
+}
+
 // GetByAgentID looks up a machine by AutoDeploy's server-minted agent_id
 // (the object id the agent identifies itself with). Empty agentID never
 // matches -- it's the transient default for un-backfilled rows.

@@ -125,12 +125,15 @@ func machineAction(r Repos) http.HandlerFunc {
 		}
 		user, _ := sessionUser(req, r)
 		if _, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
-			Action:    action,
-			Payload:   payload,
-			Target:    model.BulkTarget{MachineIDs: []model.ID{id}},
-			CreatedBy: user.Username,
+			Action:         action,
+			Payload:        payload,
+			Target:         model.BulkTarget{MachineIDs: []model.ID{id}},
+			CreatedBy:      user.Username,
+			ReimageImageID: reimageImageIDFromForm(req),
 		}); err != nil {
 			flash(w, "err", err.Error())
+		} else if action == model.BulkActionReimage {
+			flash(w, "ok", "Re-image queued. The machine will reboot and re-image on its next check-in.")
 		} else {
 			flash(w, "ok", "Action queued for this machine.")
 		}
@@ -168,8 +171,23 @@ func actionPayloadFromForm(req *http.Request) (string, error) {
 		}
 		b, _ := json.Marshal(map[string]int64{"package_id": pid})
 		return string(b), nil
+	case model.BulkActionReimage:
+		// The image to deploy is carried on the operation (ReimageImageID),
+		// not the job payload; the job just tells the agent to reboot.
+		return "{}", nil
 	}
 	return "", fmt.Errorf("unknown action")
+}
+
+// reimageImageIDFromForm reads the optional target image for a reimage
+// action; 0 (or absent) means "use each machine's existing binding".
+func reimageImageIDFromForm(req *http.Request) model.ID {
+	if v := strings.TrimSpace(req.FormValue("reimage_image_id")); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return model.ID(n)
+		}
+	}
+	return 0
 }
 
 func machineList(r Repos) http.HandlerFunc {

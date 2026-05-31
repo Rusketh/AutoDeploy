@@ -63,6 +63,7 @@
       <option value="rename">Rename</option>
       <option value="script">Run a script (cmd / powershell)</option>
       <option value="software_push">Push software</option>
+      <option value="reimage">Re-image (rebuild from image)</option>
     </select>
   </label>
   <div id="m-rename">
@@ -79,10 +80,16 @@
     </label>
     <p class="hint">Installs the package and its dependencies; detection rules skip what's already present.</p>
   </div>
+  <div id="m-reimage" style="display:none">
+    <label><span class="lbl">Image (optional)</span>
+      <select name="reimage_image_id"><option value="">— use this machine's bound image —</option>{{range .Data.Images}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}</select>
+    </label>
+    <p class="hint"><strong>Destructive.</strong> The machine reboots on its next check-in (≤5 min), network-boots into AutoDeploy, and re-images automatically. It must be configured to network-boot.</p>
+  </div>
   <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
 <script>
-function mActionChanged(sel){['rename','script','software_push'].forEach(function(a){document.getElementById('m-'+a).style.display=(sel.value===a)?'':'none';});}
+function mActionChanged(sel){['rename','script','software_push','reimage'].forEach(function(a){document.getElementById('m-'+a).style.display=(sel.value===a)?'':'none';});}
 </script>
 
 <div class="section-head"><h3>BitLocker</h3><div class="line"></div></div>

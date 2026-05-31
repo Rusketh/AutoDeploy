@@ -45,8 +45,10 @@ func bulkList(r Repos) http.HandlerFunc {
 func bulkFormNew(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		pkgs, _ := r.Software.List(req.Context())
+		imgs, _ := r.Images.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
 			"Packages": pkgs,
+			"Images":   imgs,
 		})
 	}
 }
@@ -145,6 +147,9 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			}
 			b, _ := json.Marshal(map[string]int64{"package_id": pid})
 			payload = string(b)
+		case model.BulkActionReimage:
+			// Image to deploy is carried on the operation; job payload is "{}".
+			payload = "{}"
 		default:
 			flash(w, "err", "Unknown action.")
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
@@ -153,6 +158,7 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		user, _ := sessionUser(req, r)
 		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
 			Action: action, Payload: payload, Target: t, CreatedBy: user.Username,
+			ReimageImageID: reimageImageIDFromForm(req),
 		})
 		if err != nil {
 			flash(w, "err", err.Error())

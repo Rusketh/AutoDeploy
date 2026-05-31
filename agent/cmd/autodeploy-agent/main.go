@@ -902,6 +902,21 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			return "failed", string(out)
 		}
 		return "ok", string(out)
+
+	case "reimage":
+		// The server has already flagged this machine for re-image
+		// (reimage_pending). All the agent does is reboot; on the next
+		// network boot the boot client sees the flag and auto-deploys.
+		// Report ok BEFORE rebooting so the job isn't left "running"
+		// (the result POST happens after this returns, but the reboot is
+		// scheduled with a short delay to let that POST complete).
+		if f.dryRun {
+			return "ok", `{"reimage":"dry-run; reboot skipped"}`
+		}
+		// 15s delay: enough for the caller to POST this job result before
+		// the OS goes down.
+		_, _ = runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", "AutoDeploy re-image"}, "")
+		return "ok", `{"reimage":"reboot scheduled"}`
 	}
 	return "failed", `{"error":"unknown action"}`
 }
