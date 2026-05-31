@@ -105,8 +105,8 @@ func Open(dev string) (*Framebuffer, error) {
 	w, h := int(vinfo.Xres), int(vinfo.Yres)
 	return &Framebuffer{
 		f: f, mem: mem,
-		back:       image.NewRGBA(image.Rect(0, 0, w, h)),
-		width:      w, height: h,
+		back:  image.NewRGBA(image.Rect(0, 0, w, h)),
+		width: w, height: h,
 		bpp:        int(vinfo.BitsPerPixel),
 		lineLength: int(finfo.LineLength),
 		rOff:       vinfo.RedOffset, gOff: vinfo.GreenOffset, bOff: vinfo.BlueOffset,

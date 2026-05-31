@@ -36,10 +36,10 @@ type Screen interface {
 // App owns the surface, theme, and pointer state, and runs a screen until
 // it returns ActionDone/ActionCancel.
 type App struct {
-	surf  Surface
-	theme *Theme
-	curX  int
-	curY  int
+	surf       Surface
+	theme      *Theme
+	curX       int
+	curY       int
 	hasPointer bool
 }
 

@@ -38,13 +38,13 @@ func decodeRaw(b []byte) (rawEvent, bool) {
 // relative mice and absolute pointers both produce PointerMove with
 // screen coordinates.
 type Reader struct {
-	w, h    int
-	x, y    int
-	shift   bool
-	out     chan Event
-	files   []*os.File
-	once    sync.Once
-	closed  chan struct{}
+	w, h   int
+	x, y   int
+	shift  bool
+	out    chan Event
+	files  []*os.File
+	once   sync.Once
+	closed chan struct{}
 }
 
 // NewReader opens all input devices and starts reading. w,h bound the

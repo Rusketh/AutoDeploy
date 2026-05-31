@@ -204,21 +204,30 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 		return
 	}
 
-	// Interactive path: the access PIN gates the operator menu. Three
-	// attempts; on the third failure or lock-out, fail-safe to a normal
-	// boot. The Boot Client never decides whether a PIN is correct -- every
-	// attempt is server-validated.
-	if !runAccessPIN(ctx, log, c, id) {
-		return
-	}
 	if len(resp.Items) == 0 && resp.Reimage == nil {
 		log.Info("menu.empty", slog.String("reason", "no deployable images; fail-safe to normal boot"))
 		return
 	}
-	// Fetch branding so the menu shows the operator's product /
-	// organisation name. Failure is silent: the menu still renders
-	// with the AutoDeploy default.
+	// Fetch branding (product/org name + primary colour) for the UI.
+	// Failure is silent: defaults take over.
 	brand := fetchBrand(ctx, c, log)
+
+	// Try the graphical UI first; if the framebuffer/input can't be
+	// brought up (serial console, odd firmware) startInteractive returns
+	// false and we fall back to the text console. Both paths run the same
+	// PIN gate and call runDeploy with the chosen image.
+	if startInteractive(ctx, log, f, c, id, resp, brand, shipper) {
+		return
+	}
+	runConsoleMenu(ctx, log, f, c, id, resp, brand, shipper)
+}
+
+// runConsoleMenu is the text-console fallback: PIN gate, then the numbered
+// menu. Unchanged behaviour from the original boot client.
+func runConsoleMenu(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc.Client, id smbios.Identity, resp menuResponse, brand brandResp, shipper *logging.Shipper) {
+	if !runAccessPIN(ctx, log, c, id) {
+		return
+	}
 	fmt.Println()
 	fmt.Printf("=== %s ===\n", brandTitle(brand))
 	if resp.Reimage != nil {
@@ -275,6 +284,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// Open a deployment row right away so a machine that fails before its
 	// OS ever boots is still visible on the dashboard.
 	reportDeployStatus(ctx, c, log, id, imageID, "staging", "")
+	reportStage("Preparing", "Fetching deployment manifest", -1)
 	var m manifest
 	// POST identity so the server can match driver packages.
 	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
@@ -367,6 +377,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 
 	// Partition + format + mount the FAT32 boot partition, then stream the
 	// media tree straight onto it (on disk), avoiding a RAM staging copy.
+	reportStage("Preparing disk", "Partitioning and formatting", -1)
 	mountPath, err := imaging.PreparePartition(ctx, plan, runner)
 	if err != nil {
 		log.Error("deploy.partition.fail", slog.String("error", err.Error()))
@@ -374,6 +385,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		os.Exit(1)
 	}
 	if !f.dryRun {
+		reportStage("Downloading image", "Copying install media to disk", 0)
 		if err := downloadMedia(ctx, c, log, *mediaItem, mountPath); err != nil {
 			log.Error("download.media",
 				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
@@ -381,6 +393,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 			os.Exit(1) // partition already wiped; do not reboot into a broken disk
 		}
 	}
+	reportStage("Finalising", "Writing answer file, drivers and agent", -1)
 	if err := imaging.FinalizeMedia(ctx, plan, runner, mountPath); err != nil {
 		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
 		reportDeployStatus(ctx, c, log, id, imageID, "failed", "media staging failed: "+err.Error())
@@ -399,6 +412,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk))
 	reportDeployStatus(ctx, c, log, id, imageID, "staged", "")
+	reportStage("Ready", "Rebooting into Windows Setup", 100)
 	if f.dryRun {
 		log.Info("deploy.reboot.skip", slog.String("reason", "dry run"))
 		return
@@ -642,6 +656,44 @@ func runAccessPIN(ctx context.Context, log *slog.Logger, c *httpc.Client, id smb
 	}
 	fmt.Println("Three failed PIN attempts. Booting normally.")
 	return false
+}
+
+// submitPIN validates one PIN attempt against the server. An empty pin is
+// the initial probe that returns granted=true when no PIN is configured.
+// Returns (granted, locked). Shared by the console and GUI access gates so
+// the server remains the sole authority on PIN correctness.
+func submitPIN(ctx context.Context, c *httpc.Client, id smbios.Identity, pin string) (granted, locked bool) {
+	var r struct {
+		Granted   bool `json:"granted"`
+		LockedOut bool `json:"locked_out,omitempty"`
+	}
+	if err := c.PostJSON(ctx, "/api/v1/clients/validate-pin", map[string]any{
+		"system_uuid": id.SystemUUID,
+		"pin":         pin,
+	}, &r); err != nil {
+		return false, false // fail-safe: treat as not granted
+	}
+	return r.Granted, r.LockedOut
+}
+
+// progressSink receives deploy stage updates so an interactive UI can show
+// them. nil = no UI attached (the console deploy logs to slog as before).
+type progressSink interface {
+	Stage(stage, detail string, percent int)
+}
+
+var activeProgress progressSink
+
+// setProgressSink installs (or clears, with nil) the sink runDeploy reports
+// stages to. Set by the GUI flow around a deploy.
+func setProgressSink(p progressSink) { activeProgress = p }
+
+// reportStage forwards a deploy stage to the active UI sink, if any. A
+// negative percent means "indeterminate".
+func reportStage(stage, detail string, percent int) {
+	if activeProgress != nil {
+		activeProgress.Stage(stage, detail, percent)
+	}
 }
 
 // identityBody is the SMBIOS-shaped JSON body the server expects for

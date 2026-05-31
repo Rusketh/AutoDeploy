@@ -29,9 +29,9 @@ type Theme struct {
 	OnPrimary color.RGBA
 	Danger    color.RGBA
 
-	Title   font.Face
-	Body    font.Face
-	Small   font.Face
+	Title font.Face
+	Body  font.Face
+	Small font.Face
 }
 
 // NewTheme builds a theme from a primary colour (CSS hex like "#0b65c2";
