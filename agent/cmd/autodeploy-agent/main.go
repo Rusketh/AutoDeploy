@@ -913,10 +913,16 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		if f.dryRun {
 			return "ok", `{"reimage":"dry-run; reboot skipped"}`
 		}
+		// Set a one-time UEFI next-boot to the network/PXE entry so the
+		// machine lands in AutoDeploy regardless of its persistent boot
+		// order. Best-effort: if no network entry is found we still reboot
+		// and rely on the firmware boot order.
+		nb := setNextBootNetwork()
+		log.Info("reimage.nextboot", slog.String("status", nb))
 		// 15s delay: enough for the caller to POST this job result before
 		// the OS goes down.
 		_, _ = runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", "AutoDeploy re-image"}, "")
-		return "ok", `{"reimage":"reboot scheduled"}`
+		return "ok", `{"reimage":"reboot scheduled","next_boot":"` + nb + `"}`
 	}
 	return "failed", `{"error":"unknown action"}`
 }
