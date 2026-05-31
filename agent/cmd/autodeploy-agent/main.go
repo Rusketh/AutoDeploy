@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -784,19 +785,39 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		// operator creates the bulk operation (Phase 10 + 13).
 		var p struct {
 			NewName string `json:"new_name"`
+			Find    string `json:"rename_find"`
+			Replace string `json:"rename_replace"`
 		}
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
 			return "failed", `{"error":"invalid payload"}`
 		}
+		newName := p.NewName
+		if p.Find != "" {
+			// Regex find/replace against this machine's CURRENT hostname,
+			// so one operation renames a whole fleet consistently
+			// (LAB-A-01 -> LAB-B-01, LAB-A-02 -> LAB-B-02, ...).
+			re, rerr := regexp.Compile(p.Find)
+			if rerr != nil {
+				return "failed", fmt.Sprintf(`{"error":"bad rename regex: %s"}`, errString(rerr))
+			}
+			host, _ := os.Hostname()
+			newName = re.ReplaceAllString(host, p.Replace)
+			if newName == "" || newName == host {
+				return "ok", fmt.Sprintf(`{"skipped":true,"host":%q}`, host)
+			}
+		}
+		if newName == "" {
+			return "failed", `{"error":"no new name"}`
+		}
 		body := fmt.Sprintf(`Rename-Computer -NewName '%s' -Force -Restart`,
-			ps1Escape(p.NewName))
+			ps1Escape(newName))
 		code, err := runner.Run(ctx, "powershell",
 			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body},
 			"")
 		if err != nil || code != 0 {
 			return "failed", fmt.Sprintf(`{"exit_code":%d,"error":%q}`, code, errString(err))
 		}
-		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, p.NewName)
+		return "ok", fmt.Sprintf(`{"renamed_to":%q}`, newName)
 
 	case "software_push":
 		// Payload: {"package_id": N}. The agent fetches that package's

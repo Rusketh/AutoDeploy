@@ -85,13 +85,22 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		switch action {
 		case model.BulkActionRename:
 			name := strings.TrimSpace(req.FormValue("rename_new_name"))
-			if name == "" {
-				flash(w, "err", "Rename requires a new name.")
+			find := strings.TrimSpace(req.FormValue("rename_find"))
+			switch {
+			case name != "":
+				b, _ := json.Marshal(map[string]string{"new_name": name})
+				payload = string(b)
+			case find != "":
+				b, _ := json.Marshal(map[string]string{
+					"rename_find":    find,
+					"rename_replace": req.FormValue("rename_replace"),
+				})
+				payload = string(b)
+			default:
+				flash(w, "err", "Rename requires either a new name or a find pattern.")
 				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 				return
 			}
-			b, _ := json.Marshal(map[string]string{"new_name": name})
-			payload = string(b)
 		case model.BulkActionScript:
 			shell := req.FormValue("script_shell")
 			body := req.FormValue("script_body")

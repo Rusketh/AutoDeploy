@@ -15,9 +15,9 @@ import (
 
 // BulkAction is the discriminator on a bulk operation's payload.
 const (
-	BulkActionRename        = "rename"
-	BulkActionSoftwarePush  = "software_push"
-	BulkActionScript        = "script"
+	BulkActionRename       = "rename"
+	BulkActionSoftwarePush = "software_push"
+	BulkActionScript       = "script"
 )
 
 // BulkTarget is the AD-centric selection. Empty fields are ignored.
@@ -29,12 +29,12 @@ type BulkTarget struct {
 
 // BulkOperation is the operator's intent.
 type BulkOperation struct {
-	ID         ID        `json:"id"`
-	Action     string    `json:"action"`
-	Payload    string    `json:"payload"`
-	Target     BulkTarget `json:"target"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        ID         `json:"id"`
+	Action    string     `json:"action"`
+	Payload   string     `json:"payload"`
+	Target    BulkTarget `json:"target"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // BulkJob is one queued unit of work, per-machine.
