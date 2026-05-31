@@ -61,7 +61,7 @@ func TestGenerateDrivesUnattendedInstall(t *testing.T) {
 		`<WillWipeDisk>false</WillWipeDisk>`, // coexist with the media partition
 		`<ImageInstall>`,
 		`<Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value>`,
-		`<InstallTo><DiskID>0</DiskID><PartitionID>4</PartitionID></InstallTo>`,
+		`<InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("generated unattend missing %q", want)
