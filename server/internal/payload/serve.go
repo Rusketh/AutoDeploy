@@ -40,6 +40,8 @@ type Service struct {
 	// the agent (so Setup doesn't also attempt -- and hang on -- an online
 	// join during specialize).
 	DomainJoin *model.DomainJoinRepo
+	// Updates serves .msu payload blobs for Windows Update deployment jobs.
+	Updates *model.WindowsUpdateRepo
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -86,6 +88,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/drivers/{id}/upload", s.uploadDriver)
 	mux.HandleFunc("POST /api/v1/drivers/{id}/extract", s.extractDriver)
 	mux.HandleFunc("PUT /api/v1/software/{id}/upload", s.uploadSoftware)
+	mux.HandleFunc("PUT /api/v1/updates/{id}/upload", s.uploadUpdate)
 
 	// Throttle the download routes; uploads and the lightweight
 	// unattend generator are not in the burst path.
@@ -104,6 +107,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	// the backstop against path traversal.
 	mux.Handle("GET /payload/software/{id}/files/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
 	mux.Handle("GET /payload/software/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareBundle)))
+	mux.Handle("GET /payload/updates/{id}", s.throttleHandler(http.HandlerFunc(s.serveUpdate)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
 }
 
@@ -557,6 +561,67 @@ func (s *Service) serveSoftwareBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := "software/" + fmt.Sprint(int64(id)) + "/bundle/" + name
 	s.serveBlob(w, r, rel)
+}
+
+func (s *Service) uploadUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+	if s.Updates == nil {
+		http.Error(w, "updates not configured", http.StatusNotFound)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Updates.Get(r.Context(), id); err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	filename := r.Header.Get("X-Filename")
+	if filename == "" {
+		filename = "update.msu"
+	}
+	rel := filepath.ToSlash(filepath.Join("updates", fmt.Sprint(int64(id)), filename))
+	n, err := s.Blobs.WriteStream(rel, r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.Updates.SetPayload(r.Context(), id, rel, filename, n); err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"id":           id,
+		"storage_path": rel,
+		"filename":     filename,
+		"size_bytes":   n,
+	})
+}
+
+func (s *Service) serveUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.Updates == nil {
+		http.Error(w, "updates not configured", http.StatusNotFound)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u, err := s.Updates.Get(r.Context(), id)
+	if err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	if u.StoragePath == "" {
+		http.Error(w, "update payload not uploaded", http.StatusNotFound)
+		return
+	}
+	s.serveBlob(w, r, u.StoragePath)
 }
 
 // serveBlob streams the file at relative to the response with range

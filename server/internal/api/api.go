@@ -58,6 +58,8 @@ type Repos struct {
 	// nil disables the agent domain-join endpoint (the agent then never
 	// joins, and the legacy unattend join is used if configured).
 	DomainJoin *model.DomainJoinRepo
+	// Updates manages Windows Update KB patches and deployment jobs.
+	Updates *model.WindowsUpdateRepo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -73,6 +75,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterMirrors(mux, r)
 	RegisterVersion(mux, r)
 	RegisterDomainJoin(mux, r)
+	RegisterWindowsUpdates(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", requireAuth(r, handleListISOs(r)))

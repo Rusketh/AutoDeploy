@@ -107,6 +107,19 @@
     <label><input type="checkbox" name="skip_auto_activation" value="1" {{if $s.SkipAutoActivation}}checked{{end}}>
       Skip first-boot activation attempt (activate later via slmgr)
     </label>
+    <hr style="margin:1rem 0 0.5rem">
+    <p class="hint">Additional product activations (e.g. Windows 10 ESU, Server CALs). Each installs a supplementary key via <code>slmgr /ipk</code>. The activation ID (a GUID) is optional &mdash; only needed for products like ESU that require <code>slmgr /ato &lt;id&gt;</code>.</p>
+    <div id="aas">
+      {{range $i, $a := $s.AdditionalActivations}}
+      <div class="rep rep-aa">
+        <input type="text" name="aa_label[]" value="{{$a.Label}}" placeholder="Label (e.g. ESU Year 1)">
+        <input type="text" name="aa_key[]" value="{{$a.ProductKey}}" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX">
+        <input type="text" name="aa_activation_id[]" value="{{$a.ActivationID}}" placeholder="Activation ID (GUID, optional)">
+        <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addAA()">Add activation</button>
   </fieldset>
 
   <fieldset id="sec-accounts"><legend>6. Local accounts</legend>
@@ -377,6 +390,15 @@ function addRep(containerId, prefix){
     '<button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>';
   document.getElementById(containerId).appendChild(d);
 }
+function addAA(){
+  var d = document.createElement('div'); d.className='rep rep-aa';
+  d.innerHTML =
+    '<input type="text" name="aa_label[]" placeholder="Label (e.g. ESU Year 1)">' +
+    '<input type="text" name="aa_key[]" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX">' +
+    '<input type="text" name="aa_activation_id[]" placeholder="Activation ID (GUID, optional)">' +
+    '<button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>';
+  document.getElementById('aas').appendChild(d);
+}
 // addLA appends a local-account row. Mirrors the server-side fields:
 // name, password, group, full name, description.
 function addLA(){
@@ -410,6 +432,7 @@ function addLA(){
 .unattend-shell form.std { max-width: none; }
 .checkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; }
 .rep-wide { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1.2fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+.rep-aa { display: grid; grid-template-columns: 1fr 1.5fr 1.5fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
 fieldset.disabled { opacity: 0.6; }
 fieldset.disabled::after { content: " (does not apply to selected target OS)"; color: var(--muted); font-size: 0.85rem; }
 @media (max-width: 800px) {

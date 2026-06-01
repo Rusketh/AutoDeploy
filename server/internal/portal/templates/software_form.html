@@ -157,7 +157,7 @@
 <script>
 function ruleTypeChanged(sel){
   var b = sel.closest('.block');
-  ['file','registry','msi','script'].forEach(function(t){
+  ['file','registry','msi','script','winget'].forEach(function(t){
     var d = b.querySelector('.rule-'+t);
     if (d) d.style.display = (sel.value===t)?'block':'none';
   });
@@ -167,7 +167,7 @@ function stepTypeChanged(sel){
   // copy and unzip share the source/destination inputs, so the
   // shared .step-srcdst div is visible for either type. The hint
   // text below the inputs tweaks itself to match.
-  ['copy','msi','appx','cmd','powershell','exe'].forEach(function(t){
+  ['copy','msi','appx','cmd','powershell','exe','winget'].forEach(function(t){
     var d = b.querySelector('.step-'+t);
     if (d) d.style.display = (sel.value===t)?'block':'none';
   });
@@ -189,6 +189,7 @@ function addRule(){
     '<select name="rule_' + idx + '_type" onchange="ruleTypeChanged(this)">' +
       '<option value="file" selected>file</option><option value="registry">registry</option>' +
       '<option value="msi">msi product code</option><option value="script">script</option>' +
+      '<option value="winget">winget package</option>' +
     '</select></label>' +
     '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="rule-file"><label><span class="lbl">File path</span><input type="text" name="rule_' + idx + '_file_path" placeholder="%ProgramFiles%\\Acme\\acme.exe"></label>' +
@@ -202,7 +203,10 @@ function addRule(){
     '<div class="rule-msi" style="display:none"><label><span class="lbl">MSI product code</span><input type="text" name="rule_' + idx + '_msi_product_code"></label></div>' +
     '<div class="rule-script" style="display:none"><label><span class="lbl">Shell</span>' +
     '<select name="rule_' + idx + '_script_shell"><option>powershell</option><option>cmd</option></select></label>' +
-    '<label><span class="lbl">Body</span><textarea name="rule_' + idx + '_script_body"></textarea></label></div></div>';
+    '<label><span class="lbl">Body</span><textarea name="rule_' + idx + '_script_body"></textarea></label></div>' +
+    '<div class="rule-winget" style="display:none"><label><span class="lbl">Winget package ID</span>' +
+    '<input type="text" name="rule_' + idx + '_winget_id" placeholder="Microsoft.VisualStudioCode"></label>' +
+    '<span class="hint">Exact match against <code>winget list --id &lt;id&gt; --exact</code>. Winget must be installed on the target machine.</span></div></div>';
   var wrap = document.createElement('div'); wrap.innerHTML = html;
   document.getElementById('rules').appendChild(wrap.firstChild);
 }
@@ -218,7 +222,8 @@ function addStep(){
     '<option value="appx">Install an APPX/MSIX package</option>' +
     '<option value="exe">Run an EXE installer</option>' +
     '<option value="cmd">Run a cmd.exe script</option>' +
-    '<option value="powershell">Run a PowerShell script</option></select></label>' +
+    '<option value="powershell">Run a PowerShell script</option>' +
+    '<option value="winget">Install via winget</option></select></label>' +
     '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install VS Code"></label>' +
     '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
@@ -234,7 +239,10 @@ function addStep(){
     '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell script body</span><textarea name="step_' + idx + '_script_body" rows="6" placeholder="Set-ItemProperty -Path \'HKLM:\\\\…\' -Name X -Value 1"></textarea></label></div>' +
     '<div class="step-exe" style="display:none"><label><span class="lbl">EXE file path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="setup.exe"></label>' +
     '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args" placeholder="/S /quiet"></label>' +
-    '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div></div>';
+    '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div>' +
+    '<div class="step-winget" style="display:none"><label><span class="lbl">Winget package ID</span><input type="text" name="step_' + idx + '_winget_id" placeholder="Microsoft.VisualStudioCode"></label>' +
+    '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_winget_args" placeholder="--scope machine"></label>' +
+    '<span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span></div></div>';
   var wrap = document.createElement('div'); wrap.innerHTML = html;
   document.getElementById('steps').appendChild(wrap.firstChild);
 }
@@ -258,6 +266,7 @@ function addStep(){
         <option value="registry" {{if eq $r.Type "registry"}}selected{{end}}>registry</option>
         <option value="msi"      {{if eq $r.Type "msi"}}selected{{end}}>msi product code</option>
         <option value="script"   {{if eq $r.Type "script"}}selected{{end}}>script</option>
+        <option value="winget"   {{if eq $r.Type "winget"}}selected{{end}}>winget package</option>
       </select>
     </label>
     <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
@@ -298,6 +307,10 @@ function addStep(){
     </label>
     <label><span class="lbl">Body (exit 0 = detected)</span><textarea name="rule_{{$i}}_script_body">{{$r.ScriptBody}}</textarea></label>
   </div>
+  <div class="rule-winget" {{if ne $r.Type "winget"}}style="display:none"{{end}}>
+    <label><span class="lbl">Winget package ID</span><input type="text" name="rule_{{$i}}_winget_id" value="{{$r.WingetID}}" placeholder="Microsoft.VisualStudioCode"></label>
+    <span class="hint">Exact match against <code>winget list --id &lt;id&gt; --exact</code>. Winget must be installed on the target machine.</span>
+  </div>
 </div>
 {{end}}
 
@@ -315,6 +328,7 @@ function addStep(){
         <option value="exe"        {{if eq $s.Type "exe"}}selected{{end}}>Run an EXE installer</option>
         <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>Run a cmd.exe script</option>
         <option value="powershell" {{if eq $s.Type "powershell"}}selected{{end}}>Run a PowerShell script</option>
+        <option value="winget"     {{if eq $s.Type "winget"}}selected{{end}}>Install via winget</option>
       </select>
     </label>
     <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install VS Code"></label>
@@ -355,6 +369,11 @@ function addStep(){
     <label><span class="lbl">EXE file path</span><input type="text" name="step_{{$i}}_exe_path" value="{{$s.ExePath}}" placeholder="setup.exe"></label>
     <label><span class="lbl">Args</span><input type="text" name="step_{{$i}}_exe_args" value="{{range $j, $a := $s.ExeArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="/S /quiet"></label>
     <span class="hint">Runs the EXE with the given args. If you uploaded the installer above, just write <code>{payload}</code>; common silent-install flags are <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, or <code>/VERYSILENT</code> depending on the installer.</span>
+  </div>
+  <div class="step-winget" {{if ne $s.Type "winget"}}style="display:none"{{end}}>
+    <label><span class="lbl">Winget package ID</span><input type="text" name="step_{{$i}}_winget_id" value="{{$s.WingetID}}" placeholder="Microsoft.VisualStudioCode"></label>
+    <label><span class="lbl">Extra args</span><input type="text" name="step_{{$i}}_winget_args" value="{{range $j, $a := $s.WingetArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="--scope machine"></label>
+    <span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span>
   </div>
 </div>
 {{end}}

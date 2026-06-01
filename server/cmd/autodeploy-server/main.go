@@ -174,6 +174,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AD:         adSvc,
 		Blobs:      blobs,
 		DomainJoin: r.DomainJoin,
+		Updates:    r.Updates,
 	}
 
 	api.Register(mux, apiRepos)
@@ -186,6 +187,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Resolver:   r.Resolver,
 		Inventory:  r.Inventory,
 		DomainJoin: r.DomainJoin,
+		Updates:    r.Updates,
 		RequireAuth: func(w http.ResponseWriter, req *http.Request) bool {
 			if _, ok := api.UserFromRequest(req, apiRepos); !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -234,6 +236,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Blobs:         blobs,
 		AD:            adSvc,
 		DomainJoin:    r.DomainJoin,
+		Updates:       r.Updates,
 		SecretsBox:    bx,
 		DataDir:       cfg.DataDir,
 		ServerVersion: Version,
@@ -352,6 +355,7 @@ type appRepos struct {
 	Mirrors    *model.PayloadMirrorRepo
 	Runtime    *runtime.Settings
 	DomainJoin *model.DomainJoinRepo
+	Updates    *model.WindowsUpdateRepo
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -370,6 +374,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	brandRepo := branding.New(db)
 	mirrors := model.NewPayloadMirrorRepo(db)
 	domainJoin := model.NewDomainJoinRepo(db, bx)
+	updates := model.NewWindowsUpdateRepo(db, inventory)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -380,6 +385,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		BitLocker: bitlocker, Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
 		DomainJoin: domainJoin,
+		Updates:    updates,
 	}
 }
 

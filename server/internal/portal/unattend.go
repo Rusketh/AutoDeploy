@@ -199,6 +199,27 @@ func buildUnattendFromForm(req *http.Request) (model.Unattend, error) {
 	s.AVMAKey = formStr(req, "avma_key", "")
 	s.SkipAutoActivation = formBool(req, "skip_auto_activation")
 
+	// Additional activations: repeating rows (label, key, activation_id).
+	s.AdditionalActivations = nil
+	aaLabels := req.Form["aa_label[]"]
+	aaKeys := req.Form["aa_key[]"]
+	aaActIDs := req.Form["aa_activation_id[]"]
+	for i, label := range aaLabels {
+		label = strings.TrimSpace(label)
+		key := ""
+		if i < len(aaKeys) {
+			key = strings.TrimSpace(aaKeys[i])
+		}
+		if label == "" && key == "" {
+			continue
+		}
+		aa := unattend.AdditionalActivation{Label: label, ProductKey: key}
+		if i < len(aaActIDs) {
+			aa.ActivationID = strings.TrimSpace(aaActIDs[i])
+		}
+		s.AdditionalActivations = append(s.AdditionalActivations, aa)
+	}
+
 	// Local accounts: repeating rows (name, password, group, full_name,
 	// description). Empty-name rows are skipped so leftover blanks from
 	// the "add row" button don't pollute the unattend.

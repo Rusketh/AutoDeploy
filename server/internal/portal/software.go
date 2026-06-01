@@ -230,6 +230,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 			MSIProductCode: req.FormValue("rule_" + idx + "_msi_product_code"),
 			ScriptShell:    req.FormValue("rule_" + idx + "_script_shell"),
 			ScriptBody:     req.FormValue("rule_" + idx + "_script_body"),
+			WingetID:       req.FormValue("rule_" + idx + "_winget_id"),
 		}
 		if err := r.Validate(); err != nil {
 			return model.SoftwarePackage{}, fmt.Errorf("detection rule: %w", err)
@@ -254,6 +255,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 			APPXPath:          req.FormValue("step_" + idx + "_appx_path"),
 			ScriptBody:        req.FormValue("step_" + idx + "_script_body"),
 			ExePath:           req.FormValue("step_" + idx + "_exe_path"),
+			WingetID:          req.FormValue("step_" + idx + "_winget_id"),
 			ContinueOnFailure: req.FormValue("step_"+idx+"_continue") != "",
 		}
 		if a := req.FormValue("step_" + idx + "_msi_args"); a != "" {
@@ -261,6 +263,9 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 		}
 		if a := req.FormValue("step_" + idx + "_exe_args"); a != "" {
 			s.ExeArgs = splitArgs(a)
+		}
+		if a := req.FormValue("step_" + idx + "_winget_args"); a != "" {
+			s.WingetArgs = splitArgs(a)
 		}
 		if a := req.FormValue("step_" + idx + "_success_codes"); a != "" {
 			for _, tok := range strings.Split(a, ",") {

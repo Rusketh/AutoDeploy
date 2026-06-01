@@ -1,0 +1,115 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>{{if .Data.IsNew}}New Windows Update{{else}}Edit {{.Data.Update.KBNumber}}{{end}}</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/updates">Back to list</a>
+  </div>
+</div>
+
+<form method="POST" action="{{if .Data.IsNew}}/portal/updates{{else}}/portal/updates/{{int64 .Data.Update.ID}}{{end}}" class="form-card">
+  <fieldset>
+    <legend>Update metadata</legend>
+    <div class="field">
+      <label for="kb_number">KB Number</label>
+      <input type="text" id="kb_number" name="kb_number" value="{{.Data.Update.KBNumber}}" required placeholder="KB5034441">
+    </div>
+    <div class="field">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" value="{{.Data.Update.Title}}" required placeholder="2024-01 Cumulative Update for Windows 10">
+    </div>
+    <div class="field">
+      <label for="description">Description</label>
+      <textarea id="description" name="description" rows="3">{{.Data.Update.Description}}</textarea>
+    </div>
+    <div class="field">
+      <label for="os_filter">OS Filter</label>
+      <select id="os_filter" name="os_filter">
+        <option value="" {{if eq .Data.Update.OSFilter ""}}selected{{end}}>Any OS</option>
+        <option value="windows-10" {{if eq .Data.Update.OSFilter "windows-10"}}selected{{end}}>Windows 10</option>
+        <option value="windows-11" {{if eq .Data.Update.OSFilter "windows-11"}}selected{{end}}>Windows 11</option>
+        <option value="server-2019" {{if eq .Data.Update.OSFilter "server-2019"}}selected{{end}}>Server 2019</option>
+        <option value="server-2022" {{if eq .Data.Update.OSFilter "server-2022"}}selected{{end}}>Server 2022</option>
+        <option value="server-2025" {{if eq .Data.Update.OSFilter "server-2025"}}selected{{end}}>Server 2025</option>
+      </select>
+      <p class="hint">Matches against the machine's reported OS caption.</p>
+    </div>
+    <div class="field">
+      <label for="severity">Severity</label>
+      <select id="severity" name="severity">
+        <option value="" {{if eq .Data.Update.Severity ""}}selected{{end}}>—</option>
+        <option value="critical" {{if eq .Data.Update.Severity "critical"}}selected{{end}}>Critical</option>
+        <option value="important" {{if eq .Data.Update.Severity "important"}}selected{{end}}>Important</option>
+        <option value="moderate" {{if eq .Data.Update.Severity "moderate"}}selected{{end}}>Moderate</option>
+        <option value="low" {{if eq .Data.Update.Severity "low"}}selected{{end}}>Low</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="supersedes_json">Supersedes (JSON array of KB numbers)</label>
+      <input type="text" id="supersedes_json" name="supersedes_json" value="{{.Data.Update.SupersedesJSON}}" placeholder='["KB5033372"]'>
+      <p class="hint">List of KB numbers this update supersedes, as a JSON array.</p>
+    </div>
+    <div class="field">
+      <label>
+        <input type="checkbox" name="reboot_after" value="1" {{if .Data.Update.RebootAfter}}checked{{end}}>
+        Reboot after install
+      </label>
+      <p class="hint">If checked, the agent schedules a reboot after successful install.</p>
+    </div>
+  </fieldset>
+  <div class="actions">
+    <button type="submit" class="btn">{{if .Data.IsNew}}Create update{{else}}Save changes{{end}}</button>
+  </div>
+</form>
+
+{{if not .Data.IsNew}}
+<div class="form-card" style="margin-top:1.5rem;">
+  <fieldset>
+    <legend>Payload (.msu file)</legend>
+    {{if .Data.Update.StoragePath}}
+    <p>Current file: <strong>{{.Data.Update.PayloadFilename}}</strong> ({{humanBytes .Data.Update.SizeBytes}})</p>
+    {{else}}
+    <p class="muted">No payload uploaded yet.</p>
+    {{end}}
+    <div class="field">
+      <label for="payload">Upload .msu</label>
+      <input type="file" id="payload" accept=".msu,.cab">
+    </div>
+    <button type="button" class="btn secondary" onclick="uploadPayload()" id="uploadBtn">Upload</button>
+    <progress id="uploadProgress" value="0" max="100" style="display:none;width:100%;margin-top:.5rem;"></progress>
+    <p id="uploadStatus" class="hint"></p>
+  </fieldset>
+</div>
+<script>
+function uploadPayload() {
+  var input = document.getElementById('payload');
+  if (!input.files.length) return;
+  var file = input.files[0];
+  var xhr = new XMLHttpRequest();
+  xhr.open('PUT', '/api/v1/updates/{{int64 .Data.Update.ID}}/upload');
+  xhr.setRequestHeader('X-Filename', file.name);
+  var progress = document.getElementById('uploadProgress');
+  var status = document.getElementById('uploadStatus');
+  var btn = document.getElementById('uploadBtn');
+  progress.style.display = 'block';
+  btn.disabled = true;
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) progress.value = (e.loaded / e.total) * 100;
+  };
+  xhr.onload = function() {
+    btn.disabled = false;
+    if (xhr.status === 200) {
+      status.textContent = 'Upload complete. Reloading...';
+      location.reload();
+    } else {
+      status.textContent = 'Upload failed: ' + xhr.responseText;
+    }
+  };
+  xhr.onerror = function() {
+    btn.disabled = false;
+    status.textContent = 'Upload failed (network error).';
+  };
+  xhr.send(file);
+}
+</script>
+{{end}}
+{{end}}

@@ -288,6 +288,35 @@ func TestGenerateLicensingAVMA(t *testing.T) {
 	}
 }
 
+func TestGenerateAdditionalActivations(t *testing.T) {
+	s := Defaults()
+	s.AdditionalActivations = []AdditionalActivation{
+		{Label: "ESU Year 1", ProductKey: "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE", ActivationID: "77db037b-95c3-48d7-a3ab-a9c6d41093e0"},
+		{Label: "Server CAL", ProductKey: "FFFFF-GGGGG-HHHHH-IIIII-JJJJJ"},
+		{Label: "Empty key row", ProductKey: ""},
+	}
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	xml := string(x)
+	if !strings.Contains(xml, "slmgr.vbs /ipk AAAAA-BBBBB-CCCCC-DDDDD-EEEEE") {
+		t.Error("expected ESU /ipk command")
+	}
+	if !strings.Contains(xml, "slmgr.vbs /ato 77db037b-95c3-48d7-a3ab-a9c6d41093e0") {
+		t.Error("expected ESU /ato command")
+	}
+	if !strings.Contains(xml, "slmgr.vbs /ipk FFFFF-GGGGG-HHHHH-IIIII-JJJJJ") {
+		t.Error("expected Server CAL /ipk command")
+	}
+	if strings.Contains(xml, "Empty key row") {
+		t.Error("empty-key activation should be skipped")
+	}
+	if strings.Count(xml, "slmgr.vbs /ato") != 1 {
+		t.Error("only the ESU entry has an activation ID; expected exactly one /ato")
+	}
+}
+
 func TestGenerateSkipAutoActivation(t *testing.T) {
 	s := Defaults()
 	s.SkipAutoActivation = true

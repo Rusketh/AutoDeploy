@@ -57,6 +57,11 @@ type Settings struct {
 	// attempt. Use when you intend to activate later via slmgr.
 	SkipAutoActivation bool `json:"skip_auto_activation,omitempty"`
 
+	// AdditionalActivations is a list of supplementary product keys to
+	// install during the specialize pass (e.g. Windows 10 ESU, Server
+	// CALs). Each runs slmgr.vbs /ipk and optionally /ato.
+	AdditionalActivations []AdditionalActivation `json:"additional_activations,omitempty"`
+
 	// --- Local accounts ---
 	// LocalAccounts is the list of local accounts to create. Each has a
 	// group (Administrators or Users), name, password (secret), display
@@ -141,6 +146,16 @@ type Settings struct {
 	// the specialize pass — run BEFORE the OOBE pages even render. Use
 	// for environment prep (registry tweaks, driver injection helpers).
 	SpecializeCommands []SpecializeCommand `json:"specialize_commands,omitempty"`
+}
+
+// AdditionalActivation is a supplementary product key installed via
+// slmgr.vbs during the specialize pass. The optional ActivationID is
+// needed for products like Windows 10 ESU that require /ato with a
+// specific activation GUID.
+type AdditionalActivation struct {
+	Label        string `json:"label"`                    // e.g. "Windows 10 ESU Year 1"
+	ProductKey   string `json:"product_key"`              // XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+	ActivationID string `json:"activation_id,omitempty"` // GUID for /ato; empty = skip
 }
 
 // LocalAccount is a single user account to create on the deployed

@@ -40,6 +40,9 @@ type DetectionRule struct {
 	// Script detection. The script is run; non-zero exit => not detected.
 	ScriptShell string `json:"script_shell,omitempty"` // "cmd" | "powershell"
 	ScriptBody  string `json:"script_body,omitempty"`
+
+	// Winget detection.
+	WingetID string `json:"winget_id,omitempty"` // e.g. "Microsoft.VisualStudioCode"
 }
 
 // Validate checks the rule's fields make sense for its Type.
@@ -64,8 +67,12 @@ func (r DetectionRule) Validate() error {
 		if r.ScriptShell != "cmd" && r.ScriptShell != "powershell" {
 			return fmt.Errorf("script detection: script_shell must be cmd or powershell")
 		}
+	case "winget":
+		if r.WingetID == "" {
+			return fmt.Errorf("winget detection: winget_id required")
+		}
 	default:
-		return fmt.Errorf("unknown detection type %q (allowed: file, registry, msi, script)", r.Type)
+		return fmt.Errorf("unknown detection type %q (allowed: file, registry, msi, script, winget)", r.Type)
 	}
 	return nil
 }
@@ -100,6 +107,10 @@ type InstallStep struct {
 	// exe.
 	ExePath string   `json:"exe_path,omitempty"`
 	ExeArgs []string `json:"exe_args,omitempty"`
+
+	// winget.
+	WingetID   string   `json:"winget_id,omitempty"`
+	WingetArgs []string `json:"winget_args,omitempty"` // extra args after --silent
 }
 
 // Validate checks the step's fields make sense for its Type.
@@ -129,8 +140,12 @@ func (s InstallStep) Validate() error {
 		if s.ExePath == "" {
 			return fmt.Errorf("exe step: exe_path required")
 		}
+	case "winget":
+		if s.WingetID == "" {
+			return fmt.Errorf("winget step: winget_id required")
+		}
 	default:
-		return fmt.Errorf("unknown step type %q (allowed: copy, unzip, msi, appx, cmd, powershell, exe)", s.Type)
+		return fmt.Errorf("unknown step type %q (allowed: copy, unzip, msi, appx, cmd, powershell, exe, winget)", s.Type)
 	}
 	return nil
 }

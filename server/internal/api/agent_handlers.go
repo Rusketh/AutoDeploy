@@ -78,6 +78,8 @@ type AgentSelfResponse struct {
 	// the agent hasn't closed yet. The agent uses this to report the final
 	// outcome once software installation completes.
 	DeploymentID model.ID `json:"deployment_id,omitempty"`
+	// UpdateJobs are pending Windows Update deployment jobs for this machine.
+	UpdateJobs []model.UpdateDeploymentJob `json:"update_jobs,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -176,6 +178,13 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		}
 		if jobs != nil {
 			resp.Jobs = jobs
+		}
+		// Claim pending Windows Update deployment jobs.
+		if r.Updates != nil {
+			updateJobs, uerr := r.Updates.ClaimUpdateJobs(req.Context(), m.ID, 4)
+			if uerr == nil && len(updateJobs) > 0 {
+				resp.UpdateJobs = updateJobs
+			}
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
