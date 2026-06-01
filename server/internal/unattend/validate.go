@@ -51,6 +51,12 @@ var orderedChildren = map[string][]string{
 	"Disk": {"CreatePartitions", "ModifyPartitions"},
 	"OOBE": {"HideEULAPage", "HideOEMRegistrationScreen", "HideOnlineAccountScreens",
 		"HideWirelessSetupInOOBE", "ProtectYourPC", "SkipMachineOOBE", "SkipUserOOBE"},
+	// UnattendedJoin Identification: Credentials before JoinDomain before
+	// MachineObjectOU.
+	"Identification": {"Credentials", "JoinDomain", "JoinWorkgroup", "MachineObjectOU", "DebugJoin"},
+	// CredentialsType: Domain, Password, Username (in that order). Username
+	// before Password aborts Setup at specialize (0x8030000b).
+	"Credentials": {"Domain", "Password", "Username"},
 }
 
 // walkOrder checks each element's known-ordered children appear in the
