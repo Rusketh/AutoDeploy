@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -186,6 +187,37 @@ func (r *ImageRepo) linksFor(ctx context.Context, id ID) ([]ImageSoftwareLink, e
 			return nil, err
 		}
 		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// ListNamesByIDs returns a map of image ID to image name for the given IDs.
+// Missing IDs are silently omitted. This is a lightweight batch lookup used
+// by the portal machine list to avoid N+1 per-machine image loads.
+func (r *ImageRepo) ListNamesByIDs(ctx context.Context, ids []ID) (map[ID]string, error) {
+	if len(ids) == 0 {
+		return map[ID]string{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, name FROM image WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[ID]string, len(ids))
+	for rows.Next() {
+		var id ID
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
 	}
 	return out, rows.Err()
 }

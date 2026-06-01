@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/secrets"
@@ -61,6 +62,38 @@ func (r *BitLockerRepo) SetPIN(ctx context.Context, machineID ID, pin string) er
 		    updated_at=CURRENT_TIMESTAMP`,
 		machineID, ct)
 	return err
+}
+
+// ListPINStatuses returns PINSet status for a batch of machine IDs in a
+// single query. Machines without a PIN row are absent from the map.
+func (r *BitLockerRepo) ListPINStatuses(ctx context.Context, machineIDs []ID) (map[ID]BitLockerPIN, error) {
+	if len(machineIDs) == 0 {
+		return map[ID]BitLockerPIN{}, nil
+	}
+	placeholders := make([]string, len(machineIDs))
+	args := make([]any, len(machineIDs))
+	for i, id := range machineIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT machine_id, pin_cipher, updated_at FROM bitlocker_pin
+		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[ID]BitLockerPIN, len(machineIDs))
+	for rows.Next() {
+		var v BitLockerPIN
+		var ct string
+		if err := rows.Scan(&v.MachineID, &ct, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		v.PINSet = ct != ""
+		out[v.MachineID] = v
+	}
+	return out, rows.Err()
 }
 
 // PINStatus reports whether a PIN is configured. Does NOT decrypt.

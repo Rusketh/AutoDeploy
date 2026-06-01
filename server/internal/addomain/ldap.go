@@ -232,13 +232,13 @@ func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN stri
 // RenameComputer issues an LDAP MODRDN with the same parent (so the
 // object stays in its current OU; only the CN changes).
 func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) (string, error) {
-	c, err := l.dial(ctx)
+	c, err := l.getConn(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
 	req := ldap.NewModifyDNRequest(dn, "CN="+ldapEscape(newName), true, "")
 	if err := c.ModifyDN(req); err != nil {
+		l.discardConn(c)
 		return "", fmt.Errorf("rename %s -> %s: %w", dn, newName, err)
 	}
 	// Compose the new DN: replace the leading RDN.
@@ -253,10 +253,12 @@ func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) 
 	mod := ldap.NewModifyRequest(newDN, nil)
 	mod.Replace("sAMAccountName", []string{newName + "$"})
 	if err := c.Modify(mod); err != nil {
-		// Non-fatal: log via returned error so the operator sees it but
-		// the rename itself completed.
+		// Non-fatal: the rename itself completed. Discard the conn
+		// since the error may indicate a bad state.
+		l.discardConn(c)
 		return newDN, fmt.Errorf("rename ok; sAMAccountName update failed: %w", err)
 	}
+	l.putConn(c)
 	return newDN, nil
 }
 
