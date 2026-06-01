@@ -257,6 +257,11 @@ func runOne(ctx context.Context, s swspec.InstallStep, r Runner) Result {
 			s.ScriptBody)
 	case "exe":
 		res.ExitCode, res.Error = r.Run(ctx, s.ExePath, s.ExeArgs, "")
+	case "winget":
+		args := []string{"install", "--id", s.WingetID, "--silent",
+			"--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}
+		args = append(args, s.WingetArgs...)
+		res.ExitCode, res.Error = r.Run(ctx, "winget", args, "")
 	default:
 		res.Error = fmt.Errorf("unknown step type %q", s.Type)
 		res.ExitCode = -1

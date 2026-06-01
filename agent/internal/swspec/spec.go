@@ -16,6 +16,7 @@ type DetectionRule struct {
 	MSIProductCode string `json:"msi_product_code,omitempty"`
 	ScriptShell    string `json:"script_shell,omitempty"`
 	ScriptBody     string `json:"script_body,omitempty"`
+	WingetID       string `json:"winget_id,omitempty"`
 }
 
 // InstallStep mirrors server/internal/swspec.InstallStep.
@@ -32,4 +33,6 @@ type InstallStep struct {
 	ScriptBody        string   `json:"script_body,omitempty"`
 	ExePath           string   `json:"exe_path,omitempty"`
 	ExeArgs           []string `json:"exe_args,omitempty"`
+	WingetID          string   `json:"winget_id,omitempty"`
+	WingetArgs        []string `json:"winget_args,omitempty"`
 }

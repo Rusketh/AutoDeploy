@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/rusketh/autodeploy/agent/internal/swspec"
 )
@@ -64,6 +65,8 @@ func (e *Evaluator) evaluateRule(ctx context.Context, r swspec.DetectionRule) (b
 		return e.Backend.MSIProductInstalled(r.MSIProductCode)
 	case "script":
 		return evaluateScript(ctx, r)
+	case "winget":
+		return evaluateWinget(ctx, r)
 	default:
 		return false, fmt.Errorf("unknown rule type %q", r.Type)
 	}
@@ -133,6 +136,19 @@ func evaluateScript(ctx context.Context, r swspec.DetectionRule) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func evaluateWinget(ctx context.Context, r swspec.DetectionRule) (bool, error) {
+	cmd := exec.CommandContext(ctx, "winget", "list", "--id", r.WingetID,
+		"--exact", "--accept-source-agreements", "--disable-interactivity")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.Contains(string(out), r.WingetID), nil
 }
 
 func sha256File(path string) (string, error) {
