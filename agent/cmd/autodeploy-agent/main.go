@@ -438,19 +438,22 @@ func cleanupMediaOnce(log *slog.Logger) {
 	}
 }
 
-// runSelfLoop polls runSelfOnce immediately and then every interval until
-// ctx is cancelled (the service Stop handler cancels it). This is the
-// resident heartbeat: the agent only needs the server URL + its agent_id.
-func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+// pollLoopResult is the return value of a pollLoop work function. It
+// carries an optional suggested interval (from the server) and a flag
+// indicating whether the caller should exit (e.g. self-update launched).
+type pollLoopResult struct {
+	suggestedInterval time.Duration
+	exit              bool
+}
+
+// pollLoop is the common ticker loop shared by runSelfLoop and
+// runCheckInLoop. It runs work immediately, then every interval, adding
+// ±20 % random jitter to avoid thundering-herd polling. If work returns
+// exit==true the loop returns. The server can change the cadence by
+// returning a non-zero suggestedInterval.
+func pollLoop(ctx context.Context, log *slog.Logger, interval time.Duration, work func(ctx context.Context) pollLoopResult) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
-	}
-	// When running under the SCM, self-update must restart the SERVICE
-	// (not relaunch a detached console process), or the upgraded agent
-	// would run outside the service. Empty in console mode.
-	svc := ""
-	if isWindowsService() {
-		svc = serviceName
 	}
 	// applyInterval resets the ticker when the server advertises a different
 	// cadence, so an operator changing the check-in interval in the portal
@@ -464,18 +467,15 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		}
 	}
 
-	suggested := runSelfOnce(ctx, log, c, f)
-	if suggested > 0 {
-		interval = suggested // honour the server cadence from the first tick
+	// First immediate poll.
+	res := work(ctx)
+	if res.suggestedInterval > 0 {
+		interval = res.suggestedInterval
 	}
-	shipLogs(log, shipper, f.server, f.insecureTLS)
-	// Apply a pending self-update after the first poll, so a freshly
-	// uploaded agent version is picked up without waiting a full interval.
-	if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
-		log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
-		shipLogs(log, shipper, f.server, f.insecureTLS)
+	if res.exit {
 		return
 	}
+
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
@@ -483,11 +483,9 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			applyInterval(tick, runSelfOnce(ctx, log, c, f))
-			shipLogs(log, shipper, f.server, f.insecureTLS)
-			if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
-				log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
-				shipLogs(log, shipper, f.server, f.insecureTLS)
+			res := work(ctx)
+			applyInterval(tick, res.suggestedInterval)
+			if res.exit {
 				return
 			}
 			// Add ±20% random jitter to avoid thundering-herd polling.
@@ -495,6 +493,29 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 			tick.Reset(interval - interval/5 + jitter)
 		}
 	}
+}
+
+// runSelfLoop polls runSelfOnce immediately and then every interval until
+// ctx is cancelled (the service Stop handler cancels it). This is the
+// resident heartbeat: the agent only needs the server URL + its agent_id.
+func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+	// When running under the SCM, self-update must restart the SERVICE
+	// (not relaunch a detached console process), or the upgraded agent
+	// would run outside the service. Empty in console mode.
+	svc := ""
+	if isWindowsService() {
+		svc = serviceName
+	}
+	pollLoop(ctx, log, interval, func(ctx context.Context) pollLoopResult {
+		suggested := runSelfOnce(ctx, log, c, f)
+		shipLogs(log, shipper, f.server, f.insecureTLS)
+		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
+			log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
+			shipLogs(log, shipper, f.server, f.insecureTLS)
+			return pollLoopResult{exit: true}
+		}
+		return pollLoopResult{suggestedInterval: suggested}
+	})
 }
 
 // packageFile is one downloadable file in a software package.
@@ -903,9 +924,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		Jobs      []bulkJob `json:"jobs"`
 	}
 
-	tick := time.NewTicker(f.checkInInterval)
-	defer tick.Stop()
-	for {
+	pollLoop(ctx, log, f.checkInInterval, func(ctx context.Context) pollLoopResult {
 		var resp checkinResp
 		if err := c.PostJSON(ctx, "/api/v1/agent/checkin",
 			map[string]any{"identity": identityBody}, &resp); err != nil {
@@ -930,17 +949,10 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Info("selfupdate.exiting",
 				slog.String("note", "updater script spawned; exiting so the swap can complete"))
 			shipLogs(log, shipper, f.server, f.insecureTLS)
-			return
+			return pollLoopResult{exit: true}
 		}
-		// Add ±20% random jitter to avoid thundering-herd polling.
-		jitter := time.Duration(rand.Int64N(int64(f.checkInInterval) * 2 / 5))
-		tick.Reset(f.checkInInterval - f.checkInInterval/5 + jitter)
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
+		return pollLoopResult{}
+	})
 }
 
 // maybeSelfUpdate asks the server whether a newer agent is

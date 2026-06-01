@@ -316,11 +316,16 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		if len(topMachines) > 5 {
 			topMachines = topMachines[:5]
 		}
-		// Deploy outcome rollup for the last 24h.
+		// Deploy outcome rollup for the last 24h. Batch-load history for
+		// all machines in a single query instead of N+1.
+		allIDs := make([]model.ID, len(machines))
+		for i, m := range machines {
+			allIDs[i] = m.ID
+		}
+		allHistory, _ := r.Inventory.ListHistoryForMachines(req.Context(), allIDs)
 		var ok, failed, inProgress int
 		for _, m := range machines {
-			hist, _ := r.Inventory.HistoryFor(req.Context(), m.ID)
-			for _, h := range hist {
+			for _, h := range allHistory[m.ID] {
 				if time.Since(h.StartedAt) > 24*time.Hour {
 					break
 				}

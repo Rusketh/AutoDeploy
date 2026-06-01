@@ -37,6 +37,9 @@ func handleCreateDriver(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		if r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
+		}
 		writeJSON(w, http.StatusCreated, out)
 	}
 }
@@ -77,6 +80,9 @@ func handleUpdateDriver(r Repos) http.HandlerFunc {
 		if err := r.Drivers.Update(req.Context(), in); err != nil {
 			writeError(w, err)
 			return
+		}
+		if r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
 		}
 		v, _ := r.Drivers.Get(req.Context(), id)
 		writeJSON(w, http.StatusOK, v)
@@ -144,6 +150,9 @@ func handleDeleteDriver(r Repos) http.HandlerFunc {
 		if err := r.Drivers.Delete(req.Context(), id); err != nil {
 			writeError(w, err)
 			return
+		}
+		if r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}

@@ -14,6 +14,7 @@ package runtime
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
@@ -188,6 +189,22 @@ func (s *Settings) setRaw(ctx context.Context, key, value string) error {
 	return s.refresh(ctx)
 }
 
+// setRawTx is like setRaw but executes within the given transaction and
+// does NOT reload the settings cache (the caller must refresh once after
+// committing).
+func (s *Settings) setRawTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	if value == "" {
+		_, err := tx.ExecContext(ctx,
+			`DELETE FROM system_setting WHERE key=?`, key)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO system_setting (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+		    updated_at=CURRENT_TIMESTAMP`, key, value)
+	return err
+}
+
 // ADConfig returns the current AD configuration. Empty URL means
 // disabled — callers MUST short-circuit before dialing.
 func (s *Settings) ADConfig(ctx context.Context) addomain.LDAPConfig {
@@ -213,43 +230,58 @@ func (s *Settings) ADEnabled() bool {
 }
 
 // SetADConfig writes a new AD configuration. An empty URL fully
-// disables AD (removes all the AD keys).
+// disables AD (removes all the AD keys). All writes are batched into a
+// single SQLite transaction so the cache is refreshed only once.
 func (s *Settings) SetADConfig(ctx context.Context, cfg addomain.LDAPConfig) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // harmless after commit
+
 	if cfg.URL == "" {
 		// Disable: remove every AD key.
 		for _, k := range []string{
 			keyADURL, keyADBindDN, keyADBindPasswordEnc,
 			keyADSearchBase, keyADSkipTLSVerify,
 		} {
-			if err := s.setRaw(ctx, k, ""); err != nil {
+			if err := s.setRawTx(ctx, tx, k, ""); err != nil {
 				return err
 			}
 		}
-		return nil
-	}
-	if err := s.setRaw(ctx, keyADURL, cfg.URL); err != nil {
-		return err
-	}
-	if err := s.setRaw(ctx, keyADBindDN, cfg.BindDN); err != nil {
-		return err
-	}
-	// Password is only written when supplied; "" preserves existing.
-	if cfg.BindPassword != "" {
-		if s.bx == nil {
-			return errors.New("no secrets box configured; cannot store AD bind password")
+	} else {
+		if err := s.setRawTx(ctx, tx, keyADURL, cfg.URL); err != nil {
+			return err
 		}
-		ct, err := s.bx.Encrypt(cfg.BindPassword)
-		if err != nil {
-			return fmt.Errorf("encrypt AD bind password: %w", err)
+		if err := s.setRawTx(ctx, tx, keyADBindDN, cfg.BindDN); err != nil {
+			return err
 		}
-		if err := s.setRaw(ctx, keyADBindPasswordEnc, ct); err != nil {
+		// Password is only written when supplied; "" preserves existing.
+		if cfg.BindPassword != "" {
+			if s.bx == nil {
+				return errors.New("no secrets box configured; cannot store AD bind password")
+			}
+			ct, err := s.bx.Encrypt(cfg.BindPassword)
+			if err != nil {
+				return fmt.Errorf("encrypt AD bind password: %w", err)
+			}
+			if err := s.setRawTx(ctx, tx, keyADBindPasswordEnc, ct); err != nil {
+				return err
+			}
+		}
+		if err := s.setRawTx(ctx, tx, keyADSearchBase, cfg.SearchBase); err != nil {
+			return err
+		}
+		if err := s.setRawTx(ctx, tx, keyADSkipTLSVerify, boolStr(cfg.SkipTLSVerify)); err != nil {
 			return err
 		}
 	}
-	if err := s.setRaw(ctx, keyADSearchBase, cfg.SearchBase); err != nil {
-		return err
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit AD config: %w", err)
 	}
-	return s.setRaw(ctx, keyADSkipTLSVerify, boolStr(cfg.SkipTLSVerify))
+	// Single cache refresh after all writes are committed.
+	return s.refresh(ctx)
 }
 
 // LogRetentionDays returns the effective retention. 0 = disabled.
