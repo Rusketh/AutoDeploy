@@ -52,6 +52,10 @@ type Repos struct {
 	// handler to scan the downloads category for a newer agent
 	// binary to advertise to checkin-mode agents.
 	Blobs *storage.BlobStore
+	// DomainJoin holds per-image agent-driven AD join config. Optional;
+	// nil disables the agent domain-join endpoint (the agent then never
+	// joins, and the legacy unattend join is used if configured).
+	DomainJoin *model.DomainJoinRepo
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -66,6 +70,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterBranding(mux, r)
 	RegisterMirrors(mux, r)
 	RegisterVersion(mux, r)
+	RegisterDomainJoin(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))
