@@ -100,14 +100,21 @@ func (r *UnattendRepo) Update(ctx context.Context, in Unattend) error {
 }
 
 func (r *UnattendRepo) Delete(ctx context.Context, id ID) error {
-	refs, err := r.RefCount(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var refs int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM image WHERE unattend_id=?`, id).Scan(&refs); err != nil {
 		return err
 	}
 	if refs > 0 {
 		return fmt.Errorf("unattend %d: %w (referenced by %d images)", id, ErrInUse, refs)
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM unattend WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM unattend WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -115,7 +122,7 @@ func (r *UnattendRepo) Delete(ctx context.Context, id ID) error {
 	if n == 0 {
 		return fmt.Errorf("unattend %d: %w", id, ErrNotFound)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (r *UnattendRepo) RefCount(ctx context.Context, id ID) (int, error) {

@@ -168,14 +168,21 @@ func (r *ISORepo) Update(ctx context.Context, in ISO) error {
 
 // Delete removes the ISO. Returns ErrInUse if any image links it.
 func (r *ISORepo) Delete(ctx context.Context, id ID) error {
-	refs, err := r.RefCount(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var refs int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM image WHERE iso_id=?`, id).Scan(&refs); err != nil {
 		return err
 	}
 	if refs > 0 {
 		return fmt.Errorf("iso %d: %w (referenced by %d images)", id, ErrInUse, refs)
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM iso WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM iso WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -183,7 +190,7 @@ func (r *ISORepo) Delete(ctx context.Context, id ID) error {
 	if n == 0 {
 		return fmt.Errorf("iso %d: %w", id, ErrNotFound)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RefCount returns the number of images that link this ISO directly.

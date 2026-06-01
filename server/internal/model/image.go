@@ -193,14 +193,21 @@ func (r *ImageRepo) linksFor(ctx context.Context, id ID) ([]ImageSoftwareLink, e
 // Delete removes an image. Refuses if any other image points at it via
 // parent_id (ON DELETE RESTRICT enforces this at the DB level too).
 func (r *ImageRepo) Delete(ctx context.Context, id ID) error {
-	refs, err := r.ChildCount(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var refs int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM image WHERE parent_id=?`, id).Scan(&refs); err != nil {
 		return err
 	}
 	if refs > 0 {
 		return fmt.Errorf("image %d: %w (parent of %d images)", id, ErrInUse, refs)
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM image WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM image WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -208,7 +215,7 @@ func (r *ImageRepo) Delete(ctx context.Context, id ID) error {
 	if n == 0 {
 		return fmt.Errorf("image %d: %w", id, ErrNotFound)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ChildCount returns the number of images that name this one as parent.

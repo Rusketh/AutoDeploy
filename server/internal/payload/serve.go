@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
@@ -49,6 +51,21 @@ type Service struct {
 	// the request is authenticated. When it returns false, it must
 	// write an HTTP error response itself (typically 401).
 	RequireAuth func(http.ResponseWriter, *http.Request) bool
+
+	// isoIndexCache caches the result of ListTree per ISO id so that
+	// concurrent requests (e.g. 120 machines PXE-booting) don't each
+	// trigger a full directory walk. Entries expire after 30 seconds.
+	isoIndexMu    sync.Mutex
+	isoIndexCache map[int64]*isoIndexEntry
+}
+
+// isoIndexCacheTTL is how long a cached ISO index is considered fresh.
+const isoIndexCacheTTL = 30 * time.Second
+
+// isoIndexEntry holds a cached ISO file listing.
+type isoIndexEntry struct {
+	entries []storage.DirEntry
+	at      time.Time
 }
 
 // Register mounts payload routes on mux:
@@ -241,6 +258,7 @@ func (s *Service) uploadISO(w http.ResponseWriter, r *http.Request) {
 	// A failure here is non-fatal: the source blob is safely stored and
 	// the operator can re-run POST /api/v1/isos/{id}/extract.
 	prep, exErr := ExtractAndRecord(r.Context(), s.Blobs, s.ISOs, id)
+	s.InvalidateISOIndexCache(id)
 	resp := map[string]any{
 		"id":           iso.ID,
 		"storage_path": rel,
@@ -384,8 +402,7 @@ func (s *Service) serveISOIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(int64(id)), "files"))
-	entries, err := s.Blobs.ListTree(rel)
+	entries, err := s.cachedISOIndex(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -399,6 +416,47 @@ func (s *Service) serveISOIndex(w http.ResponseWriter, r *http.Request) {
 		idx.Files = append(idx.Files, MediaIndexFile{Path: e.Name, Size: e.Size})
 	}
 	respondJSON(w, http.StatusOK, idx)
+}
+
+// cachedISOIndex returns the file listing for an extracted ISO, using a
+// TTL-based in-memory cache to avoid a full filepath.WalkDir on every
+// concurrent request.
+func (s *Service) cachedISOIndex(id model.ID) ([]storage.DirEntry, error) {
+	key := int64(id)
+	now := time.Now()
+
+	s.isoIndexMu.Lock()
+	if s.isoIndexCache != nil {
+		if ce, ok := s.isoIndexCache[key]; ok && now.Sub(ce.at) < isoIndexCacheTTL {
+			out := ce.entries
+			s.isoIndexMu.Unlock()
+			return out, nil
+		}
+	}
+	s.isoIndexMu.Unlock()
+
+	rel := filepath.ToSlash(filepath.Join("iso", fmt.Sprint(key), "files"))
+	entries, err := s.Blobs.ListTree(rel)
+	if err != nil {
+		return nil, err
+	}
+
+	s.isoIndexMu.Lock()
+	if s.isoIndexCache == nil {
+		s.isoIndexCache = make(map[int64]*isoIndexEntry)
+	}
+	s.isoIndexCache[key] = &isoIndexEntry{entries: entries, at: now}
+	s.isoIndexMu.Unlock()
+
+	return entries, nil
+}
+
+// InvalidateISOIndexCache removes the cached ISO index for the given id.
+// Call this after an ISO is (re-)extracted so the next request sees fresh data.
+func (s *Service) InvalidateISOIndexCache(id model.ID) {
+	s.isoIndexMu.Lock()
+	delete(s.isoIndexCache, int64(id))
+	s.isoIndexMu.Unlock()
 }
 
 func (s *Service) serveISOContent(w http.ResponseWriter, r *http.Request) {
