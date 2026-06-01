@@ -163,7 +163,7 @@ jobs:
             scripts/check-secrets.sh \
             scripts/systemd/ \
             scripts/windows/ \
-            docs/user-guide/ \
+            docs/ \
             README.md
           sha256sum out/autodeploy-extras.tar.gz > out/autodeploy-extras.tar.gz.sha256
       - uses: actions/upload-artifact@v4
@@ -224,7 +224,7 @@ jobs:
             echo 'Get-Content C:\ProgramData\AutoDeploy\admin-bootstrap.txt   # one-time password'
             echo '```'
             echo
-            echo "Full tutorial: \`docs/user-guide/getting-started.md\` (Linux) and \`docs/user-guide/install-windows.md\` (Windows) inside \`autodeploy-extras.tar.gz\`."
+            echo "Full tutorial: \`docs/getting-started.md\` and \`docs/install/\` inside \`autodeploy-extras.tar.gz\`."
             echo
             echo "### Downloads"
             echo
@@ -245,7 +245,7 @@ jobs:
             echo "- \`scripts/windows/\` — Windows installer + uninstaller + backup (PowerShell) and env-file template."
             echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store, secrets key, TLS material."
             echo "- \`scripts/check-secrets.sh\` — CI tripwire for cleartext-secret patterns."
-            echo "- \`docs/user-guide/\` — full operator guide for this release."
+            echo "- \`docs/\` — full operator guide for this release."
             echo "- \`README.md\` — repository orientation."
           } > release-notes.md
           cat release-notes.md
