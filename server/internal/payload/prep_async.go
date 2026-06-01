@@ -59,12 +59,19 @@ func (t *prepTracker) snapshot(id model.ID) PrepStatus {
 }
 
 // begin marks a job running iff one isn't already; returns false if a
-// prepare for id is already in flight.
+// prepare for id is already in flight. Finished entries for other IDs
+// are evicted to prevent the map from growing without bound.
 func (t *prepTracker) begin(id model.ID, total int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if s, ok := t.m[id]; ok && s.Active() {
 		return false
+	}
+	// Evict finished entries to bound memory.
+	for k, v := range t.m {
+		if v.Finished && k != id {
+			delete(t.m, k)
+		}
 	}
 	t.m[id] = &PrepStatus{Phase: PrepExtracting, TotalBytes: total}
 	return true

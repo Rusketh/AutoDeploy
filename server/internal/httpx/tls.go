@@ -65,6 +65,13 @@ func ListenAndServeTLS(ctx context.Context, cfg config.Config, h http.Handler, l
 			MinVersion: tls.VersionTLS12,
 		},
 	}
+	// Graceful shutdown when ctx is cancelled.
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
 	logger.LogAttrs(ctx, slog.LevelInfo, "https.listen",
 		slog.String("addr", cfg.HTTPSAddr),
 		slog.String("cert", certFile),

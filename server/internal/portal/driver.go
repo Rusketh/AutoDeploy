@@ -235,6 +235,9 @@ func driverCreate(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/drivers/new", http.StatusFound)
 			return
 		}
+		if r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
+		}
 		flash(w, "ok", "Driver package created — upload the payload next.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", out.ID), http.StatusFound)
 	}
@@ -260,6 +263,9 @@ func driverUpdate(r Repos) http.HandlerFunc {
 		if err := r.Drivers.Update(req.Context(), p); err != nil {
 			flash(w, "err", err.Error())
 		} else {
+			if r.Resolver != nil {
+				r.Resolver.InvalidateDriverCache()
+			}
 			flash(w, "ok", "Saved.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", id), http.StatusFound)
@@ -272,6 +278,9 @@ func driverDelete(r Repos) http.HandlerFunc {
 		if err := r.Drivers.Delete(req.Context(), id); err != nil {
 			flash(w, "err", err.Error())
 		} else {
+			if r.Resolver != nil {
+				r.Resolver.InvalidateDriverCache()
+			}
 			flash(w, "ok", "Deleted.")
 		}
 		http.Redirect(w, req, "/portal/drivers", http.StatusFound)
@@ -317,6 +326,9 @@ func driverUpload(r Repos) http.HandlerFunc {
 			if err := r.Drivers.Update(req.Context(), pkg); err != nil {
 				flash(w, "err", err.Error())
 			} else {
+				if r.Resolver != nil {
+					r.Resolver.InvalidateDriverCache()
+				}
 				flash(w, "ok", fmt.Sprintf("Uploaded %d bytes.", n))
 			}
 			break

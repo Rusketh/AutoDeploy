@@ -10,6 +10,7 @@
 package portal
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
 	"fmt"
@@ -76,6 +77,9 @@ const (
 	flashCookieName   = "autodeploy_flash"
 )
 
+// ctxKeyUser is the private context key for the authenticated portal user.
+type ctxKeyUser struct{}
+
 // Register mounts the portal routes. The session middleware protects
 // every /portal/* path except the login form, its POST handler and the
 // static assets.
@@ -141,14 +145,15 @@ func Register(mux *http.ServeMux, r Repos) error {
 // trying to go.
 func requireSession(r Repos, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		_, ok := sessionUser(req, r)
+		u, ok := sessionUser(req, r)
 		if !ok {
 			to := url.Values{}
 			to.Set("next", req.URL.RequestURI())
 			http.Redirect(w, req, "/portal/login?"+to.Encode(), http.StatusFound)
 			return
 		}
-		h(w, req)
+		ctx := context.WithValue(req.Context(), ctxKeyUser{}, u)
+		h(w, req.WithContext(ctx))
 	}
 }
 
@@ -215,10 +220,10 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Now().Add(12 * time.Hour),
-			Secure:   req.TLS != nil,
+			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
 		next := req.FormValue("next")
-		if next == "" || !strings.HasPrefix(next, "/portal") {
+		if next == "" || !strings.HasPrefix(next, "/portal/") {
 			next = "/portal/"
 		}
 		http.Redirect(w, req, next, http.StatusFound)
@@ -311,11 +316,16 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		if len(topMachines) > 5 {
 			topMachines = topMachines[:5]
 		}
-		// Deploy outcome rollup for the last 24h.
+		// Deploy outcome rollup for the last 24h. Batch-load history for
+		// all machines in a single query instead of N+1.
+		allIDs := make([]model.ID, len(machines))
+		for i, m := range machines {
+			allIDs[i] = m.ID
+		}
+		allHistory, _ := r.Inventory.ListHistoryForMachines(req.Context(), allIDs)
 		var ok, failed, inProgress int
 		for _, m := range machines {
-			hist, _ := r.Inventory.HistoryFor(req.Context(), m.ID)
-			for _, h := range hist {
+			for _, h := range allHistory[m.ID] {
 				if time.Since(h.StartedAt) > 24*time.Hour {
 					break
 				}
@@ -446,7 +456,7 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
 	}
-	user, _ := sessionUser(req, r)
+	user, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 	brand, _ := r.Branding.Get(req.Context())
 	kind, msg := readFlash(w, req)
 	// Bootstrap-admin warning: the file holds a cleartext password

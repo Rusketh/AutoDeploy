@@ -9,6 +9,7 @@
 package smbios
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func ReadFromSysfs(root string) (Identity, error) {
 		}
 		return strings.TrimSpace(string(b))
 	}
-	return Identity{
+	id := Identity{
 		SystemManufacturer: read("sys_vendor"),
 		SystemProduct:      read("product_name"),
 		SystemSerial:       read("product_serial"),
@@ -63,5 +64,9 @@ func ReadFromSysfs(root string) (Identity, error) {
 		BoardManufacturer:  read("board_vendor"),
 		BoardProduct:       read("board_name"),
 		BoardSerial:        read("board_serial"),
-	}, nil
+	}
+	if id.SystemUUID == "" {
+		return id, fmt.Errorf("smbios: system UUID is empty (read from %s/product_uuid); SMBIOS data is incomplete", root)
+	}
+	return id, nil
 }

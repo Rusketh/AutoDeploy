@@ -237,7 +237,13 @@ func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]B
 	if max <= 0 {
 		max = 8
 	}
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT j.id, j.operation_id, j.machine_id, o.action, o.payload,
 		       j.status, j.queued_at
 		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
@@ -261,14 +267,29 @@ func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]B
 		return nil, err
 	}
 	for i := range out {
-		if _, err := r.db.ExecContext(ctx,
-			`UPDATE bulk_job SET status='running', claimed_at=CURRENT_TIMESTAMP WHERE id=?`,
-			out[i].ID); err != nil {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE bulk_job SET status='running', claimed_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'`,
+			out[i].ID)
+		if err != nil {
 			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			continue // already claimed by another agent
 		}
 		out[i].Status = "running"
 	}
-	return out, nil
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// Filter out any jobs that were already claimed
+	claimed := out[:0]
+	for _, j := range out {
+		if j.Status == "running" {
+			claimed = append(claimed, j)
+		}
+	}
+	return claimed, nil
 }
 
 // CompleteJob writes the final status + result.

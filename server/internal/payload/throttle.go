@@ -17,14 +17,20 @@ import (
 type Throttle struct {
 	slots chan struct{}
 	// metrics hook
-	onWait func()
-	inFlight atomic.Int64
+	onWait       func()
+	inFlight     atomic.Int64
+	queueTimeout time.Duration
 }
 
 // NewThrottle returns a Throttle with capacity slots. capacity<=0
-// returns a no-op throttle (unbounded).
-func NewThrottle(capacity int, onWait func()) *Throttle {
-	t := &Throttle{onWait: onWait}
+// returns a no-op throttle (unbounded). A zero queueTimeout defaults
+// to 2 minutes, which is more reasonable for 120+ machines pulling
+// multi-GB files.
+func NewThrottle(capacity int, queueTimeout time.Duration, onWait func()) *Throttle {
+	if queueTimeout <= 0 {
+		queueTimeout = 2 * time.Minute
+	}
+	t := &Throttle{onWait: onWait, queueTimeout: queueTimeout}
 	if capacity > 0 {
 		t.slots = make(chan struct{}, capacity)
 	}
@@ -60,7 +66,7 @@ func (t *Throttle) Wrap(h http.Handler) http.Handler {
 			case <-r.Context().Done():
 				http.Error(w, "request cancelled while queued", http.StatusServiceUnavailable)
 				return
-			case <-time.After(30 * time.Second):
+			case <-time.After(t.queueTimeout):
 				http.Error(w, "payload throttle queue timed out", http.StatusServiceUnavailable)
 				return
 			}

@@ -19,6 +19,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -42,6 +44,17 @@ type Resolved struct {
 	Diagnostics []string `json:"diagnostics,omitempty"`
 }
 
+// driverCacheTTL is how long the cached driver list is considered fresh.
+const driverCacheTTL = 30 * time.Second
+
+// driverCache holds a time-limited snapshot of the driver package list so
+// ResolveForMachine does not hit the database on every manifest request.
+type driverCache struct {
+	mu      sync.Mutex
+	pkgs    []model.DriverPackage
+	fetched time.Time
+}
+
 // Resolver walks image chains. It is constructed once and reused.
 type Resolver struct {
 	images   *model.ImageRepo
@@ -49,6 +62,7 @@ type Resolver struct {
 	unattend *model.UnattendRepo
 	drivers  *model.DriverPackageRepo     // nil = driver matching disabled
 	loadouts *model.SoftwareLoadoutRepo   // nil = loadout resolution disabled
+	dc       driverCache
 }
 
 // New constructs a resolver bound to the given repositories. The drivers
@@ -71,6 +85,39 @@ func (r *Resolver) WithDrivers(drivers *model.DriverPackageRepo) *Resolver {
 func (r *Resolver) WithLoadouts(loadouts *model.SoftwareLoadoutRepo) *Resolver {
 	r.loadouts = loadouts
 	return r
+}
+
+// InvalidateDriverCache forces the next ResolveForMachine call to re-read
+// the driver list from the database. Call this after creating, updating, or
+// deleting a driver package.
+func (r *Resolver) InvalidateDriverCache() {
+	r.dc.mu.Lock()
+	r.dc.pkgs = nil
+	r.dc.fetched = time.Time{}
+	r.dc.mu.Unlock()
+}
+
+// cachedDrivers returns the driver list, using a time-limited cache to avoid
+// hitting the database on every manifest request.
+func (r *Resolver) cachedDrivers(ctx context.Context) ([]model.DriverPackage, error) {
+	r.dc.mu.Lock()
+	if r.dc.pkgs != nil && time.Since(r.dc.fetched) < driverCacheTTL {
+		cached := r.dc.pkgs
+		r.dc.mu.Unlock()
+		return cached, nil
+	}
+	r.dc.mu.Unlock()
+
+	pkgs, err := r.drivers.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.dc.mu.Lock()
+	r.dc.pkgs = pkgs
+	r.dc.fetched = time.Now()
+	r.dc.mu.Unlock()
+	return pkgs, nil
 }
 
 // Resolve computes the effective manifest for the image with id.
@@ -170,7 +217,7 @@ func (r *Resolver) ResolveForMachine(ctx context.Context, id model.ID, identity 
 	if r.drivers == nil {
 		return out, nil
 	}
-	pkgs, err := r.drivers.List(ctx)
+	pkgs, err := r.cachedDrivers(ctx)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("load driver packages: %w", err)
 	}

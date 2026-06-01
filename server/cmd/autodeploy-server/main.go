@@ -160,7 +160,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// return the correct value.
 	api.SetServerVersion(Version)
 
-	api.Register(mux, api.Repos{
+	// Build the api.Repos value once so we can share it with the
+	// payload auth check below without duplicating field lists.
+	apiRepos := api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
 		Images: r.Images, Inventory: r.Inventory,
@@ -172,7 +174,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AD:         adSvc,
 		Blobs:      blobs,
 		DomainJoin: r.DomainJoin,
-	})
+	}
+
+	api.Register(mux, apiRepos)
 
 	pl := &payload.Service{
 		Blobs:     blobs,
@@ -182,9 +186,16 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Resolver:   r.Resolver,
 		Inventory:  r.Inventory,
 		DomainJoin: r.DomainJoin,
+		RequireAuth: func(w http.ResponseWriter, req *http.Request) bool {
+			if _, ok := api.UserFromRequest(req, apiRepos); !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return false
+			}
+			return true
+		},
 	}
 	// Throttle /payload/* so a thundering herd queues rather than thrashes.
-	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, func() {
+	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, 0, func() {
 		mtr.PayloadQueuedWaits.Inc()
 	})
 	pl.OnBytesServed = func(n int64) { mtr.PayloadBytesServed.Add(n) }
@@ -242,6 +253,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Logs:          r.Logs,
 		RetentionDays: rt.LogRetentionDays,
 		Logger:        logger,
+		SessionPrune:  r.Users.PruneExpiredSessions,
 	}
 	go sch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",

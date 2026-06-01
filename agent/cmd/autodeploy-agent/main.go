@@ -16,11 +16,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -248,7 +248,6 @@ func main() {
 	if f.checkInInterval > 0 {
 		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
 	}
-	_ = time.Now // placeholder for resident-mode timing in Phase 13
 }
 
 // selfResponse mirrors the server's AgentSelfResponse from
@@ -264,6 +263,11 @@ type selfResponse struct {
 	} `json:"jobs"`
 	Warnings            []string `json:"warnings"`
 	PollIntervalSeconds int      `json:"poll_interval_seconds"`
+	// DeploymentID is the primary key of an open (in_progress) deployment
+	// row for this machine. Non-zero when the boot client opened a deployment
+	// that hasn't been closed yet; the agent reports the final outcome after
+	// installing packages.
+	DeploymentID int64 `json:"deployment_id"`
 }
 
 // runSelfOnce polls the server for this machine's desired state (by its
@@ -300,8 +304,37 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
 	cleanupMediaOnce(log)
+	var packageReports []pkgReport
+	var pkgFailed bool
 	if len(resp.Software) > 0 {
-		installPackages(ctx, log, c, f, resp.Software)
+		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software)
+	}
+	// If the server told us about an open deployment (opened by the boot
+	// client), report the final outcome so the dashboard row transitions
+	// from "in_progress" to "ok" or "failed". This fires at most once per
+	// deployment: after reporting, the server's next /self response won't
+	// include the deployment_id anymore.
+	if resp.DeploymentID != 0 {
+		outcome := "ok"
+		if pkgFailed {
+			outcome = "failed"
+		}
+		identityBody := map[string]any{"system_uuid": f.uuid}
+		var ignore struct{}
+		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
+			"identity":      identityBody,
+			"image_id":      resp.ImageID,
+			"deployment_id": resp.DeploymentID,
+			"outcome":       outcome,
+			"packages":      packageReports,
+		}, &ignore); err != nil {
+			log.Warn("deploy.close", slog.String("error", err.Error()))
+		} else {
+			log.Info("deploy.closed",
+				slog.String("actor", f.uuid),
+				slog.Int64("deployment_id", resp.DeploymentID),
+				slog.String("outcome", outcome))
+		}
 	}
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
@@ -439,19 +472,22 @@ func cleanupMediaOnce(log *slog.Logger) {
 	}
 }
 
-// runSelfLoop polls runSelfOnce immediately and then every interval until
-// ctx is cancelled (the service Stop handler cancels it). This is the
-// resident heartbeat: the agent only needs the server URL + its agent_id.
-func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+// pollLoopResult is the return value of a pollLoop work function. It
+// carries an optional suggested interval (from the server) and a flag
+// indicating whether the caller should exit (e.g. self-update launched).
+type pollLoopResult struct {
+	suggestedInterval time.Duration
+	exit              bool
+}
+
+// pollLoop is the common ticker loop shared by runSelfLoop and
+// runCheckInLoop. It runs work immediately, then every interval, adding
+// ±20 % random jitter to avoid thundering-herd polling. If work returns
+// exit==true the loop returns. The server can change the cadence by
+// returning a non-zero suggestedInterval.
+func pollLoop(ctx context.Context, log *slog.Logger, interval time.Duration, work func(ctx context.Context) pollLoopResult) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
-	}
-	// When running under the SCM, self-update must restart the SERVICE
-	// (not relaunch a detached console process), or the upgraded agent
-	// would run outside the service. Empty in console mode.
-	svc := ""
-	if isWindowsService() {
-		svc = serviceName
 	}
 	// applyInterval resets the ticker when the server advertises a different
 	// cadence, so an operator changing the check-in interval in the portal
@@ -465,18 +501,15 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		}
 	}
 
-	suggested := runSelfOnce(ctx, log, c, f)
-	if suggested > 0 {
-		interval = suggested // honour the server cadence from the first tick
+	// First immediate poll.
+	res := work(ctx)
+	if res.suggestedInterval > 0 {
+		interval = res.suggestedInterval
 	}
-	shipLogs(log, shipper, f.server, f.insecureTLS)
-	// Apply a pending self-update after the first poll, so a freshly
-	// uploaded agent version is picked up without waiting a full interval.
-	if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
-		log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
-		shipLogs(log, shipper, f.server, f.insecureTLS)
+	if res.exit {
 		return
 	}
+
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
@@ -484,15 +517,39 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			applyInterval(tick, runSelfOnce(ctx, log, c, f))
-			shipLogs(log, shipper, f.server, f.insecureTLS)
-			if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
-				log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
-				shipLogs(log, shipper, f.server, f.insecureTLS)
+			res := work(ctx)
+			applyInterval(tick, res.suggestedInterval)
+			if res.exit {
 				return
 			}
+			// Add ±20% random jitter to avoid thundering-herd polling.
+			jitter := time.Duration(rand.Int64N(int64(interval) * 2 / 5))
+			tick.Reset(interval - interval/5 + jitter)
 		}
 	}
+}
+
+// runSelfLoop polls runSelfOnce immediately and then every interval until
+// ctx is cancelled (the service Stop handler cancels it). This is the
+// resident heartbeat: the agent only needs the server URL + its agent_id.
+func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+	// When running under the SCM, self-update must restart the SERVICE
+	// (not relaunch a detached console process), or the upgraded agent
+	// would run outside the service. Empty in console mode.
+	svc := ""
+	if isWindowsService() {
+		svc = serviceName
+	}
+	pollLoop(ctx, log, interval, func(ctx context.Context) pollLoopResult {
+		suggested := runSelfOnce(ctx, log, c, f)
+		shipLogs(log, shipper, f.server, f.insecureTLS)
+		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
+			log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
+			shipLogs(log, shipper, f.server, f.insecureTLS)
+			return pollLoopResult{exit: true}
+		}
+		return pollLoopResult{suggestedInterval: suggested}
+	})
 }
 
 // packageFile is one downloadable file in a software package.
@@ -901,9 +958,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		Jobs      []bulkJob `json:"jobs"`
 	}
 
-	tick := time.NewTicker(f.checkInInterval)
-	defer tick.Stop()
-	for {
+	pollLoop(ctx, log, f.checkInInterval, func(ctx context.Context) pollLoopResult {
 		var resp checkinResp
 		if err := c.PostJSON(ctx, "/api/v1/agent/checkin",
 			map[string]any{"identity": identityBody}, &resp); err != nil {
@@ -928,14 +983,10 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Info("selfupdate.exiting",
 				slog.String("note", "updater script spawned; exiting so the swap can complete"))
 			shipLogs(log, shipper, f.server, f.insecureTLS)
-			return
+			return pollLoopResult{exit: true}
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
+		return pollLoopResult{}
+	})
 }
 
 // maybeSelfUpdate asks the server whether a newer agent is
@@ -1132,10 +1183,10 @@ func rewriteSteps(in []swspec.InstallStep, payload string) []swspec.InstallStep 
 	out := make([]swspec.InstallStep, len(in))
 	copy(out, in)
 	for i := range out {
-		out[i].SourcePath = replaceToken(out[i].SourcePath, payload)
-		out[i].MSIPath = replaceToken(out[i].MSIPath, payload)
-		out[i].APPXPath = replaceToken(out[i].APPXPath, payload)
-		out[i].ExePath = replaceToken(out[i].ExePath, payload)
+		out[i].SourcePath = strings.ReplaceAll(out[i].SourcePath, "{payload}", payload)
+		out[i].MSIPath = strings.ReplaceAll(out[i].MSIPath, "{payload}", payload)
+		out[i].APPXPath = strings.ReplaceAll(out[i].APPXPath, "{payload}", payload)
+		out[i].ExePath = strings.ReplaceAll(out[i].ExePath, "{payload}", payload)
 	}
 	return out
 }
@@ -1178,26 +1229,6 @@ func expandPkgDir(in []swspec.InstallStep, dir string) []swspec.InstallStep {
 		out[i].ExeArgs = repAll(out[i].ExeArgs)
 	}
 	return out
-}
-
-func replaceToken(s, payload string) string {
-	if s == "" {
-		return s
-	}
-	// Use a simple substring replace; avoids importing strings just for one
-	// call. Cheap for short strings.
-	const token = "{payload}"
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); {
-		if i+len(token) <= len(s) && s[i:i+len(token)] == token {
-			out = append(out, payload...)
-			i += len(token)
-			continue
-		}
-		out = append(out, s[i])
-		i++
-	}
-	return string(out)
 }
 
 // resolveBareFilenames substitutes bare filenames in install-step
@@ -1314,6 +1345,3 @@ func defaultWorkDir() string {
 	}
 	return "/var/lib/autodeploy/work"
 }
-
-// parseDuration kept as a stub for Phase 13 resident-mode flags.
-var _ = strconv.Itoa

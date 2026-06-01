@@ -129,22 +129,75 @@ fetch() {
         || die "fetch failed for $asset"
 }
 
-log "Downloading server + companions..."
+log "Downloading server binary..."
 fetch "$SERVER_ASSET"
 fetch "$SERVER_ASSET.sha256"
-fetch "autodeploy-agent-windows-amd64.exe"
-fetch "autodeploy-agent-windows-amd64.exe.sha256"
-# .version sidecars: optional pre-v0.1.3, fetch best-effort.
-for opt in "$SERVER_ASSET.version" "autodeploy-agent-windows-amd64.exe.version"; do
-    curl -sSfL --connect-timeout 10 --retry 2 \
-        -o "$WORK/$opt" "$GH_BASE/$opt" 2>/dev/null || rm -f "$WORK/$opt"
-done
+# .version sidecar: optional pre-v0.1.3, fetch best-effort.
+curl -sSfL --connect-timeout 10 --retry 2 \
+    -o "$WORK/$SERVER_ASSET.version" "$GH_BASE/$SERVER_ASSET.version" 2>/dev/null \
+    || rm -f "$WORK/$SERVER_ASSET.version"
 
-log "Verifying SHA-256..."
+log "Verifying server SHA-256..."
 ( cd "$WORK" && sha256sum -c "$SERVER_ASSET.sha256" --quiet ) \
     || die "SHA-256 mismatch on $SERVER_ASSET; aborting update"
-( cd "$WORK" && sha256sum -c "autodeploy-agent-windows-amd64.exe.sha256" --quiet ) \
-    || die "SHA-256 mismatch on the agent; aborting update"
+log "Server binary verified."
+
+# --- Fetch ALL available agent binaries from the release ----------------
+# Query the GitHub API for every autodeploy-agent-* asset in the release
+# so we automatically pick up new platforms (linux-arm64, etc.) without
+# hardcoding each one. Falls back to the legacy single-agent fetch when
+# the API is unreachable (air-gapped / rate-limited environments).
+log "Fetching agent binaries..."
+AGENTS=""
+AGENTS=$(curl -sSfL --connect-timeout 10 --retry 2 \
+    -H "Accept: application/vnd.github+json" \
+    -H "User-Agent: autodeploy-update" \
+    "https://api.github.com/repos/Rusketh/AutoDeploy/releases/tags/$TAG" 2>/dev/null \
+    | grep -o '"name": "autodeploy-agent-[^"]*"' | cut -d'"' -f4 \
+    | grep -v '\.sha256$' | grep -v '\.version$' | sort -u) || true
+
+if [ -n "$AGENTS" ]; then
+    AGENT_FAIL=0
+    for agent in $AGENTS; do
+        log "  fetching $agent + sidecars"
+        if ! curl -sSfL --connect-timeout 10 --retry 2 \
+                -o "$WORK/$agent" "$GH_BASE/$agent"; then
+            log "  WARN: failed to fetch $agent; skipping"
+            rm -f "$WORK/$agent"
+            continue
+        fi
+        if ! curl -sSfL --connect-timeout 10 --retry 2 \
+                -o "$WORK/$agent.sha256" "$GH_BASE/$agent.sha256"; then
+            log "  WARN: failed to fetch $agent.sha256; skipping $agent"
+            rm -f "$WORK/$agent" "$WORK/$agent.sha256"
+            continue
+        fi
+        # .version sidecar is optional
+        curl -sSfL --connect-timeout 10 --retry 2 \
+            -o "$WORK/$agent.version" "$GH_BASE/$agent.version" 2>/dev/null \
+            || rm -f "$WORK/$agent.version"
+
+        # Verify SHA-256
+        if ! ( cd "$WORK" && sha256sum -c "$agent.sha256" --quiet ); then
+            log "  WARN: SHA-256 mismatch on $agent; skipping"
+            rm -f "$WORK/$agent" "$WORK/$agent.sha256" "$WORK/$agent.version"
+            AGENT_FAIL=1
+            continue
+        fi
+    done
+    [ "$AGENT_FAIL" -eq 0 ] || log "  WARN: one or more agent binaries failed verification"
+else
+    # Fallback: API unavailable, fetch the legacy single agent.
+    log "  GitHub API unavailable; falling back to legacy single-agent fetch"
+    fetch "autodeploy-agent-windows-amd64.exe"
+    fetch "autodeploy-agent-windows-amd64.exe.sha256"
+    curl -sSfL --connect-timeout 10 --retry 2 \
+        -o "$WORK/autodeploy-agent-windows-amd64.exe.version" \
+        "$GH_BASE/autodeploy-agent-windows-amd64.exe.version" 2>/dev/null \
+        || rm -f "$WORK/autodeploy-agent-windows-amd64.exe.version"
+    ( cd "$WORK" && sha256sum -c "autodeploy-agent-windows-amd64.exe.sha256" --quiet ) \
+        || die "SHA-256 mismatch on the agent; aborting update"
+fi
 log "All artifacts verified."
 
 # Refresh the downloads directory FIRST. The agents poll the server's
@@ -152,12 +205,10 @@ log "All artifacts verified."
 # immediately.
 log "Refreshing $DATA_DIR/downloads/..."
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/downloads"
-for a in autodeploy-agent-windows-amd64.exe \
-         autodeploy-agent-windows-amd64.exe.sha256 \
-         autodeploy-agent-windows-amd64.exe.version; do
-    if [ -f "$WORK/$a" ]; then
-        install -m 0644 -o autodeploy -g autodeploy "$WORK/$a" "$DATA_DIR/downloads/$a"
-    fi
+for f in "$WORK"/autodeploy-agent-*; do
+    [ -f "$f" ] || continue
+    fname="$(basename "$f")"
+    install -m 0644 -o autodeploy -g autodeploy "$f" "$DATA_DIR/downloads/$fname"
 done
 
 # Refresh the Boot Client image (kernel + initramfs) in the iPXE dir so

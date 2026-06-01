@@ -83,6 +83,13 @@ func machineCSV(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Batch-load bindings for all machines.
+		machineIDs := make([]model.ID, len(machines))
+		for i, m := range machines {
+			machineIDs[i] = m.ID
+		}
+		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
+
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
 		cw := csv.NewWriter(w)
@@ -90,7 +97,7 @@ func machineCSV(r Repos) http.HandlerFunc {
 			"system_uuid", "bios_vendor", "bios_version", "board_manufacturer", "board_product",
 			"image_id", "first_seen", "last_seen"})
 		for _, m := range machines {
-			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+			b := bindings[m.ID]
 			imageID := ""
 			if b.ImageID != nil {
 				imageID = strconv.FormatInt(int64(*b.ImageID), 10)
@@ -211,15 +218,37 @@ func machineList(r Repos) http.HandlerFunc {
 		// payload, not a substitute for search.
 		page := paginate(req, len(v), 50)
 		slice := v[page.Offset:page.End]
+
+		// Batch-load bindings, images, and BitLocker status for the
+		// page slice instead of N+1 per-machine queries.
+		machineIDs := make([]model.ID, len(slice))
+		for i, m := range slice {
+			machineIDs[i] = m.ID
+		}
+		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
+		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
+
+		// Collect unique image IDs from bindings so we can batch-load names.
+		imageIDSet := map[model.ID]struct{}{}
+		for _, b := range bindings {
+			if b.ImageID != nil {
+				imageIDSet[*b.ImageID] = struct{}{}
+			}
+		}
+		imageIDs := make([]model.ID, 0, len(imageIDSet))
+		for id := range imageIDSet {
+			imageIDs = append(imageIDs, id)
+		}
+		imageNames, _ := r.Images.ListNamesByIDs(req.Context(), imageIDs)
+
 		rows := make([]row, 0, len(slice))
 		for _, m := range slice {
-			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+			b := bindings[m.ID]
 			imgName := ""
 			if b.ImageID != nil {
-				im, _ := r.Images.Get(req.Context(), *b.ImageID)
-				imgName = im.Name
+				imgName = imageNames[*b.ImageID]
 			}
-			bl, _ := r.BitLocker.PINStatus(req.Context(), m.ID)
+			bl := blStatuses[m.ID]
 			name := m.ReportedName
 			if name == "" {
 				name = b.MachineName

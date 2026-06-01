@@ -173,14 +173,26 @@ func (r *SoftwareLoadoutRepo) packagesFor(ctx context.Context, id ID) ([]Softwar
 // Delete removes a loadout. Refuses if any image still links it or any
 // child loadout still names it as parent.
 func (r *SoftwareLoadoutRepo) Delete(ctx context.Context, id ID) error {
-	refs, err := r.RefCount(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
+
+	var images, children int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM image WHERE loadout_id=?`, id).Scan(&images); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM software_loadout WHERE parent_id=?`, id).Scan(&children); err != nil {
+		return err
+	}
+	refs := images + children
 	if refs > 0 {
 		return fmt.Errorf("loadout %d: %w (referenced by %d objects)", id, ErrInUse, refs)
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM software_loadout WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM software_loadout WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -188,7 +200,7 @@ func (r *SoftwareLoadoutRepo) Delete(ctx context.Context, id ID) error {
 	if n == 0 {
 		return fmt.Errorf("loadout %d: %w", id, ErrNotFound)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RefCount returns the number of images that link this loadout plus the

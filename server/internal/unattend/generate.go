@@ -226,7 +226,7 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 	}
 
 	// Licensing.
-	if s.KMSServer != "" {
+	if s.KMSServer != "" && isHostnameSafe(s.KMSServer) {
 		port := s.KMSPort
 		if port == 0 {
 			port = 1688
@@ -491,6 +491,19 @@ func writeUserAccounts(b *bytes.Buffer, s Settings) {
 	fmt.Fprint(b, `        </LocalAccounts>
       </UserAccounts>
 `)
+}
+
+// isHostnameSafe reports whether s contains only characters valid in a
+// DNS hostname: ASCII letters, digits, dots, hyphens, and underscores.
+// This prevents command-injection when the value is interpolated into a
+// cscript command line.
+func isHostnameSafe(s string) bool {
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func esc(s string) string { return html.EscapeString(s) }

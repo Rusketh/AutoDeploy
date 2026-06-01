@@ -7,7 +7,11 @@ booting. For the values mentioned here, see the [configuration reference](../ref
 
 - Operators sign in with a **username and password**. Passwords are hashed with **bcrypt**;
   the plaintext is never stored.
-- A successful login sets an **`autodeploy_session`** cookie (HttpOnly), valid for **12 hours**.
+- A successful login sets an **`autodeploy_session`** cookie (HttpOnly, SameSite=Lax), valid for
+  **12 hours**. The `Secure` flag is set automatically when the server detects TLS — either a
+  direct HTTPS connection or a reverse proxy that sets `X-Forwarded-Proto: https`.
+- **Login rate limiting:** each IP address is limited to **10 login attempts per minute**. Further
+  attempts receive `429 Too Many Requests` until the window expires.
 - Manage accounts under **[Settings → Accounts](../portal/settings.md#accounts)**: create users,
   disable/enable them, delete them, and change passwords.
 
@@ -65,6 +69,19 @@ Because a machine that network-boots can reach the deployment menu, you can requ
 **[Settings → Access PIN](../portal/settings.md#access-pin)**. When set, the
 [boot client](../introduction.md#boot-client-autodeploy-boot) must submit a valid PIN before it
 can image a machine.
+
+## API request protection
+
+The JSON API enforces several safeguards:
+
+- **CSRF protection:** all `POST`, `PUT` and `DELETE` requests to authenticated endpoints must
+  include an `X-Requested-With` header (any non-empty value). Browsers cannot send custom headers
+  cross-origin without a CORS preflight, which the server does not grant, so cross-site form
+  submissions and simple fetches are blocked.
+- **Request body limits:** JSON request bodies are capped at **10 MB**. Requests exceeding this
+  are rejected before parsing.
+- **Entity name validation:** names for ISOs, images, unattends, drivers, software and loadouts
+  must be 1–200 characters and may not contain `<`, `>`, `"`, or null bytes.
 
 ## Audit logging
 

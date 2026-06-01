@@ -69,6 +69,9 @@ const (
 	listenReadBufferSize = 65535
 )
 
+// errACKTimeout is returned by awaitACK when the read deadline expires.
+var errACKTimeout = errors.New("timed out waiting for ACK")
+
 // Server is the TFTP listener.
 type Server struct {
 	// Addr is the UDP listen address, e.g. ":69". Operators usually
@@ -391,10 +394,7 @@ func (t *transfer) run(ctx context.Context) error {
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 			return err
 		}
-		if err := t.sendDATA(block, buf[:n]); err != nil {
-			return err
-		}
-		if err := t.awaitACK(ctx, block); err != nil {
+		if err := t.sendDATA(ctx, block, buf[:n]); err != nil {
 			return err
 		}
 		if n < t.blockSize {
@@ -405,7 +405,7 @@ func (t *transfer) run(ctx context.Context) error {
 	}
 }
 
-func (t *transfer) sendDATA(block uint16, data []byte) error {
+func (t *transfer) sendDATA(ctx context.Context, block uint16, data []byte) error {
 	pkt := make([]byte, 4+len(data))
 	binary.BigEndian.PutUint16(pkt[:2], opDATA)
 	binary.BigEndian.PutUint16(pkt[2:4], block)
@@ -414,7 +414,14 @@ func (t *transfer) sendDATA(block uint16, data []byte) error {
 		if _, err := t.conn.WriteToUDP(pkt, t.client); err != nil {
 			return err
 		}
-		return nil
+		err := t.awaitACK(ctx, block)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errACKTimeout) {
+			return err
+		}
+		// Timeout — retransmit.
 	}
 	return errors.New("send data exhausted retries")
 }
@@ -449,7 +456,7 @@ func (t *transfer) awaitACK(ctx context.Context, want uint16) error {
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
-				return errors.New("timed out waiting for ACK")
+				return errACKTimeout
 			}
 			return err
 		}

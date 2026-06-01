@@ -367,6 +367,82 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 	return out, rows.Err()
 }
 
+// ListBindingsForMachines returns bindings for the given machine IDs in a
+// single query. Machines without a binding are absent from the map.
+func (r *InventoryRepo) ListBindingsForMachines(ctx context.Context, machineIDs []ID) (map[ID]MachineBinding, error) {
+	if len(machineIDs) == 0 {
+		return map[ID]MachineBinding{}, nil
+	}
+	placeholders := make([]string, len(machineIDs))
+	args := make([]any, len(machineIDs))
+	for i, id := range machineIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT machine_id, image_id, machine_name, target_ou, group_memberships, updated_at
+		 FROM machine_binding WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[ID]MachineBinding, len(machineIDs))
+	for rows.Next() {
+		var b MachineBinding
+		var imageID sql.NullInt64
+		var groups string
+		if err := rows.Scan(&b.MachineID, &imageID, &b.MachineName, &b.TargetOU, &groups, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		b.ImageID = idPtr(imageID)
+		if err := json.Unmarshal([]byte(groups), &b.GroupMemberships); err != nil {
+			return nil, fmt.Errorf("parse group_memberships: %w", err)
+		}
+		out[b.MachineID] = b
+	}
+	return out, rows.Err()
+}
+
+// ListHistoryForMachines returns deployment records for the given machine IDs
+// in a single query, grouped by machine ID, newest first.
+func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs []ID) (map[ID][]DeploymentRecord, error) {
+	if len(machineIDs) == 0 {
+		return map[ID][]DeploymentRecord{}, nil
+	}
+	placeholders := make([]string, len(machineIDs))
+	args := make([]any, len(machineIDs))
+	for i, id := range machineIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		 FROM deployment_history
+		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY started_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[ID][]DeploymentRecord, len(machineIDs))
+	for rows.Next() {
+		var d DeploymentRecord
+		var imageID sql.NullInt64
+		var completed sql.NullTime
+		if err := rows.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
+			&completed, &d.Outcome, &d.Notes); err != nil {
+			return nil, err
+		}
+		d.ImageID = idPtr(imageID)
+		if completed.Valid {
+			t := completed.Time
+			d.CompletedAt = &t
+		}
+		out[d.MachineID] = append(out[d.MachineID], d)
+	}
+	return out, rows.Err()
+}
+
 // GetBinding returns the binding for a machine, or ErrNotFound.
 func (r *InventoryRepo) GetBinding(ctx context.Context, machineID ID) (MachineBinding, error) {
 	var b MachineBinding
@@ -471,6 +547,10 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 		`DELETE FROM machine_binding WHERE machine_id=?`,
 		`DELETE FROM deployment_history WHERE machine_id=?`,
 		`DELETE FROM machine_detected_state WHERE machine_id=?`,
+		`DELETE FROM bitlocker_pin WHERE machine_id=?`,
+		`DELETE FROM bitlocker_recovery_key WHERE machine_id=?`,
+		`DELETE FROM machine_deploy_token WHERE machine_id=?`,
+		`DELETE FROM bulk_job WHERE machine_id=?`,
 		`DELETE FROM machine_record WHERE id=?`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
@@ -478,6 +558,35 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// LatestOpenDeployment returns the most recent in_progress deployment for the
+// machine, or ErrNotFound if there is none. Used by /api/v1/agent/self to tell
+// the resident agent about a deployment the boot client opened so the agent can
+// close it once software installation finishes.
+func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) (DeploymentRecord, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		FROM deployment_history
+		WHERE machine_id=? AND outcome='in_progress'
+		ORDER BY started_at DESC
+		LIMIT 1`, machineID)
+	var d DeploymentRecord
+	var imageID sql.NullInt64
+	var completed sql.NullTime
+	if err := row.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
+		&completed, &d.Outcome, &d.Notes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DeploymentRecord{}, ErrNotFound
+		}
+		return DeploymentRecord{}, err
+	}
+	d.ImageID = idPtr(imageID)
+	if completed.Valid {
+		t := completed.Time
+		d.CompletedAt = &t
+	}
+	return d, nil
 }
 
 // HistoryFor returns dated deployment rows for the machine, newest first.

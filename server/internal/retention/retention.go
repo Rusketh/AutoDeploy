@@ -21,6 +21,8 @@ type Scheduler struct {
 	RetentionDays func() int
 	Interval      time.Duration // 0 -> hourly
 	Logger        *slog.Logger
+	// SessionPrune, when set, deletes expired sessions on each tick.
+	SessionPrune func(ctx context.Context) error
 }
 
 // Start runs the scheduler until ctx is cancelled.
@@ -46,20 +48,26 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 	if s.RetentionDays != nil {
 		days = s.RetentionDays()
 	}
-	if s.Logs == nil || days <= 0 {
-		return
+	if s.Logs != nil && days > 0 {
+		cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		n, err := s.Logs.Prune(ctx, cutoff)
+		if err != nil {
+			s.log().Warn("retention.log_prune.fail",
+				slog.String("error", err.Error()))
+		} else {
+			s.log().Info("retention.log_prune.ok",
+				slog.Int64("removed", n),
+				slog.Int("days", days),
+				slog.String("cutoff", cutoff.Format(time.RFC3339)))
+		}
 	}
-	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
-	n, err := s.Logs.Prune(ctx, cutoff)
-	if err != nil {
-		s.log().Warn("retention.log_prune.fail",
-			slog.String("error", err.Error()))
-		return
+
+	if s.SessionPrune != nil {
+		if err := s.SessionPrune(ctx); err != nil {
+			s.log().Warn("retention.session_prune.fail",
+				slog.String("error", err.Error()))
+		}
 	}
-	s.log().Info("retention.log_prune.ok",
-		slog.Int64("removed", n),
-		slog.Int("days", days),
-		slog.String("cutoff", cutoff.Format(time.RFC3339)))
 }
 
 func (s *Scheduler) log() *slog.Logger {

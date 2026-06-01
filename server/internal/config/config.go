@@ -63,7 +63,7 @@ func Load() (Config, error) {
 		TLSKeyFile:  getenv("AUTODEPLOY_TLS_KEY", ""),
 		DataDir:     getenv("AUTODEPLOY_DATA_DIR", "./data"),
 	}
-	dev, err := strconv.ParseBool(getenv("AUTODEPLOY_DEV", "true"))
+	dev, err := strconv.ParseBool(getenv("AUTODEPLOY_DEV", "false"))
 	if err != nil {
 		return Config{}, errors.New("AUTODEPLOY_DEV must be a boolean")
 	}
@@ -83,7 +83,7 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AUTODEPLOY_LOG_RETENTION_DAYS must be an integer")
 	}
 	c.LogRetentionDays = days
-	maxIF, err := strconv.Atoi(getenv("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT", "64"))
+	maxIF, err := strconv.Atoi(getenv("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT", "128"))
 	if err != nil {
 		return Config{}, errors.New("AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT must be an integer")
 	}

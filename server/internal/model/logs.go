@@ -54,11 +54,31 @@ func (r *LogRepo) Append(ctx context.Context, ev LogEvent) error {
 	return err
 }
 
-// AppendBatch inserts many events in one transaction.
+// appendBatchChunkSize is the maximum number of events inserted per
+// transaction in AppendBatch, keeping the write-lock hold time bounded.
+const appendBatchChunkSize = 500
+
+// AppendBatch inserts many events, splitting them into chunks of at most
+// appendBatchChunkSize records so that no single transaction holds the
+// write lock for an unbounded duration.
 func (r *LogRepo) AppendBatch(ctx context.Context, evs []LogEvent) error {
 	if len(evs) == 0 {
 		return nil
 	}
+	for start := 0; start < len(evs); start += appendBatchChunkSize {
+		end := start + appendBatchChunkSize
+		if end > len(evs) {
+			end = len(evs)
+		}
+		if err := r.appendBatchChunk(ctx, evs[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// appendBatchChunk inserts a single chunk of events in one transaction.
+func (r *LogRepo) appendBatchChunk(ctx context.Context, evs []LogEvent) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

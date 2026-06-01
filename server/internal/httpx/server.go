@@ -59,6 +59,13 @@ func ListenAndServe(ctx context.Context, cfg config.Config, h http.Handler, logg
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Graceful shutdown when ctx is cancelled.
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
 	logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",
 		slog.String("addr", cfg.HTTPAddr),
 		slog.Bool("dev_mode", cfg.DevMode))
@@ -108,6 +115,14 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 
 // BytesWritten exposes the total bytes the handler wrote.
 func (s *statusRecorder) BytesWritten() int64 { return s.bytes }
+
+// Flush implements http.Flusher so streaming responses (e.g. SSE) work
+// through the logging wrapper.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
 
 func clientID(r *http.Request) string {
 	if h := r.Header.Get("X-AutoDeploy-Machine-UUID"); h != "" {

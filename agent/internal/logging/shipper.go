@@ -41,27 +41,35 @@ type LogEvent struct {
 // Shipper is the buffered slog handler. Share state across clones so
 // every With(...) descendant feeds the same queue.
 type Shipper struct {
-	state *shipperState
-	base  slog.Handler
-	attrs []slog.Attr
+	state  *shipperState
+	base   slog.Handler
+	attrs  []slog.Attr
+	client *http.Client
 }
 
 type shipperState struct {
 	mu     sync.Mutex
-	buffer []LogEvent
-	cap    int
+	buffer []LogEvent // fixed-size ring buffer (allocated once in NewShipper)
+	head   int        // index of the oldest element
+	count  int        // number of valid elements in the ring
 }
 
 // NewShipper wraps base. cap is the maximum number of events kept in
 // memory; once full, the oldest events are dropped (so a failing
 // upload can't OOM the boot environment).
-func NewShipper(base slog.Handler, cap int) *Shipper {
-	if cap <= 0 {
-		cap = 1024
+func NewShipper(base slog.Handler, capacity int) *Shipper {
+	if capacity <= 0 {
+		capacity = 1024
 	}
 	return &Shipper{
-		state: &shipperState{cap: cap},
+		state: &shipperState{buffer: make([]LogEvent, capacity)},
 		base:  base,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+			},
+		},
 	}
 }
 
@@ -97,12 +105,16 @@ func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
 
 	st := s.state
 	st.mu.Lock()
-	if len(st.buffer) >= st.cap {
-		// Drop the oldest so a stuck upload can't grow the buffer.
-		copy(st.buffer, st.buffer[1:])
-		st.buffer = st.buffer[:len(st.buffer)-1]
+	cap := len(st.buffer)
+	if st.count < cap {
+		// Space available: write at the next free slot.
+		st.buffer[(st.head+st.count)%cap] = ev
+		st.count++
+	} else {
+		// Full: overwrite the oldest slot and advance head.
+		st.buffer[st.head] = ev
+		st.head = (st.head + 1) % cap
 	}
-	st.buffer = append(st.buffer, ev)
 	st.mu.Unlock()
 	return nil
 }
@@ -113,9 +125,10 @@ func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
 func (s *Shipper) WithAttrs(attrs []slog.Attr) slog.Handler {
 	merged := append(append([]slog.Attr(nil), s.attrs...), attrs...)
 	return &Shipper{
-		state: s.state,
-		base:  s.base.WithAttrs(attrs),
-		attrs: merged,
+		state:  s.state,
+		base:   s.base.WithAttrs(attrs),
+		attrs:  merged,
+		client: s.client,
 	}
 }
 
@@ -124,19 +137,29 @@ func (s *Shipper) WithAttrs(attrs []slog.Attr) slog.Handler {
 // groups for its own output.
 func (s *Shipper) WithGroup(name string) slog.Handler {
 	return &Shipper{
-		state: s.state,
-		base:  s.base.WithGroup(name),
-		attrs: s.attrs,
+		state:  s.state,
+		base:   s.base.WithGroup(name),
+		attrs:  s.attrs,
+		client: s.client,
 	}
 }
 
-// Drain returns and clears every queued event.
+// Drain returns and clears every queued event in FIFO order.
 func (s *Shipper) Drain() []LogEvent {
 	st := s.state
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	out := st.buffer
-	st.buffer = nil
+	if st.count == 0 {
+		return nil
+	}
+	out := make([]LogEvent, st.count)
+	cap := len(st.buffer)
+	for i := 0; i < st.count; i++ {
+		out[i] = st.buffer[(st.head+i)%cap]
+	}
+	// Reset the ring without reallocating the backing array.
+	st.head = 0
+	st.count = 0
 	return out
 }
 
@@ -153,12 +176,12 @@ func (s *Shipper) Ship(ctx context.Context, baseURL string, insecureTLS bool) (i
 	if len(events) == 0 {
 		return 0, nil
 	}
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureTLS},
-		},
+	// Update the TLS setting on the shared client's transport in case
+	// the caller toggles insecureTLS between calls (unlikely but safe).
+	if tr, ok := s.client.Transport.(*http.Transport); ok {
+		tr.TLSClientConfig.InsecureSkipVerify = insecureTLS
 	}
+	client := s.client
 	// Server cap is 500 events per request; chunk slightly below to
 	// leave headroom for JSON framing.
 	const chunk = 400
@@ -205,12 +228,21 @@ func (s *Shipper) requeue(events []LogEvent) {
 	st := s.state
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	combined := append([]LogEvent{}, events...)
-	combined = append(combined, st.buffer...)
-	if len(combined) > st.cap {
-		combined = combined[len(combined)-st.cap:]
+	cap := len(st.buffer)
+	// Drain existing items into a temporary slice, prepend the failed
+	// events, then refill the ring.
+	existing := make([]LogEvent, st.count)
+	for i := 0; i < st.count; i++ {
+		existing[i] = st.buffer[(st.head+i)%cap]
 	}
-	st.buffer = combined
+	combined := append(events, existing...)
+	if len(combined) > cap {
+		// Keep the newest (tail) entries, drop the oldest (head).
+		combined = combined[len(combined)-cap:]
+	}
+	st.head = 0
+	st.count = len(combined)
+	copy(st.buffer, combined)
 }
 
 // promote folds a single slog.Attr into either a LogEvent header

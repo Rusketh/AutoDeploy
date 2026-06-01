@@ -161,27 +161,54 @@ for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm
     done
 done
 
-# For the Windows agent specifically: most operators only download the
-# server binary + extras.tar.gz, so the agent isn't sitting on disk for
-# the seeding loop above to find. Fetch it from the GitHub release that
-# matches the server binary's embedded version. This means the portal's
-# Downloads page works end-to-end after `install-linux.sh` with zero
-# manual steps -- operator goes straight to imaging.
+# Fetch ALL available agent binaries from the GitHub release that matches
+# the server binary's embedded version.  This means the portal's Downloads
+# page works end-to-end after `install-linux.sh` with zero manual steps --
+# the operator goes straight to imaging, regardless of which agent
+# platforms the release ships.
+#
+# The GitHub API is queried to discover every autodeploy-agent-* asset in
+# the release.  When the API is unreachable (air-gapped / rate-limited)
+# we fall back to fetching the legacy hardcoded list so existing setups
+# aren't broken.
 #
 # Failure here is non-fatal: an air-gapped install just won't have the
-# agent ready, the operator can drop it in by hand later.
+# agents ready; the operator can drop them in by hand later.
 INSTALLED_VERSION=$(/usr/local/bin/autodeploy-server --version 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
 if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "dev" ]; then
     GH_BASE="https://github.com/Rusketh/AutoDeploy/releases/download/$INSTALLED_VERSION"
-    # The agent is the only binary every install needs; boot client is
-    # optional (only needed if you'll PXE-boot bare metal). Fetch both
-    # but treat the agent as the primary case.
-    for fetch in autodeploy-agent-windows-amd64.exe \
-                 autodeploy-boot-linux-amd64; do
-        if [ -f "$DATA_DIR/downloads/$fetch" ]; then continue; fi
-        echo "== Fetching $fetch from $INSTALLED_VERSION =="
+
+    # Try the GitHub API to discover all agent + boot-client assets.
+    RELEASE_AGENTS=""
+    RELEASE_AGENTS=$(curl -sSfL --connect-timeout 10 --retry 2 \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: autodeploy-installer" \
+        "https://api.github.com/repos/Rusketh/AutoDeploy/releases/tags/$INSTALLED_VERSION" 2>/dev/null \
+        | grep -o '"name": "autodeploy-agent-[^"]*"' | cut -d'"' -f4 \
+        | grep -v '\.sha256$' | grep -v '\.version$' | sort -u) || true
+
+    # Also pick up boot-client assets from the same API response.
+    RELEASE_BOOT=""
+    RELEASE_BOOT=$(curl -sSfL --connect-timeout 10 --retry 2 \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: autodeploy-installer" \
+        "https://api.github.com/repos/Rusketh/AutoDeploy/releases/tags/$INSTALLED_VERSION" 2>/dev/null \
+        | grep -o '"name": "autodeploy-boot-[^"]*"' | cut -d'"' -f4 \
+        | grep -v '\.sha256$' | grep -v '\.version$' | sort -u) || true
+
+    if [ -n "$RELEASE_AGENTS" ] || [ -n "$RELEASE_BOOT" ]; then
+        ALL_FETCH="$RELEASE_AGENTS $RELEASE_BOOT"
+    else
+        # Fallback: API unreachable, use the legacy hardcoded list.
+        echo "  GitHub API unavailable; falling back to legacy asset list." >&2
+        ALL_FETCH="autodeploy-agent-windows-amd64.exe autodeploy-boot-linux-amd64"
+    fi
+
+    for fetch_asset in $ALL_FETCH; do
+        if [ -f "$DATA_DIR/downloads/$fetch_asset" ]; then continue; fi
+        echo "== Fetching $fetch_asset from $INSTALLED_VERSION =="
         ok=1
-        for asset in "$fetch" "$fetch.sha256" "$fetch.version"; do
+        for asset in "$fetch_asset" "$fetch_asset.sha256" "$fetch_asset.version"; do
             if ! curl -sSfL --connect-timeout 10 --retry 2 \
                     -o "$DATA_DIR/downloads/$asset" \
                     "$GH_BASE/$asset"; then
@@ -195,21 +222,21 @@ if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "dev" ]; then
                 esac
             fi
         done
-        if [ "$ok" -eq 1 ] && [ -f "$DATA_DIR/downloads/$fetch.sha256" ]; then
-            if ( cd "$DATA_DIR/downloads" && sha256sum -c "$fetch.sha256" --quiet >/dev/null 2>&1 ); then
-                chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch" \
-                    "$DATA_DIR/downloads/$fetch.sha256" 2>/dev/null || true
-                [ -f "$DATA_DIR/downloads/$fetch.version" ] && \
-                    chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch.version" 2>/dev/null || true
-                echo "    fetched $DATA_DIR/downloads/$fetch (sha256 verified)"
+        if [ "$ok" -eq 1 ] && [ -f "$DATA_DIR/downloads/$fetch_asset.sha256" ]; then
+            if ( cd "$DATA_DIR/downloads" && sha256sum -c "$fetch_asset.sha256" --quiet >/dev/null 2>&1 ); then
+                chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch_asset" \
+                    "$DATA_DIR/downloads/$fetch_asset.sha256" 2>/dev/null || true
+                [ -f "$DATA_DIR/downloads/$fetch_asset.version" ] && \
+                    chown autodeploy:autodeploy "$DATA_DIR/downloads/$fetch_asset.version" 2>/dev/null || true
+                echo "    fetched $DATA_DIR/downloads/$fetch_asset (sha256 verified)"
             else
-                echo "    WARN: SHA-256 mismatch for $fetch; removing" >&2
-                rm -f "$DATA_DIR/downloads/$fetch" \
-                      "$DATA_DIR/downloads/$fetch.sha256" \
-                      "$DATA_DIR/downloads/$fetch.version"
+                echo "    WARN: SHA-256 mismatch for $fetch_asset; removing" >&2
+                rm -f "$DATA_DIR/downloads/$fetch_asset" \
+                      "$DATA_DIR/downloads/$fetch_asset.sha256" \
+                      "$DATA_DIR/downloads/$fetch_asset.version"
             fi
         elif [ "$ok" -eq 0 ]; then
-            echo "    WARN: failed to fetch $fetch from $GH_BASE -- offline install? Drop the binary into $DATA_DIR/downloads/ by hand." >&2
+            echo "    WARN: failed to fetch $fetch_asset from $GH_BASE -- offline install? Drop the binary into $DATA_DIR/downloads/ by hand." >&2
         fi
     done
 fi
@@ -267,6 +294,20 @@ EOF
         echo "  Drop in by hand later, or update will not work from the portal." >&2
     fi
     rm -f "$SUDOERS_TMP"
+    # Verify the sudoers entry was actually written. A silent failure here
+    # (e.g. read-only /etc, selinux denial) would leave the portal's Update
+    # button broken with no clue in the install log.
+    if [ ! -f /etc/sudoers.d/autodeploy-update ]; then
+        echo "  WARN: /etc/sudoers.d/autodeploy-update was not installed." >&2
+        echo "  The portal Update button will fail because sudo will prompt for" >&2
+        echo "  a password. Create the file manually or re-run the installer" >&2
+        echo "  with write access to /etc/sudoers.d/." >&2
+    fi
+else
+    echo "  WARN: $UPDATE_SRC not found in the release bundle." >&2
+    echo "  Skipping installation of the in-place update helper." >&2
+    echo "  The portal's Update button will not work until the helper" >&2
+    echo "  is installed at /usr/local/sbin/autodeploy-update." >&2
 fi
 
 # Install the embedded-iPXE build helper alongside the binary. It's

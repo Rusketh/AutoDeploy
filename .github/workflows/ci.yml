@@ -20,13 +20,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: true
           cache-dependency-path: server/go.sum
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test -count=1 ./...
+        run: go test -race -count=1 ./...
       - name: build
         run: make build
       - uses: actions/upload-artifact@v4
@@ -45,13 +45,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: true
           cache-dependency-path: boot-client/go.sum
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test -count=1 ./...
+        run: go test -race -count=1 ./...
       - name: build (linux/amd64 static)
         run: make build
       - uses: actions/upload-artifact@v4
@@ -70,13 +70,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: true
           cache-dependency-path: agent/go.sum
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test -count=1 ./...
+        run: go test -race -count=1 ./...
       - name: build host
         run: make build
       - name: build windows/amd64

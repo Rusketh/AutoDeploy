@@ -27,7 +27,8 @@ type Client struct {
 // system trust store is used.
 func New(baseURL, uuid string, insecureTLS bool) *Client {
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureTLS},
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: insecureTLS},
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	return &Client{
 		BaseURL: baseURL,

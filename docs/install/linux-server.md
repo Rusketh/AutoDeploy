@@ -88,8 +88,11 @@ The installer:
 - best-effort installs the optional `p7zip` / `wimtools` packages,
 - creates the `autodeploy` system user and the data directory `/var/lib/autodeploy`
   (with `ipxe/` and `downloads/` subdirectories),
-- seeds bundled agent/boot binaries and fetches any missing ones from the release that matches
-  the installed server version,
+- seeds bundled agent/boot binaries and fetches any missing ones for **all available platforms**
+  from the release that matches the installed server version,
+- installs the self-update helper at `/usr/local/sbin/autodeploy-update` and a sudoers rule at
+  `/etc/sudoers.d/autodeploy` so the server can trigger in-place updates from the portal (see
+  [Updates](../operations/updates.md)),
 - installs the systemd unit at `/etc/systemd/system/autodeploy.service` and the environment file
   at `/etc/default/autodeploy`,
 - fetches the stock iPXE bootstrap binaries (unless you pass `--no-ipxe`).

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -164,31 +165,31 @@ func CountStatus(code int) string {
 // duration counter. We do not want one metric per machine UUID.
 func BucketRoute(path string) string {
 	switch {
-	case startsWith(path, "/payload/iso/"):
+	case strings.HasPrefix(path, "/payload/iso/"):
 		return "payload_iso"
-	case startsWith(path, "/payload/drivers/"):
+	case strings.HasPrefix(path, "/payload/drivers/"):
 		return "payload_drivers"
-	case startsWith(path, "/payload/software/"):
+	case strings.HasPrefix(path, "/payload/software/"):
 		return "payload_software"
-	case startsWith(path, "/payload/unattend/"):
+	case strings.HasPrefix(path, "/payload/unattend/"):
 		return "payload_unattend"
-	case startsWith(path, "/api/v1/agent/checkin"):
+	case strings.HasPrefix(path, "/api/v1/agent/checkin"):
 		return "agent_checkin"
-	case startsWith(path, "/api/v1/agent/report"):
+	case strings.HasPrefix(path, "/api/v1/agent/report"):
 		return "agent_report"
-	case startsWith(path, "/api/v1/agent/"):
+	case strings.HasPrefix(path, "/api/v1/agent/"):
 		return "agent_other"
-	case startsWith(path, "/api/v1/clients/menu"):
+	case strings.HasPrefix(path, "/api/v1/clients/menu"):
 		return "client_menu"
-	case startsWith(path, "/api/v1/clients/validate-pin"):
+	case strings.HasPrefix(path, "/api/v1/clients/validate-pin"):
 		return "client_pin"
-	case startsWith(path, "/api/v1/images/") && hasSuffix(path, "/manifest"):
+	case strings.HasPrefix(path, "/api/v1/images/") && strings.HasSuffix(path, "/manifest"):
 		return "manifest"
-	case startsWith(path, "/api/v1/logs/ingest"):
+	case strings.HasPrefix(path, "/api/v1/logs/ingest"):
 		return "logs_ingest"
-	case startsWith(path, "/api/v1/"):
+	case strings.HasPrefix(path, "/api/v1/"):
 		return "api_other"
-	case startsWith(path, "/portal/"):
+	case strings.HasPrefix(path, "/portal/"):
 		return "portal"
 	case path == "/healthz":
 		return "healthz"
@@ -196,11 +197,4 @@ func BucketRoute(path string) string {
 		return "metrics"
 	}
 	return "other"
-}
-
-func startsWith(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
