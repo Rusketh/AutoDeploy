@@ -35,6 +35,7 @@ const (
 	keyADSkipTLSVerify    = "ad.skip_tls_verify"
 	keyLogRetentionDays   = "retention.log_days"
 	keyPayloadMaxInFlight = "payload.max_in_flight"
+	keyAgentPollSeconds   = "agent.poll_interval_seconds"
 	keyStorageISO         = "storage.iso"
 	keyStorageDrivers     = "storage.drivers"
 	keyStorageSoftware    = "storage.software"
@@ -291,6 +292,35 @@ func (s *Settings) SetPayloadMaxInFlight(ctx context.Context, n int) error {
 		return errors.New("max in-flight must be >= 0")
 	}
 	return s.setRaw(ctx, keyPayloadMaxInFlight, strconv.Itoa(n))
+}
+
+// defaultAgentPollSeconds is the resident agent's check-in cadence when the
+// operator hasn't set one. 5 minutes balances responsiveness (re-image
+// flags, bulk jobs, rename/AD-move reporting) against load on a large fleet.
+const defaultAgentPollSeconds = 300
+
+// AgentPollIntervalSeconds returns the resident-agent check-in cadence the
+// server advertises in /api/v1/agent/self. Always >= 5s.
+func (s *Settings) AgentPollIntervalSeconds() int {
+	v := s.get(keyAgentPollSeconds)
+	if v == "" {
+		return defaultAgentPollSeconds
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 5 {
+		return defaultAgentPollSeconds
+	}
+	return n
+}
+
+// SetAgentPollIntervalSeconds stores the agent check-in cadence. Agents pick
+// it up on their next poll, so a change can take up to the OLD interval to
+// apply. Minimum 5s so a misconfiguration can't hammer the server.
+func (s *Settings) SetAgentPollIntervalSeconds(ctx context.Context, n int) error {
+	if n < 5 {
+		return errors.New("check-in interval must be >= 5 seconds")
+	}
+	return s.setRaw(ctx, keyAgentPollSeconds, strconv.Itoa(n))
 }
 
 // ApplyStorageOverrides pushes every configured storage path into

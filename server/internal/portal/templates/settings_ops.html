@@ -11,6 +11,16 @@
       <span class="hint">0 disables pruning — log_event grows forever. The retention scheduler ticks hourly and prunes rows older than the cutoff.</span>
     </label>
   </fieldset>
+  <fieldset><legend>Agent check-in interval</legend>
+    <label><span class="lbl">Resident agent poll interval (seconds)</span>
+      <input type="number" name="agent_poll_seconds" value="{{.Data.CheckInSeconds}}" min="5" max="86400">
+      <span class="hint">
+        How often each deployed agent polls <code>/api/v1/agent/self</code> for pending jobs, re-image flags and software, and reports its name / AD location.
+        The default is 300 (5 minutes). Lower it (e.g. 30) while testing so changes apply quickly; raise it for a large fleet. Minimum 5s.
+        <strong>Each agent applies the new value on its next poll</strong> — so a change can take up to the current interval to take effect.
+      </span>
+    </label>
+  </fieldset>
   <fieldset><legend>Payload throttle</legend>
     <label><span class="lbl">Maximum concurrent <code>/payload/*</code> streams</span>
       <input type="number" name="payload_max_in_flight" value="{{.Data.Throttle}}" min="0" max="65535">
