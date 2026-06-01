@@ -263,6 +263,11 @@ type selfResponse struct {
 	} `json:"jobs"`
 	Warnings            []string `json:"warnings"`
 	PollIntervalSeconds int      `json:"poll_interval_seconds"`
+	// DeploymentID is the primary key of an open (in_progress) deployment
+	// row for this machine. Non-zero when the boot client opened a deployment
+	// that hasn't been closed yet; the agent reports the final outcome after
+	// installing packages.
+	DeploymentID int64 `json:"deployment_id"`
 }
 
 // runSelfOnce polls the server for this machine's desired state (by its
@@ -299,8 +304,37 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
 	cleanupMediaOnce(log)
+	var packageReports []pkgReport
+	var pkgFailed bool
 	if len(resp.Software) > 0 {
-		installPackages(ctx, log, c, f, resp.Software)
+		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software)
+	}
+	// If the server told us about an open deployment (opened by the boot
+	// client), report the final outcome so the dashboard row transitions
+	// from "in_progress" to "ok" or "failed". This fires at most once per
+	// deployment: after reporting, the server's next /self response won't
+	// include the deployment_id anymore.
+	if resp.DeploymentID != 0 {
+		outcome := "ok"
+		if pkgFailed {
+			outcome = "failed"
+		}
+		identityBody := map[string]any{"system_uuid": f.uuid}
+		var ignore struct{}
+		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
+			"identity":      identityBody,
+			"image_id":      resp.ImageID,
+			"deployment_id": resp.DeploymentID,
+			"outcome":       outcome,
+			"packages":      packageReports,
+		}, &ignore); err != nil {
+			log.Warn("deploy.close", slog.String("error", err.Error()))
+		} else {
+			log.Info("deploy.closed",
+				slog.String("actor", f.uuid),
+				slog.Int64("deployment_id", resp.DeploymentID),
+				slog.String("outcome", outcome))
+		}
 	}
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}

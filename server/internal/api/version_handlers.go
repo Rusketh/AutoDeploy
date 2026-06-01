@@ -64,6 +64,7 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/download/{name}", handleAgentDownload(r))
 	mux.HandleFunc("POST /api/v1/server/update", requireAuth(r, handleServerUpdate(r)))
+	mux.HandleFunc("GET /api/v1/server/update-log", requireAuth(r, handleUpdateLog(r)))
 	mux.HandleFunc("POST /api/v1/server/install-agent", requireAuth(r, handleInstallAgent(r)))
 }
 
@@ -352,29 +353,149 @@ func handleServerUpdate(r Repos) http.HandlerFunc {
 			})
 			return
 		}
+		// Verify the sudoers entry exists. Without it, sudo -n will
+		// fail immediately because there's no tty to prompt for a
+		// password. Catch this early with a clear message.
+		const sudoersPath = "/etc/sudoers.d/autodeploy-update"
+		if _, err := os.Stat(sudoersPath); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "sudoers entry for autodeploy-update is not installed; " +
+					"re-run the installer or manually add the entry at " + sudoersPath,
+			})
+			return
+		}
+
+		// Resolve the data directory so the update script uses the
+		// same location the server was configured with.
+		dataDir := updateDataDir(r)
+
+		// Log file for the spawned process -- lets operators (and
+		// the /api/v1/server/update-log endpoint) inspect failures
+		// even though the process is detached.
+		logPath := filepath.Join(dataDir, "update.log")
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "failed to open update log at " + logPath + ": " + err.Error(),
+			})
+			return
+		}
+
 		// Spawn detached. The helper's first action is
 		// `systemctl stop autodeploy.service`, which will kill us
 		// 50ms from now -- so we set Setsid so the child outlives
 		// our exit, and we don't wait for it.
-		args := []string{"-n", helper}
+		args := []string{"-n", helper, "--data", dataDir}
 		if body.Tag != "" {
 			args = append(args, "--tag", body.Tag)
 		}
 		cmd := execCommand("sudo", args...)
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
 		// Detach: new session so the child isn't in our process
 		// group and won't take a SIGTERM with us.
 		cmd.SysProcAttr = newDetachedSysProcAttr()
 		if err := cmd.Start(); err != nil {
+			logFile.Close()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": "failed to start update helper: " + err.Error(),
 			})
 			return
 		}
+
+		pid := cmd.Process.Pid
 		// Release the child so the OS reaps it independently.
 		_ = cmd.Process.Release()
+		logFile.Close()
+
+		// Brief delay to catch immediate failures (e.g. sudo
+		// rejecting the command, script syntax error). If the
+		// process already exited, read the log for a useful error.
+		time.Sleep(100 * time.Millisecond)
+		if !processIsRunning(pid) {
+			snippet, _ := os.ReadFile(logPath)
+			msg := "update helper exited immediately"
+			if len(snippet) > 0 {
+				// Cap to a reasonable size for the JSON response.
+				s := string(snippet)
+				if len(s) > 512 {
+					s = s[:512] + "…"
+				}
+				msg += ": " + s
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": msg,
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusAccepted, map[string]string{
 			"status": "update started; the server will restart in a few seconds",
 			"tag":    body.Tag,
+		})
+	}
+}
+
+// updateDataDir returns the data directory the server is using. It
+// prefers the BlobStore root (which is the --data flag's value), and
+// falls back to the well-known default.
+func updateDataDir(r Repos) string {
+	if r.Blobs != nil {
+		return r.Blobs.Root()
+	}
+	return "/var/lib/autodeploy"
+}
+
+// updateLogPath returns the path to the update log file.
+func updateLogPath(r Repos) string {
+	return filepath.Join(updateDataDir(r), "update.log")
+}
+
+// handleUpdateLog serves the last portion of the update log file so
+// operators can diagnose update failures from the dashboard. The log
+// is written by the detached update helper process.
+func handleUpdateLog(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		logPath := updateLogPath(r)
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				writeJSON(w, http.StatusNotFound, map[string]string{
+					"error": "no update log found; no update has been run yet",
+				})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "failed to read update log: " + err.Error(),
+			})
+			return
+		}
+
+		// Return the last 64 KiB at most to avoid huge responses.
+		const maxBytes = 64 * 1024
+		content := string(data)
+		truncated := false
+		if len(content) > maxBytes {
+			content = content[len(content)-maxBytes:]
+			truncated = true
+		}
+
+		// Parse optional ?lines=N query parameter to limit output
+		// to the last N lines.
+		if linesStr := req.URL.Query().Get("lines"); linesStr != "" {
+			if n, err := strconv.Atoi(linesStr); err == nil && n > 0 {
+				lines := strings.Split(content, "\n")
+				if len(lines) > n {
+					lines = lines[len(lines)-n:]
+					truncated = true
+				}
+				content = strings.Join(lines, "\n")
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"log":       content,
+			"truncated": truncated,
 		})
 	}
 }
