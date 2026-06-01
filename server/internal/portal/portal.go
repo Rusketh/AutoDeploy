@@ -220,7 +220,7 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Now().Add(12 * time.Hour),
-			Secure:   req.TLS != nil,
+			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
 		next := req.FormValue("next")
 		if next == "" || !strings.HasPrefix(next, "/portal/") {
