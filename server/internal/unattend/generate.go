@@ -238,6 +238,17 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 		push("Licensing: install AVMA key",
 			fmt.Sprintf(`cscript //nologo %%SystemRoot%%\System32\slmgr.vbs /ipk %s`, s.AVMAKey))
 	}
+	for _, aa := range s.AdditionalActivations {
+		if aa.ProductKey == "" {
+			continue
+		}
+		push(fmt.Sprintf("Licensing: install key for %s", aa.Label),
+			fmt.Sprintf(`cscript //nologo %%SystemRoot%%\System32\slmgr.vbs /ipk %s`, aa.ProductKey))
+		if aa.ActivationID != "" {
+			push(fmt.Sprintf("Licensing: activate %s", aa.Label),
+				fmt.Sprintf(`cscript //nologo %%SystemRoot%%\System32\slmgr.vbs /ato %s`, aa.ActivationID))
+		}
+	}
 
 	// Telemetry policy (1-3). 0 / negative leave the system default.
 	if s.TelemetryLevel >= 1 && s.TelemetryLevel <= 3 {
