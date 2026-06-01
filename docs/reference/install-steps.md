@@ -94,9 +94,15 @@ Run an executable installer.
   listed in `success_codes`) aborts the package; set `continue_on_failure` to override per step.
 - **Path resolution** (applied to `source_path`, `destination_path`, `msi_path`, `appx_path`,
   `exe_path` and the arg lists): a bare filename resolves to an uploaded file or a file from an
-  extracted [package bundle](../portal/software.md); Windows environment variables (`%ProgramData%`,
-  `%ProgramFiles%`, …) are expanded — **including on copy/unzip destinations**; absolute paths are
-  used as-is.
+  extracted [package bundle](../portal/software.md); `%pkgdir%` expands to the package work
+  directory in **every** field of **every** step type (paths, args, and `cmd`/`powershell` script
+  bodies); other Windows environment variables (`%ProgramData%`, `%ProgramFiles%`, …) are expanded
+  too — **including on copy/unzip destinations**; absolute paths are used as-is.
+- **Working directory.** For a multi-file package, install steps run **from the package work
+  directory** (where the uploaded/extracted files live), so an installer's relative argument
+  resolves there — e.g. an `exe` step `OfficeSetup.exe` with args `/configure NoTeams.xml` finds
+  `NoTeams.xml` next to it. (It does *not* run from `C:\Windows\System32`, which is why a bare
+  relative path used to be lost.)
 - `copy` and `unzip` **create the destination directory** if it doesn't exist.
 - Windows paths must be escaped in JSON (`\\`).
 - AutoDeploy validates steps when you save a software package: an unknown `type` or a missing

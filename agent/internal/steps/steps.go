@@ -42,6 +42,12 @@ type Runner interface {
 type OSRunner struct {
 	Log    *slog.Logger
 	DryRun bool
+	// WorkDir, when set, is the working directory for Run'd processes. The
+	// agent points it at the package's work dir so an installer's relative
+	// args (e.g. OfficeSetup.exe /configure NoTeams.xml) and a step's bare
+	// filenames resolve against the downloaded/extracted files, not the
+	// service's CWD (C:\Windows\System32).
+	WorkDir string
 }
 
 // Run implements Runner.
@@ -51,6 +57,7 @@ func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInp
 			slog.String("actor", "agent"),
 			slog.String("target", name),
 			slog.String("args", fmt.Sprintf("%q", args)),
+			slog.String("dir", r.WorkDir),
 			slog.Bool("dry_run", r.DryRun),
 			slog.Bool("has_stdin", shellInput != ""),
 		)
@@ -59,6 +66,7 @@ func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInp
 		return 0, nil
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = r.WorkDir
 	cmd.Stdout = stdoutWriter{r.Log}
 	cmd.Stderr = stderrWriter{r.Log}
 	if shellInput != "" {

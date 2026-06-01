@@ -133,6 +133,7 @@
       <ul class="small" style="margin: 0 0 var(--sp-2) 0; padding-left: 1.4rem;">
         <li><strong>Absolute paths</strong> like <code>C:\Program Files\Acme\foo.exe</code> -- used verbatim.</li>
         <li><strong>Windows env vars</strong> like <code>%ProgramFiles%\Acme\foo.exe</code> -- expanded by the agent.</li>
+        <li><code>%pkgdir%</code> -- the package work directory the files were downloaded into. Works in <strong>any</strong> field of <strong>any</strong> step (args too), e.g. <code>/configure %pkgdir%\NoTeams.xml</code>. Steps already run with this as their working directory, so a plain relative arg like <code>NoTeams.xml</code> works as well.</li>
         <li><code>{payload}</code> (legacy single-file token) -- still works when the package has exactly one file; ambiguous otherwise.</li>
       </ul>
       {{else}}

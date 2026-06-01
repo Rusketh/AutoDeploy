@@ -685,6 +685,10 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		// the real location instead of a literal "%ProgramData%" folder.
 		rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
 		if hasWorkdir {
+			// %pkgdir% -> the work dir (any field, any step type); then resolve
+			// remaining bare filenames against everything in the work dir
+			// (uploaded files + extracted bundle contents).
+			rewritten = expandPkgDir(rewritten, filesDir)
 			knownFiles := mapWorkdirFiles(filesDir)
 			rewritten = resolveBareFilenames(rewritten, knownFiles)
 		}
@@ -694,6 +698,14 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 			slog.String("actor", f.uuid),
 			slog.String("target", pkg.Name),
 			slog.Int("steps", len(rewritten)))
+		// Run steps from the package work dir so an installer's relative args
+		// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
+		// resolve against the downloaded/extracted files, not the service's CWD.
+		if hasWorkdir {
+			runner.WorkDir = filesDir
+		} else {
+			runner.WorkDir = f.workDir
+		}
 		results := steps.Execute(ctx, rewritten, runner)
 		ok := true
 		for i, r := range results {
@@ -1124,6 +1136,46 @@ func rewriteSteps(in []swspec.InstallStep, payload string) []swspec.InstallStep 
 		out[i].MSIPath = replaceToken(out[i].MSIPath, payload)
 		out[i].APPXPath = replaceToken(out[i].APPXPath, payload)
 		out[i].ExePath = replaceToken(out[i].ExePath, payload)
+	}
+	return out
+}
+
+// pkgDirToken matches the %pkgdir% placeholder (case-insensitive), which
+// expands to the package work directory. Unlike {payload} it works in EVERY
+// path field and arg of EVERY step type, including copy/unzip destinations and
+// script bodies -- e.g. copy a shortcut to "%pkgdir%\..." or pass
+// "/configure %pkgdir%\NoTeams.xml".
+var pkgDirToken = regexp.MustCompile(`(?i)%pkgdir%`)
+
+// expandPkgDir replaces %pkgdir% with the absolute package work dir in every
+// path field, arg and script body. Literal replacement (no $-expansion) so
+// Windows backslash paths pass through untouched.
+func expandPkgDir(in []swspec.InstallStep, dir string) []swspec.InstallStep {
+	if dir == "" {
+		return in
+	}
+	rep := func(s string) string { return pkgDirToken.ReplaceAllLiteralString(s, dir) }
+	repAll := func(a []string) []string {
+		if len(a) == 0 {
+			return a
+		}
+		o := make([]string, len(a))
+		for i, s := range a {
+			o[i] = rep(s)
+		}
+		return o
+	}
+	out := make([]swspec.InstallStep, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].SourcePath = rep(out[i].SourcePath)
+		out[i].DestinationPath = rep(out[i].DestinationPath)
+		out[i].MSIPath = rep(out[i].MSIPath)
+		out[i].APPXPath = rep(out[i].APPXPath)
+		out[i].ExePath = rep(out[i].ExePath)
+		out[i].ScriptBody = rep(out[i].ScriptBody)
+		out[i].MSIArgs = repAll(out[i].MSIArgs)
+		out[i].ExeArgs = repAll(out[i].ExeArgs)
 	}
 	return out
 }
