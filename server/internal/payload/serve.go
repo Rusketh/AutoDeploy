@@ -43,13 +43,13 @@ type Service struct {
 
 // Register mounts payload routes on mux:
 //
-//   PUT  /api/v1/isos/{id}/upload      — upload an ISO file (multipart or raw)
-//   POST /api/v1/isos/{id}/extract     — extract the uploaded ISO contents
-//   PUT  /api/v1/drivers/{id}/upload   — upload a driver-package blob
-//   PUT  /api/v1/software/{id}/upload  — upload a software-installer blob
-//   GET  /payload/iso/{id}/{path...}   — serve an extracted ISO file
-//   GET  /payload/drivers/{id}         — serve a driver-package blob
-//   GET  /payload/software/{id}        — serve a software-installer blob
+//	PUT  /api/v1/isos/{id}/upload      — upload an ISO file (multipart or raw)
+//	POST /api/v1/isos/{id}/extract     — extract the uploaded ISO contents
+//	PUT  /api/v1/drivers/{id}/upload   — upload a driver-package blob
+//	PUT  /api/v1/software/{id}/upload  — upload a software-installer blob
+//	GET  /payload/iso/{id}/{path...}   — serve an extracted ISO file
+//	GET  /payload/drivers/{id}         — serve a driver-package blob
+//	GET  /payload/software/{id}        — serve a software-installer blob
 //
 // All downloads support HTTP Range so a Boot Client can resume an
 // interrupted fetch over a flaky link.
@@ -162,10 +162,54 @@ func applyBindingIdentity(r *http.Request, inv *model.InventoryRepo, uuid string
 	if binding.MachineName != "" {
 		settings.NameStrategy = "literal"
 		settings.ComputerName = binding.MachineName
+	} else if settings.NameStrategy == "prefix" {
+		// "prefix" must resolve to a CONCRETE name before XML generation:
+		// <ComputerName>PREFIX*</ComputerName> is invalid (Windows only
+		// accepts a bare "*" for fully-random, and "*" is an illegal name
+		// character otherwise -- it aborts Setup at specialize). Build a
+		// stable per-machine name from the prefix + a short suffix derived
+		// from the server-minted agent_id, capped to the 15-char NetBIOS
+		// limit.
+		settings.NameStrategy = "literal"
+		settings.ComputerName = computerNameFromPrefix(settings.ComputerName, machine.AgentID)
 	}
 	if binding.TargetOU != "" && settings.DomainJoin != nil {
 		settings.DomainJoin.OU = binding.TargetOU
 	}
+}
+
+// computerNameFromPrefix builds a concrete NetBIOS computer name from a
+// prefix and a stable per-machine seed (the agent_id). The suffix is the
+// last hex chars of the seed; the whole name is capped at 15 chars and
+// stripped of any characters Windows disallows in a computer name.
+func computerNameFromPrefix(prefix, seed string) string {
+	suffix := sanitizeName(seed)
+	// Use the tail of the seed (most-variable part); keep it short.
+	if len(suffix) > 6 {
+		suffix = suffix[len(suffix)-6:]
+	}
+	name := sanitizeName(prefix) + suffix
+	if name == "" {
+		// No usable prefix or seed -> let Generate emit fully-random "*".
+		return ""
+	}
+	if len(name) > 15 {
+		name = name[:15]
+	}
+	return name
+}
+
+// sanitizeName drops characters not allowed in a Windows computer name
+// (letters, digits, hyphen are safe; everything else removed).
+func sanitizeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // uploadISO accepts a raw octet-stream PUT body and writes it to
