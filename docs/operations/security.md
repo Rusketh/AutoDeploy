@@ -31,12 +31,27 @@ After your first login:
 
 ## Transport security (HTTPS)
 
-Enable the HTTPS listener by setting `AUTODEPLOY_HTTPS_ADDR` (for example `0.0.0.0:443`) in
-`/etc/default/autodeploy`. In production (`AUTODEPLOY_DEV=false`) you must also provide a
-certificate and key via `AUTODEPLOY_TLS_CERT` and `AUTODEPLOY_TLS_KEY`.
+Enable the HTTPS listener by setting an HTTPS address — either via the environment variable
+`AUTODEPLOY_HTTPS_ADDR` (for example `0.0.0.0:443`) in `/etc/default/autodeploy`, or through
+**Settings > [Network](../portal/settings.md#network)** in the portal. Provide a certificate and
+key via the same settings page (path fields or file upload), or via the `AUTODEPLOY_TLS_CERT` and
+`AUTODEPLOY_TLS_KEY` environment variables.
 
-If HTTPS is enabled without a cert/key **and** dev mode is on, the server generates a self-signed
-certificate under `<data-dir>/tls/` and logs a warning. Use a CA-signed certificate for production.
+If HTTPS is enabled without a cert/key, the server generates a self-signed certificate under
+`<data-dir>/tls/` and logs a warning. Use a CA-signed certificate for production.
+
+### Reverse proxy
+
+If you front the server with a reverse proxy (nginx, Caddy, Traefik, etc.), configure the
+**Trusted proxy CIDRs** in **Settings > Network** so the server honours `X-Forwarded-For` for
+client IP logging and `X-Forwarded-Proto` for secure-cookie detection. Only requests arriving
+from the specified CIDRs will have their forwarded headers trusted.
+
+For deployments where agents connect remotely but the portal should stay internal, set
+**External access** to **Agent only**. This blocks the portal, login page, and admin API for any
+request arriving through a trusted proxy — only agent endpoints (`/api/v1/agent/*`, `/payload/*`,
+`/healthz`) are reachable externally. Operators must access the portal directly on the internal
+network.
 
 The systemd unit grants only `CAP_NET_BIND_SERVICE` and runs the service as the unprivileged
 `autodeploy` user inside a hardened sandbox (`ProtectSystem=strict`, `ProtectHome=true`,

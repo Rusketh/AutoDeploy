@@ -129,7 +129,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	mtr := metrics.New()
-	mux, handler := httpx.New(cfg, logger, mtr)
+	mux, rawHandler := httpx.New(cfg, logger, mtr)
+	handler := httpx.DynamicTrustedProxyMiddleware(httpx.ProxyConfig{
+		CIDRsFn:        rt.TrustedProxies,
+		ExternalAccess: rt.ExternalAccess,
+	}, rawHandler)
 
 	// AD Domain Integration Service (Phase 10). Always-on; the
 	// EnabledFunc reads the portal's current AD URL setting so an
@@ -261,6 +265,24 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	go sch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
 		slog.Int("log_retention_days", rt.LogRetentionDays()))
+
+	// Apply portal-managed network overrides. The runtime settings
+	// layer seeds from env on first start, so env-only installs work
+	// unchanged; once an operator edits the Network page, those values
+	// win.
+	netCfg := rt.NetworkConfig()
+	if netCfg.HTTPAddr != "" {
+		cfg.HTTPAddr = netCfg.HTTPAddr
+	}
+	if netCfg.HTTPSAddr != "" {
+		cfg.HTTPSAddr = netCfg.HTTPSAddr
+	}
+	if netCfg.TLSCertPath != "" {
+		cfg.TLSCertFile = netCfg.TLSCertPath
+	}
+	if netCfg.TLSKeyPath != "" {
+		cfg.TLSKeyFile = netCfg.TLSKeyPath
+	}
 
 	logger.LogAttrs(ctx, slog.LevelInfo, "server.start",
 		slog.String("actor", "system"),
