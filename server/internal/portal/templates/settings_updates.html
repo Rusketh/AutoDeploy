@@ -80,7 +80,8 @@
     <code>wimlib</code>), downloads + SHA-256-verifies the new binary, stops the
     service, swaps the binary, and restarts. Downtime is typically a few seconds
     (longer if OS packages are being installed). Logs go to
-    <code>journalctl -u autodeploy</code>.
+    <code>journalctl -u autodeploy</code> and the
+    <a href="/api/v1/server/update-log">update log</a>.
   </p>
   {{else}}
   <p class="hint warn" style="margin-top:var(--sp-3);">
@@ -132,7 +133,17 @@ document.addEventListener('DOMContentLoaded', function () {
       // a clean response. Move into the polling phase.
       pollForNewVersion(btn.getAttribute('data-target-tag'), 0);
     }).catch(function (err) {
-      status.innerHTML = '<strong>Update failed:</strong> ' + (err && err.message ? err.message : err);
+      var msg = '<strong>Update failed:</strong> ' + escapeHTML(err && err.message ? err.message : err);
+      // Try to fetch the update log for additional diagnostics.
+      fetch('/api/v1/server/update-log?lines=20', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (logData) {
+          if (logData && logData.log) {
+            msg += '<details style="margin-top:var(--sp-2);"><summary>Update log (last 20 lines)</summary><pre style="white-space:pre-wrap;font-size:0.85em;margin-top:var(--sp-1);">' + escapeHTML(logData.log) + '</pre></details>';
+          }
+          status.innerHTML = msg;
+        })
+        .catch(function () { status.innerHTML = msg; });
       btn.disabled = false;
       btn.innerHTML = btn.dataset.originalText || 'Retry update';
     });
@@ -143,7 +154,7 @@ document.addEventListener('DOMContentLoaded', function () {
       // 150 * 2s = 5 minutes. The update now also installs OS packages
       // (7z, wimlib) which can be slow; if the server isn't back by now
       // the update probably failed and the operator needs journalctl.
-      status.innerHTML = '<strong>Update is taking longer than expected.</strong> Check <code>journalctl -u autodeploy</code> on the server. Once it comes back, reload this page.';
+      status.innerHTML = '<strong>Update is taking longer than expected.</strong> Check <code>journalctl -u autodeploy</code> on the server or <a href="/api/v1/server/update-log">view the update log</a>. Once it comes back, reload this page.';
       return;
     }
     setTimeout(function () {

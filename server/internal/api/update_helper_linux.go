@@ -3,6 +3,7 @@
 package api
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -23,4 +24,16 @@ var execCommand = exec.Command
 // kills the parent server process -- the child must outlive us.
 func newDetachedSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
+}
+
+// processIsRunning checks whether a process with the given PID is
+// still alive. It sends signal 0 which doesn't affect the process
+// but fails with ESRCH if it doesn't exist.
+func processIsRunning(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
 }

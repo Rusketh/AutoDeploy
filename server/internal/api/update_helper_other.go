@@ -3,6 +3,7 @@
 package api
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -24,4 +25,15 @@ var execCommand = exec.Command
 
 func newDetachedSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{}
+}
+
+// processIsRunning checks whether a process with the given PID is
+// still alive.
+func processIsRunning(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
 }
