@@ -41,9 +41,10 @@ type LogEvent struct {
 // Shipper is the buffered slog handler. Share state across clones so
 // every With(...) descendant feeds the same queue.
 type Shipper struct {
-	state *shipperState
-	base  slog.Handler
-	attrs []slog.Attr
+	state  *shipperState
+	base   slog.Handler
+	attrs  []slog.Attr
+	client *http.Client
 }
 
 type shipperState struct {
@@ -62,6 +63,12 @@ func NewShipper(base slog.Handler, cap int) *Shipper {
 	return &Shipper{
 		state: &shipperState{cap: cap},
 		base:  base,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+			},
+		},
 	}
 }
 
@@ -113,9 +120,10 @@ func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
 func (s *Shipper) WithAttrs(attrs []slog.Attr) slog.Handler {
 	merged := append(append([]slog.Attr(nil), s.attrs...), attrs...)
 	return &Shipper{
-		state: s.state,
-		base:  s.base.WithAttrs(attrs),
-		attrs: merged,
+		state:  s.state,
+		base:   s.base.WithAttrs(attrs),
+		attrs:  merged,
+		client: s.client,
 	}
 }
 
@@ -124,9 +132,10 @@ func (s *Shipper) WithAttrs(attrs []slog.Attr) slog.Handler {
 // groups for its own output.
 func (s *Shipper) WithGroup(name string) slog.Handler {
 	return &Shipper{
-		state: s.state,
-		base:  s.base.WithGroup(name),
-		attrs: s.attrs,
+		state:  s.state,
+		base:   s.base.WithGroup(name),
+		attrs:  s.attrs,
+		client: s.client,
 	}
 }
 
@@ -153,12 +162,12 @@ func (s *Shipper) Ship(ctx context.Context, baseURL string, insecureTLS bool) (i
 	if len(events) == 0 {
 		return 0, nil
 	}
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureTLS},
-		},
+	// Update the TLS setting on the shared client's transport in case
+	// the caller toggles insecureTLS between calls (unlikely but safe).
+	if tr, ok := s.client.Transport.(*http.Transport); ok {
+		tr.TLSClientConfig.InsecureSkipVerify = insecureTLS
 	}
+	client := s.client
 	// Server cap is 500 events per request; chunk slightly below to
 	// leave headroom for JSON framing.
 	const chunk = 400

@@ -28,9 +28,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -375,6 +378,21 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		slog.String("target", f.disk),
 		slog.Bool("dry_run", f.dryRun))
 
+	// Fetch and validate the media index BEFORE wiping the disk. This
+	// ensures the server is reachable and the media payload exists; if
+	// the index fetch fails the existing disk is left untouched.
+	var mediaIdx *mediaIndex
+	if !f.dryRun {
+		reportStage("Validating media", "Fetching media index", -1)
+		idx, err := fetchMediaIndex(ctx, c, *mediaItem)
+		if err != nil {
+			log.Error("deploy.media_index.fail", slog.String("error", err.Error()))
+			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media index fetch failed: "+err.Error())
+			os.Exit(0) // fail-safe: disk untouched, normal boot
+		}
+		mediaIdx = idx
+	}
+
 	// Partition + format + mount the FAT32 boot partition, then stream the
 	// media tree straight onto it (on disk), avoiding a RAM staging copy.
 	reportStage("Preparing disk", "Partitioning and formatting", -1)
@@ -386,7 +404,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	}
 	if !f.dryRun {
 		reportStage("Downloading image", "Copying install media to disk", 0)
-		if err := downloadMedia(ctx, c, log, *mediaItem, mountPath); err != nil {
+		if err := downloadMediaFiles(ctx, c, log, *mediaItem, mountPath, mediaIdx); err != nil {
 			log.Error("download.media",
 				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
 			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media download failed: "+err.Error())
@@ -433,21 +451,20 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	}
 }
 
-// downloadMedia mirrors an iso-media payload: it fetches the media index
-// (it.URL) then downloads every listed file under destDir, preserving the
-// tree. Each file comes from it.Base + path. Paths are validated to stay
-// within destDir (defence against a malformed index).
-func downloadMedia(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifestItem, destDir string) error {
+// fetchMediaIndex downloads and validates the media index for an iso-media
+// manifest item. It is called BEFORE the disk is wiped so that a server
+// error or missing payload leaves the existing disk intact.
+func fetchMediaIndex(ctx context.Context, c *httpc.Client, it manifestItem) (*mediaIndex, error) {
 	var buf bytes.Buffer
 	if err := c.Download(ctx, it.URL, &buf, nil); err != nil {
-		return fmt.Errorf("fetch index: %w", err)
+		return nil, fmt.Errorf("fetch index: %w", err)
 	}
 	var idx mediaIndex
 	if err := json.Unmarshal(buf.Bytes(), &idx); err != nil {
-		return fmt.Errorf("parse index: %w", err)
+		return nil, fmt.Errorf("parse index: %w", err)
 	}
 	if len(idx.Files) == 0 {
-		return fmt.Errorf("media index lists no files")
+		return nil, fmt.Errorf("media index lists no files")
 	}
 	// The boot media is a single FAT32 partition (4 GiB per-file limit).
 	// An oversized install.wim should have been split into .swm parts
@@ -456,10 +473,17 @@ func downloadMedia(ctx context.Context, c *httpc.Client, log *slog.Logger, it ma
 	const fat32MaxFile = 4*1024*1024*1024 - 1
 	for _, mf := range idx.Files {
 		if mf.Size > fat32MaxFile {
-			return fmt.Errorf("media file %s is %d bytes, over the FAT32 4 GiB limit; "+
+			return nil, fmt.Errorf("media file %s is %d bytes, over the FAT32 4 GiB limit; "+
 				"the server-side split did not run -- re-prepare the ISO", mf.Path, mf.Size)
 		}
 	}
+	return &idx, nil
+}
+
+// downloadMediaFiles mirrors an iso-media payload onto destDir using a
+// previously fetched index. Each file comes from it.Base + path. Paths are
+// validated to stay within destDir (defence against a malformed index).
+func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifestItem, destDir string, idx *mediaIndex) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
@@ -507,7 +531,8 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 
 // agentUpdateInfo mirrors the server's /api/v1/agent/update-info response.
 type agentUpdateInfo struct {
-	URL string `json:"url"`
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // fetchAgent downloads the Windows agent binary the server serves (if any)
@@ -545,6 +570,28 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 			slog.String("reason", "downloaded agent is not a PE binary; refusing to inject it"))
 		return ""
 	}
+	// Verify the SHA-256 hash if the server provided one; otherwise log a
+	// warning but don't break the flow (older servers may not serve the hash).
+	if info.SHA256 != "" {
+		actual, err := fileSHA256(dst)
+		if err != nil {
+			log.Warn("agent.hash.read", slog.String("error", err.Error()))
+			return ""
+		}
+		if !strings.EqualFold(actual, info.SHA256) {
+			log.Warn("agent.hash.mismatch",
+				slog.String("url", info.URL),
+				slog.String("expected", info.SHA256),
+				slog.String("actual", actual),
+				slog.String("reason", "SHA-256 mismatch; refusing to inject agent"))
+			return ""
+		}
+		log.Info("agent.hash.ok", slog.String("sha256", actual))
+	} else {
+		log.Warn("agent.hash.skipped",
+			slog.String("url", info.URL),
+			slog.String("reason", "server did not provide a SHA-256 hash; skipping verification"))
+	}
 	log.Info("agent.fetched", slog.String("url", info.URL))
 	return dst
 }
@@ -565,6 +612,21 @@ func looksLikePE(path string) bool {
 	return hdr[0] == 'M' && hdr[1] == 'Z'
 }
 
+// fileSHA256 returns the lowercase hex-encoded SHA-256 digest of the file at
+// path. Used to verify agent binary downloads against the server-provided hash.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // setupCompleteTemplate is the SetupComplete.cmd Windows Setup runs as
 // SYSTEM at the end of installation. It copies the agent (staged by the
 // $OEM$ tree into C:\Windows\AutoDeploy) into Program Files, provisions the
@@ -583,9 +645,36 @@ const setupCompleteTemplate = "@echo off\r\n" +
 	"\"%DEST%\\autodeploy-agent.exe\" install-service\r\n" +
 	"exit /b 0\r\n"
 
+// sanitizeCmdValue validates that a value is safe for embedding in a
+// Windows batch file (SetupComplete.cmd). Only characters that are safe
+// in server URLs and agent IDs are allowed: alphanumeric, plus the set
+// / : - . _ (covers https://host:port/path and UUID-style agent IDs).
+// Returns an error if the value contains anything else, preventing
+// cmd.exe metacharacter injection (&, |, >, <, ^, %, !, etc.).
+func sanitizeCmdValue(name, value string) error {
+	for i, c := range value {
+		switch {
+		case c >= 'a' && c <= 'z',
+			c >= 'A' && c <= 'Z',
+			c >= '0' && c <= '9',
+			c == '/' || c == ':' || c == '-' || c == '.' || c == '_':
+			// safe
+		default:
+			return fmt.Errorf("%s contains unsafe character %q at position %d", name, string(c), i)
+		}
+	}
+	return nil
+}
+
 // writeSetupComplete renders SetupComplete.cmd with the server URL and the
 // machine's agent_id baked in, and writes it to work, returning its path.
 func writeSetupComplete(work, serverURL, agentID string) (string, error) {
+	if err := sanitizeCmdValue("server URL", serverURL); err != nil {
+		return "", err
+	}
+	if err := sanitizeCmdValue("agent ID", agentID); err != nil {
+		return "", err
+	}
 	content := strings.ReplaceAll(setupCompleteTemplate, "{{SERVER}}", serverURL)
 	content = strings.ReplaceAll(content, "{{AGENTID}}", agentID)
 	dst := filepath.Join(work, "SetupComplete.cmd")

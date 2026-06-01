@@ -27,6 +27,10 @@ func handleCreateISO(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		if err := validateName(in.Name); err != nil {
+			writeError(w, err)
+			return
+		}
 		out, err := r.ISOs.Create(req.Context(), in)
 		if err != nil {
 			writeError(w, err)
@@ -65,6 +69,10 @@ func handleUpdateISO(r Repos) http.HandlerFunc {
 			return
 		}
 		in.ID = id
+		if err := validateName(in.Name); err != nil {
+			writeError(w, err)
+			return
+		}
 		if err := r.ISOs.Update(req.Context(), in); err != nil {
 			writeError(w, err)
 			return

@@ -1137,10 +1137,10 @@ func rewriteSteps(in []swspec.InstallStep, payload string) []swspec.InstallStep 
 	out := make([]swspec.InstallStep, len(in))
 	copy(out, in)
 	for i := range out {
-		out[i].SourcePath = replaceToken(out[i].SourcePath, payload)
-		out[i].MSIPath = replaceToken(out[i].MSIPath, payload)
-		out[i].APPXPath = replaceToken(out[i].APPXPath, payload)
-		out[i].ExePath = replaceToken(out[i].ExePath, payload)
+		out[i].SourcePath = strings.ReplaceAll(out[i].SourcePath, "{payload}", payload)
+		out[i].MSIPath = strings.ReplaceAll(out[i].MSIPath, "{payload}", payload)
+		out[i].APPXPath = strings.ReplaceAll(out[i].APPXPath, "{payload}", payload)
+		out[i].ExePath = strings.ReplaceAll(out[i].ExePath, "{payload}", payload)
 	}
 	return out
 }
@@ -1183,26 +1183,6 @@ func expandPkgDir(in []swspec.InstallStep, dir string) []swspec.InstallStep {
 		out[i].ExeArgs = repAll(out[i].ExeArgs)
 	}
 	return out
-}
-
-func replaceToken(s, payload string) string {
-	if s == "" {
-		return s
-	}
-	// Use a simple substring replace; avoids importing strings just for one
-	// call. Cheap for short strings.
-	const token = "{payload}"
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); {
-		if i+len(token) <= len(s) && s[i:i+len(token)] == token {
-			out = append(out, payload...)
-			i += len(token)
-			continue
-		}
-		out = append(out, s[i])
-		i++
-	}
-	return string(out)
 }
 
 // resolveBareFilenames substitutes bare filenames in install-step

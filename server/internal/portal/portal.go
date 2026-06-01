@@ -10,6 +10,7 @@
 package portal
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
 	"fmt"
@@ -76,6 +77,9 @@ const (
 	flashCookieName   = "autodeploy_flash"
 )
 
+// ctxKeyUser is the private context key for the authenticated portal user.
+type ctxKeyUser struct{}
+
 // Register mounts the portal routes. The session middleware protects
 // every /portal/* path except the login form, its POST handler and the
 // static assets.
@@ -141,14 +145,15 @@ func Register(mux *http.ServeMux, r Repos) error {
 // trying to go.
 func requireSession(r Repos, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		_, ok := sessionUser(req, r)
+		u, ok := sessionUser(req, r)
 		if !ok {
 			to := url.Values{}
 			to.Set("next", req.URL.RequestURI())
 			http.Redirect(w, req, "/portal/login?"+to.Encode(), http.StatusFound)
 			return
 		}
-		h(w, req)
+		ctx := context.WithValue(req.Context(), ctxKeyUser{}, u)
+		h(w, req.WithContext(ctx))
 	}
 }
 
@@ -446,7 +451,7 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
 	}
-	user, _ := sessionUser(req, r)
+	user, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 	brand, _ := r.Branding.Get(req.Context())
 	kind, msg := readFlash(w, req)
 	// Bootstrap-admin warning: the file holds a cleartext password

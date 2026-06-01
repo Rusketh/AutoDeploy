@@ -291,6 +291,7 @@ func (s *Service) extractISO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prep, err := ExtractAndRecord(r.Context(), s.Blobs, s.ISOs, id)
+	s.InvalidateISOIndexCache(id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("extract: %v", err), http.StatusInternalServerError)
 		return

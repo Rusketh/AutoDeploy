@@ -6,8 +6,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/auth"
@@ -167,12 +169,44 @@ func decodeJSON(r *http.Request, v any) error {
 // response is written and the inner handler is never called. This is
 // the single guard for all operator-facing CRUD routes; agents and
 // boot clients use separate, unauthenticated endpoints.
+//
+// For state-mutating methods (POST, PUT, DELETE) it also enforces a
+// CSRF defence-in-depth check: the request must carry an
+// X-Requested-With header (any non-empty value). Browsers will not
+// send custom headers in a cross-origin request without a CORS
+// preflight, so this blocks forged form submissions even if
+// SameSite=Lax is somehow bypassed.
 func requireAuth(r Repos, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if _, ok := UserFromRequest(req, r); !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		// CSRF: require X-Requested-With on state-mutating methods.
+		switch req.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete:
+			if req.Header.Get("X-Requested-With") == "" {
+				http.Error(w, "missing X-Requested-With header", http.StatusForbidden)
+				return
+			}
+		}
 		h(w, req)
 	}
+}
+
+// validateName checks that an entity name is between 1 and 200
+// characters and does not contain characters that could enable XSS
+// when rendered in HTML templates (<, >, ", or null bytes). Returns a
+// model.ErrValidation-wrapped error so writeError maps it to 400.
+func validateName(name string) error {
+	if len(name) == 0 {
+		return fmt.Errorf("%w: name must not be empty", model.ErrValidation)
+	}
+	if len(name) > 200 {
+		return fmt.Errorf("%w: name must be at most 200 characters", model.ErrValidation)
+	}
+	if strings.ContainsAny(name, "<>\"") || strings.ContainsRune(name, 0) {
+		return fmt.Errorf("%w: name contains forbidden characters", model.ErrValidation)
+	}
+	return nil
 }

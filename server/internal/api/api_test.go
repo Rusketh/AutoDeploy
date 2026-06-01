@@ -80,6 +80,11 @@ func doJSON(t *testing.T, client *http.Client, method, url string, body any) (*h
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// CSRF defence: state-mutating requests require X-Requested-With.
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete:
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)

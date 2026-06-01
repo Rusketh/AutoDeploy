@@ -41,13 +41,10 @@ func TestReadFromSysfs(t *testing.T) {
 }
 
 func TestReadFromSysfsMissingDir(t *testing.T) {
-	// Missing files should be empty strings, not errors — the field set
-	// is best-effort and downstream resolution handles missing fields.
-	id, err := ReadFromSysfs(filepath.Join(t.TempDir(), "does-not-exist"))
-	if err != nil {
-		t.Fatalf("ReadFromSysfs returned error: %v", err)
-	}
-	if id.SystemUUID != "" {
-		t.Errorf("expected empty UUID, got %q", id.SystemUUID)
+	// A missing sysfs dir produces an empty UUID, which is now an error
+	// since UUID is required for inventory tracking.
+	_, err := ReadFromSysfs(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err == nil {
+		t.Fatal("expected error for missing sysfs dir (empty UUID)")
 	}
 }
