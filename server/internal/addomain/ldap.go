@@ -5,9 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync"
 
 	ldap "github.com/go-ldap/ldap/v3"
 )
+
+const defaultPoolSize = 10
 
 // LDAPConfig is the operator-supplied AD connection configuration.
 type LDAPConfig struct {
@@ -26,20 +29,77 @@ type LDAPConfig struct {
 	SkipTLSVerify bool
 }
 
-// LDAPDirectory is the real AD backend. Each call dials, binds, performs
-// the operation, then closes — connection caching is left for Phase 16 if
-// the throughput motivates it.
+// LDAPDirectory is the real AD backend backed by a connection pool.
+// Idle connections are reused across operations to avoid the cost of
+// TLS handshake + LDAP bind on every call.
 type LDAPDirectory struct {
-	cfg LDAPConfig
+	cfg     LDAPConfig
+	mu      sync.Mutex
+	pool    []*ldap.Conn
+	maxPool int
+	closed  bool
 }
 
-// NewLDAPDirectory returns a Directory bound to cfg.
+// NewLDAPDirectory returns a Directory bound to cfg with connection pooling.
 func NewLDAPDirectory(cfg LDAPConfig) *LDAPDirectory {
-	return &LDAPDirectory{cfg: cfg}
+	return &LDAPDirectory{cfg: cfg, maxPool: defaultPoolSize}
 }
 
-// Close is a no-op: connections are not cached.
-func (l *LDAPDirectory) Close() error { return nil }
+// Close drains the connection pool and closes all idle connections.
+func (l *LDAPDirectory) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.closed = true
+	for _, c := range l.pool {
+		_ = c.Close()
+	}
+	l.pool = nil
+	return nil
+}
+
+// getConn returns a pooled connection or dials a new one.
+func (l *LDAPDirectory) getConn(ctx context.Context) (*ldap.Conn, error) {
+	l.mu.Lock()
+	for len(l.pool) > 0 {
+		n := len(l.pool) - 1
+		c := l.pool[n]
+		l.pool[n] = nil // avoid leak in underlying array
+		l.pool = l.pool[:n]
+		l.mu.Unlock()
+
+		if c.IsClosing() {
+			_ = c.Close()
+			l.mu.Lock()
+			continue
+		}
+		return c, nil
+	}
+	l.mu.Unlock()
+	return l.dial(ctx)
+}
+
+// putConn returns a connection to the pool, or closes it if the pool is
+// full or the directory has been closed.
+func (l *LDAPDirectory) putConn(c *ldap.Conn) {
+	if c == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || len(l.pool) >= l.maxPool {
+		_ = c.Close()
+		return
+	}
+	l.pool = append(l.pool, c)
+}
+
+// discardConn closes a connection that may be in a bad state instead of
+// returning it to the pool.
+func (l *LDAPDirectory) discardConn(c *ldap.Conn) {
+	if c != nil {
+		_ = c.Close()
+	}
+}
 
 func (l *LDAPDirectory) dial(ctx context.Context) (*ldap.Conn, error) {
 	if l.cfg.URL == "" {
@@ -59,19 +119,20 @@ func (l *LDAPDirectory) dial(ctx context.Context) (*ldap.Conn, error) {
 }
 
 func (l *LDAPDirectory) FindComputer(ctx context.Context, name string) (string, error) {
-	c, err := l.dial(ctx)
+	c, err := l.getConn(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
 	filter := fmt.Sprintf("(&(objectClass=computer)(cn=%s))", ldap.EscapeFilter(name))
 	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,
 		ldap.NeverDerefAliases, 1, 30, false,
 		filter, []string{"distinguishedName"}, nil)
 	res, err := c.Search(req)
 	if err != nil {
+		l.discardConn(c)
 		return "", err
 	}
+	l.putConn(c)
 	if len(res.Entries) == 0 {
 		return "", nil
 	}
@@ -79,20 +140,23 @@ func (l *LDAPDirectory) FindComputer(ctx context.Context, name string) (string, 
 }
 
 func (l *LDAPDirectory) DeleteComputer(ctx context.Context, dn string) error {
-	c, err := l.dial(ctx)
+	c, err := l.getConn(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
-	return c.Del(ldap.NewDelRequest(dn, nil))
+	if err := c.Del(ldap.NewDelRequest(dn, nil)); err != nil {
+		l.discardConn(c)
+		return err
+	}
+	l.putConn(c)
+	return nil
 }
 
 func (l *LDAPDirectory) CreateComputer(ctx context.Context, ou, name string) (string, error) {
-	c, err := l.dial(ctx)
+	c, err := l.getConn(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
 	dn := computerDN(name, ou)
 	req := ldap.NewAddRequest(dn, nil)
 	req.Attribute("objectClass", []string{"top", "computer"})
@@ -101,17 +165,18 @@ func (l *LDAPDirectory) CreateComputer(ctx context.Context, ou, name string) (st
 	// userAccountControl 4096 = WORKSTATION_TRUST_ACCOUNT.
 	req.Attribute("userAccountControl", []string{"4096"})
 	if err := c.Add(req); err != nil {
+		l.discardConn(c)
 		return "", fmt.Errorf("create %s: %w", dn, err)
 	}
+	l.putConn(c)
 	return dn, nil
 }
 
 func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN string, groups []string) error {
-	c, err := l.dial(ctx)
+	c, err := l.getConn(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
 	// Find current groups: groups whose 'member' includes computerDN.
 	filter := fmt.Sprintf("(&(objectClass=group)(member=%s))", ldap.EscapeFilter(computerDN))
 	req := ldap.NewSearchRequest(l.cfg.SearchBase, ldap.ScopeWholeSubtree,
@@ -119,6 +184,7 @@ func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN stri
 		filter, []string{"distinguishedName", "cn"}, nil)
 	res, err := c.Search(req)
 	if err != nil {
+		l.discardConn(c)
 		return err
 	}
 	want := map[string]bool{}
@@ -137,6 +203,7 @@ func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN stri
 		mod := ldap.NewModifyRequest(e.DN, nil)
 		mod.Delete("member", []string{computerDN})
 		if err := c.Modify(mod); err != nil {
+			l.discardConn(c)
 			return fmt.Errorf("remove %s from %s: %w", computerDN, e.DN, err)
 		}
 	}
@@ -144,17 +211,21 @@ func (l *LDAPDirectory) SetGroupMemberships(ctx context.Context, computerDN stri
 	for groupName := range want {
 		groupDN, err := l.findGroupDN(c, groupName)
 		if err != nil {
+			l.discardConn(c)
 			return err
 		}
 		if groupDN == "" {
+			l.discardConn(c)
 			return fmt.Errorf("group %s not found", groupName)
 		}
 		mod := ldap.NewModifyRequest(groupDN, nil)
 		mod.Add("member", []string{computerDN})
 		if err := c.Modify(mod); err != nil {
+			l.discardConn(c)
 			return fmt.Errorf("add %s to %s: %w", computerDN, groupDN, err)
 		}
 	}
+	l.putConn(c)
 	return nil
 }
 
