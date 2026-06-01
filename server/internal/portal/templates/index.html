@@ -74,6 +74,85 @@
     </div>
   </section>
 
+  {{if .Data.OSBreakdown}}
+  <section class="card hover">
+    <div class="card-head">
+      <h3>OS distribution</h3>
+      <a class="btn ghost sm" href="/portal/machines">View fleet <svg><use href="#i-ext"/></svg></a>
+    </div>
+    <table class="activity">
+      <tbody>
+        {{range .Data.OSBreakdown}}
+        <tr>
+          <td><strong>{{.OS}}</strong></td>
+          <td class="num" style="width:60px;">{{.Count}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  <section class="card hover">
+    <div class="card-head">
+      <h3>Software compliance</h3>
+      <a class="btn ghost sm" href="/portal/software">Details <svg><use href="#i-ext"/></svg></a>
+    </div>
+    <div class="deploy-rollup">
+      <div class="rollup ok">
+        <span class="dot ok"></span>
+        <div>
+          <span class="num">{{.Data.SWFull}}</span>
+          <span class="lbl">fully deployed</span>
+        </div>
+      </div>
+      <div class="rollup warn">
+        <span class="dot warn"></span>
+        <div>
+          <span class="num">{{.Data.SWGap}}</span>
+          <span class="lbl">with gaps</span>
+        </div>
+      </div>
+      <div class="rollup">
+        <div>
+          <span class="num">{{.Data.SWTotal}}</span>
+          <span class="lbl">total packages</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {{with .Data.UpdateSummary}}{{if .TotalUpdates}}
+  <section class="card hover">
+    <div class="card-head">
+      <h3>Update compliance</h3>
+      <a class="btn ghost sm" href="/portal/updates">Details <svg><use href="#i-ext"/></svg></a>
+    </div>
+    <div class="deploy-rollup">
+      <div class="rollup ok">
+        <span class="dot ok"></span>
+        <div>
+          <span class="num">{{.FullyPatched}}</span>
+          <span class="lbl">fully patched</span>
+        </div>
+      </div>
+      <div class="rollup warn">
+        <span class="dot warn"></span>
+        <div>
+          <span class="num">{{.WithPending}}</span>
+          <span class="lbl">with pending</span>
+        </div>
+      </div>
+      <div class="rollup">
+        <div>
+          <span class="num">{{.TotalUpdates}}</span>
+          <span class="lbl">tracked KBs</span>
+        </div>
+      </div>
+    </div>
+  </section>
+  {{end}}{{end}}
+
   <section class="card hover">
     <div class="card-head">
       <h3>Recently seen machines</h3>

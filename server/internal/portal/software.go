@@ -91,8 +91,9 @@ func softwareList(r Repos) http.HandlerFunc {
 			n, _ := r.Software.RefCount(req.Context(), p.ID)
 			refs[p.ID] = n
 		}
+		compliance, _ := r.Software.AllComplianceSummaries(req.Context())
 		render(w, req, r, "software_list.html", "Software packages", map[string]any{
-			"Packages": v, "Refs": refs,
+			"Packages": v, "Refs": refs, "Compliance": compliance,
 		})
 	}
 }

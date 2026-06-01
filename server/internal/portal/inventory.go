@@ -212,6 +212,7 @@ func machineList(r Repos) http.HandlerFunc {
 			Name      string
 			ImageName string
 			BLSet     bool
+			OS        string
 		}
 		// Pagination. Client-side filtering still works within the
 		// page; pagination is a guard against a multi-thousand-row
@@ -253,7 +254,11 @@ func machineList(r Repos) http.HandlerFunc {
 			if name == "" {
 				name = b.MachineName
 			}
-			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet})
+			osCaption := ""
+			if full, err := r.Inventory.Get(req.Context(), m.ID); err == nil && full.Hardware != nil {
+				osCaption = full.Hardware.OSCaption
+			}
+			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet, OS: osCaption})
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page,
@@ -281,11 +286,29 @@ func machineDetail(r Repos) http.HandlerFunc {
 		images, _ := r.Images.List(req.Context())
 		var pkgs []model.SoftwarePackage
 		pkgs, _ = r.Software.List(req.Context())
+		var kbStatuses []model.MachineUpdateStatus
+		if r.Updates != nil {
+			kbStatuses, _ = r.Updates.ListMachineStatuses(req.Context(), id)
+		}
+		swDetected, swTotal := 0, len(detected)
+		for _, d := range detected {
+			if d.Detected {
+				swDetected++
+			}
+		}
+		kbInstalled := 0
+		for _, s := range kbStatuses {
+			if s.Status == "installed" {
+				kbInstalled++
+			}
+		}
 		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
 			"M": m, "Binding": binding, "History": history,
 			"Detected": detected, "Packages": pkgs,
 			"BL": bl, "Recovery": recovery,
-			"Images": images,
+			"Images": images, "KBStatuses": kbStatuses,
+			"SWDetected": swDetected, "SWTotal": swTotal,
+			"KBInstalled": kbInstalled, "KBTotal": len(kbStatuses),
 		})
 	}
 }

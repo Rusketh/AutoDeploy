@@ -33,8 +33,9 @@ func wuList(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		compliance, _ := r.Updates.AllComplianceSummaries(req.Context())
 		render(w, req, r, "windowsupdate_list.html", "Windows Updates", map[string]any{
-			"Updates": updates,
+			"Updates": updates, "Compliance": compliance,
 		})
 	}
 }

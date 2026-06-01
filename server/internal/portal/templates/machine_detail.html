@@ -11,6 +11,27 @@
   </div>
 </div>
 
+<div class="grid stats" style="margin-bottom:var(--sp-4);">
+  <div class="stat">
+    <span class="num">{{.Data.SWDetected}} / {{.Data.SWTotal}}</span>
+    <span class="lbl"><svg><use href="#i-box"/></svg>Software detected</span>
+  </div>
+  <div class="stat">
+    <span class="num">{{.Data.KBInstalled}} / {{.Data.KBTotal}}</span>
+    <span class="lbl"><svg><use href="#i-disc"/></svg>KBs installed</span>
+  </div>
+  {{with $m.Hardware}}{{if .OSCaption}}
+  <div class="stat">
+    <span class="num" style="font-size:var(--fs-lg);">{{.OSCaption}}</span>
+    <span class="lbl"><svg><use href="#i-server"/></svg>OS · {{.OSVersion}}</span>
+  </div>
+  {{end}}{{end}}
+  <div class="stat">
+    <span class="num">{{relTime $m.LastSeen}}</span>
+    <span class="lbl"><svg><use href="#i-list"/></svg>Last seen</span>
+  </div>
+</div>
+
 <dl class="kv">
   <dt>Name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
   {{if $m.ADDistinguishedName}}<dt>AD location</dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
@@ -179,5 +200,25 @@ function mActionChanged(sel){['rename','script','software_push','reimage'].forEa
 </div>
 {{else}}
 <p class="muted">No detection state reported yet.</p>
+{{end}}
+
+<div class="section-head"><h3>Windows Update status</h3><div class="line"></div></div>
+{{if .Data.KBStatuses}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr><th>KB Number</th><th>Status</th><th data-sort="num">Reported</th></tr></thead>
+  <tbody>
+    {{range .Data.KBStatuses}}
+    <tr>
+      <td><strong>{{.KBNumber}}</strong></td>
+      <td><span class="badge {{if eq .Status "installed"}}ok{{else if eq .Status "pending"}}warn{{else if eq .Status "failed"}}bad{{else}}{{end}}">{{.Status}}</span></td>
+      <td class="small muted" data-sort-value="{{.ReportedAt.Unix}}">{{formatTime .ReportedAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No KB status reported yet.</p>
 {{end}}
 {{end}}
