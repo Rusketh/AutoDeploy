@@ -2,18 +2,19 @@
 <div class="toolbar">
   <h2>Deploy Windows Updates</h2>
   <div class="right">
-    <a class="btn secondary" href="/portal/updates">Back to list</a>
+    <a class="btn secondary" href="/portal/updates"><svg><use href="#i-arrow-left"/></svg>Back to list</a>
   </div>
 </div>
 
-<form method="POST" action="/portal/update-deployments" class="form-card">
+<form class="std" method="POST" action="/portal/update-deployments">
   <fieldset>
     <legend>Select updates</legend>
     {{if .Data.Updates}}
+    <p class="hint" style="margin-top:0;">Only updates with an uploaded payload are shown. Check the ones to deploy.</p>
     <div class="tablewrap" style="max-height:300px;overflow-y:auto;">
       <table>
         <thead><tr>
-          <th style="width:32px;"></th>
+          <th data-nosort style="width:32px;"></th>
           <th>KB Number</th>
           <th>Title</th>
           <th>OS Filter</th>
@@ -26,8 +27,8 @@
             <td><input type="checkbox" name="update_ids" value="{{int64 .ID}}"></td>
             <td><strong>{{.KBNumber}}</strong></td>
             <td>{{.Title}}</td>
-            <td>{{if .OSFilter}}{{.OSFilter}}{{else}}any{{end}}</td>
-            <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}—{{end}}</td>
+            <td>{{if .OSFilter}}{{.OSFilter}}{{else}}<span class="muted">any</span>{{end}}</td>
+            <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
           </tr>
           {{end}}
           {{end}}
@@ -35,16 +36,19 @@
       </table>
     </div>
     {{else}}
-    <p class="muted">No updates available. Create an update and upload a .msu file first.</p>
+    <div class="empty" style="padding: var(--sp-4) var(--sp-3);">
+      <svg class="empty-icon"><use href="#i-disc"/></svg>
+      <h3>No updates available</h3>
+      <p>Create an update and upload a .msu file first.</p>
+    </div>
     {{end}}
   </fieldset>
 
   <fieldset>
     <legend>Target machines</legend>
-    <p class="hint">Machines must match ALL specified filters. Leave a filter empty to skip it.</p>
-    <div class="field">
-      <label for="os_filter">OS Filter</label>
-      <select id="os_filter" name="os_filter">
+    <p class="hint" style="margin-top:0;">Machines must match <strong>all</strong> specified filters. Leave a filter empty to skip it.</p>
+    <label><span class="lbl">OS Filter</span>
+      <select name="os_filter">
         <option value="">Any OS</option>
         <option value="windows-10">Windows 10</option>
         <option value="windows-11">Windows 11</option>
@@ -52,27 +56,23 @@
         <option value="server-2022">Server 2022</option>
         <option value="server-2025">Server 2025</option>
       </select>
-    </div>
-    <div class="field">
-      <label for="name_regex">Name regex</label>
-      <input type="text" id="name_regex" name="name_regex" placeholder="LAB-.*">
-    </div>
-    <div class="field">
-      <label for="ou">OU</label>
-      <input type="text" id="ou" name="ou" placeholder="OU=Workstations,DC=example,DC=com">
-    </div>
-    <div class="field">
-      <label for="group">Group</label>
-      <input type="text" id="group" name="group" placeholder="Engineering">
-    </div>
-    <div class="field">
-      <label for="machine_ids_input">Specific machine IDs (comma-separated)</label>
+    </label>
+    <label><span class="lbl">Name regex</span>
+      <input type="text" name="name_regex" placeholder="LAB-.*">
+    </label>
+    <label><span class="lbl">OU</span>
+      <input type="text" name="ou" placeholder="OU=Workstations,DC=example,DC=com">
+    </label>
+    <label><span class="lbl">Group</span>
+      <input type="text" name="group" placeholder="Engineering">
+    </label>
+    <label><span class="lbl">Specific machine IDs (comma-separated)</span>
       <input type="text" id="machine_ids_input" name="" placeholder="1,2,3">
-      <p class="hint">Leave empty to target all machines matching above filters.</p>
-    </div>
+      <span class="hint">Leave empty to target all machines matching above filters.</span>
+    </label>
   </fieldset>
   <div class="actions">
-    <button type="submit" class="btn" onclick="prepIDs()">Deploy</button>
+    <button type="submit" onclick="prepIDs()"><svg><use href="#i-bolt"/></svg>Deploy</button>
   </div>
 </form>
 <script>
