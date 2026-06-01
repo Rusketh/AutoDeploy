@@ -61,6 +61,8 @@ type Repos struct {
 	// DomainJoin stores per-image agent-driven AD join config (the image
 	// edit form reads/writes it).
 	DomainJoin *model.DomainJoinRepo
+	// Updates manages Windows Update KB patches and deployment jobs.
+	Updates *model.WindowsUpdateRepo
 	// SecretsBox is unused at the portal layer but kept here so the
 	// bundle matches the api one-for-one if we ever want to swap.
 	SecretsBox *secrets.Box
@@ -136,6 +138,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerSettingsRoutes(get, post, r)
 	registerDownloadRoutes(get, post, r)
 	mirrorRoutes(get, post, r)
+	registerWindowsUpdateRoutes(get, post, r)
 
 	return nil
 }

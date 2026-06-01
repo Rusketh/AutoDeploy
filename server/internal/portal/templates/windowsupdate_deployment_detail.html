@@ -1,0 +1,70 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Update Deployment #{{int64 .Data.Deployment.ID}}</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/updates">Back to updates</a>
+  </div>
+</div>
+
+<div class="card-grid" style="margin-bottom:1.5rem;">
+  <div class="stat-card">
+    <span class="stat-value">{{index .Data.Counts "queued"}}</span>
+    <span class="stat-label">Queued</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{index .Data.Counts "running"}}</span>
+    <span class="stat-label">Running</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{index .Data.Counts "ok"}}</span>
+    <span class="stat-label">OK</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{index .Data.Counts "failed"}}</span>
+    <span class="stat-label">Failed</span>
+  </div>
+</div>
+
+<div class="form-card" style="margin-bottom:1.5rem;">
+  <p><strong>Created by:</strong> {{.Data.Deployment.CreatedBy}}</p>
+  <p><strong>Created at:</strong> {{formatTime .Data.Deployment.CreatedAt}}</p>
+  {{if .Data.Deployment.OSFilter}}<p><strong>OS filter:</strong> {{.Data.Deployment.OSFilter}}</p>{{end}}
+  <details>
+    <summary>Target criteria</summary>
+    <pre style="font-size:0.85rem;">{{.Data.TargetJSON}}</pre>
+  </details>
+</div>
+
+{{if .Data.Jobs}}
+<div class="filter" style="margin-bottom:1rem;">
+  <svg><use href="#i-search"/></svg>
+  <input type="search" placeholder="Filter jobs" data-filter="#jtbl">
+</div>
+<div class="tablewrap">
+<table id="jtbl" data-sortable>
+  <thead><tr>
+    <th>Machine</th>
+    <th>KB Number</th>
+    <th>Status</th>
+    <th>Queued</th>
+    <th>Claimed</th>
+    <th>Completed</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Jobs}}
+    <tr>
+      <td><a href="/portal/machines/{{int64 .MachineID}}">{{if .MachineName}}{{.MachineName}}{{else}}#{{int64 .MachineID}}{{end}}</a></td>
+      <td>{{.KBNumber}}</td>
+      <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+      <td class="small">{{formatTime .QueuedAt}}</td>
+      <td class="small">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No jobs in this deployment.</p>
+{{end}}
+{{end}}

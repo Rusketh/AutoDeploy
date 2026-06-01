@@ -1,0 +1,95 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Deploy Windows Updates</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/updates">Back to list</a>
+  </div>
+</div>
+
+<form method="POST" action="/portal/updates/deploy" class="form-card">
+  <fieldset>
+    <legend>Select updates</legend>
+    {{if .Data.Updates}}
+    <div class="tablewrap" style="max-height:300px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th style="width:32px;"></th>
+          <th>KB Number</th>
+          <th>Title</th>
+          <th>OS Filter</th>
+          <th>Severity</th>
+        </tr></thead>
+        <tbody>
+          {{range .Data.Updates}}
+          {{if .StoragePath}}
+          <tr>
+            <td><input type="checkbox" name="update_ids" value="{{int64 .ID}}"></td>
+            <td><strong>{{.KBNumber}}</strong></td>
+            <td>{{.Title}}</td>
+            <td>{{if .OSFilter}}{{.OSFilter}}{{else}}any{{end}}</td>
+            <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}—{{end}}</td>
+          </tr>
+          {{end}}
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="muted">No updates available. Create an update and upload a .msu file first.</p>
+    {{end}}
+  </fieldset>
+
+  <fieldset>
+    <legend>Target machines</legend>
+    <p class="hint">Machines must match ALL specified filters. Leave a filter empty to skip it.</p>
+    <div class="field">
+      <label for="os_filter">OS Filter</label>
+      <select id="os_filter" name="os_filter">
+        <option value="">Any OS</option>
+        <option value="windows-10">Windows 10</option>
+        <option value="windows-11">Windows 11</option>
+        <option value="server-2019">Server 2019</option>
+        <option value="server-2022">Server 2022</option>
+        <option value="server-2025">Server 2025</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="name_regex">Name regex</label>
+      <input type="text" id="name_regex" name="name_regex" placeholder="LAB-.*">
+    </div>
+    <div class="field">
+      <label for="ou">OU</label>
+      <input type="text" id="ou" name="ou" placeholder="OU=Workstations,DC=example,DC=com">
+    </div>
+    <div class="field">
+      <label for="group">Group</label>
+      <input type="text" id="group" name="group" placeholder="Engineering">
+    </div>
+    <div class="field">
+      <label for="machine_ids_input">Specific machine IDs (comma-separated)</label>
+      <input type="text" id="machine_ids_input" name="" placeholder="1,2,3">
+      <p class="hint">Leave empty to target all machines matching above filters.</p>
+    </div>
+  </fieldset>
+  <div class="actions">
+    <button type="submit" class="btn" onclick="prepIDs()">Deploy</button>
+  </div>
+</form>
+<script>
+function prepIDs() {
+  var input = document.getElementById('machine_ids_input');
+  if (!input.value.trim()) return;
+  var ids = input.value.split(',');
+  var form = input.closest('form');
+  ids.forEach(function(id) {
+    id = id.trim();
+    if (!id) return;
+    var h = document.createElement('input');
+    h.type = 'hidden';
+    h.name = 'machine_ids';
+    h.value = id;
+    form.appendChild(h);
+  });
+}
+</script>
+{{end}}

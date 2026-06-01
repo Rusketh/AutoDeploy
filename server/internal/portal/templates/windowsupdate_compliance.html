@@ -1,0 +1,62 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>{{.Data.Update.KBNumber}} — Compliance</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/updates/{{int64 .Data.Update.ID}}/edit">Edit update</a>
+    <a class="btn secondary" href="/portal/updates">Back to list</a>
+  </div>
+</div>
+
+<div class="card-grid" style="margin-bottom:1.5rem;">
+  <div class="stat-card">
+    <span class="stat-value">{{.Data.Summary.Installed}}</span>
+    <span class="stat-label">Installed</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{.Data.Summary.Pending}}</span>
+    <span class="stat-label">Pending</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{.Data.Summary.Failed}}</span>
+    <span class="stat-label">Failed</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{.Data.Summary.Unknown}}</span>
+    <span class="stat-label">Unknown</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{.Data.Summary.Total}}</span>
+    <span class="stat-label">Total</span>
+  </div>
+</div>
+
+<p><strong>{{.Data.Update.Title}}</strong></p>
+{{if .Data.Update.Description}}<p class="muted">{{.Data.Update.Description}}</p>{{end}}
+
+{{if .Data.Machines}}
+<div class="filter" style="margin:1rem 0;">
+  <svg><use href="#i-search"/></svg>
+  <input type="search" placeholder="Filter machines" data-filter="#ctbl">
+</div>
+<div class="tablewrap">
+<table id="ctbl" data-sortable>
+  <thead><tr>
+    <th>Machine</th>
+    <th>UUID</th>
+    <th>Status</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Machines}}
+    <tr>
+      <td><a href="/portal/machines/{{int64 .Machine.ID}}">{{if .Name}}{{.Name}}{{else}}{{.Machine.SystemUUID}}{{end}}</a></td>
+      <td class="small muted">{{.Machine.SystemUUID}}</td>
+      <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No machines match the OS filter for this update.</p>
+{{end}}
+{{end}}
