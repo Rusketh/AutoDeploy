@@ -76,6 +76,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	// into. {name} is sanitized server-side; BlobStore.Resolve is
 	// the backstop against path traversal.
 	mux.Handle("GET /payload/software/{id}/files/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
+	mux.Handle("GET /payload/software/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareBundle)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
 }
 
@@ -433,6 +434,28 @@ func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := "software/" + fmt.Sprint(int64(id)) + "/files/" + name
+	s.serveBlob(w, r, rel)
+}
+
+// serveSoftwareBundle streams one bundle zip (software/<id>/bundle/<name>),
+// which the agent extracts into its package workdir. Same sanitisation +
+// containment as serveSoftwareFile.
+func (s *Service) serveSoftwareBundle(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		http.Error(w, "bad filename", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Software.Get(r.Context(), id); err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	rel := "software/" + fmt.Sprint(int64(id)) + "/bundle/" + name
 	s.serveBlob(w, r, rel)
 }
 

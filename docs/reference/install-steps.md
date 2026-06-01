@@ -92,6 +92,12 @@ Run an executable installer.
 
 - Steps run in array order. By default the first failing step (whose exit code is not `0` and not
   listed in `success_codes`) aborts the package; set `continue_on_failure` to override per step.
+- **Path resolution** (applied to `source_path`, `destination_path`, `msi_path`, `appx_path`,
+  `exe_path` and the arg lists): a bare filename resolves to an uploaded file or a file from an
+  extracted [package bundle](../portal/software.md); Windows environment variables (`%ProgramData%`,
+  `%ProgramFiles%`, …) are expanded — **including on copy/unzip destinations**; absolute paths are
+  used as-is.
+- `copy` and `unzip` **create the destination directory** if it doesn't exist.
 - Windows paths must be escaped in JSON (`\\`).
 - AutoDeploy validates steps when you save a software package: an unknown `type` or a missing
   required field (for example a `copy` without `destination_path`) is rejected with a clear error.
