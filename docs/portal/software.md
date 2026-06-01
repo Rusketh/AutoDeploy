@@ -61,11 +61,13 @@ request a reboot). Step types:
 | cmd | Run a cmd.exe script |
 | powershell | Run a PowerShell script |
 
-Paths accept a bare uploaded filename, an absolute path, or Windows environment variables like
-`%ProgramFiles%` — these are expanded on the agent in **all** step paths, including **copy/unzip
-destinations** (so `%ProgramData%\Microsoft\Windows\Start Menu\...` resolves to the real folder).
-Copy and unzip **create the destination directory** if it doesn't exist, so dropping shortcuts or
-config into a not-yet-existing path just works.
+Paths (and args) accept a bare uploaded filename, an absolute path, Windows environment variables
+like `%ProgramFiles%`, or `%pkgdir%` (the package work directory). Environment variables are
+expanded by the agent in **all** step paths, including **copy/unzip destinations** (so
+`%ProgramData%\Microsoft\Windows\Start Menu\...` resolves to the real folder), and copy/unzip
+**create the destination directory** if it doesn't exist. Steps also run **from the work
+directory**, so a relative installer arg like `OfficeSetup.exe /configure NoTeams.xml` finds its
+sibling file; use `%pkgdir%\NoTeams.xml` when you need the absolute path.
 
 ![Editing a software package](../images/software-edit.png)
 
