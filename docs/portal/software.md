@@ -1,0 +1,100 @@
+# Software packages & loadouts
+
+AutoDeploy installs applications after Windows is up, using the [agent](../introduction.md#agent-autodeploy-agent).
+You describe each application once as a **software package**, then group packages into
+**[loadouts](#loadouts)** that you attach to images.
+
+## Software packages
+
+A software package defines **how to install** an application as a sequence of steps, **how to
+detect** that it's already installed (so the agent can skip work it doesn't need to repeat), and
+the **files** the install needs.
+
+![Software list](../images/software-list.png)
+
+The list shows each package's **name** and **description**.
+
+### Creating a package
+
+Go to **Software → New**. Give it a name and description, save, then upload the file (or files) it
+needs and define its detection rules and install steps.
+
+![Creating a software package](../images/software-new.png)
+
+**Payload files.** A package can hold several files (e.g. `setup.exe` plus a `config.json`). The
+agent downloads every file into a per-package work directory on the target; in your install steps
+you reference each file by its bare filename and the agent resolves it to the on-disk path.
+
+**Dependencies.** A package can require other packages. They're installed before it and pulled in
+automatically even if not directly assigned to an image.
+
+**Detection rules.** A package counts as already installed when *every* rule reports present. Zero
+rules means re-install on every deployment. Rule types:
+
+| Type | Checks |
+|------|--------|
+| file | A file path exists (optionally a version / SHA-256) |
+| registry | A registry key/value (optionally equals a value) |
+| msi | An MSI product code is installed |
+| script | A PowerShell or cmd script exits 0 |
+
+**Install steps.** Steps run in order; a failed step aborts the package unless its *On failure* is
+set to continue. You can set per-step **success exit codes** (e.g. add `3010` for installers that
+request a reboot). Step types:
+
+| Type | What it does |
+|------|--------------|
+| copy | Copy a file to a destination |
+| unzip | Extract a ZIP archive to a destination |
+| msi | Install an MSI (`msiexec /quiet /norestart`) |
+| appx | Install an APPX / MSIX package |
+| exe | Run an EXE installer with arguments |
+| cmd | Run a cmd.exe script |
+| powershell | Run a PowerShell script |
+
+Paths accept a bare uploaded filename, an absolute path, or Windows environment variables like
+`%ProgramFiles%`.
+
+![Editing a software package](../images/software-edit.png)
+
+For the full set of options and examples, see the references on
+[detection rules](../reference/detection-rules.md) and
+[install steps](../reference/install-steps.md).
+
+## Loadouts
+
+A loadout is a named **group of software packages** — for example "Standard apps" or "Engineering
+tools". You attach loadouts to [images](images.md) rather than picking individual packages every
+time, which keeps images tidy and consistent.
+
+![Loadout list](../images/loadouts-list.png)
+
+The list shows each loadout's **name**, **description**, and its **parent**, if any.
+
+### Creating a loadout
+
+Go to **Loadouts → New**, give it a **Name** (required) and optional **Description**, optionally
+pick a **parent loadout**, then add the **software packages** to include. Each package row has an
+**install order** and an **opt-out** checkbox.
+
+![Creating a loadout](../images/loadout-new.png)
+
+### Parent inheritance
+
+A loadout can have a **parent**. When it does, it **inherits the parent's packages additively** and
+adds its own on top. To drop a package the parent included, add it as a row and tick **opt-out**.
+
+This lets you build a base loadout (the apps every machine gets) and have team-specific loadouts
+extend it — for example an "Engineering tools" loadout whose parent is "Standard apps", so machines
+that get the engineering loadout receive both sets, minus any opt-outs.
+
+![Editing a loadout](../images/loadout-edit.png)
+
+When an image is resolved, AutoDeploy flattens loadouts (following parents and applying opt-outs)
+together with the image's direct software links into a single ordered list. You can see the result
+on the image's [Resolved view](images.md#the-resolved-view).
+
+## Next steps
+
+- Attach a loadout to an [image](images.md).
+- Push software to already-deployed machines with [bulk operations](bulk-operations.md).

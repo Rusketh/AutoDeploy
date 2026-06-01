@@ -1,87 +1,118 @@
 # AutoDeploy
 
-A remote operating-system deployment and configuration platform for Windows
-machines. A single replacement for WDS, MDT, SCCM and FOG, delivered entirely
-over HTTP(S) and driven from a web portal.
+**AutoDeploy is a network-driven Windows deployment and configuration platform.**
+It boots bare-metal or virtual machines over the network, installs Windows from your own
+media, applies drivers and software, and then keeps each machine under management through a
+resident agent — all from a single web portal.
 
-## Get started
+Everything is driven over HTTP(S). There is no client to pre-install: a machine PXE-boots,
+shows up in the portal, and you deploy to it.
 
-**New operator?** Read
-**[`docs/user-guide/getting-started.md`](docs/user-guide/getting-started.md)** —
-zero to your first deployed machine in 30–60 minutes.
+```
+   PXE boot ──► Boot Client (Linux)        Server (portal + API)        Agent (Windows)
+   the machine   stages Windows media   ◄──►  decides what to deploy  ◄──►  installs software,
+   network-boots  onto the local disk         and records every fact        enables BitLocker,
+   into a menu                                                               stays resident
+```
 
-**Downloading a release?** Grab the binaries for your platform from
-the [Releases page](https://github.com/Rusketh/AutoDeploy/releases).
-Each tag publishes:
+---
 
-| File pattern                                   | Component                                                                  |
-|------------------------------------------------|----------------------------------------------------------------------------|
-| `autodeploy-server-<os>-<arch>`                | Management portal + JSON API + payload + AD service. Place on `$PATH`.    |
-| `autodeploy-boot-linux-<arch>`                 | Linux Boot Client. Goes into the initramfs (see `build-initramfs.sh`).    |
-| `autodeploy-agent-<os>-<arch>`                 | In-OS Deployment Client. Bundled into Windows images by the unattend.     |
-| `autodeploy-extras.tar.gz`                     | Operator scripts (install, fetch-ipxe, build-initramfs, backup, systemd unit) and the full user guide for the release. |
-| `*.sha256`                                     | Download verification.                                                     |
+## What you can do with it
 
-The fastest path on Linux is:
+- **Network-boot and image machines** over PXE / iPXE using your own Windows ISOs.
+- **Answer-file (unattend) automation** — locale, accounts, OOBE, domain join.
+- **Driver packages** matched to hardware automatically from SMBIOS identity.
+- **Software packages & loadouts** with detection rules and scripted install steps.
+- **Inventory** of every machine, its hardware, bindings, and deployment history.
+- **Bulk operations** — reimage, rename, run scripts, or push software to many machines at once.
+- **BitLocker** enablement with recovery-key escrow.
+- **Active Directory** domain join and lookups.
+- **Payload mirrors** for scaling deployments across sites.
+- **Audit logging** of every operator and client action.
 
-```sh
-# 1. Download from the Releases page (substitute the right tag):
-TAG=v0.1.0
-URL=https://github.com/Rusketh/AutoDeploy/releases/download/$TAG
-curl -LO $URL/autodeploy-server-linux-amd64
-curl -LO $URL/autodeploy-extras.tar.gz
+## Architecture at a glance
+
+AutoDeploy is three Go programs that talk to each other over HTTP(S):
+
+| Component | Binary | Runs on | Role |
+|-----------|--------|---------|------|
+| **Server** | `autodeploy-server` | Linux | Web portal, JSON API, deployment orchestration, SQLite store, optional built-in TFTP. The single source of truth. |
+| **Boot Client** | `autodeploy-boot` | Linux (in initramfs, via iPXE) | Pre-OS imaging: reads hardware identity, fetches the deployment manifest, stages Windows media onto disk, reboots. |
+| **Agent** | `autodeploy-agent` | Windows | Post-install configuration and a resident service that polls the server for work (software, rename, reimage, BitLocker). |
+
+The server **decides**; the boot client and agent **report facts and fail safe**.
+
+## Quick start (Linux server)
+
+> The AutoDeploy **server runs on Linux**. The Windows **agent** is delivered automatically to
+> the machines you deploy — you don't install the server on Windows.
+
+Download the **latest release**, then run the installer:
+
+```bash
+# Resolve the latest release tag from GitHub
+TAG=$(curl -fsSL https://api.github.com/repos/Rusketh/AutoDeploy/releases/latest \
+  | grep -oP '"tag_name":\s*"\K[^"]+')
+echo "Latest release: $TAG"
+
+# Download the server binary (amd64) + the extras bundle (install script, systemd unit, iPXE helper)
+curl -fLO "https://github.com/Rusketh/AutoDeploy/releases/download/$TAG/autodeploy-server-linux-amd64"
+curl -fLO "https://github.com/Rusketh/AutoDeploy/releases/download/$TAG/autodeploy-extras.tar.gz"
+
+# Unpack the extras and run the installer (expects the server binary alongside it)
 tar xzf autodeploy-extras.tar.gz
-
-# 2. Install (system user + systemd unit + iPXE bootstrap binaries):
 sudo ./scripts/install-linux.sh
 
-# 3. Edit /etc/default/autodeploy, then:
+# Start the service
 sudo systemctl enable --now autodeploy
-
-# 4. Read the bootstrap admin password and change it in the portal:
-sudo cat /var/lib/autodeploy/admin-bootstrap.txt
-# → http://your-server:8080/portal/  (Settings → Local accounts)
-# Default shape is HTTP on :8080; switch to HTTPS later if you want
-# (see Configuration -> HTTP vs HTTPS in docs/user-guide/).
 ```
 
-Everything beyond this — building the initramfs, configuring DHCP,
-uploading ISOs, composing images, deploying machines — is in
-[`getting-started.md`](docs/user-guide/getting-started.md).
+On first start the server writes a one-time admin password to
+`/var/lib/autodeploy/admin-bootstrap.txt`. Read it, open `https://<server>/portal/`, log in as
+`admin`, change the password, then delete that file.
 
-## What's in the repository
-
-| Path           | Component                                                   |
-|----------------|-------------------------------------------------------------|
-| `server/`      | Management portal, HTTP API, Deployment Service, Domain Integration Service, TFTP (Go) |
-| `boot-client/` | Linux pre-OS imaging client, chainloaded over HTTP via iPXE (Go) |
-| `agent/`       | In-OS resident Deployment Client for Windows (Go)           |
-| `scripts/`     | Install, build, iPXE, initramfs, backup helpers + systemd unit |
-| `docs/`        | Design documents, worklog and operator guide                |
-
-## Building from source
-
-Each component is a separate Go module and is built independently. CI
-(GitHub Actions, `.github/workflows/ci.yml`) builds and tests all three
-on every push.
-
-```sh
-make -C server build
-make -C boot-client build
-make -C agent build
-```
-
-Tagged releases are built and published automatically by
-`.github/workflows/release.yml` when a `v*` tag is pushed.
+Full, step-by-step instructions (including how to always fetch the latest version) are in
+**[docs/install/linux-server.md](docs/install/linux-server.md)**.
 
 ## Documentation
 
-| Document                                                           | Purpose                                                       |
-|--------------------------------------------------------------------|----------------------------------------------------------------|
-| [Getting started](docs/user-guide/getting-started.md)              | The 30–60 minute first-install tutorial.                       |
-| [Operator guide](docs/user-guide/README.md)                        | Index of all reference documentation by topic.                  |
-| [Operations / production](docs/user-guide/operations.md)           | Topology, backup, retention, security review.                   |
-| [Scaling](docs/user-guide/scaling.md)                              | Payload mirrors, throttling, metrics.                            |
-| [PXE setup](docs/user-guide/pxe-setup.md)                          | DHCP / TFTP / iPXE for classic PXE and UEFI HTTP Boot.          |
-| [Design document](docs/design/AutoDeploy_Design_Document.docx)     | The authoritative architecture spec.                            |
-| [Development worklog](docs/design/WORKLOG.md)                      | Running log of what was built and why.                         |
+The complete, screenshot-rich user guide lives in **[docs/](docs/README.md)**:
+
+- **[Introduction](docs/introduction.md)** & **[Concepts](docs/concepts.md)** — how it all fits together.
+- **[Getting started](docs/getting-started.md)** — your first end-to-end deployment.
+- **[Installation](docs/install/linux-server.md)** & **[PXE / boot setup](docs/install/pxe-and-boot.md)**.
+- **Portal guide** — [dashboard](docs/portal/dashboard.md), [payloads](docs/portal/payloads.md),
+  [software](docs/portal/software.md), [images](docs/portal/images.md),
+  [machines](docs/portal/machines.md), [bulk operations](docs/portal/bulk-operations.md),
+  [mirrors](docs/portal/mirrors.md), [logs](docs/portal/logs.md),
+  [downloads](docs/portal/downloads.md), [settings](docs/portal/settings.md).
+- **Reference** — [configuration](docs/reference/configuration.md), [CLI](docs/reference/cli.md),
+  [detection rules](docs/reference/detection-rules.md), [install steps](docs/reference/install-steps.md),
+  [JSON API](docs/reference/api.md).
+- **Operations** — [security](docs/operations/security.md),
+  [Active Directory](docs/operations/active-directory.md), [BitLocker](docs/operations/bitlocker.md),
+  [scaling](docs/operations/scaling.md), [backup & retention](docs/operations/backup-and-retention.md),
+  [updates](docs/operations/updates.md), [troubleshooting](docs/operations/troubleshooting.md).
+
+## Building from source
+
+All three components are Go modules (Go 1.25+):
+
+```bash
+cd server      && go build ./cmd/autodeploy-server
+cd boot-client && go build ./cmd/autodeploy-boot
+cd agent       && go build ./cmd/autodeploy-agent
+```
+
+Run the test suites with `go test ./...` in each module.
+
+## Repository layout
+
+```
+server/        AutoDeploy server (portal, API, orchestration)
+boot-client/   Pre-OS Linux imaging client
+agent/         Windows in-OS / resident agent
+scripts/       Install, iPXE, initramfs, backup and update helpers
+docs/          User documentation (this guide) and design notes
+```
+</content>
