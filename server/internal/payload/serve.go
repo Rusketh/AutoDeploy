@@ -33,6 +33,11 @@ type Service struct {
 	// disables per-machine identity injection and the unattend falls
 	// back to the shared template's values.
 	Inventory *model.InventoryRepo
+	// DomainJoin, when non-nil, lets the unattend endpoint suppress the
+	// legacy <UnattendedJoin> block for images configured to join AD via
+	// the agent (so Setup doesn't also attempt -- and hang on -- an online
+	// join during specialize).
+	DomainJoin *model.DomainJoinRepo
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -124,6 +129,15 @@ func (s *Service) serveUnattend(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// If the resolved image joins AD via the agent, drop the legacy unattend
+	// UnattendedJoin block: the agent performs the join after first boot, and
+	// leaving the block in makes Setup also attempt an online join during
+	// specialize (which hangs ~15m and fails when the DC isn't reachable yet).
+	if s.DomainJoin != nil && settings.DomainJoin != nil {
+		if cfg, derr := s.DomainJoin.Get(r.Context(), res.ImageID); derr == nil && cfg.Enabled {
+			settings.DomainJoin = nil
+		}
 	}
 	// Per-machine identity injection. The boot client adds ?uuid=... to
 	// the URL the manifest gave it; we resolve that to the bound name +

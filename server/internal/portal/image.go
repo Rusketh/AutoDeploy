@@ -80,10 +80,15 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 		if !isNew {
 			title = "Edit image: " + im.Name
 		}
+		var dj model.ImageDomainJoin
+		if !isNew && r.DomainJoin != nil {
+			dj, _ = r.DomainJoin.Get(req.Context(), im.ID)
+		}
 		render(w, req, r, "image_form.html", title, map[string]any{
 			"Im": im, "IsNew": isNew,
 			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
 			"Images": images, "Packages": packages,
+			"DomainJoin": dj,
 		})
 	}
 }
@@ -158,6 +163,11 @@ func imageCreate(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/images/new", http.StatusFound)
 			return
 		}
+		if err := saveDomainJoinFromForm(r, req, out.ID); err != nil {
+			flash(w, "err", "Image created, but domain-join config failed: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
+			return
+		}
 		flash(w, "ok", "Image created.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 	}
@@ -175,11 +185,30 @@ func imageUpdate(r Repos) http.HandlerFunc {
 		im.ID = id
 		if err := r.Images.Update(req.Context(), im); err != nil {
 			flash(w, "err", err.Error())
+		} else if err := saveDomainJoinFromForm(r, req, id); err != nil {
+			flash(w, "err", "domain-join config: "+err.Error())
 		} else {
 			flash(w, "ok", "Saved.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
 	}
+}
+
+// saveDomainJoinFromForm persists the agent-driven AD join config from the
+// image edit form. The password field is write-only: a blank value keeps the
+// stored secret. No-op when the repo isn't wired.
+func saveDomainJoinFromForm(r Repos, req *http.Request, imageID model.ID) error {
+	if r.DomainJoin == nil {
+		return nil
+	}
+	cfg := model.ImageDomainJoin{
+		ImageID:  imageID,
+		Enabled:  req.FormValue("dj_enabled") == "1",
+		Domain:   strings.TrimSpace(req.FormValue("dj_domain")),
+		OU:       strings.TrimSpace(req.FormValue("dj_ou")),
+		JoinUser: strings.TrimSpace(req.FormValue("dj_user")),
+	}
+	return r.DomainJoin.Set(req.Context(), cfg, req.FormValue("dj_password"))
 }
 
 func imageDelete(r Repos) http.HandlerFunc {

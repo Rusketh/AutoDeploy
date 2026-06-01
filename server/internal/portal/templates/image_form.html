@@ -60,6 +60,26 @@
     <button type="button" class="secondary sm" onclick="addSw()"><svg><use href="#i-plus"/></svg>Add package</button>
   </fieldset>
 
+  {{$dj := .Data.DomainJoin}}
+  <fieldset><legend>Active Directory domain join (via agent)</legend>
+    <label class="check"><input type="checkbox" name="dj_enabled" value="1" {{if $dj.Enabled}}checked{{end}}>
+      <span class="lbl">Join this image's machines to AD using the agent after first boot</span></label>
+    <p class="hint">
+      The agent joins the domain once the OS is up (networking + DNS available), which is far more reliable than the
+      unattend's online join during Setup. When enabled, the unattend's legacy domain-join block is <strong>ignored</strong>
+      for machines built from this image. The per-machine binding's Target OU overrides the OU below.
+    </p>
+    <label><span class="lbl">Domain (FQDN)</span>
+      <input type="text" name="dj_domain" value="{{$dj.Domain}}" placeholder="corp.example.com"></label>
+    <label><span class="lbl">Computer object OU (DN, optional)</span>
+      <input type="text" name="dj_ou" value="{{$dj.OU}}" placeholder="OU=Workstations,DC=corp,DC=example"></label>
+    <label><span class="lbl">Join account</span>
+      <input type="text" name="dj_user" value="{{$dj.JoinUser}}" placeholder="CORP\\join or join@corp.example.com"></label>
+    <label><span class="lbl">Join account password</span>
+      <input type="password" name="dj_password" autocomplete="new-password" placeholder="{{if $dj.HasPassword}}•••••••• (unchanged){{else}}required to enable join{{end}}">
+      <span class="hint">Stored encrypted; handed only to the deploying agent, never written to the unattend XML. Leave blank to keep the current password. Use a least-privilege join account.</span></label>
+  </fieldset>
+
   <div class="actions">
     <a class="btn secondary" href="/portal/images">Cancel</a>
     {{if not $new}}<a class="btn ghost" href="/portal/images/{{int64 $im.ID}}/resolved"><svg><use href="#i-eye"/></svg>Resolved</a>{{end}}

@@ -169,8 +169,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
 		Mirrors: r.Mirrors, Runtime: rt,
-		AD:    adSvc,
-		Blobs: blobs,
+		AD:         adSvc,
+		Blobs:      blobs,
+		DomainJoin: r.DomainJoin,
 	})
 
 	pl := &payload.Service{
@@ -178,8 +179,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		ISOs:      r.ISOs,
 		Drivers:   r.Drivers,
 		Software:  r.Software,
-		Resolver:  r.Resolver,
-		Inventory: r.Inventory,
+		Resolver:   r.Resolver,
+		Inventory:  r.Inventory,
+		DomainJoin: r.DomainJoin,
 	}
 	// Throttle /payload/* so a thundering herd queues rather than thrashes.
 	pl.Throttle = payload.NewThrottle(cfg.PayloadMaxInFlight, func() {
@@ -220,6 +222,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Resolver:      r.Resolver,
 		Blobs:         blobs,
 		AD:            adSvc,
+		DomainJoin:    r.DomainJoin,
 		SecretsBox:    bx,
 		DataDir:       cfg.DataDir,
 		ServerVersion: Version,
@@ -334,8 +337,9 @@ type appRepos struct {
 	Bulk      *model.BulkRepo
 	Logs      *model.LogRepo
 	Branding  *branding.Repo
-	Mirrors   *model.PayloadMirrorRepo
-	Runtime   *runtime.Settings
+	Mirrors    *model.PayloadMirrorRepo
+	Runtime    *runtime.Settings
+	DomainJoin *model.DomainJoinRepo
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -353,6 +357,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	logs := model.NewLogRepo(db)
 	brandRepo := branding.New(db)
 	mirrors := model.NewPayloadMirrorRepo(db)
+	domainJoin := model.NewDomainJoinRepo(db, bx)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -362,6 +367,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Users: users, Settings: settings,
 		BitLocker: bitlocker, Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
+		DomainJoin: domainJoin,
 	}
 }
 

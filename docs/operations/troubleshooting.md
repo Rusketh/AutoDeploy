@@ -58,6 +58,23 @@ reinstalling, its detection rule probably isn't matching the installed state; if
 the detection rule may be matching too eagerly. Review the package's rules under
 [Software](../portal/software.md).
 
+## A machine doesn't join the domain
+
+Prefer **agent-driven join**, configured on the image
+([Images → Active Directory domain join](../portal/images.md#active-directory-domain-join)). The
+agent joins after first boot, when networking and DNS are up, and retries on its next check-in if
+the directory was briefly unreachable.
+
+If you're using the **legacy unattend join** and Setup stalls for a long time during the *getting
+ready* / specialize phase and then comes up unjoined, the machine could not reach a domain
+controller mid-Setup — almost always because DNS during Setup doesn't point at the AD DNS server,
+so the domain can't be resolved to a DC. Switch the image to agent-driven join, or ensure the
+imaging network's DNS resolves the domain. Either way, confirm the **join account** can add
+computers to the target OU.
+
+After a successful join the agent reports the machine's new computer name and AD location, which
+appear on the [machine's page](../portal/machines.md).
+
 ## Recovery keys / BitLocker PINs can't be read
 
 These are encrypted with the server's [secrets key](security.md#secrets-at-rest). If the key was

@@ -57,6 +57,9 @@ type Repos struct {
 	Resolver  *resolve.Resolver
 	Blobs     *storage.BlobStore
 	AD        *addomain.Service
+	// DomainJoin stores per-image agent-driven AD join config (the image
+	// edit form reads/writes it).
+	DomainJoin *model.DomainJoinRepo
 	// SecretsBox is unused at the portal layer but kept here so the
 	// bundle matches the api one-for-one if we ever want to swap.
 	SecretsBox *secrets.Box

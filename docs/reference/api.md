@@ -209,6 +209,11 @@ information).
 The boot client and agent use a dedicated set of endpoints for AutoDeploy's internal protocol —
 `POST /api/v1/clients/menu`, `POST /api/v1/clients/deploy-status`,
 `POST /api/v1/clients/validate-pin`, and the `/api/v1/agent/*` family (check-in, hardware reports,
-job results, software state, BitLocker config/escrow, self-update). These are not intended for
-operator scripting and are listed here only for completeness.
+job results, software state, BitLocker config/escrow, self-update, and `domain-join`). These are
+not intended for operator scripting and are listed here only for completeness.
+
+`POST /api/v1/agent/domain-join` returns the [agent-driven domain join](../operations/active-directory.md#agent-driven-join-recommended)
+configuration for the calling machine's bound image (domain, OU, join account and — only over this
+authenticated agent channel — the join password). It is the runtime source of join credentials, so
+they never need to be written into the unattend answer file.
 </content>

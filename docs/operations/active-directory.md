@@ -25,12 +25,49 @@ enabled for testing against a directory with an untrusted certificate.
 
 ## Domain join during deployment
 
-Domain join is driven by the [unattend](../portal/payloads.md#unattend-files) used by an image:
-the unattend captures the domain and the credentials/OU used to join. Combine an unattend that
-joins the domain with the directory connection above for fully automated, domain-joined
-deployments.
+There are two ways to join deployed machines to the domain. **Agent-driven join (recommended)** is
+configured per image; the legacy **unattend join** is kept for backwards compatibility.
+
+### Agent-driven join (recommended)
+
+Configure the join on the **image** itself, under the *Active Directory domain join (via agent)*
+section of the [image editor](../portal/images.md#active-directory-domain-join). The deployed
+agent performs the join **after first boot**, once Windows is fully up with working networking and
+DNS — which is far more reliable than joining mid-Setup.
+
+| Field | Notes |
+|-------|-------|
+| Enable | Turns on agent-driven join for machines built from this image |
+| Domain (FQDN) | e.g. `corp.example.com` |
+| Computer object OU | Optional DN, e.g. `OU=Workstations,DC=corp,DC=example`. A machine's [binding](../portal/machines.md#bindings) **Target OU** overrides this per machine. |
+| Join account | A **least-privilege** account allowed to join computers to the domain |
+| Join account password | Stored **encrypted at rest** and handed only to the deploying agent — it is **never written into the unattend XML** |
+
+How it works:
+
+1. After first boot the agent asks the server whether its image is set to join, and for the
+   credentials.
+2. If it isn't already a member of the target domain, it runs the join and reboots to complete it.
+   The credentials are passed to Windows in memory only and are never logged.
+3. Because the image joins via the agent, AutoDeploy **automatically suppresses** the unattend's
+   own domain-join block for that image, so Setup never attempts (and stalls on) an online join.
+
+> The agent join needs the directory to be reachable from the deployed machine (correct DNS to a
+> domain controller). The server's LDAP connection above is not required for the join itself, but
+> is used for related directory lookups and [bulk rename](../portal/bulk-operations.md)
+> coordination.
+
+### Legacy: unattend join
+
+An [unattend](../portal/payloads.md#unattend-files) can also carry the domain, credentials and OU
+directly, so Windows Setup joins during the *specialize* pass. This requires a domain controller to
+be reachable mid-Setup and is less reliable — see
+[Troubleshooting](troubleshooting.md#a-machine-doesnt-join-the-domain). These fields are **ignored**
+when the image is configured for agent-driven join.
 
 ## Related
+
+- [Images → Active Directory domain join](../portal/images.md#active-directory-domain-join)
 
 - [Settings → Active Directory](../portal/settings.md#active-directory)
 - [Payloads → Unattend files](../portal/payloads.md#unattend-files)

@@ -289,6 +289,13 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// not, so once-per-process would miss moves. The server syncs the
 	// binding from this. Best-effort.
 	reportObservedIdentity(ctx, log, c, f)
+	// Agent-driven AD domain join: if this machine's image is configured for
+	// it and we're not already in the domain, join and reboot. Done before
+	// software/jobs so a reboot doesn't interrupt a half-finished install; the
+	// credentials are fetched per-call and never logged.
+	if maybeDomainJoin(ctx, log, c, f) {
+		return 0 // a join reboot is scheduled; the rest resumes after reboot
+	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
@@ -309,6 +316,58 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		return time.Duration(resp.PollIntervalSeconds) * time.Second
 	}
 	return 0
+}
+
+// domainJoined guards maybeDomainJoin so a successful join (which schedules a
+// reboot) isn't re-attempted later in the same process.
+var domainJoined bool
+
+// maybeDomainJoin asks the server whether this machine's image is configured
+// for agent-driven AD join and, if so and the machine isn't already in that
+// domain, joins it and schedules a reboot. Returns true when a reboot was
+// scheduled (so the caller should stop this poll). Credentials are fetched
+// per-call and NEVER logged; failures are logged and retried on the next poll.
+func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
+	if domainJoined || f.agentID == "" {
+		return false
+	}
+	var resp struct {
+		Join     bool   `json:"join"`
+		Domain   string `json:"domain"`
+		OU       string `json:"ou"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/domain-join",
+		map[string]any{"agent_id": f.agentID}, &resp); err != nil {
+		log.Warn("domainjoin.fetch", slog.String("error", err.Error()))
+		return false
+	}
+	if !resp.Join || resp.Domain == "" {
+		return false
+	}
+	if cur, joined := currentDomain(); joined && strings.EqualFold(cur, resp.Domain) {
+		domainJoined = true // already a member of the target domain
+		return false
+	}
+	if f.dryRun {
+		log.Info("domainjoin.skip",
+			slog.String("reason", "--dry-run"), slog.String("domain", resp.Domain))
+		return false
+	}
+	if err := joinDomain(resp.Domain, resp.OU, resp.User, resp.Password); err != nil {
+		log.Error("domainjoin.fail",
+			slog.String("domain", resp.Domain), slog.String("error", err.Error()))
+		return false // retry on the next poll
+	}
+	domainJoined = true
+	// LOG ONLY THE FACT — credentials never appear in any log line.
+	log.Info("domainjoin.ok",
+		slog.String("domain", resp.Domain), slog.String("ou", resp.OU),
+		slog.String("note", "rebooting to complete join"))
+	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+	_, _ = runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", "AutoDeploy domain join"}, "")
+	return true
 }
 
 // hardwareReported guards reportHardwareOnce so the WMI sweep runs at most

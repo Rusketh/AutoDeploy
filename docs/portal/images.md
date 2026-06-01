@@ -27,10 +27,30 @@ Go to **Images → New** and assemble the recipe.
 | Unattend | The answer file (or inherit from the parent) |
 | Software loadout | A single [loadout](software.md#loadouts) to install |
 | Direct software links | Individual [software packages](software.md) to install, each with an order — these override the loadout for those packages |
+| Active Directory domain join | Optionally have the agent join machines from this image to AD — see [below](#active-directory-domain-join) |
 
 Save the image. You can edit it later to change any of these selections.
 
 ![Editing an image](../images/image-edit.png)
+
+## Active Directory domain join
+
+The image editor has an **Active Directory domain join (via agent)** section. When enabled, the
+[agent](../operations/active-directory.md#agent-driven-join-recommended) joins machines deployed
+from this image to the domain **after first boot** — when networking and DNS are fully up, which is
+much more reliable than joining during Windows Setup.
+
+| Field | Notes |
+|-------|-------|
+| Enable | Turn on agent-driven join for this image |
+| Domain (FQDN) | e.g. `corp.example.com` |
+| Computer object OU | Optional DN; a machine's [binding](machines.md#bindings) Target OU overrides it per machine |
+| Join account | A least-privilege account that can join computers |
+| Join account password | Stored encrypted; handed only to the deploying agent, **never written into the unattend XML**. Leave blank when editing to keep the current password. |
+
+> When agent-driven join is enabled, any domain-join settings in the image's **unattend are
+> ignored** — AutoDeploy drops the unattend join block so Setup doesn't also attempt an online
+> join. See [Active Directory](../operations/active-directory.md#domain-join-during-deployment).
 
 > Drivers are not attached to the image directly — at deploy time AutoDeploy evaluates every
 > [driver package's SMBIOS filters](payloads.md#driver-packages) against the target machine and
