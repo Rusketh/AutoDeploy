@@ -23,6 +23,7 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Software & loadouts](portal/software.md)** — software packages, detection, install steps, and loadouts.
 - **[Images](portal/images.md)** — composing ISOs, unattends, drivers and software into a deployable image.
 - **[Machines](portal/machines.md)** — inventory, machine detail, bindings, history and BitLocker.
+- **[Windows Updates](portal/windows-updates.md)** — KB patches, compliance tracking, and fleet-wide deployment.
 - **[Bulk operations](portal/bulk-operations.md)** — act on many machines at once.
 - **[Mirrors](portal/mirrors.md)** — site-local payload caches.
 - **[Logs](portal/logs.md)** — searching and tailing the audit log.

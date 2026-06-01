@@ -19,9 +19,9 @@ func RegisterWindowsUpdates(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("PUT /api/v1/updates/{id}", requireAuth(r, handleUpdateUpdate(r)))
 	mux.HandleFunc("DELETE /api/v1/updates/{id}", requireAuth(r, handleDeleteUpdate(r)))
 	mux.HandleFunc("GET /api/v1/updates/{id}/compliance", requireAuth(r, handleUpdateCompliance(r)))
-	mux.HandleFunc("POST /api/v1/updates/deploy", requireAuth(r, handleCreateUpdateDeployment(r)))
-	mux.HandleFunc("GET /api/v1/updates/deployments", requireAuth(r, handleListUpdateDeployments(r)))
-	mux.HandleFunc("GET /api/v1/updates/deployments/{id}", requireAuth(r, handleGetUpdateDeployment(r)))
+	mux.HandleFunc("POST /api/v1/update-deployments", requireAuth(r, handleCreateUpdateDeployment(r)))
+	mux.HandleFunc("GET /api/v1/update-deployments", requireAuth(r, handleListUpdateDeployments(r)))
+	mux.HandleFunc("GET /api/v1/update-deployments/{id}", requireAuth(r, handleGetUpdateDeployment(r)))
 	mux.HandleFunc("GET /api/v1/machines/{id}/updates", requireAuth(r, handleMachineUpdates(r)))
 
 	// Agent endpoints (unauthenticated — called by the agent).

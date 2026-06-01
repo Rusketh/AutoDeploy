@@ -13,9 +13,10 @@ The list shows, per machine:
 | Column | Notes |
 |--------|-------|
 | UUID | The SMBIOS UUID (truncated; click to open, or copy the full value) |
+| Name | The machine's current computer name (agent-reported, or desired name from binding) |
 | Make / model | Manufacturer and product, from SMBIOS |
 | Serial | System serial |
-| Binding | The image it's [bound](#bindings) to, or *unbound* |
+| OS | The running OS (e.g. "Microsoft Windows 10 Pro"), from the agent's hardware report |
 | Image | The bound image's name |
 | BitLocker | Whether a pre-boot PIN is configured |
 | Last seen | When the machine last contacted the server |
@@ -34,8 +35,15 @@ Click a machine to open its detail page, which gathers everything known about it
 
 ![Machine detail](../images/machine-detail.png)
 
-The header shows its SMBIOS UUID, make/model, serial, AutoDeploy ID, BIOS, baseboard, and
-first/last-seen times.
+At the top, **summary cards** give a quick overview:
+
+- **Software detected** — how many of the machine's targeted packages are detected vs total
+- **KBs installed** — how many tracked Windows Updates are installed on this machine
+- **OS** — the running OS caption and version
+- **Last seen** — when the machine last contacted the server
+
+Below the summary cards, the header shows its SMBIOS UUID, make/model, serial, AutoDeploy ID,
+BIOS, baseboard, and first/last-seen times.
 
 ### Hardware
 
@@ -85,8 +93,9 @@ when, never the value). For the full workflow, see the
 ### History and detected software
 
 Further down, the page lists the machine's **deployment history** (start/finish, image, outcome,
-notes) and its **detected software state** (which packages the agent has found present or absent,
-and when last evaluated).
+notes), its **detected software state** (which packages the agent has found present or absent,
+and when last evaluated), and its **Windows Update status** (a table of tracked KBs with their
+install status — installed, pending, or failed — and when last reported).
 
 ### Removing a machine
 

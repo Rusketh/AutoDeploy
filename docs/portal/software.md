@@ -12,7 +12,15 @@ the **files** the install needs.
 
 ![Software list](../images/software-list.png)
 
-The list shows each package's **name** and **description**.
+The list shows each package's **name**, **description**, and fleet compliance data:
+
+| Column | Notes |
+|--------|-------|
+| Size | Total size of uploaded files |
+| Used by | Number of images and loadouts that reference this package |
+| Targets | Number of machines that should have this package (via image binding) |
+| Installed | Number of target machines where the package is detected |
+| Compliance | Percentage badge — green (100%), amber (partial), red (0%), or N/A if no targets |
 
 ### Creating a package
 
