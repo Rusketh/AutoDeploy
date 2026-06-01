@@ -694,6 +694,43 @@ func (r *InventoryRepo) ValidateDeployToken(ctx context.Context, machineID ID, t
 	return true, nil
 }
 
+// OSCount is one row of the OS distribution breakdown.
+type OSCount struct {
+	OS    string
+	Count int
+}
+
+// OSBreakdown groups machines by reported OS caption and returns counts
+// sorted by count descending. Machines without hardware data are skipped.
+func (r *InventoryRepo) OSBreakdown(ctx context.Context) ([]OSCount, error) {
+	machines, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// List doesn't load hardware_json; fetch each machine for its Hardware.
+	counts := map[string]int{}
+	for _, m := range machines {
+		full, err := r.Get(ctx, m.ID)
+		if err != nil || full.Hardware == nil || full.Hardware.OSCaption == "" {
+			continue
+		}
+		counts[full.Hardware.OSCaption]++
+	}
+	out := make([]OSCount, 0, len(counts))
+	for os, n := range counts {
+		out = append(out, OSCount{OS: os, Count: n})
+	}
+	// Sort by count desc, then name asc.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].Count > out[i].Count || (out[j].Count == out[i].Count && out[j].OS < out[i].OS) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out, nil
+}
+
 // DetectedStateFor returns the latest detected state per package for a
 // machine. Use for drift reporting in the portal.
 func (r *InventoryRepo) DetectedStateFor(ctx context.Context, machineID ID) ([]DetectedState, error) {

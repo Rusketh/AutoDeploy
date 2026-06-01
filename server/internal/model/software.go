@@ -219,6 +219,108 @@ func (r *SoftwarePackageRepo) ResolveOrder(ctx context.Context, seeds []ID) ([]I
 	return order, warnings
 }
 
+// SoftwareCompliance is per-package fleet compliance stats.
+type SoftwareCompliance struct {
+	TargetCount    int
+	InstalledCount int
+	MissingCount   int
+	UnknownCount   int
+}
+
+// AllComplianceSummaries returns compliance stats for every software package
+// in a single batch. "Target" machines are those bound to images that include
+// the package (directly or via loadout). Uses machine_detected_state for
+// installed/missing status.
+func (r *SoftwarePackageRepo) AllComplianceSummaries(ctx context.Context) (map[ID]SoftwareCompliance, error) {
+	directRows, err := r.db.QueryContext(ctx, `
+		SELECT isp.software_package_id, mb.machine_id
+		FROM image_software_package isp
+		JOIN machine_binding mb ON mb.image_id = isp.image_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer directRows.Close()
+	targets := map[ID]map[ID]bool{}
+	for directRows.Next() {
+		var pkgID, machID ID
+		if err := directRows.Scan(&pkgID, &machID); err != nil {
+			return nil, err
+		}
+		if targets[pkgID] == nil {
+			targets[pkgID] = map[ID]bool{}
+		}
+		targets[pkgID][machID] = true
+	}
+	if err := directRows.Err(); err != nil {
+		return nil, err
+	}
+
+	loadoutRows, err := r.db.QueryContext(ctx, `
+		SELECT slp.software_package_id, mb.machine_id
+		FROM software_loadout_package slp
+		JOIN image i ON i.loadout_id = slp.loadout_id
+		JOIN machine_binding mb ON mb.image_id = i.id
+		WHERE slp.opt_out = 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer loadoutRows.Close()
+	for loadoutRows.Next() {
+		var pkgID, machID ID
+		if err := loadoutRows.Scan(&pkgID, &machID); err != nil {
+			return nil, err
+		}
+		if targets[pkgID] == nil {
+			targets[pkgID] = map[ID]bool{}
+		}
+		targets[pkgID][machID] = true
+	}
+	if err := loadoutRows.Err(); err != nil {
+		return nil, err
+	}
+
+	detRows, err := r.db.QueryContext(ctx, `
+		SELECT machine_id, software_package_id, detected
+		FROM machine_detected_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer detRows.Close()
+	detected := map[ID]map[ID]bool{}
+	for detRows.Next() {
+		var machID, pkgID ID
+		var d int
+		if err := detRows.Scan(&machID, &pkgID, &d); err != nil {
+			return nil, err
+		}
+		if detected[pkgID] == nil {
+			detected[pkgID] = map[ID]bool{}
+		}
+		detected[pkgID][machID] = d != 0
+	}
+	if err := detRows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make(map[ID]SoftwareCompliance, len(targets))
+	for pkgID, machSet := range targets {
+		c := SoftwareCompliance{TargetCount: len(machSet)}
+		for machID := range machSet {
+			if det, ok := detected[pkgID][machID]; ok {
+				if det {
+					c.InstalledCount++
+				} else {
+					c.MissingCount++
+				}
+			} else {
+				c.UnknownCount++
+			}
+		}
+		out[pkgID] = c
+	}
+	return out, nil
+}
+
 func validateSoftware(in *SoftwarePackage) error {
 	if err := validateName(in.Name); err != nil {
 		return err

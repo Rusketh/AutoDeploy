@@ -1,91 +1,127 @@
 {{define "body"}}
+{{$u := .Data.Update}}
+{{$new := .Data.IsNew}}
 <div class="toolbar">
-  <h2>{{if .Data.IsNew}}New Windows Update{{else}}Edit {{.Data.Update.KBNumber}}{{end}}</h2>
+  <h2>{{if $new}}New Windows Update{{else}}Edit {{$u.KBNumber}}{{end}}</h2>
   <div class="right">
     <a class="btn secondary" href="/portal/updates">Back to list</a>
   </div>
 </div>
 
-<form method="POST" action="{{if .Data.IsNew}}/portal/updates{{else}}/portal/updates/{{int64 .Data.Update.ID}}{{end}}" class="form-card">
+<form class="std" method="POST" action="{{if $new}}/portal/updates{{else}}/portal/updates/{{int64 $u.ID}}{{end}}">
   <fieldset>
     <legend>Update metadata</legend>
-    <div class="field">
-      <label for="kb_number">KB Number</label>
-      <input type="text" id="kb_number" name="kb_number" value="{{.Data.Update.KBNumber}}" required placeholder="KB5034441">
-    </div>
-    <div class="field">
-      <label for="title">Title</label>
-      <input type="text" id="title" name="title" value="{{.Data.Update.Title}}" required placeholder="2024-01 Cumulative Update for Windows 10">
-    </div>
-    <div class="field">
-      <label for="description">Description</label>
-      <textarea id="description" name="description" rows="3">{{.Data.Update.Description}}</textarea>
-    </div>
-    <div class="field">
-      <label for="os_filter">OS Filter</label>
-      <select id="os_filter" name="os_filter">
-        <option value="" {{if eq .Data.Update.OSFilter ""}}selected{{end}}>Any OS</option>
-        <option value="windows-10" {{if eq .Data.Update.OSFilter "windows-10"}}selected{{end}}>Windows 10</option>
-        <option value="windows-11" {{if eq .Data.Update.OSFilter "windows-11"}}selected{{end}}>Windows 11</option>
-        <option value="server-2019" {{if eq .Data.Update.OSFilter "server-2019"}}selected{{end}}>Server 2019</option>
-        <option value="server-2022" {{if eq .Data.Update.OSFilter "server-2022"}}selected{{end}}>Server 2022</option>
-        <option value="server-2025" {{if eq .Data.Update.OSFilter "server-2025"}}selected{{end}}>Server 2025</option>
+    <label><span class="lbl">KB Number</span>
+      <input type="text" name="kb_number" value="{{$u.KBNumber}}" required placeholder="KB5034441">
+    </label>
+    <label><span class="lbl">Title</span>
+      <input type="text" name="title" value="{{$u.Title}}" required placeholder="2024-01 Cumulative Update for Windows 10">
+    </label>
+    <label><span class="lbl">Description</span>
+      <textarea name="description" rows="3">{{$u.Description}}</textarea>
+    </label>
+    <label><span class="lbl">OS Filter</span>
+      <select name="os_filter">
+        <option value="" {{if eq $u.OSFilter ""}}selected{{end}}>Any OS</option>
+        <option value="windows-10" {{if eq $u.OSFilter "windows-10"}}selected{{end}}>Windows 10</option>
+        <option value="windows-11" {{if eq $u.OSFilter "windows-11"}}selected{{end}}>Windows 11</option>
+        <option value="server-2019" {{if eq $u.OSFilter "server-2019"}}selected{{end}}>Server 2019</option>
+        <option value="server-2022" {{if eq $u.OSFilter "server-2022"}}selected{{end}}>Server 2022</option>
+        <option value="server-2025" {{if eq $u.OSFilter "server-2025"}}selected{{end}}>Server 2025</option>
       </select>
-      <p class="hint">Matches against the machine's reported OS caption.</p>
-    </div>
-    <div class="field">
-      <label for="severity">Severity</label>
-      <select id="severity" name="severity">
-        <option value="" {{if eq .Data.Update.Severity ""}}selected{{end}}>—</option>
-        <option value="critical" {{if eq .Data.Update.Severity "critical"}}selected{{end}}>Critical</option>
-        <option value="important" {{if eq .Data.Update.Severity "important"}}selected{{end}}>Important</option>
-        <option value="moderate" {{if eq .Data.Update.Severity "moderate"}}selected{{end}}>Moderate</option>
-        <option value="low" {{if eq .Data.Update.Severity "low"}}selected{{end}}>Low</option>
+      <span class="hint">Matches against the machine's reported OS caption.</span>
+    </label>
+    <label><span class="lbl">Severity</span>
+      <select name="severity">
+        <option value="" {{if eq $u.Severity ""}}selected{{end}}>—</option>
+        <option value="critical" {{if eq $u.Severity "critical"}}selected{{end}}>Critical</option>
+        <option value="important" {{if eq $u.Severity "important"}}selected{{end}}>Important</option>
+        <option value="moderate" {{if eq $u.Severity "moderate"}}selected{{end}}>Moderate</option>
+        <option value="low" {{if eq $u.Severity "low"}}selected{{end}}>Low</option>
       </select>
+    </label>
+    <div style="margin-bottom: var(--sp-3);">
+      <span class="lbl" style="display:block; margin-bottom: var(--sp-1);">Supersedes</span>
+      <input type="hidden" name="supersedes_json" id="supersedes_json" value="{{$u.SupersedesJSON}}">
+      <div id="supersedes_tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom: var(--sp-2); min-height:28px;"></div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="supersedes_input" placeholder="KB5033372" style="flex:1; max-width:220px;">
+        <button type="button" class="btn secondary" onclick="addSupersedes()" style="white-space:nowrap;"><svg><use href="#i-plus"/></svg>Add</button>
+      </div>
+      <span class="hint">KB numbers that this update replaces. Add one at a time.</span>
     </div>
-    <div class="field">
-      <label for="supersedes_json">Supersedes (JSON array of KB numbers)</label>
-      <input type="text" id="supersedes_json" name="supersedes_json" value="{{.Data.Update.SupersedesJSON}}" placeholder='["KB5033372"]'>
-      <p class="hint">List of KB numbers this update supersedes, as a JSON array.</p>
-    </div>
-    <div class="field">
-      <label>
-        <input type="checkbox" name="reboot_after" value="1" {{if .Data.Update.RebootAfter}}checked{{end}}>
-        Reboot after install
-      </label>
-      <p class="hint">If checked, the agent schedules a reboot after successful install.</p>
-    </div>
+    <label>
+      <input type="checkbox" name="reboot_after" value="1" {{if $u.RebootAfter}}checked{{end}}>
+      Reboot after install
+      <span class="hint">If checked, the agent schedules a reboot after successful install.</span>
+    </label>
   </fieldset>
   <div class="actions">
-    <button type="submit" class="btn">{{if .Data.IsNew}}Create update{{else}}Save changes{{end}}</button>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create update{{else}}Save changes{{end}}</button>
   </div>
 </form>
 
-{{if not .Data.IsNew}}
-<div class="form-card" style="margin-top:1.5rem;">
-  <fieldset>
-    <legend>Payload (.msu file)</legend>
-    {{if .Data.Update.StoragePath}}
-    <p>Current file: <strong>{{.Data.Update.PayloadFilename}}</strong> ({{humanBytes .Data.Update.SizeBytes}})</p>
-    {{else}}
-    <p class="muted">No payload uploaded yet.</p>
-    {{end}}
-    <div class="field">
-      <label for="payload">Upload .msu</label>
+<script>
+var supersedesList = [];
+try { supersedesList = JSON.parse(document.getElementById('supersedes_json').value) || []; } catch(e) {}
+function renderTags() {
+  var c = document.getElementById('supersedes_tags');
+  c.innerHTML = '';
+  supersedesList.forEach(function(kb, i) {
+    var s = document.createElement('span');
+    s.className = 'badge accent';
+    s.style.cssText = 'cursor:pointer; padding: 4px 10px; font-size: 0.85rem;';
+    s.textContent = kb + ' ×';
+    s.title = 'Click to remove';
+    s.onclick = function() { supersedesList.splice(i, 1); renderTags(); };
+    c.appendChild(s);
+  });
+  document.getElementById('supersedes_json').value = JSON.stringify(supersedesList);
+}
+function addSupersedes() {
+  var input = document.getElementById('supersedes_input');
+  var v = input.value.trim().toUpperCase();
+  if (!v) return;
+  if (supersedesList.indexOf(v) === -1) supersedesList.push(v);
+  input.value = '';
+  renderTags();
+  input.focus();
+}
+document.getElementById('supersedes_input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); addSupersedes(); }
+});
+renderTags();
+</script>
+{{if not $new}}
+<fieldset style="margin-top: var(--sp-4);">
+  <legend>Payload (.msu file)</legend>
+  {{if $u.StoragePath}}
+  <p>Current file: <strong>{{$u.PayloadFilename}}</strong> ({{humanBytes $u.SizeBytes}})</p>
+  {{else}}
+  <div class="empty" style="padding: var(--sp-4) var(--sp-3);">
+    <svg class="empty-icon"><use href="#i-disc"/></svg>
+    <h3 style="margin: var(--sp-2) 0;">No payload uploaded yet</h3>
+    <p class="small muted">Upload the .msu file for this update. The agent downloads and installs it using wusa.exe.</p>
+  </div>
+  {{end}}
+  <form class="std" style="margin-top: var(--sp-3);">
+    <label><span class="lbl">Upload .msu</span>
       <input type="file" id="payload" accept=".msu,.cab">
+    </label>
+    <div class="actions">
+      <button type="button" class="btn secondary" onclick="uploadPayload()" id="uploadBtn"><svg><use href="#i-plus"/></svg>Upload</button>
     </div>
-    <button type="button" class="btn secondary" onclick="uploadPayload()" id="uploadBtn">Upload</button>
-    <progress id="uploadProgress" value="0" max="100" style="display:none;width:100%;margin-top:.5rem;"></progress>
+    <progress id="uploadProgress" value="0" max="100" style="display:none;width:100%;margin-top:var(--sp-2);"></progress>
     <p id="uploadStatus" class="hint"></p>
-  </fieldset>
-</div>
+  </form>
+</fieldset>
 <script>
 function uploadPayload() {
   var input = document.getElementById('payload');
   if (!input.files.length) return;
   var file = input.files[0];
   var xhr = new XMLHttpRequest();
-  xhr.open('PUT', '/api/v1/updates/{{int64 .Data.Update.ID}}/upload');
+  xhr.open('PUT', '/api/v1/updates/{{int64 $u.ID}}/upload');
   xhr.setRequestHeader('X-Filename', file.name);
   var progress = document.getElementById('uploadProgress');
   var status = document.getElementById('uploadStatus');

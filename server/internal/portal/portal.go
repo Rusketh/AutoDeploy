@@ -342,6 +342,23 @@ func dashboardPage(r Repos) http.HandlerFunc {
 				}
 			}
 		}
+		osBreakdown, _ := r.Inventory.OSBreakdown(req.Context())
+		swCompliance, _ := r.Software.AllComplianceSummaries(req.Context())
+		swPkgs, _ := r.Software.List(req.Context())
+		swFull, swGap := 0, 0
+		for _, p := range swPkgs {
+			if sc, ok := swCompliance[p.ID]; ok && sc.TargetCount > 0 {
+				if sc.InstalledCount == sc.TargetCount {
+					swFull++
+				} else {
+					swGap++
+				}
+			}
+		}
+		var updateSummary model.FleetUpdateSummary
+		if r.Updates != nil {
+			updateSummary, _ = r.Updates.FleetUpdateSummary(req.Context())
+		}
 		render(w, req, r, "index.html", "Dashboard", map[string]any{
 			"Counts":      c,
 			"Events":      events,
@@ -351,6 +368,11 @@ func dashboardPage(r Repos) http.HandlerFunc {
 				"failed":      failed,
 				"in_progress": inProgress,
 			},
+			"OSBreakdown":   osBreakdown,
+			"SWFull":        swFull,
+			"SWGap":         swGap,
+			"SWTotal":       len(swPkgs),
+			"UpdateSummary": updateSummary,
 		})
 	}
 }
@@ -405,8 +427,17 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return m
 		},
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"add":     func(a, b int) int { return a + b },
+		"sub":     func(a, b int) int { return a - b },
+		"toFloat": func(n int) float64 { return float64(n) },
+		"div":     func(a, b float64) float64 { if b == 0 { return 0 }; return a / b },
+		"mul":     func(a, b float64) float64 { return a * b },
+		"pct": func(a, b int) int {
+			if b == 0 {
+				return 0
+			}
+			return int(float64(a) / float64(b) * 100)
+		},
 		// humanBytes formats a byte count as a short suffixed string.
 		// Mirrors the JS upload-progress formatter so values match
 		// between live progress and the saved record.

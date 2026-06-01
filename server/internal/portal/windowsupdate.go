@@ -17,9 +17,9 @@ func registerWindowsUpdateRoutes(get, post func(string, http.HandlerFunc), r Rep
 	get("/portal/updates", wuList(r))
 	get("/portal/updates/new", wuFormNew(r))
 	post("/portal/updates", wuCreate(r))
-	get("/portal/updates/deploy", wuDeployForm(r))
-	post("/portal/updates/deploy", wuDeployCreate(r))
-	get("/portal/updates/deployments/{id}", wuDeploymentDetail(r))
+	get("/portal/update-deployments/new", wuDeployForm(r))
+	post("/portal/update-deployments", wuDeployCreate(r))
+	get("/portal/update-deployments/{id}", wuDeploymentDetail(r))
 	get("/portal/updates/{id}/edit", wuFormEdit(r))
 	post("/portal/updates/{id}", wuSave(r))
 	post("/portal/updates/{id}/delete", wuDelete(r))
@@ -33,8 +33,9 @@ func wuList(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		compliance, _ := r.Updates.AllComplianceSummaries(req.Context())
 		render(w, req, r, "windowsupdate_list.html", "Windows Updates", map[string]any{
-			"Updates": updates,
+			"Updates": updates, "Compliance": compliance,
 		})
 	}
 }
@@ -244,7 +245,7 @@ func wuDeployCreate(r Repos) http.HandlerFunc {
 			return
 		}
 		flash(w, "ok", "Deployment created")
-		http.Redirect(w, req, "/portal/updates/deployments/"+idStr(dep.ID), http.StatusFound)
+		http.Redirect(w, req, "/portal/update-deployments/"+idStr(dep.ID), http.StatusFound)
 	}
 }
 

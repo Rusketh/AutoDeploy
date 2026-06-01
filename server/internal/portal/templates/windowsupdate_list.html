@@ -6,7 +6,7 @@
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
   <div class="right">
-    <a class="btn secondary" href="/portal/updates/deploy"><svg><use href="#i-bolt"/></svg>Deploy updates</a>
+    <a class="btn secondary" href="/portal/update-deployments/new"><svg><use href="#i-bolt"/></svg>Deploy updates</a>
     <a class="btn" href="/portal/updates/new"><svg><use href="#i-plus"/></svg>New update</a>
   </div>
 </div>
@@ -20,10 +20,12 @@
     <th>Severity</th>
     <th class="num" data-sort="num">Size</th>
     <th>Reboot</th>
+    <th>Compliance</th>
     <th data-nosort></th>
   </tr></thead>
   <tbody>
     {{range .Data.Updates}}
+    {{$c := index $.Data.Compliance .ID}}
     <tr>
       <td><a href="/portal/updates/{{int64 .ID}}/edit"><strong>{{.KBNumber}}</strong></a></td>
       <td>{{.Title}}</td>
@@ -31,6 +33,7 @@
       <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="num">{{if .SizeBytes}}{{humanBytes .SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .RebootAfter}}yes{{else}}<span class="muted">no</span>{{end}}</td>
+      <td>{{if $c}}{{if $c.Total}}{{$c.Installed}} / {{$c.Total}} <span class="badge {{if eq $c.Installed $c.Total}}ok{{else}}warn{{end}}">{{pct $c.Installed $c.Total}}%</span>{{else}}<span class="muted">N/A</span>{{end}}{{else}}<span class="muted">N/A</span>{{end}}</td>
       <td class="actions">
         <a class="btn secondary sm" href="/portal/updates/{{int64 .ID}}/compliance"><svg><use href="#i-list"/></svg>Compliance</a>
         <a class="btn secondary sm" href="/portal/updates/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>

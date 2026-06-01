@@ -2,43 +2,47 @@
 <div class="toolbar">
   <h2>Update Deployment #{{int64 .Data.Deployment.ID}}</h2>
   <div class="right">
-    <a class="btn secondary" href="/portal/updates">Back to updates</a>
+    <a class="btn secondary" href="/portal/updates"><svg><use href="#i-arrow-left"/></svg>Back to updates</a>
   </div>
 </div>
 
-<div class="card-grid" style="margin-bottom:1.5rem;">
-  <div class="stat-card">
-    <span class="stat-value">{{index .Data.Counts "queued"}}</span>
-    <span class="stat-label">Queued</span>
+<div class="grid stats">
+  <div class="stat">
+    <span class="num">{{index .Data.Counts "queued"}}</span>
+    <span class="lbl"><svg><use href="#i-list"/></svg>Queued</span>
   </div>
-  <div class="stat-card">
-    <span class="stat-value">{{index .Data.Counts "running"}}</span>
-    <span class="stat-label">Running</span>
+  <div class="stat">
+    <span class="num">{{index .Data.Counts "running"}}</span>
+    <span class="lbl"><svg><use href="#i-bolt"/></svg>Running</span>
   </div>
-  <div class="stat-card">
-    <span class="stat-value">{{index .Data.Counts "ok"}}</span>
-    <span class="stat-label">OK</span>
+  <div class="stat">
+    <span class="num">{{index .Data.Counts "ok"}}</span>
+    <span class="lbl"><svg><use href="#i-check"/></svg>OK</span>
   </div>
-  <div class="stat-card">
-    <span class="stat-value">{{index .Data.Counts "failed"}}</span>
-    <span class="stat-label">Failed</span>
+  <div class="stat">
+    <span class="num">{{index .Data.Counts "failed"}}</span>
+    <span class="lbl"><svg><use href="#i-trash"/></svg>Failed</span>
   </div>
 </div>
 
-<div class="form-card" style="margin-bottom:1.5rem;">
-  <p><strong>Created by:</strong> {{.Data.Deployment.CreatedBy}}</p>
-  <p><strong>Created at:</strong> {{formatTime .Data.Deployment.CreatedAt}}</p>
-  {{if .Data.Deployment.OSFilter}}<p><strong>OS filter:</strong> {{.Data.Deployment.OSFilter}}</p>{{end}}
-  <details>
-    <summary>Target criteria</summary>
-    <pre style="font-size:0.85rem;">{{.Data.TargetJSON}}</pre>
-  </details>
-</div>
+<dl class="kv" style="margin-top: var(--sp-4);">
+  <dt>Created by</dt><dd>{{.Data.Deployment.CreatedBy}}</dd>
+  <dt>Created at</dt><dd>{{formatTime .Data.Deployment.CreatedAt}}</dd>
+  {{if .Data.Deployment.OSFilter}}<dt>OS filter</dt><dd>{{.Data.Deployment.OSFilter}}</dd>{{end}}
+</dl>
+
+<details style="margin-top: var(--sp-3);">
+  <summary class="small muted" style="cursor:pointer;">Target criteria (JSON)</summary>
+  <pre style="font-size:0.85rem; padding: var(--sp-3); background: var(--surface-2); border-radius: var(--r); margin-top: var(--sp-2);">{{.Data.TargetJSON}}</pre>
+</details>
 
 {{if .Data.Jobs}}
-<div class="filter" style="margin-bottom:1rem;">
-  <svg><use href="#i-search"/></svg>
-  <input type="search" placeholder="Filter jobs" data-filter="#jtbl">
+<div class="toolbar" style="margin-top: var(--sp-4);">
+  <h3>Jobs</h3>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter jobs" data-filter="#jtbl">
+  </div>
 </div>
 <div class="tablewrap">
 <table id="jtbl" data-sortable>
@@ -46,25 +50,28 @@
     <th>Machine</th>
     <th>KB Number</th>
     <th>Status</th>
-    <th>Queued</th>
-    <th>Claimed</th>
-    <th>Completed</th>
+    <th data-sort="num">Queued</th>
+    <th data-sort="num">Claimed</th>
+    <th data-sort="num">Completed</th>
   </tr></thead>
   <tbody>
     {{range .Data.Jobs}}
     <tr>
-      <td><a href="/portal/machines/{{int64 .MachineID}}">{{if .MachineName}}{{.MachineName}}{{else}}#{{int64 .MachineID}}{{end}}</a></td>
+      <td><a href="/portal/machines/{{int64 .MachineID}}">{{if .MachineName}}<strong>{{.MachineName}}</strong>{{else}}#{{int64 .MachineID}}{{end}}</a></td>
       <td>{{.KBNumber}}</td>
-      <td><span class="badge {{.Status}}">{{.Status}}</span></td>
-      <td class="small">{{formatTime .QueuedAt}}</td>
-      <td class="small">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="small">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{end}}">{{.Status}}</span></td>
+      <td class="small muted" data-sort-value="{{.QueuedAt.Unix}}">{{formatTime .QueuedAt}}</td>
+      <td class="small muted">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small muted">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="muted">—</span>{{end}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
 {{else}}
-<p class="muted">No jobs in this deployment.</p>
+<div class="empty" style="margin-top: var(--sp-4);">
+  <svg class="empty-icon"><use href="#i-list"/></svg>
+  <h3>No jobs in this deployment</h3>
+</div>
 {{end}}
 {{end}}

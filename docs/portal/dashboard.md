@@ -22,6 +22,25 @@ A rollup of deployment outcomes over the last 24 hours: **successful**, **in pro
 **failed**. It's a quick health check — a rising "failed" count is your cue to open the affected
 machines or the [activity log](logs.md).
 
+## Software compliance
+
+Shows how many software packages are **fully deployed** (100% of target machines have the package
+detected) versus packages **with gaps** (some target machines are missing the package). Click
+**Details** to jump to the [software list](software.md) where per-package compliance is broken down.
+
+## Update compliance
+
+Shows fleet-wide Windows Update patch status: how many machines are **fully patched** (every tracked
+KB installed), how many have **pending** updates, and the total number of tracked KBs. Click
+**Details** to open the [Windows Updates](windows-updates.md) list.
+
+## OS distribution
+
+When machines have reported hardware, a card shows the **OS distribution** across the fleet — each
+OS caption (e.g. "Microsoft Windows 10 Pro", "Microsoft Windows 11 Enterprise") with a machine
+count. This gives you a quick view of your fleet's OS makeup. Click **View fleet** to jump to the
+[machines](machines.md) list.
+
 ## Recently seen machines
 
 The machines that have most recently network-booted or had their agent check in, with their

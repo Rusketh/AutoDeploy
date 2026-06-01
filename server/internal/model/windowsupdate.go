@@ -460,6 +460,86 @@ func (r *WindowsUpdateRepo) PreviewTargets(ctx context.Context, t BulkTarget, os
 	return r.matchMachines(ctx, t, osFilter)
 }
 
+// FleetUpdateSummary holds fleet-wide Windows Update compliance stats.
+type FleetUpdateSummary struct {
+	TotalUpdates       int
+	UpdatesWithPayload int
+	TotalMachines      int
+	FullyPatched       int
+	WithPending        int
+}
+
+// FleetUpdateSummary computes fleet-wide Windows Update compliance.
+func (r *WindowsUpdateRepo) FleetUpdateSummary(ctx context.Context) (FleetUpdateSummary, error) {
+	var s FleetUpdateSummary
+	updates, err := r.List(ctx)
+	if err != nil {
+		return s, err
+	}
+	s.TotalUpdates = len(updates)
+	for _, u := range updates {
+		if u.StoragePath != "" {
+			s.UpdatesWithPayload++
+		}
+	}
+	machines, err := r.Inventory.List(ctx)
+	if err != nil {
+		return s, err
+	}
+	s.TotalMachines = len(machines)
+	if s.TotalUpdates == 0 || s.TotalMachines == 0 {
+		return s, nil
+	}
+	kbs := make([]string, len(updates))
+	for i, u := range updates {
+		kbs[i] = u.KBNumber
+	}
+	for _, m := range machines {
+		statuses, _ := r.ListMachineStatuses(ctx, m.ID)
+		statusMap := map[string]string{}
+		for _, st := range statuses {
+			statusMap[st.KBNumber] = st.Status
+		}
+		allInstalled := true
+		hasPending := false
+		for _, kb := range kbs {
+			switch statusMap[kb] {
+			case "installed":
+			case "pending":
+				hasPending = true
+				allInstalled = false
+			default:
+				allInstalled = false
+			}
+		}
+		if allInstalled {
+			s.FullyPatched++
+		}
+		if hasPending {
+			s.WithPending++
+		}
+	}
+	return s, nil
+}
+
+// AllComplianceSummaries returns compliance stats for every tracked update
+// in a single batch. Used by the update list page to show inline compliance.
+func (r *WindowsUpdateRepo) AllComplianceSummaries(ctx context.Context) (map[ID]ComplianceSummary, error) {
+	updates, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ID]ComplianceSummary, len(updates))
+	for _, u := range updates {
+		c, err := r.ComplianceForUpdate(ctx, u.ID)
+		if err != nil {
+			continue
+		}
+		out[u.ID] = c
+	}
+	return out, nil
+}
+
 // matchMachines resolves a BulkTarget + OS filter to matching machines.
 func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osFilter string) ([]MachineRecord, error) {
 	all, err := r.Inventory.List(ctx)
