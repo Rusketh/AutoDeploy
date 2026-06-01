@@ -52,6 +52,19 @@ func TestISOFormBootMediaStates(t *testing.T) {
 			contains: []string{"ready to deploy", "split into <strong>2</strong>", "Re-prepare media"},
 		},
 		{
+			name: "editions listed",
+			iso: model.ISO{ID: 1, Name: "A", OSType: "windows-11", StoragePath: extracted,
+				InstallImageFormat: "wim", BootloaderPresent: true, MediaPreparedAt: &now,
+				Editions: []string{"Windows 11 Pro", "Windows 11 Home"}},
+			contains: []string{"Windows editions in this image", "Windows 11 Pro", "Windows 11 Home", "/IMAGE/NAME"},
+		},
+		{
+			name: "no editions enumerated",
+			iso: model.ISO{ID: 1, Name: "A", OSType: "windows-11", StoragePath: extracted,
+				InstallImageFormat: "wim", BootloaderPresent: true, MediaPreparedAt: &now},
+			contains: []string{"none enumerated"},
+		},
+		{
 			name: "missing bootloader",
 			iso: model.ISO{ID: 1, Name: "A", OSType: "windows-11", StoragePath: extracted,
 				InstallImageFormat: "wim", BootloaderPresent: false, MediaPreparedAt: &now},

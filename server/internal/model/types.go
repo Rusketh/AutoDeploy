@@ -39,6 +39,11 @@ type ISO struct {
 	MediaFileCount  int   `json:"media_file_count"`
 	MediaTotalBytes int64 `json:"media_total_bytes"`
 	BootWimPresent  bool  `json:"boot_wim_present"` // sources/boot.wim (WinPE)
+	// Editions are the Windows edition names (WIM image names) inside the
+	// install image, enumerated at prep time. The portal shows them so an
+	// operator knows which /IMAGE/NAME an unattend can target. See
+	// migration 0016.
+	Editions []string `json:"editions"`
 }
 
 // Extracted reports whether the ISO has been unpacked into its files/
