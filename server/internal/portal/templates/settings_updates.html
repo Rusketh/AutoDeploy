@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function () {
     status.innerHTML = '<strong>Update launched.</strong> The updater is refreshing itself to the target release, installing any newly-required tools (7z, wimlib), downloading + SHA-256-verifying the new binary, then restarting. This can take a minute. Polling for the new version…';
     fetch('/api/v1/server/update', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify({ tag: btn.getAttribute('data-target-tag') })
     }).then(function (r) {
       if (!r.ok) {
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', function () {
     status.textContent = 'Downloading agent for ' + os + '/' + arch + '…';
     fetch('/api/v1/server/install-agent', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify({ os: os, arch: arch })
     }).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, body: j }; });
