@@ -70,3 +70,20 @@ func TestValidateCatchesDiskOrderAndMalformed(t *testing.T) {
 		t.Error("expected wrong-root error")
 	}
 }
+
+func TestValidateCatchesCredentialsOrder(t *testing.T) {
+	// Username before Password in CredentialsType -- the domain-join bug
+	// that aborted Win10 Setup at specialize (0x8030000b).
+	bad := []byte(`<unattend xmlns="urn:schemas-microsoft-com:unattend"><settings pass="specialize">
+  <component name="Microsoft-Windows-UnattendedJoin"><Identification><Credentials>
+    <Domain>corp</Domain><Username>u</Username><Password>p</Password>
+  </Credentials><JoinDomain>corp</JoinDomain></Identification></component>
+</settings></unattend>`)
+	err := Validate(bad)
+	if err == nil {
+		t.Fatal("expected a Credentials order violation, got nil")
+	}
+	if !strings.Contains(err.Error(), "Username") || !strings.Contains(err.Error(), "Password") {
+		t.Errorf("error should name Username/Password; got %v", err)
+	}
+}

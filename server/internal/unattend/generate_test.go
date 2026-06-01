@@ -425,16 +425,28 @@ func TestDomainJoinIncluded(t *testing.T) {
 		JoinUser:     "joiner@corp.example",
 		JoinPassword: "join-password-not-real",
 	}
-	x, _ := Generate(s)
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatalf("domain-join generate failed validation: %v", err)
+	}
+	xs := string(x)
 	for _, w := range []string{
 		"<JoinDomain>corp.example</JoinDomain>",
 		"<MachineObjectOU>OU=Lab,DC=corp,DC=example</MachineObjectOU>",
 		"joiner@corp.example",
 		"join-password-not-real",
 	} {
-		if !strings.Contains(string(x), w) {
+		if !strings.Contains(xs, w) {
 			t.Errorf("domain join: missing %q", w)
 		}
+	}
+	// CredentialsType schema order: Domain, then Password, then Username.
+	// Username before Password aborts Setup at specialize (0x8030000b).
+	dom := strings.Index(xs, "<Domain>")
+	pwd := strings.Index(xs, "join-password-not-real")
+	usr := strings.Index(xs, "joiner@corp.example")
+	if !(dom >= 0 && dom < pwd && pwd < usr) {
+		t.Errorf("Credentials order must be Domain<Password<Username (dom=%d pwd=%d usr=%d)\n%s", dom, pwd, usr, xs)
 	}
 }
 

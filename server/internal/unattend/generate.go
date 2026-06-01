@@ -343,8 +343,8 @@ func writeDomainJoin(b *bytes.Buffer, d *DomainJoin) {
       <Identification>
         <Credentials>
           <Domain>`+esc(d.Domain)+`</Domain>
-          <Username>`+esc(d.JoinUser)+`</Username>
           <Password>`+esc(d.JoinPassword)+`</Password>
+          <Username>`+esc(d.JoinUser)+`</Username>
         </Credentials>
         <JoinDomain>`+esc(d.Domain)+`</JoinDomain>
 `)
