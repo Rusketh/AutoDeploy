@@ -23,9 +23,9 @@
   <thead><tr>
     <th data-nosort><input type="checkbox" onclick="toggleAllMachines(this)" aria-label="Select all"></th>
     <th>UUID</th>
+    <th>Name</th>
     <th>Make / model</th>
     <th>Serial</th>
-    <th>Binding</th>
     <th>Image</th>
     <th>BitLocker</th>
     <th data-sort="num">Last seen</th>
@@ -39,9 +39,9 @@
         <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
         <button type="button" class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
       </td>
+      <td>{{if .Name}}<span class="badge accent">{{.Name}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
       <td class="small">{{.Machine.SystemSerial}}</td>
-      <td>{{if .BindingName}}<span class="badge accent">{{.BindingName}}</span>{{else}}<span class="badge">unbound</span>{{end}}</td>
       <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .BLSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN set</span>{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}</td>
       <td class="small muted" data-sort-value="{{.Machine.LastSeen.Unix}}">{{formatTime .Machine.LastSeen}}</td>

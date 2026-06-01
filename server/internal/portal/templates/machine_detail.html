@@ -12,6 +12,8 @@
 </div>
 
 <dl class="kv">
+  <dt>Name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
+  {{if $m.ADDistinguishedName}}<dt>AD location</dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
   <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
   <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
   <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
@@ -37,7 +39,7 @@
 
 <div class="section-head"><h3>Binding</h3><div class="line"></div></div>
 <form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding">
-  <label><span class="lbl">Machine name (used in AD object + unattend ComputerName)</span>
+  <label><span class="lbl">Machine name — desired (AD object + unattend ComputerName). The agent keeps this in sync if the machine is renamed; a %placeholder% template is left as-is.</span>
     <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="LAB-01">
   </label>
   <label><span class="lbl">Bound image (re-image will rebuild to the current definition of this)</span>

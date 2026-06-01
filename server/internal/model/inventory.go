@@ -36,6 +36,14 @@ type MachineRecord struct {
 	BoardManufacturer  string `json:"board_manufacturer"`
 	BoardProduct       string `json:"board_product"`
 	BoardSerial        string `json:"board_serial"`
+	// ReportedName / ADDistinguishedName are OBSERVED facts the running agent
+	// reports each poll: the machine's current Windows computer name and its
+	// full AD distinguished name. They track reality (a manual rename, an AD
+	// move) and drive the inventory's Name + AD-location display; the binding
+	// holds the DESIRED name/OU and is synced from these. Empty until the
+	// agent reports (migration 0017).
+	ReportedName        string `json:"reported_name"`
+	ADDistinguishedName string `json:"ad_distinguished_name"`
 	// Hardware is the full spec set the agent collects (CPU/RAM/disks/
 	// GPU/NICs), reported on each poll. Empty until the agent reports.
 	Hardware  *Hardware `json:"hardware,omitempty"`
@@ -165,11 +173,11 @@ func (r *InventoryRepo) Get(ctx context.Context, id ID) (MachineRecord, error) {
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
-		       hardware_json, first_seen, last_seen
+		       hardware_json, reported_name, ad_dn, first_seen, last_seen
 		FROM machine_record WHERE id=?`, id).Scan(
 		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
 		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
-		&hw, &v.FirstSeen, &v.LastSeen)
+		&hw, &v.ReportedName, &v.ADDistinguishedName, &v.FirstSeen, &v.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MachineRecord{}, fmt.Errorf("machine %d: %w", id, ErrNotFound)
 	}
@@ -199,6 +207,53 @@ func (r *InventoryRepo) UpdateHardware(ctx context.Context, machineID ID, h Hard
 	_, err = r.db.ExecContext(ctx,
 		`UPDATE machine_record SET hardware_json=? WHERE id=?`, string(b), machineID)
 	return err
+}
+
+// UpdateObservedIdentity stores the running agent's reported current computer
+// name and AD distinguished name, and refreshes last_seen. Keyed by the
+// server-minted agent_id. Returns the machine so the caller can sync the
+// binding from the observed values.
+func (r *InventoryRepo) UpdateObservedIdentity(ctx context.Context, agentID, name, dn string) (MachineRecord, error) {
+	m, err := r.GetByAgentID(ctx, agentID)
+	if err != nil {
+		return MachineRecord{}, err
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE machine_record
+		SET reported_name=?, ad_dn=?, last_seen=CURRENT_TIMESTAMP
+		WHERE id=?`, name, dn, m.ID); err != nil {
+		return MachineRecord{}, err
+	}
+	m.ReportedName, m.ADDistinguishedName = name, dn
+	return m, nil
+}
+
+// SyncBindingFromObserved updates a machine's binding to reflect reality the
+// agent reported: a manual rename updates MachineName, an AD move updates
+// TargetOU. A MachineName that is an operator-set TEMPLATE (contains '%') is
+// left untouched so re-image keeps expanding it per machine. Empty values are
+// ignored, equal values are no-ops, and a binding is created if none exists.
+func (r *InventoryRepo) SyncBindingFromObserved(ctx context.Context, machineID ID, name, ou string) error {
+	b, err := r.GetBinding(ctx, machineID)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		b = MachineBinding{MachineID: machineID}
+	}
+	changed := false
+	if name != "" && !strings.Contains(b.MachineName, "%") && b.MachineName != name {
+		b.MachineName = name
+		changed = true
+	}
+	if ou != "" && b.TargetOU != ou {
+		b.TargetOU = ou
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.UpsertBinding(ctx, b)
 }
 
 // GetByUUID looks up a machine by SMBIOS UUID.
@@ -282,7 +337,7 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, system_uuid, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
-		       first_seen, last_seen
+		       reported_name, ad_dn, first_seen, last_seen
 		FROM machine_record ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, err
@@ -294,6 +349,7 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 		if err := rows.Scan(&v.ID, &v.SystemUUID, &v.SystemSerial, &v.SystemManufacturer,
 			&v.SystemProduct, &v.BIOSVendor, &v.BIOSVersion,
 			&v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
+			&v.ReportedName, &v.ADDistinguishedName,
 			&v.FirstSeen, &v.LastSeen); err != nil {
 			return nil, err
 		}

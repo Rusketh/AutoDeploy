@@ -65,6 +65,10 @@ type AgentSelfResponse struct {
 	Software  []AgentSoftwareItem `json:"software"`
 	Jobs      []model.BulkJob     `json:"jobs"`
 	Warnings  []string            `json:"warnings,omitempty"`
+	// PollIntervalSeconds is the operator-configured check-in cadence; the
+	// agent resets its poll ticker to this on each response. Omitted (0) when
+	// unset, in which case the agent keeps its current interval.
+	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -126,6 +130,12 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			AgentID:   m.AgentID,
 			Software:  []AgentSoftwareItem{},
 			Jobs:      []model.BulkJob{},
+		}
+		// Advertise the operator-configured check-in cadence so the agent
+		// adjusts its poll interval live (no reinstall needed to speed it up
+		// for testing or slow it down for a large fleet).
+		if r.Runtime != nil {
+			resp.PollIntervalSeconds = r.Runtime.AgentPollIntervalSeconds()
 		}
 		// Software comes from the machine's bound image. No binding (or no
 		// image) just means "nothing to install" -- not an error.

@@ -127,14 +127,16 @@ func adTest(r Repos) http.HandlerFunc {
 
 func opsForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		var retentionDays, throttle int
+		var retentionDays, throttle, checkInSeconds int
 		if r.Runtime != nil {
 			retentionDays = r.Runtime.LogRetentionDays()
 			throttle = r.Runtime.PayloadMaxInFlight()
+			checkInSeconds = r.Runtime.AgentPollIntervalSeconds()
 		}
 		render(w, req, r, "settings_ops.html", "Operational settings", map[string]any{
-			"RetentionDays": retentionDays,
-			"Throttle":      throttle,
+			"RetentionDays":  retentionDays,
+			"Throttle":       throttle,
+			"CheckInSeconds": checkInSeconds,
 		})
 	}
 }
@@ -175,7 +177,20 @@ func opsSubmit(r Repos) http.HandlerFunc {
 				return
 			}
 		}
-		flash(w, "ok", "Saved. Retention takes effect on the next hourly tick. Payload throttle takes effect on the next server restart.")
+		if v := req.FormValue("agent_poll_seconds"); v != "" {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				flash(w, "err", "agent_poll_seconds must be a number")
+				http.Redirect(w, req, "/portal/settings/operational", http.StatusFound)
+				return
+			}
+			if err := r.Runtime.SetAgentPollIntervalSeconds(req.Context(), n); err != nil {
+				flash(w, "err", err.Error())
+				http.Redirect(w, req, "/portal/settings/operational", http.StatusFound)
+				return
+			}
+		}
+		flash(w, "ok", "Saved. Retention takes effect on the next hourly tick; payload throttle on the next server restart; the agent check-in interval on each agent's next poll.")
 		http.Redirect(w, req, "/portal/settings/operational", http.StatusFound)
 	}
 }

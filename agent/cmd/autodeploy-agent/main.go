@@ -262,19 +262,21 @@ type selfResponse struct {
 		Action  string `json:"action"`
 		Payload string `json:"payload"`
 	} `json:"jobs"`
-	Warnings []string `json:"warnings"`
+	Warnings            []string `json:"warnings"`
+	PollIntervalSeconds int      `json:"poll_interval_seconds"`
 }
 
 // runSelfOnce polls the server for this machine's desired state (by its
 // server-minted agent_id) and acts on it: installs the bound image's
 // software set and runs any queued bulk jobs. Best-effort -- a poll that
-// fails is logged and retried on the next tick.
-func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+// fails is logged and retried on the next tick. Returns the server-advertised
+// check-in interval (0 if none/unreachable) so the caller can adjust cadence.
+func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) time.Duration {
 	var resp selfResponse
 	// agent_id is a UUID (URL-safe), so no escaping needed.
 	if err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp); err != nil {
 		log.Warn("self.fetch", slog.String("error", err.Error()))
-		return
+		return 0
 	}
 	for _, w := range resp.Warnings {
 		log.Warn("self.warning", slog.String("message", w))
@@ -282,6 +284,11 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// Report collected hardware once per process run (the WMI sweep is
 	// relatively expensive; specs change rarely). Best-effort.
 	reportHardwareOnce(ctx, log, c, f)
+	// Report the observed identity (current computer name + AD DN) EVERY
+	// poll: a rename needs a reboot (which restarts us) but an AD move does
+	// not, so once-per-process would miss moves. The server syncs the
+	// binding from this. Best-effort.
+	reportObservedIdentity(ctx, log, c, f)
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
@@ -298,6 +305,10 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				map[string]any{"status": status, "result_json": result}, nil)
 		}
 	}
+	if resp.PollIntervalSeconds > 0 {
+		return time.Duration(resp.PollIntervalSeconds) * time.Second
+	}
+	return 0
 }
 
 // hardwareReported guards reportHardwareOnce so the WMI sweep runs at most
@@ -323,6 +334,26 @@ func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, 
 	}
 	hardwareReported = true
 	log.Info("hardware.reported")
+}
+
+// reportObservedIdentity posts the machine's current computer name and AD
+// distinguished name so the server tracks manual renames and AD moves and
+// syncs the binding. Runs every poll; all failures are logged and swallowed.
+func reportObservedIdentity(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	if f.agentID == "" {
+		return
+	}
+	name, dn := collectObservedIdentity()
+	if name == "" && dn == "" {
+		return
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/identity", map[string]any{
+		"agent_id":              f.agentID,
+		"computer_name":         name,
+		"ad_distinguished_name": dn,
+	}, nil); err != nil {
+		log.Warn("identity.report", slog.String("error", err.Error()))
+	}
 }
 
 // mediaCleaned guards cleanupMediaOnce so the partition removal is attempted
@@ -363,7 +394,22 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if isWindowsService() {
 		svc = serviceName
 	}
-	runSelfOnce(ctx, log, c, f)
+	// applyInterval resets the ticker when the server advertises a different
+	// cadence, so an operator changing the check-in interval in the portal
+	// takes effect on the next poll without reinstalling the agent.
+	applyInterval := func(tick *time.Ticker, suggested time.Duration) {
+		if suggested > 0 && suggested != interval {
+			log.Info("checkin.interval",
+				slog.Duration("old", interval), slog.Duration("new", suggested))
+			interval = suggested
+			tick.Reset(interval)
+		}
+	}
+
+	suggested := runSelfOnce(ctx, log, c, f)
+	if suggested > 0 {
+		interval = suggested // honour the server cadence from the first tick
+	}
 	shipLogs(log, shipper, f.server, f.insecureTLS)
 	// Apply a pending self-update after the first poll, so a freshly
 	// uploaded agent version is picked up without waiting a full interval.
@@ -379,7 +425,7 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			runSelfOnce(ctx, log, c, f)
+			applyInterval(tick, runSelfOnce(ctx, log, c, f))
 			shipLogs(log, shipper, f.server, f.insecureTLS)
 			if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
 				log.Info("selfupdate.exiting", slog.String("note", "updater launched; exiting so the swap can complete"))
