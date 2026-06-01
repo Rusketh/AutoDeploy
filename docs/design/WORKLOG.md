@@ -2503,3 +2503,42 @@ gh workflow run release.yml --ref v0.1.2
 Going forward, every merge to main produces both a tag and a
 published release with binaries + sidecars, with no manual
 intervention.
+
+---
+
+## 2026-06-01 — Agent-driven Active Directory domain join
+
+**WHAT.** Moved domain join off the unattend's specialize-pass online join and
+onto the agent, configured per **image**. New `image_domain_join` table
+(migration 0018) holds enable/domain/OU/join-account; the join password is
+encrypted at rest via `secrets.Box` and returned only to the deploying agent
+over `POST /api/v1/agent/domain-join` (never written to the unattend XML). The
+agent's `/self` loop joins after first boot (`Add-Computer`, credentials passed
+via environment, not the command line) when it isn't already in the target
+domain, then reboots. The unattend generator suppresses its legacy
+`<UnattendedJoin>` block for images that join via the agent. Portal image
+editor gains an "Active Directory domain join (via agent)" section. Docs
+updated (operations/active-directory, portal/images, troubleshooting,
+reference/api).
+
+**WHY (assumptions / decisions).**
+- The unattend online join ran `djoin` during specialize, needed a DC reachable
+  mid-Setup, and was observed on the rig to hang ~15 minutes then leave the
+  machine unjoined. Joining from the booted OS (full networking/DNS) is far more
+  reliable.
+- Config lives on the image (operator's request); the unattend's domain-join
+  fields are kept for legacy and **ignored** when the image does agent join.
+- DECISION: the join endpoint is gated by the server-minted `agent_id` (same
+  capability the `/self` loop already uses). Operators should use a
+  least-privilege join account; surfaced in the portal hint.
+- Binding `Target OU` overrides the image's default OU per machine.
+- SCOPE: AD group membership is left to the existing server-side AD coordination
+  (out of scope here).
+
+**STATE.** `go build ./...` + targeted tests green on server (model/api/payload/
+portal) and agent (windows build + vet). New tests: repo round-trip /
+password-preserve/rotate / at-rest encryption; endpoint resolution incl. OU
+override and enable/disable; generator suppression vs legacy emission.
+
+**NEXT.** Optional: agent-set AD group memberships; a per-image "test join"
+button; surface last join status on the machine page.
