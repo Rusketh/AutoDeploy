@@ -50,6 +50,19 @@ func TestIsOlderVersion_EmptyOrDevAlwaysOlder(t *testing.T) {
 	if !isOlderVersion("v0.1.0", "v0.1.1") {
 		t.Error("v0.1.0 < v0.1.1")
 	}
+	// Regression: a non-semver AVAILABLE build must never trigger an update,
+	// or a "dev" agent self-updates to an equally-"dev"/unversioned binary on
+	// every poll and the resident loop exits each time (check-ins stop; queued
+	// jobs like re-image are never claimed).
+	if isOlderVersion("dev", "dev") {
+		t.Error("dev -> dev must NOT be an update (self-update loop)")
+	}
+	if isOlderVersion("dev", "") {
+		t.Error("dev -> unversioned must NOT be an update")
+	}
+	if isOlderVersion("v0.1.0", "dev") {
+		t.Error("released -> dev must NOT be an update")
+	}
 }
 
 func TestHandleVersion_ReturnsBuildVersion(t *testing.T) {

@@ -666,6 +666,22 @@ func parseSemver(v string) (major, minor, patch int, pre string, ok bool) {
 // considered older so a freshly installed agent gets the latest on
 // its very next check-in.
 func isOlderVersion(running, available string) bool {
+	// Never advertise an update unless the AVAILABLE build carries a real,
+	// parseable semver. A non-semver available ("dev", or a binary with no
+	// .version sidecar) cannot be proven newer, and treating it as newer
+	// caused a self-update loop: a "dev" agent was told to update to an
+	// equally-"dev" binary on every poll, exiting the resident loop each time
+	// (so check-ins stopped and queued jobs like re-image were never
+	// claimed). Likewise, an identical version is never "older".
+	if _, _, _, _, ok := parseSemver(available); !ok {
+		return false
+	}
+	if running == available {
+		return false
+	}
+	// A dev/empty running build is older than any real release -- this
+	// updates once (dev -> released) and then settles, because afterwards
+	// running == available.
 	if running == "" || running == "dev" {
 		return true
 	}
