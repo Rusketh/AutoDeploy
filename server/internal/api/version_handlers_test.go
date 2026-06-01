@@ -23,7 +23,7 @@ func TestSemverLess(t *testing.T) {
 		{"v0.9.0", "v0.10.0", true},
 		{"v0.10.0", "v1.0.0", true},
 		{"v1.0.0", "v0.99.99", false},
-		{"v0.1.0-rc.1", "v0.1.0", true},  // pre-release loses to release
+		{"v0.1.0-rc.1", "v0.1.0", true}, // pre-release loses to release
 		{"v0.1.0", "v0.1.0-rc.1", false},
 		{"v0.1.0-alpha", "v0.1.0-beta", true},
 		// Non-semver strings -- "dev" loses to anything that parses.
@@ -192,7 +192,6 @@ func TestHandleAgentUpdateInfo_SameVersion_NoUpdate(t *testing.T) {
 	}
 }
 
-
 func TestLooksLikeSemver(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -203,10 +202,10 @@ func TestLooksLikeSemver(t *testing.T) {
 		{"v0.1.0-rc.1", true},
 		{"v0.1.0+build.5", true},
 		// Reject anything we'd be uncomfortable handing to a shell.
-		{"0.1.0", false},          // missing v prefix
-		{"v0.1", false},           // only two parts
-		{"v0.1.0.0", false},       // four parts
-		{"v0.1.x", false},         // non-numeric
+		{"0.1.0", false},    // missing v prefix
+		{"v0.1", false},     // only two parts
+		{"v0.1.0.0", false}, // four parts
+		{"v0.1.x", false},   // non-numeric
 		{"v0.1.0; rm -rf /", false},
 		{"v0.1.0 && evil", false},
 		{"", false},
