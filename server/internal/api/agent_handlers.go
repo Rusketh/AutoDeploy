@@ -129,6 +129,11 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			writeError(w, err) // 404 for an unknown id
 			return
 		}
+		// A successful poll IS the check-in: bump last_seen so the portal
+		// shows real liveness for every agent version (the resident loop
+		// otherwise never touched it). Best-effort -- a write hiccup must not
+		// fail the poll.
+		_ = r.Inventory.TouchLastSeen(req.Context(), m.ID)
 		resp := AgentSelfResponse{
 			MachineID: m.ID,
 			AgentID:   m.AgentID,

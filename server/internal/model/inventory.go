@@ -256,6 +256,15 @@ func (r *InventoryRepo) SyncBindingFromObserved(ctx context.Context, machineID I
 	return r.UpsertBinding(ctx, b)
 }
 
+// TouchLastSeen bumps a machine's last_seen to now. Called on every resident
+// agent /self poll so "last seen" reflects real check-in liveness, not just
+// the last boot-client/identity report. Best-effort at the call site.
+func (r *InventoryRepo) TouchLastSeen(ctx context.Context, id ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE machine_record SET last_seen=CURRENT_TIMESTAMP WHERE id=?`, id)
+	return err
+}
+
 // GetByUUID looks up a machine by SMBIOS UUID.
 func (r *InventoryRepo) GetByUUID(ctx context.Context, uuid string) (MachineRecord, error) {
 	var v MachineRecord
