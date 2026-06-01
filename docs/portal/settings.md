@@ -1,14 +1,15 @@
 # Settings
 
 The **Settings** area is a hub of small pages, each editing one slice of server configuration.
-Operator-changeable configuration lives here; low-level bootstrap settings (bind addresses, data
-directory, the at-rest secrets key) stay in environment variables on the server. This page
-documents each area:
+Operator-changeable configuration lives here; bootstrap defaults (data directory, dev mode, the
+at-rest secrets key) come from environment variables, while network and listen settings can be
+overridden in the portal and take effect on next restart. This page documents each area:
 
 - [Accounts](#accounts)
 - [Access PIN](#access-pin)
 - [Branding](#branding)
 - [Active Directory](#active-directory)
+- [Network](#network)
 - [Operational](#operational)
 - [Storage](#storage)
 - [Updates](#updates)
@@ -80,6 +81,52 @@ LDAP connection details so AutoDeploy can manage computer objects for
 A **Test connection** button validates the settings, and there's a **Disable AD** action. Changes
 take effect on the next manifest request — no restart needed. For the full setup and workflow, see
 the [Active Directory operations guide](../operations/active-directory.md).
+
+## Network
+
+Listen addresses, TLS certificates, reverse proxy support, and the external URL for remote agents.
+
+![Network settings](../images/settings-network.png)
+
+### Listen addresses
+
+| Field | Example | Notes |
+|-------|---------|-------|
+| HTTP address | `0.0.0.0:8080` | Host and port for cleartext HTTP. `127.0.0.1:8080` restricts to loopback; `0.0.0.0:8080` listens on all interfaces. Empty disables HTTP |
+| HTTPS address | `0.0.0.0:8443` | Host and port for HTTPS. Empty disables HTTPS. When enabled without a certificate, a self-signed cert is auto-generated |
+
+Both fields show the current environment default for reference. Changes take effect on next server
+restart.
+
+### External URL
+
+The public address that remote agents use to reach this server from outside the local network — for
+example, through a firewall or reverse proxy. Agents provisioned after this is set receive the URL
+in their `/api/v1/agent/self` response and can use it to reconnect.
+
+Leave empty if all agents are on the same LAN as the server.
+
+### Reverse proxy
+
+A comma-separated list of trusted proxy CIDRs (e.g. `10.0.0.0/8, 172.16.0.0/12`). When a request
+arrives from an IP in one of these ranges, the server trusts the `X-Forwarded-For` header for client
+IP detection and `X-Forwarded-Proto` for scheme detection.
+
+This setting takes effect immediately — no restart needed. Leave empty to trust no proxies (direct
+connections only).
+
+### TLS certificate
+
+You can specify TLS certificate and key paths directly (for certificates managed outside AutoDeploy),
+or **upload** PEM-encoded files through the portal. Uploaded files are stored in the server's data
+directory under `tls/` with restricted permissions (0600).
+
+When an HTTPS address is configured but no certificate is provided, the server auto-generates a
+self-signed P-256 certificate covering `localhost` and `127.0.0.1`. The certificate info badge
+shows the current cert's CN, SANs, and expiry.
+
+> **Production deployments** should use a CA-signed certificate, or front the server with a reverse
+> proxy (e.g. nginx, Caddy, Traefik) that terminates TLS and forwards to a loopback HTTP listener.
 
 ## Operational
 

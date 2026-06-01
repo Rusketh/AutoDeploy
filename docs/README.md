@@ -28,7 +28,7 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Mirrors](portal/mirrors.md)** — site-local payload caches.
 - **[Logs](portal/logs.md)** — searching and tailing the audit log.
 - **[Downloads](portal/downloads.md)** — boot files and agent binaries.
-- **[Settings](portal/settings.md)** — accounts, access PIN, branding, Active Directory, operational, storage, updates, PXE.
+- **[Settings](portal/settings.md)** — accounts, access PIN, branding, Active Directory, network, operational, storage, updates, PXE.
 
 ### Reference
 - **[Configuration](reference/configuration.md)** — every environment variable and the data directory layout.

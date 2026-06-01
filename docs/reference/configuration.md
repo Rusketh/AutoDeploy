@@ -28,8 +28,10 @@ sudo systemctl restart autodeploy
 | `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` | `128` | Maximum concurrent payload (`/payload/*`) streams. Requests beyond this limit queue for up to 2 minutes before timing out. See [Scaling](../operations/scaling.md). |
 | `AUTODEPLOY_LOG_RETENTION_DAYS` | `0` | Delete audit-log entries older than this many days. `0` keeps everything. |
 
-The Active Directory, payload-throttle and log-retention values seed portal settings on first boot
-and can then be managed from **[Settings](../portal/settings.md)** without restarting the server.
+The Active Directory, payload-throttle, log-retention, and network values seed portal settings on
+first boot and can then be managed from **[Settings](../portal/settings.md)**. Network changes
+(listen addresses, TLS paths) take effect on next restart; reverse proxy CIDRs and the external
+URL take effect immediately.
 
 ### Validation
 
@@ -49,7 +51,7 @@ install):
 | `autodeploy.sqlite` | The SQLite database (all records and settings). |
 | `admin-bootstrap.txt` | One-time bootstrap admin password, written on first start. Delete after first login. |
 | `secrets-key.bin` | Generated at-rest encryption key (when `AUTODEPLOY_SECRETS_KEY` is not set). |
-| `tls/` | Auto-generated self-signed certificate (dev mode). |
+| `tls/` | TLS certificates — auto-generated self-signed cert or operator-uploaded PEM files via the portal. |
 | `ipxe/` | iPXE bootstrap binaries served over TFTP/HTTP for PXE boot. |
 | `downloads/` | Agent and boot-client binaries handed out during deployment. |
 | `isos/`, `unattends/`, `drivers/`, `software/`, `payloads/` | Extracted/uploaded payload blobs by category. |
