@@ -42,12 +42,13 @@ const (
 	keyStorageIPXE        = "storage.ipxe"
 	keyStorageDownloads   = "storage.downloads"
 
-	keyNetHTTPAddr       = "net.http_addr"
-	keyNetHTTPSAddr      = "net.https_addr"
-	keyNetExternalURL    = "net.external_url"
-	keyNetTrustedProxies = "net.trusted_proxies"
-	keyNetTLSCertPath    = "net.tls_cert_path"
-	keyNetTLSKeyPath     = "net.tls_key_path"
+	keyNetHTTPAddr        = "net.http_addr"
+	keyNetHTTPSAddr       = "net.https_addr"
+	keyNetExternalURL     = "net.external_url"
+	keyNetTrustedProxies  = "net.trusted_proxies"
+	keyNetExternalAccess  = "net.external_access"
+	keyNetTLSCertPath     = "net.tls_cert_path"
+	keyNetTLSKeyPath      = "net.tls_key_path"
 )
 
 // StorageCategories is the closed set of relocatable category prefixes
@@ -445,6 +446,7 @@ type NetworkConfig struct {
 	HTTPSAddr      string // e.g. "0.0.0.0:8443"
 	ExternalURL    string // e.g. "https://deploy.example.com"
 	TrustedProxies string // comma-separated CIDRs
+	ExternalAccess string // "full" or "agent" — controls what proxied requests can reach
 	TLSCertPath    string // absolute path to PEM cert
 	TLSKeyPath     string // absolute path to PEM key
 }
@@ -455,6 +457,7 @@ func (s *Settings) NetworkConfig() NetworkConfig {
 		HTTPSAddr:      s.get(keyNetHTTPSAddr),
 		ExternalURL:    s.get(keyNetExternalURL),
 		TrustedProxies: s.get(keyNetTrustedProxies),
+		ExternalAccess: s.get(keyNetExternalAccess),
 		TLSCertPath:    s.get(keyNetTLSCertPath),
 		TLSKeyPath:     s.get(keyNetTLSKeyPath),
 	}
@@ -472,6 +475,7 @@ func (s *Settings) SetNetworkConfig(ctx context.Context, cfg NetworkConfig) erro
 		{keyNetHTTPSAddr, cfg.HTTPSAddr},
 		{keyNetExternalURL, cfg.ExternalURL},
 		{keyNetTrustedProxies, cfg.TrustedProxies},
+		{keyNetExternalAccess, cfg.ExternalAccess},
 		{keyNetTLSCertPath, cfg.TLSCertPath},
 		{keyNetTLSKeyPath, cfg.TLSKeyPath},
 	} {
@@ -484,6 +488,11 @@ func (s *Settings) SetNetworkConfig(ctx context.Context, cfg NetworkConfig) erro
 	}
 	return s.refresh(ctx)
 }
+
+// ExternalAccess returns the current external access mode.
+// "agent" restricts proxied requests to agent endpoints only;
+// anything else (including empty/"full") means full access.
+func (s *Settings) ExternalAccess() string { return s.get(keyNetExternalAccess) }
 
 func (s *Settings) ExternalURL() string { return s.get(keyNetExternalURL) }
 

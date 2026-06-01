@@ -108,12 +108,16 @@ Leave empty if all agents are on the same LAN as the server.
 
 ### Reverse proxy
 
-A comma-separated list of trusted proxy CIDRs (e.g. `10.0.0.0/8, 172.16.0.0/12`). When a request
-arrives from an IP in one of these ranges, the server trusts the `X-Forwarded-For` header for client
-IP detection and `X-Forwarded-Proto` for scheme detection.
+| Field | Notes |
+|-------|-------|
+| Trusted proxy CIDRs | Comma-separated list of IP ranges (e.g. `10.0.0.0/8, 172.16.0.0/12`) whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are trusted for client IP detection. Leave empty to trust no proxies |
+| External access | **Full access** (default) allows all traffic through the proxy. **Agent only** restricts proxied requests to agent endpoints (`/api/v1/agent/*`, `/payload/*`, `/healthz`) — the portal and admin API are blocked for external traffic, so operators must access them on the internal network |
 
-This setting takes effect immediately — no restart needed. Leave empty to trust no proxies (direct
-connections only).
+Both settings take effect immediately — no restart needed.
+
+> **Agent only mode** is recommended for production deployments where agents connect remotely
+> through a public reverse proxy but the portal should remain internal. This prevents external
+> users from reaching the login page, admin API, or any operator-facing endpoint.
 
 ### TLS certificate
 

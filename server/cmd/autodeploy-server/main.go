@@ -130,7 +130,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	mtr := metrics.New()
 	mux, rawHandler := httpx.New(cfg, logger, mtr)
-	handler := httpx.DynamicTrustedProxyMiddleware(rt.TrustedProxies, rawHandler)
+	handler := httpx.DynamicTrustedProxyMiddleware(httpx.ProxyConfig{
+		CIDRsFn:        rt.TrustedProxies,
+		ExternalAccess: rt.ExternalAccess,
+	}, rawHandler)
 
 	// AD Domain Integration Service (Phase 10). Always-on; the
 	// EnabledFunc reads the portal's current AD URL setting so an

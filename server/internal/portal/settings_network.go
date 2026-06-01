@@ -53,11 +53,16 @@ func networkSubmit(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		extAccess := strings.TrimSpace(req.FormValue("external_access"))
+		if extAccess != "agent" {
+			extAccess = "full"
+		}
 		cfg := runtime.NetworkConfig{
 			HTTPAddr:       strings.TrimSpace(req.FormValue("http_addr")),
 			HTTPSAddr:      strings.TrimSpace(req.FormValue("https_addr")),
 			ExternalURL:    strings.TrimSpace(req.FormValue("external_url")),
 			TrustedProxies: strings.TrimSpace(req.FormValue("trusted_proxies")),
+			ExternalAccess: extAccess,
 			TLSCertPath:    strings.TrimSpace(req.FormValue("tls_cert_path")),
 			TLSKeyPath:     strings.TrimSpace(req.FormValue("tls_key_path")),
 		}

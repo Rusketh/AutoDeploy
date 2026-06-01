@@ -45,6 +45,18 @@
         Leave empty to trust no proxies (direct connections only).
       </span>
     </label>
+    <label><span class="lbl">External access</span>
+      <select name="external_access">
+        <option value="full" {{if ne .Data.Cfg.ExternalAccess "agent"}}selected{{end}}>Full access — portal and agents</option>
+        <option value="agent" {{if eq .Data.Cfg.ExternalAccess "agent"}}selected{{end}}>Agent only — block portal for proxied requests</option>
+      </select>
+      <span class="hint">
+        When set to <strong>Agent only</strong>, requests arriving through a trusted proxy can only reach agent endpoints
+        (<code>/api/v1/agent/*</code>, <code>/payload/*</code>, <code>/healthz</code>).
+        The portal and admin API are blocked for external traffic — operators must access them directly on the internal network.
+        Takes effect immediately.
+      </span>
+    </label>
   </fieldset>
 
   <fieldset><legend>TLS certificate</legend>

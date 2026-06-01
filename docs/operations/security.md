@@ -47,6 +47,12 @@ If you front the server with a reverse proxy (nginx, Caddy, Traefik, etc.), conf
 client IP logging and `X-Forwarded-Proto` for secure-cookie detection. Only requests arriving
 from the specified CIDRs will have their forwarded headers trusted.
 
+For deployments where agents connect remotely but the portal should stay internal, set
+**External access** to **Agent only**. This blocks the portal, login page, and admin API for any
+request arriving through a trusted proxy — only agent endpoints (`/api/v1/agent/*`, `/payload/*`,
+`/healthz`) are reachable externally. Operators must access the portal directly on the internal
+network.
+
 The systemd unit grants only `CAP_NET_BIND_SERVICE` and runs the service as the unprivileged
 `autodeploy` user inside a hardened sandbox (`ProtectSystem=strict`, `ProtectHome=true`,
 `PrivateTmp=true`, with write access limited to the data directory).
