@@ -90,7 +90,7 @@ Log retention and payload concurrency.
 | Field | Notes |
 |-------|-------|
 | Log retention (days) | How long [activity log](logs.md) entries are kept; `0` disables pruning |
-| Maximum concurrent `/payload/*` streams | Caps simultaneous payload downloads so a rush queues instead of thrashing the server; `0` = unlimited. Takes effect on next restart |
+| Maximum concurrent `/payload/*` streams | Caps simultaneous payload downloads so a rush queues instead of thrashing the server (default 128); excess requests queue for up to 2 minutes. `0` = unlimited. Takes effect on next restart |
 
 ## Storage
 
@@ -117,7 +117,9 @@ Keep the server up to date and manage the agent binaries served to your fleet.
 The **Server** section shows the **running** version against the **latest published** release and
 flags whether you're up to date, behind, ahead, or on a pre-release build, with a link to the
 release notes. When the in-place updater is installed, an **Update** button upgrades the server;
-otherwise the page explains how to update by hand.
+otherwise the page explains how to set up the updater (the installer does this automatically — see
+[Installing the server](../install/linux-server.md)). If an update fails, the page shows a link to
+the **update log** for diagnostics.
 
 The **Agents** section lets you install or refresh agent binaries for a chosen OS/arch and lists
 the staged binaries with their versions and hashes. Resident agents check for a newer version on

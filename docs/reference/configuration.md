@@ -25,7 +25,7 @@ sudo systemctl restart autodeploy
 | `AUTODEPLOY_AD_BIND_PASSWORD` | *(empty)* | Password for the bind account. |
 | `AUTODEPLOY_AD_SEARCH_BASE` | *(empty)* | LDAP search base, e.g. `DC=example,DC=com`. |
 | `AUTODEPLOY_AD_SKIP_TLS_VERIFY` | `false` | Skip LDAP TLS verification (testing only). |
-| `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` | `64` | Maximum concurrent payload (`/payload/*`) streams. See [Scaling](../operations/scaling.md). |
+| `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` | `128` | Maximum concurrent payload (`/payload/*`) streams. Requests beyond this limit queue for up to 2 minutes before timing out. See [Scaling](../operations/scaling.md). |
 | `AUTODEPLOY_LOG_RETENTION_DAYS` | `0` | Delete audit-log entries older than this many days. `0` keeps everything. |
 
 The Active Directory, payload-throttle and log-retention values seed portal settings on first boot

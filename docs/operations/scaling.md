@@ -19,10 +19,14 @@ that serve the same payload tree as the central server.
 ## Payload throttling
 
 The server bounds how many payload streams run concurrently with
-`AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` (default **64**). This protects the server from exhausting file
+`AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` (default **128**). This protects the server from exhausting file
 descriptors when a large batch of machines all start pulling media at once.
 
-- Raise it on a powerful server with fast storage and network.
+When all slots are in use, additional requests queue for up to **2 minutes**. If a slot doesn't
+free up in time the request fails with a timeout, so machines retry on their next cycle rather than
+piling up indefinitely.
+
+- Raise the limit on a powerful server with fast storage and network.
 - **Do not set it to `0` (unlimited)** on a production node — a large simultaneous PXE burst can
   exhaust resources.
 

@@ -27,6 +27,19 @@ curl -sb cookies.txt https://deploy.example.com/api/v1/isos
 Resource endpoints follow REST conventions: `GET` (list), `POST` (create), `GET /{id}` (read),
 `PUT /{id}` (update), `DELETE /{id}` (delete). Request bodies are JSON. IDs are integers.
 
+### CSRF protection
+
+All `POST`, `PUT` and `DELETE` requests to authenticated endpoints must include an
+**`X-Requested-With`** header (any non-empty value). Requests without it receive `403 Forbidden`.
+Add it to your scripts:
+
+```bash
+curl -sb cookies.txt -X POST https://deploy.example.com/api/v1/isos \
+  -H 'Content-Type: application/json' \
+  -H 'X-Requested-With: curl' \
+  -d '{"name":"Win11-24H2","os_type":"windows11"}'
+```
+
 ## Accounts
 
 | Method & path | Purpose |
@@ -198,11 +211,13 @@ information).
 | `GET /api/v1/logs` | Search the audit log (filter by component, actor, action, time range, …). |
 | `POST /api/v1/logs/ingest` | Used by clients/agents to ship buffered log events. |
 
-## Version
+## Version & server update
 
 | Method & path | Purpose |
 |---------------|---------|
 | `GET /api/v1/version` | The server's build version (used by the Updates page). |
+| `POST /api/v1/server/update` | Trigger an in-place server update. Requires the update helper and sudoers rule to be installed (see [Updates](../operations/updates.md)). Returns `503` if the helper is not available. |
+| `GET /api/v1/server/update-log` | Retrieve the last 64 KB of the update log for diagnostics. Accepts an optional `?lines=N` query parameter to limit output. |
 
 ## Client & agent endpoints
 
