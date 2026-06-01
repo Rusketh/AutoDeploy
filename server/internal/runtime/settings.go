@@ -41,6 +41,13 @@ const (
 	keyStorageSoftware    = "storage.software"
 	keyStorageIPXE        = "storage.ipxe"
 	keyStorageDownloads   = "storage.downloads"
+
+	keyNetHTTPAddr       = "net.http_addr"
+	keyNetHTTPSAddr      = "net.https_addr"
+	keyNetExternalURL    = "net.external_url"
+	keyNetTrustedProxies = "net.trusted_proxies"
+	keyNetTLSCertPath    = "net.tls_cert_path"
+	keyNetTLSKeyPath     = "net.tls_key_path"
 )
 
 // StorageCategories is the closed set of relocatable category prefixes
@@ -130,6 +137,18 @@ func (s *Settings) seedFromEnv(ctx context.Context) error {
 		{keyADBindPasswordEnc, s.env.ADBindPassword, true},
 		{keyADSearchBase, s.env.ADSearchBase, false},
 		{keyADSkipTLSVerify, boolStr(s.env.ADSkipTLSVerify), false},
+	}
+	if s.env.HTTPAddr != "" {
+		pending = append(pending, seed{keyNetHTTPAddr, s.env.HTTPAddr, false})
+	}
+	if s.env.HTTPSAddr != "" {
+		pending = append(pending, seed{keyNetHTTPSAddr, s.env.HTTPSAddr, false})
+	}
+	if s.env.TLSCertFile != "" {
+		pending = append(pending, seed{keyNetTLSCertPath, s.env.TLSCertFile, false})
+	}
+	if s.env.TLSKeyFile != "" {
+		pending = append(pending, seed{keyNetTLSKeyPath, s.env.TLSKeyFile, false})
 	}
 	if s.env.LogRetentionDays > 0 {
 		pending = append(pending, seed{keyLogRetentionDays, strconv.Itoa(s.env.LogRetentionDays), false})
@@ -419,6 +438,56 @@ func (s *Settings) SetStoragePath(ctx context.Context, category, absPath string)
 // effective values so an operator can see whether a value came from
 // env or portal.
 func (s *Settings) EnvDefaults() config.Config { return s.env }
+
+// NetworkConfig holds the network-related settings editable in the portal.
+type NetworkConfig struct {
+	HTTPAddr       string // e.g. "0.0.0.0:8080"
+	HTTPSAddr      string // e.g. "0.0.0.0:8443"
+	ExternalURL    string // e.g. "https://deploy.example.com"
+	TrustedProxies string // comma-separated CIDRs
+	TLSCertPath    string // absolute path to PEM cert
+	TLSKeyPath     string // absolute path to PEM key
+}
+
+func (s *Settings) NetworkConfig() NetworkConfig {
+	return NetworkConfig{
+		HTTPAddr:       s.get(keyNetHTTPAddr),
+		HTTPSAddr:      s.get(keyNetHTTPSAddr),
+		ExternalURL:    s.get(keyNetExternalURL),
+		TrustedProxies: s.get(keyNetTrustedProxies),
+		TLSCertPath:    s.get(keyNetTLSCertPath),
+		TLSKeyPath:     s.get(keyNetTLSKeyPath),
+	}
+}
+
+func (s *Settings) SetNetworkConfig(ctx context.Context, cfg NetworkConfig) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, kv := range []struct{ k, v string }{
+		{keyNetHTTPAddr, cfg.HTTPAddr},
+		{keyNetHTTPSAddr, cfg.HTTPSAddr},
+		{keyNetExternalURL, cfg.ExternalURL},
+		{keyNetTrustedProxies, cfg.TrustedProxies},
+		{keyNetTLSCertPath, cfg.TLSCertPath},
+		{keyNetTLSKeyPath, cfg.TLSKeyPath},
+	} {
+		if err := s.setRawTx(ctx, tx, kv.k, kv.v); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit network config: %w", err)
+	}
+	return s.refresh(ctx)
+}
+
+func (s *Settings) ExternalURL() string { return s.get(keyNetExternalURL) }
+
+func (s *Settings) TrustedProxies() string { return s.get(keyNetTrustedProxies) }
 
 func boolStr(b bool) string {
 	if b {

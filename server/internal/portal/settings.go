@@ -37,6 +37,11 @@ func init() {
 		get("/portal/settings/operational", opsForm(r))
 		post("/portal/settings/operational", opsSubmit(r))
 
+		// Network (listen address, TLS, reverse proxy, external URL)
+		get("/portal/settings/network", networkForm(r))
+		post("/portal/settings/network", networkSubmit(r))
+		post("/portal/settings/network/upload-cert", networkUploadCert(r))
+
 		// Storage (per-category path overrides)
 		get("/portal/settings/storage", storageForm(r))
 		post("/portal/settings/storage", storageSubmit(r))
