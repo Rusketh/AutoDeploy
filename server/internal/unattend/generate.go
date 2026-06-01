@@ -165,15 +165,12 @@ func writeSpecialize(b *bytes.Buffer, s Settings) {
 	fmt.Fprint(b, `  <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
 `)
-	// ComputerName: "*" means fully random (the ONLY valid use of "*").
-	// A literal name is emitted verbatim. The "prefix" strategy is resolved
-	// to a concrete name server-side (serve.go) BEFORE generation, because
-	// "<ComputerName>PREFIX*</ComputerName>" is invalid -- "*" is not a
-	// legal name character and a partial wildcard aborts Setup at
-	// specialize. If we still see "prefix" here (e.g. a unit-test or a
-	// serve path without machine identity) we fall back to random rather
-	// than emit invalid XML.
-	if name := strings.TrimSpace(s.ComputerName); s.NameStrategy == "literal" && name != "" {
+	// Computer name from the template. Placeholders are expanded here with
+	// whatever identity Settings carries (serve.go fills Serial/UUID/Agent
+	// per machine before generating; %random% always works). An empty
+	// result -> fully-random "*". ExpandName guarantees a valid NetBIOS
+	// name, so we never emit an invalid value like "PREFIX*".
+	if name := ExpandName(s.NameTemplate, s.NameIdentity); name != "" {
 		fmt.Fprintf(b, `      <ComputerName>%s</ComputerName>`+"\n", esc(name))
 	} else {
 		fmt.Fprint(b, `      <ComputerName>*</ComputerName>`+"\n")

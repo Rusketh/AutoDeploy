@@ -79,8 +79,19 @@ type Settings struct {
 	AutoLogon *AutoLogonSetting `json:"auto_logon,omitempty"`
 
 	// --- Naming ---
-	NameStrategy string `json:"name_strategy"` // "literal" | "prefix" | "random"
-	ComputerName string `json:"computer_name"`
+	// NameTemplate is the computer-name template with placeholders expanded
+	// server-side per machine: %random(N)%, %serial%, %serial(N)%, %uuid%,
+	// %uuid(N)%, %agent%/%agent(N)%, plus literal text. Empty falls back to
+	// a fully-random Windows name. See unattend.ExpandName.
+	NameTemplate string `json:"name_template"`
+	// NameStrategy/ComputerName are the legacy naming fields, kept so old
+	// unattend rows still parse; Parse() migrates them into NameTemplate.
+	NameStrategy string `json:"name_strategy,omitempty"` // "literal" | "prefix" | "random"
+	ComputerName string `json:"computer_name,omitempty"`
+	// NameIdentity is the per-machine identity used to expand NameTemplate
+	// placeholders. It is NOT persisted (json:"-"); serve.go fills it from
+	// the machine record before generation. Empty in the portal preview.
+	NameIdentity NameIdentity `json:"-"`
 
 	// --- Disk ---
 	DiskID int `json:"disk_id"`
@@ -204,9 +215,23 @@ func Parse(raw string) (Settings, error) {
 	if s.TimeZone == "" {
 		s.TimeZone = "GMT Standard Time"
 	}
-	if s.NameStrategy == "" {
-		s.NameStrategy = "random"
+	// Migrate the legacy naming fields into NameTemplate so old rows keep
+	// working. literal -> the name verbatim; prefix -> "<name>%random(4)%"
+	// (a concrete random suffix, NOT the invalid "<name>*"); random/empty
+	// -> empty template (= fully-random Windows name). Only migrate when
+	// NameTemplate isn't already set.
+	if s.NameTemplate == "" {
+		switch s.NameStrategy {
+		case "literal":
+			s.NameTemplate = s.ComputerName
+		case "prefix":
+			s.NameTemplate = s.ComputerName + "%random(4)%"
+		}
 	}
+	// Legacy fields are fully captured by NameTemplate now; clear them so
+	// the row re-serialises in the new shape.
+	s.NameStrategy = ""
+	s.ComputerName = ""
 	if s.ProtectYourPC == 0 {
 		s.ProtectYourPC = 3
 	}
@@ -244,7 +269,7 @@ func Defaults() Settings {
 		Keyboard:                 "0409:00000409",
 		TimeZone:                 "GMT Standard Time",
 		Edition:                  "Windows 11 Pro",
-		NameStrategy:             "random",
+		NameTemplate:             "", // empty = fully-random Windows name
 		SkipMachineOOBE:          true,
 		SkipUserOOBE:             true,
 		HideEULA:                 true,
