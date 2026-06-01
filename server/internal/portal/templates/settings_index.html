@@ -1,9 +1,9 @@
 {{define "body"}}
 <h2>Settings</h2>
 <p class="muted" style="max-width: 720px;">All operator-changeable configuration lives here.
-Bootstrap settings (bind addresses, data directory, dev mode, the
-at-rest secrets key) stay in environment variables on the server —
-they must be known before the server can listen.</p>
+Bootstrap defaults (data directory, dev mode, the at-rest secrets key)
+come from environment variables; network and listen settings can be
+overridden in the portal and take effect on next restart.</p>
 
 <div class="grid stats">
   <a class="stat" href="/portal/settings/access-pin">
@@ -25,6 +25,11 @@ they must be known before the server can listen.</p>
     <span class="lbl"><svg><use href="#i-globe"/></svg>Active Directory</span>
     <span class="num" style="font-size: 1.1rem;">{{if .Data.ADEnabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</span>
     <span class="small muted">LDAP service-account, computer-object lifecycle, encrypted at rest.</span>
+  </a>
+  <a class="stat" href="/portal/settings/network">
+    <span class="lbl"><svg><use href="#i-globe"/></svg>Network</span>
+    <span class="num" style="font-size: 1.1rem;">{{if .Data.NetCfg.ExternalURL}}{{.Data.NetCfg.ExternalURL}}{{else}}Local only{{end}}</span>
+    <span class="small muted">Listen address, port, TLS certificates, reverse proxy, external URL for remote agents.</span>
   </a>
   <a class="stat" href="/portal/settings/operational">
     <span class="lbl"><svg><use href="#i-gear"/></svg>Operational</span>

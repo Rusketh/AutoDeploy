@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/branding"
+	"github.com/rusketh/autodeploy/server/internal/runtime"
 )
 
 func init() {
@@ -59,10 +60,15 @@ func settingsIndex(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		brand, _ := r.Branding.Get(req.Context())
 		users, _ := r.Users.ListUsers(req.Context())
+		var netCfg runtime.NetworkConfig
+		if r.Runtime != nil {
+			netCfg = r.Runtime.NetworkConfig()
+		}
 		render(w, req, r, "settings_index.html", "Settings", map[string]any{
 			"Brand":     brand,
 			"UserCount": len(users),
 			"ADEnabled": r.Runtime != nil && r.Runtime.ADEnabled(),
+			"NetCfg":    netCfg,
 		})
 	}
 }

@@ -1,0 +1,93 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-globe"/></svg>Network settings</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
+</div>
+
+<form class="std" method="POST" action="/portal/settings/network">
+  <fieldset><legend>Listen addresses</legend>
+    <p class="hint" style="margin-top:0;">Changes to listen addresses take effect on next server restart.</p>
+    <label><span class="lbl">HTTP address</span>
+      <input type="text" name="http_addr" value="{{.Data.Cfg.HTTPAddr}}" placeholder="0.0.0.0:8080">
+      <span class="hint">
+        Host and port for the cleartext HTTP listener, e.g. <code>127.0.0.1:8080</code> (loopback only) or <code>0.0.0.0:8080</code> (all interfaces).
+        Empty disables HTTP.
+        {{if .Data.Env.HTTPAddr}}<br>Environment default: <code>{{.Data.Env.HTTPAddr}}</code>{{end}}
+      </span>
+    </label>
+    <label><span class="lbl">HTTPS address</span>
+      <input type="text" name="https_addr" value="{{.Data.Cfg.HTTPSAddr}}" placeholder="0.0.0.0:8443">
+      <span class="hint">
+        Host and port for the HTTPS listener. Empty disables HTTPS.
+        When enabled without a certificate, a self-signed cert is auto-generated.
+        {{if .Data.Env.HTTPSAddr}}<br>Environment default: <code>{{.Data.Env.HTTPSAddr}}</code>{{end}}
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>External URL</legend>
+    <label><span class="lbl">External URL</span>
+      <input type="url" name="external_url" value="{{.Data.Cfg.ExternalURL}}" placeholder="https://deploy.example.com">
+      <span class="hint">
+        The public address agents use to reach this server from outside the local network — e.g. through a firewall or reverse proxy.
+        Agents provisioned after this is set will use it as their server URL.
+        Leave empty if all agents are on the same LAN.
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Reverse proxy</legend>
+    <label><span class="lbl">Trusted proxy CIDRs</span>
+      <input type="text" name="trusted_proxies" value="{{.Data.Cfg.TrustedProxies}}" placeholder="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16">
+      <span class="hint">
+        Comma-separated list of IP ranges whose <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> headers are trusted.
+        When a request arrives from a trusted proxy, the server uses the forwarded client IP for logging and rate limiting.
+        Leave empty to trust no proxies (direct connections only).
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>TLS certificate</legend>
+    <label><span class="lbl">Certificate path</span>
+      <input type="text" name="tls_cert_path" value="{{.Data.Cfg.TLSCertPath}}" placeholder="/etc/ssl/certs/autodeploy.pem">
+      <span class="hint">
+        Absolute path to a PEM-encoded certificate file. Leave empty to auto-generate a self-signed cert.
+        {{if .Data.Env.TLSCertPath}}<br>Environment default: <code>{{.Data.Env.TLSCertPath}}</code>{{end}}
+      </span>
+    </label>
+    <label><span class="lbl">Private key path</span>
+      <input type="text" name="tls_key_path" value="{{.Data.Cfg.TLSKeyPath}}" placeholder="/etc/ssl/private/autodeploy-key.pem">
+      <span class="hint">
+        Absolute path to the matching PEM-encoded private key.
+        {{if .Data.Env.TLSKeyPath}}<br>Environment default: <code>{{.Data.Env.TLSKeyPath}}</code>{{end}}
+      </span>
+    </label>
+    {{if .Data.CertInfo}}
+    <div style="margin-top: var(--sp-2);">
+      <span class="badge accent">{{.Data.CertInfo}}</span>
+    </div>
+    {{end}}
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
+  </div>
+</form>
+
+<fieldset style="margin-top: var(--sp-4);">
+  <legend>Upload TLS certificate</legend>
+  <p class="hint" style="margin-top:0;">Upload PEM-encoded certificate and key files. They will be stored in the server's data directory and the paths above will be updated automatically.</p>
+  <form class="std" method="POST" action="/portal/settings/network/upload-cert" enctype="multipart/form-data">
+    <label><span class="lbl">Certificate file (.pem / .crt)</span>
+      <input type="file" name="cert_file" accept=".pem,.crt,.cer">
+    </label>
+    <label><span class="lbl">Private key file (.pem / .key)</span>
+      <input type="file" name="key_file" accept=".pem,.key">
+    </label>
+    <div class="actions">
+      <button type="submit" class="btn secondary"><svg><use href="#i-plus"/></svg>Upload &amp; apply</button>
+    </div>
+  </form>
+</fieldset>
+{{end}}

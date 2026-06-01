@@ -80,6 +80,10 @@ type AgentSelfResponse struct {
 	DeploymentID model.ID `json:"deployment_id,omitempty"`
 	// UpdateJobs are pending Windows Update deployment jobs for this machine.
 	UpdateJobs []model.UpdateDeploymentJob `json:"update_jobs,omitempty"`
+	// ExternalURL is the operator-configured public address for the server.
+	// Remote agents can use this to reconnect through a reverse proxy or
+	// firewall. Empty when not configured (all agents on the LAN).
+	ExternalURL string `json:"external_url,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -152,6 +156,9 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		// for testing or slow it down for a large fleet).
 		if r.Runtime != nil {
 			resp.PollIntervalSeconds = r.Runtime.AgentPollIntervalSeconds()
+			if u := r.Runtime.ExternalURL(); u != "" {
+				resp.ExternalURL = u
+			}
 		}
 		// Software comes from the machine's bound image. No binding (or no
 		// image) just means "nothing to install" -- not an error.
