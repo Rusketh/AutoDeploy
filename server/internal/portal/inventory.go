@@ -197,12 +197,14 @@ func machineList(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// For each machine show its binding's machine_name + image (if any).
+		// For each machine show its name + image (if any). Name prefers the
+		// agent-reported current computer name (reality), falling back to the
+		// binding's desired name for machines that haven't reported yet.
 		type row struct {
-			Machine     model.MachineRecord
-			BindingName string
-			ImageName   string
-			BLSet       bool
+			Machine   model.MachineRecord
+			Name      string
+			ImageName string
+			BLSet     bool
 		}
 		// Pagination. Client-side filtering still works within the
 		// page; pagination is a guard against a multi-thousand-row
@@ -218,7 +220,11 @@ func machineList(r Repos) http.HandlerFunc {
 				imgName = im.Name
 			}
 			bl, _ := r.BitLocker.PINStatus(req.Context(), m.ID)
-			rows = append(rows, row{Machine: m, BindingName: b.MachineName, ImageName: imgName, BLSet: bl.PINSet})
+			name := m.ReportedName
+			if name == "" {
+				name = b.MachineName
+			}
+			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet})
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page,

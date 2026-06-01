@@ -282,6 +282,11 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// Report collected hardware once per process run (the WMI sweep is
 	// relatively expensive; specs change rarely). Best-effort.
 	reportHardwareOnce(ctx, log, c, f)
+	// Report the observed identity (current computer name + AD DN) EVERY
+	// poll: a rename needs a reboot (which restarts us) but an AD move does
+	// not, so once-per-process would miss moves. The server syncs the
+	// binding from this. Best-effort.
+	reportObservedIdentity(ctx, log, c, f)
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
@@ -323,6 +328,26 @@ func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, 
 	}
 	hardwareReported = true
 	log.Info("hardware.reported")
+}
+
+// reportObservedIdentity posts the machine's current computer name and AD
+// distinguished name so the server tracks manual renames and AD moves and
+// syncs the binding. Runs every poll; all failures are logged and swallowed.
+func reportObservedIdentity(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
+	if f.agentID == "" {
+		return
+	}
+	name, dn := collectObservedIdentity()
+	if name == "" && dn == "" {
+		return
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/identity", map[string]any{
+		"agent_id":              f.agentID,
+		"computer_name":         name,
+		"ad_distinguished_name": dn,
+	}, nil); err != nil {
+		log.Warn("identity.report", slog.String("error", err.Error()))
+	}
 }
 
 // mediaCleaned guards cleanupMediaOnce so the partition removal is attempted

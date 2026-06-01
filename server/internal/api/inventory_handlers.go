@@ -3,6 +3,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -26,6 +27,61 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 
 	// Agent-facing hardware report: store the collected spec set.
 	mux.HandleFunc("POST /api/v1/agent/hardware", handleAgentHardware(r))
+
+	// Agent-facing observed-identity report: the machine's current computer
+	// name and AD distinguished name. Stored on the record and synced into
+	// the binding so the inventory tracks manual renames and AD moves.
+	mux.HandleFunc("POST /api/v1/agent/identity", handleAgentIdentity(r))
+}
+
+// AgentIdentityRequest is the body the running agent POSTs each poll with its
+// OBSERVED identity: the current Windows computer name and AD distinguished
+// name. The server stores them and syncs the binding so a manual rename or AD
+// move is reflected in inventory without operator action.
+type AgentIdentityRequest struct {
+	AgentID             string `json:"agent_id"`
+	ComputerName        string `json:"computer_name"`
+	ADDistinguishedName string `json:"ad_distinguished_name"`
+}
+
+func handleAgentIdentity(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in AgentIdentityRequest
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		name := strings.TrimSpace(in.ComputerName)
+		dn := strings.TrimSpace(in.ADDistinguishedName)
+		m, err := r.Inventory.UpdateObservedIdentity(req.Context(), in.AgentID, name, dn)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := r.Inventory.SyncBindingFromObserved(req.Context(), m.ID, name, ouFromDN(dn)); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
+	}
+}
+
+// ouFromDN returns the parent-container DN of a computer's distinguished name
+// -- the DN with its leading CN=<name> RDN stripped -- which is the AD OU the
+// machine currently lives in. Literal commas in an RDN are escaped as "\,";
+// the split skips those. Returns "" when the DN is empty or has no parent.
+func ouFromDN(dn string) string {
+	dn = strings.TrimSpace(dn)
+	for i := 0; i < len(dn); i++ {
+		if dn[i] == '\\' { // escaped char -- skip the next byte
+			i++
+			continue
+		}
+		if dn[i] == ',' {
+			return strings.TrimSpace(dn[i+1:])
+		}
+	}
+	return ""
 }
 
 // AgentHardwareRequest is the body the agent POSTs with its collected
