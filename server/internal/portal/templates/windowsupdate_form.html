@@ -40,10 +40,16 @@
         <option value="low" {{if eq $u.Severity "low"}}selected{{end}}>Low</option>
       </select>
     </label>
-    <label><span class="lbl">Supersedes (JSON array of KB numbers)</span>
-      <input type="text" name="supersedes_json" value="{{$u.SupersedesJSON}}" placeholder='["KB5033372"]'>
-      <span class="hint">List of KB numbers this update supersedes, as a JSON array.</span>
-    </label>
+    <div style="margin-bottom: var(--sp-3);">
+      <span class="lbl" style="display:block; margin-bottom: var(--sp-1);">Supersedes</span>
+      <input type="hidden" name="supersedes_json" id="supersedes_json" value="{{$u.SupersedesJSON}}">
+      <div id="supersedes_tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom: var(--sp-2); min-height:28px;"></div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="supersedes_input" placeholder="KB5033372" style="flex:1; max-width:220px;">
+        <button type="button" class="btn secondary" onclick="addSupersedes()" style="white-space:nowrap;"><svg><use href="#i-plus"/></svg>Add</button>
+      </div>
+      <span class="hint">KB numbers that this update replaces. Add one at a time.</span>
+    </div>
     <label>
       <input type="checkbox" name="reboot_after" value="1" {{if $u.RebootAfter}}checked{{end}}>
       Reboot after install
@@ -55,6 +61,37 @@
   </div>
 </form>
 
+<script>
+var supersedesList = [];
+try { supersedesList = JSON.parse(document.getElementById('supersedes_json').value) || []; } catch(e) {}
+function renderTags() {
+  var c = document.getElementById('supersedes_tags');
+  c.innerHTML = '';
+  supersedesList.forEach(function(kb, i) {
+    var s = document.createElement('span');
+    s.className = 'badge accent';
+    s.style.cssText = 'cursor:pointer; padding: 4px 10px; font-size: 0.85rem;';
+    s.textContent = kb + ' ×';
+    s.title = 'Click to remove';
+    s.onclick = function() { supersedesList.splice(i, 1); renderTags(); };
+    c.appendChild(s);
+  });
+  document.getElementById('supersedes_json').value = JSON.stringify(supersedesList);
+}
+function addSupersedes() {
+  var input = document.getElementById('supersedes_input');
+  var v = input.value.trim().toUpperCase();
+  if (!v) return;
+  if (supersedesList.indexOf(v) === -1) supersedesList.push(v);
+  input.value = '';
+  renderTags();
+  input.focus();
+}
+document.getElementById('supersedes_input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); addSupersedes(); }
+});
+renderTags();
+</script>
 {{if not $new}}
 <fieldset style="margin-top: var(--sp-4);">
   <legend>Payload (.msu file)</legend>
