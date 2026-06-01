@@ -36,7 +36,7 @@ type DB struct {
 func Open(ctx context.Context, path string) (*DB, error) {
 	// SQLite driver: enable foreign keys, WAL, busy timeout. Each connection
 	// must run these PRAGMAs; the connection string applies them.
-	dsn := path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	dsn := path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)"
 	if path == ":memory:" {
 		// In-memory DB cannot do WAL.
 		dsn = path + "?_pragma=foreign_keys(1)"
@@ -59,6 +59,9 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetConnMaxLifetime(0)
 	return db, nil
 }
 

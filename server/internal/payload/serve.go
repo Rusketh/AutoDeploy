@@ -44,6 +44,11 @@ type Service struct {
 	// OnBytesServed is called with the byte count of each completed
 	// payload response so the operator can wire it into metrics.
 	OnBytesServed func(int64)
+	// RequireAuth, when non-nil, is called at the top of every
+	// operator-facing upload/extract handler. It should return true if
+	// the request is authenticated. When it returns false, it must
+	// write an HTTP error response itself (typically 401).
+	RequireAuth func(http.ResponseWriter, *http.Request) bool
 }
 
 // Register mounts payload routes on mux:
@@ -192,9 +197,22 @@ func applyBindingIdentity(r *http.Request, inv *model.InventoryRepo, uuid string
 	}
 }
 
+// checkAuth returns false (and writes a 401) if RequireAuth is
+// configured and the request fails the check. Handlers call this at
+// the top and return early on false.
+func (s *Service) checkAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.RequireAuth != nil && !s.RequireAuth(w, r) {
+		return false
+	}
+	return true
+}
+
 // uploadISO accepts a raw octet-stream PUT body and writes it to
 // data/iso/{id}/source.iso, updating the ISO row with the storage path.
 func (s *Service) uploadISO(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -246,6 +264,9 @@ func (s *Service) uploadISO(w http.ResponseWriter, r *http.Request) {
 // .swm parts). It delegates to ExtractAndRecord so the manual Extract and
 // the upload auto-extract share one code path.
 func (s *Service) extractISO(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -273,6 +294,9 @@ func (s *Service) extractISO(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) uploadDriver(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -303,6 +327,9 @@ func (s *Service) uploadDriver(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) uploadSoftware(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -516,6 +543,14 @@ func (b *byteCounter) Write(p []byte) (int, error) {
 	n, err := b.ResponseWriter.Write(p)
 	b.n += int64(n)
 	return n, err
+}
+
+// Flush implements http.Flusher so streaming responses work through the
+// byte-counting wrapper.
+func (b *byteCounter) Flush() {
+	if f, ok := b.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func pathID(r *http.Request) (model.ID, error) {

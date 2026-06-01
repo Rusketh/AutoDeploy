@@ -73,48 +73,48 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterDomainJoin(mux, r)
 
 	// ISO
-	mux.HandleFunc("GET /api/v1/isos", handleListISOs(r))
-	mux.HandleFunc("POST /api/v1/isos", handleCreateISO(r))
-	mux.HandleFunc("GET /api/v1/isos/{id}", handleGetISO(r))
-	mux.HandleFunc("PUT /api/v1/isos/{id}", handleUpdateISO(r))
-	mux.HandleFunc("DELETE /api/v1/isos/{id}", handleDeleteISO(r))
+	mux.HandleFunc("GET /api/v1/isos", requireAuth(r, handleListISOs(r)))
+	mux.HandleFunc("POST /api/v1/isos", requireAuth(r, handleCreateISO(r)))
+	mux.HandleFunc("GET /api/v1/isos/{id}", requireAuth(r, handleGetISO(r)))
+	mux.HandleFunc("PUT /api/v1/isos/{id}", requireAuth(r, handleUpdateISO(r)))
+	mux.HandleFunc("DELETE /api/v1/isos/{id}", requireAuth(r, handleDeleteISO(r)))
 
 	// Unattend
-	mux.HandleFunc("GET /api/v1/unattends", handleListUnattend(r))
-	mux.HandleFunc("POST /api/v1/unattends", handleCreateUnattend(r))
-	mux.HandleFunc("GET /api/v1/unattends/{id}", handleGetUnattend(r))
-	mux.HandleFunc("PUT /api/v1/unattends/{id}", handleUpdateUnattend(r))
-	mux.HandleFunc("DELETE /api/v1/unattends/{id}", handleDeleteUnattend(r))
+	mux.HandleFunc("GET /api/v1/unattends", requireAuth(r, handleListUnattend(r)))
+	mux.HandleFunc("POST /api/v1/unattends", requireAuth(r, handleCreateUnattend(r)))
+	mux.HandleFunc("GET /api/v1/unattends/{id}", requireAuth(r, handleGetUnattend(r)))
+	mux.HandleFunc("PUT /api/v1/unattends/{id}", requireAuth(r, handleUpdateUnattend(r)))
+	mux.HandleFunc("DELETE /api/v1/unattends/{id}", requireAuth(r, handleDeleteUnattend(r)))
 
 	// Driver packages
-	mux.HandleFunc("GET /api/v1/drivers", handleListDrivers(r))
-	mux.HandleFunc("POST /api/v1/drivers", handleCreateDriver(r))
-	mux.HandleFunc("GET /api/v1/drivers/{id}", handleGetDriver(r))
-	mux.HandleFunc("PUT /api/v1/drivers/{id}", handleUpdateDriver(r))
-	mux.HandleFunc("DELETE /api/v1/drivers/{id}", handleDeleteDriver(r))
-	mux.HandleFunc("POST /api/v1/drivers/{id}/preview", handleDriverPreview(r))
+	mux.HandleFunc("GET /api/v1/drivers", requireAuth(r, handleListDrivers(r)))
+	mux.HandleFunc("POST /api/v1/drivers", requireAuth(r, handleCreateDriver(r)))
+	mux.HandleFunc("GET /api/v1/drivers/{id}", requireAuth(r, handleGetDriver(r)))
+	mux.HandleFunc("PUT /api/v1/drivers/{id}", requireAuth(r, handleUpdateDriver(r)))
+	mux.HandleFunc("DELETE /api/v1/drivers/{id}", requireAuth(r, handleDeleteDriver(r)))
+	mux.HandleFunc("POST /api/v1/drivers/{id}/preview", requireAuth(r, handleDriverPreview(r)))
 
 	// Software packages
-	mux.HandleFunc("GET /api/v1/software", handleListSoftware(r))
-	mux.HandleFunc("POST /api/v1/software", handleCreateSoftware(r))
-	mux.HandleFunc("GET /api/v1/software/{id}", handleGetSoftware(r))
-	mux.HandleFunc("PUT /api/v1/software/{id}", handleUpdateSoftware(r))
-	mux.HandleFunc("DELETE /api/v1/software/{id}", handleDeleteSoftware(r))
+	mux.HandleFunc("GET /api/v1/software", requireAuth(r, handleListSoftware(r)))
+	mux.HandleFunc("POST /api/v1/software", requireAuth(r, handleCreateSoftware(r)))
+	mux.HandleFunc("GET /api/v1/software/{id}", requireAuth(r, handleGetSoftware(r)))
+	mux.HandleFunc("PUT /api/v1/software/{id}", requireAuth(r, handleUpdateSoftware(r)))
+	mux.HandleFunc("DELETE /api/v1/software/{id}", requireAuth(r, handleDeleteSoftware(r)))
 
 	// Images
-	mux.HandleFunc("GET /api/v1/images", handleListImages(r))
-	mux.HandleFunc("POST /api/v1/images", handleCreateImage(r))
-	mux.HandleFunc("GET /api/v1/images/{id}", handleGetImage(r))
-	mux.HandleFunc("PUT /api/v1/images/{id}", handleUpdateImage(r))
-	mux.HandleFunc("DELETE /api/v1/images/{id}", handleDeleteImage(r))
-	mux.HandleFunc("GET /api/v1/images/{id}/resolved", handleResolveImage(r))
+	mux.HandleFunc("GET /api/v1/images", requireAuth(r, handleListImages(r)))
+	mux.HandleFunc("POST /api/v1/images", requireAuth(r, handleCreateImage(r)))
+	mux.HandleFunc("GET /api/v1/images/{id}", requireAuth(r, handleGetImage(r)))
+	mux.HandleFunc("PUT /api/v1/images/{id}", requireAuth(r, handleUpdateImage(r)))
+	mux.HandleFunc("DELETE /api/v1/images/{id}", requireAuth(r, handleDeleteImage(r)))
+	mux.HandleFunc("GET /api/v1/images/{id}/resolved", requireAuth(r, handleResolveImage(r)))
 
 	// Software loadouts (Phase 7).
-	mux.HandleFunc("GET /api/v1/loadouts", handleListLoadouts(r))
-	mux.HandleFunc("POST /api/v1/loadouts", handleCreateLoadout(r))
-	mux.HandleFunc("GET /api/v1/loadouts/{id}", handleGetLoadout(r))
-	mux.HandleFunc("PUT /api/v1/loadouts/{id}", handleUpdateLoadout(r))
-	mux.HandleFunc("DELETE /api/v1/loadouts/{id}", handleDeleteLoadout(r))
+	mux.HandleFunc("GET /api/v1/loadouts", requireAuth(r, handleListLoadouts(r)))
+	mux.HandleFunc("POST /api/v1/loadouts", requireAuth(r, handleCreateLoadout(r)))
+	mux.HandleFunc("GET /api/v1/loadouts/{id}", requireAuth(r, handleGetLoadout(r)))
+	mux.HandleFunc("PUT /api/v1/loadouts/{id}", requireAuth(r, handleUpdateLoadout(r)))
+	mux.HandleFunc("DELETE /api/v1/loadouts/{id}", requireAuth(r, handleDeleteLoadout(r)))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -140,7 +140,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, model.ErrValidation):
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
 	default:
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: err.Error()})
+		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
 	}
 }
 
@@ -153,8 +153,26 @@ func parseID(r *http.Request) (model.ID, error) {
 	return model.ID(n), nil
 }
 
+const maxJSONBodySize = 10 << 20 // 10 MB
+
 func decodeJSON(r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxJSONBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+// requireAuth wraps an http.HandlerFunc with a session-cookie check.
+// If UserFromRequest finds no valid session, a 401 Unauthorized
+// response is written and the inner handler is never called. This is
+// the single guard for all operator-facing CRUD routes; agents and
+// boot clients use separate, unauthenticated endpoints.
+func requireAuth(r Repos, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if _, ok := UserFromRequest(req, r); !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h(w, req)
+	}
 }

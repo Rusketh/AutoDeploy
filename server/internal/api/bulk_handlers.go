@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"regexp"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -101,10 +102,26 @@ func handleBulkCreate(r Repos) http.HandlerFunc {
 func coordinateRenameAD(req *http.Request, r Repos, op model.BulkOperation, jobs []model.BulkJob) []string {
 	var payload struct {
 		NewName string `json:"new_name"`
+		Find    string `json:"rename_find"`
+		Replace string `json:"rename_replace"`
 	}
-	if err := json.Unmarshal([]byte(op.Payload), &payload); err != nil || payload.NewName == "" {
-		return []string{"rename payload missing new_name; AD rename skipped"}
+	if err := json.Unmarshal([]byte(op.Payload), &payload); err != nil {
+		return []string{"rename payload invalid; AD rename skipped"}
 	}
+
+	var findRe *regexp.Regexp
+	if payload.Find != "" {
+		var err error
+		findRe, err = regexp.Compile(payload.Find)
+		if err != nil {
+			return []string{"rename_find regex invalid: " + err.Error()}
+		}
+	}
+
+	if findRe == nil && payload.NewName == "" {
+		return []string{"rename payload missing new_name or rename_find; AD rename skipped"}
+	}
+
 	var warns []string
 	for _, j := range jobs {
 		m, err := r.Inventory.Get(req.Context(), j.MachineID)
@@ -119,13 +136,27 @@ func coordinateRenameAD(req *http.Request, r Repos, op model.BulkOperation, jobs
 			// machines and lab targets.
 			continue
 		}
-		newDN, err := r.AD.RenameComputer(req.Context(), binding.MachineName, payload.NewName)
+
+		// Compute per-machine name: use regex find/replace when
+		// provided, otherwise fall back to the static new_name.
+		newName := payload.NewName
+		if findRe != nil {
+			newName = findRe.ReplaceAllString(binding.MachineName, payload.Replace)
+			if newName == "" || newName == binding.MachineName {
+				continue // no rename needed
+			}
+		}
+		if newName == "" {
+			continue
+		}
+
+		newDN, err := r.AD.RenameComputer(req.Context(), binding.MachineName, newName)
 		if err != nil {
 			warns = append(warns, "machine "+binding.MachineName+": AD rename failed: "+err.Error())
 			slog.Default().Error("bulk.rename.ad.fail",
 				slog.String("actor", "server"),
 				slog.String("target", binding.MachineName),
-				slog.String("new_name", payload.NewName),
+				slog.String("new_name", newName),
 				slog.String("error", err.Error()),
 			)
 			continue
@@ -133,11 +164,11 @@ func coordinateRenameAD(req *http.Request, r Repos, op model.BulkOperation, jobs
 		// Update the binding so subsequent operations see the new
 		// name. Group memberships travel with the DN inside the
 		// directory; nothing to do for them here.
-		binding.MachineName = payload.NewName
+		binding.MachineName = newName
 		_ = r.Inventory.UpsertBinding(req.Context(), binding)
 		slog.Default().Info("bulk.rename.ad.ok",
 			slog.String("actor", "server"),
-			slog.String("target", payload.NewName),
+			slog.String("target", newName),
 			slog.String("new_dn", newDN),
 		)
 	}

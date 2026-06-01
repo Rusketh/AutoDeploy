@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
@@ -27,10 +29,12 @@ func newTestServer(t *testing.T) (*httptest.Server, Repos) {
 	drivers := model.NewDriverPackageRepo(db)
 	software := model.NewSoftwarePackageRepo(db)
 	images := model.NewImageRepo(db)
+	users := auth.New(db)
 	repos := Repos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Images: images,
 		Resolver: resolve.New(images, isos, unattend),
+		Users:    users,
 	}
 	mux := http.NewServeMux()
 	Register(mux, repos)
@@ -39,7 +43,27 @@ func newTestServer(t *testing.T) (*httptest.Server, Repos) {
 	return srv, repos
 }
 
-func doJSON(t *testing.T, method, url string, body any) (*http.Response, []byte) {
+func authedClient(t *testing.T, srv *httptest.Server, repos Repos) *http.Client {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := repos.Users.CreateUser(ctx, "admin", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	body := `{"username":"admin","password":"admin"}`
+	resp, err := client.Post(srv.URL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login failed: %d", resp.StatusCode)
+	}
+	return client
+}
+
+func doJSON(t *testing.T, client *http.Client, method, url string, body any) (*http.Response, []byte) {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
@@ -56,7 +80,7 @@ func doJSON(t *testing.T, method, url string, body any) (*http.Response, []byte)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +90,11 @@ func doJSON(t *testing.T, method, url string, body any) (*http.Response, []byte)
 }
 
 func TestISOCRUDOverHTTP(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, repos := newTestServer(t)
+	client := authedClient(t, srv, repos)
 
 	// Create.
-	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
+	resp, body := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
 		"name":    "Win11",
 		"os_type": "windows-11",
 	})
@@ -85,13 +110,13 @@ func TestISOCRUDOverHTTP(t *testing.T) {
 	}
 
 	// List.
-	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/isos", nil)
+	resp, body = doJSON(t, client, http.MethodGet, srv.URL+"/api/v1/isos", nil)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Win11") {
 		t.Fatalf("list status=%d body=%s", resp.StatusCode, body)
 	}
 
 	// Duplicate name should be 409.
-	resp, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
+	resp, _ = doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
 		"name": "Win11", "os_type": "windows-11",
 	})
 	if resp.StatusCode != http.StatusConflict {
@@ -99,7 +124,7 @@ func TestISOCRUDOverHTTP(t *testing.T) {
 	}
 
 	// Missing os_type should be 400.
-	resp, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
+	resp, _ = doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/isos", map[string]any{
 		"name": "Bad",
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -108,18 +133,19 @@ func TestISOCRUDOverHTTP(t *testing.T) {
 
 	// Delete.
 	url := srv.URL + "/api/v1/isos/" + jsonInt(created.ID)
-	resp, _ = doJSON(t, http.MethodDelete, url, nil)
+	resp, _ = doJSON(t, client, http.MethodDelete, url, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("delete status = %d", resp.StatusCode)
 	}
 }
 
 func TestImageResolveOverHTTP(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, repos := newTestServer(t)
+	client := authedClient(t, srv, repos)
 
 	mustCreate := func(path string, payload any) []byte {
 		t.Helper()
-		resp, body := doJSON(t, http.MethodPost, srv.URL+path, payload)
+		resp, body := doJSON(t, client, http.MethodPost, srv.URL+path, payload)
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("POST %s status=%d body=%s", path, resp.StatusCode, body)
 		}
@@ -144,7 +170,7 @@ func TestImageResolveOverHTTP(t *testing.T) {
 	})
 
 	// Resolve the child: should inherit ISO and unattend from root.
-	resp, body := doJSON(t, http.MethodGet,
+	resp, body := doJSON(t, client, http.MethodGet,
 		srv.URL+"/api/v1/images/"+jsonInt(root.ID+1)+"/resolved", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("resolve status=%d body=%s", resp.StatusCode, body)

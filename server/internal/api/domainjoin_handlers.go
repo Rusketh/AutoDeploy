@@ -53,6 +53,12 @@ func handleAgentDomainJoin(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		token := req.Header.Get(DeployTokenHeader)
+		ok, terr := r.Inventory.ValidateDeployToken(req.Context(), m.ID, token)
+		if terr != nil || !ok {
+			http.Error(w, "unauthorized: missing or invalid deploy token", http.StatusUnauthorized)
+			return
+		}
 		b, err := r.Inventory.GetBinding(req.Context(), m.ID)
 		if err != nil || b.ImageID == nil {
 			noJoin(w)

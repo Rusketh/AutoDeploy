@@ -16,11 +16,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -248,7 +248,6 @@ func main() {
 	if f.checkInInterval > 0 {
 		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
 	}
-	_ = time.Now // placeholder for resident-mode timing in Phase 13
 }
 
 // selfResponse mirrors the server's AgentSelfResponse from
@@ -491,6 +490,9 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				shipLogs(log, shipper, f.server, f.insecureTLS)
 				return
 			}
+			// Add ±20% random jitter to avoid thundering-herd polling.
+			jitter := time.Duration(rand.Int64N(int64(interval) * 2 / 5))
+			tick.Reset(interval - interval/5 + jitter)
 		}
 	}
 }
@@ -930,6 +932,9 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			shipLogs(log, shipper, f.server, f.insecureTLS)
 			return
 		}
+		// Add ±20% random jitter to avoid thundering-herd polling.
+		jitter := time.Duration(rand.Int64N(int64(f.checkInInterval) * 2 / 5))
+		tick.Reset(f.checkInInterval - f.checkInInterval/5 + jitter)
 		select {
 		case <-ctx.Done():
 			return
@@ -1314,6 +1319,3 @@ func defaultWorkDir() string {
 	}
 	return "/var/lib/autodeploy/work"
 }
-
-// parseDuration kept as a stub for Phase 13 resident-mode flags.
-var _ = strconv.Itoa

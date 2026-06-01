@@ -166,7 +166,7 @@ func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) 
 		return "", err
 	}
 	defer c.Close()
-	req := ldap.NewModifyDNRequest(dn, "CN="+newName, true, "")
+	req := ldap.NewModifyDNRequest(dn, "CN="+ldapEscape(newName), true, "")
 	if err := c.ModifyDN(req); err != nil {
 		return "", fmt.Errorf("rename %s -> %s: %w", dn, newName, err)
 	}
@@ -175,7 +175,7 @@ func (l *LDAPDirectory) RenameComputer(ctx context.Context, dn, newName string) 
 	if i := strings.Index(dn, ","); i >= 0 {
 		parent = dn[i+1:]
 	}
-	newDN := "CN=" + newName + "," + parent
+	newDN := "CN=" + ldapEscape(newName) + "," + parent
 	// Also update sAMAccountName to match the new CN (workstation
 	// accounts have sAMAccountName = "<cn>$"). Some AD callers fail
 	// secure-channel checks if the two drift.

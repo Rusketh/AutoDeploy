@@ -218,7 +218,7 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			Secure:   req.TLS != nil,
 		})
 		next := req.FormValue("next")
-		if next == "" || !strings.HasPrefix(next, "/portal") {
+		if next == "" || !strings.HasPrefix(next, "/portal/") {
 			next = "/portal/"
 		}
 		http.Redirect(w, req, next, http.StatusFound)

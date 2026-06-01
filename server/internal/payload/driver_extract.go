@@ -56,6 +56,9 @@ type DriverExtractResult struct {
 // under data/drivers/{id}/files/, scans .inf files, and writes a
 // metadata.json summary alongside.
 func (s *Service) extractDriver(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

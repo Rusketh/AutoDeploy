@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 type Client struct {
@@ -26,6 +27,7 @@ func New(baseURL, uuid string, insecureTLS bool) *Client {
 	return &Client{
 		BaseURL: baseURL, UUID: uuid,
 		HTTPClient: &http.Client{
+			Timeout: 2 * time.Minute,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureTLS},
 			},

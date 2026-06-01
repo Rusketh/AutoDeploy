@@ -1,7 +1,9 @@
 package api
 
 import (
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/auth"
@@ -37,8 +39,36 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+var loginLimiter = struct {
+	mu      sync.Mutex
+	counts  map[string]int
+	resetAt time.Time
+}{counts: map[string]int{}}
+
+func loginAllowed(ip string) bool {
+	const maxAttempts = 10
+	const window = time.Minute
+
+	loginLimiter.mu.Lock()
+	defer loginLimiter.mu.Unlock()
+
+	now := time.Now()
+	if now.After(loginLimiter.resetAt) {
+		loginLimiter.counts = map[string]int{}
+		loginLimiter.resetAt = now.Add(window)
+	}
+	loginLimiter.counts[ip]++
+	return loginLimiter.counts[ip] <= maxAttempts
+}
+
 func handleLogin(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		ip, _, _ := net.SplitHostPort(req.RemoteAddr)
+		if !loginAllowed(ip) {
+			http.Error(w, "too many login attempts", http.StatusTooManyRequests)
+			return
+		}
+
 		var in loginRequest
 		if err := decodeJSON(req, &in); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
@@ -62,7 +92,7 @@ func handleLogin(r Repos) http.HandlerFunc {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Now().Add(sessionTTL),
-			Secure:   req.TLS != nil,
+			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":       u.ID,

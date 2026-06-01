@@ -208,3 +208,9 @@ func (r *Repo) DeleteSession(ctx context.Context, token string) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM user_session WHERE token=?`, token)
 	return err
 }
+
+// PruneExpiredSessions removes all sessions whose expiry has passed.
+func (r *Repo) PruneExpiredSessions(ctx context.Context) error {
+	_, err := r.DB.ExecContext(ctx, `DELETE FROM user_session WHERE expires_at < ?`, time.Now())
+	return err
+}

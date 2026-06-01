@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
@@ -32,16 +34,30 @@ func TestReimageFlowResolvesLatestDefinitions(t *testing.T) {
 	loadouts := model.NewSoftwareLoadoutRepo(db)
 	inv := model.NewInventoryRepo(db)
 
+	users := auth.New(db)
 	repos := Repos{
 		ISOs: isos, Unattend: una, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: imgs,
-		Inventory: inv,
+		Inventory: inv, Users: users,
 		Resolver:  resolve.New(imgs, isos, una).WithDrivers(drivers).WithLoadouts(loadouts),
 	}
 	mux := http.NewServeMux()
 	Register(mux, repos)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
+
+	// Create an authenticated client for operator endpoints.
+	if _, err := users.CreateUser(ctx, "admin", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	loginResp, err := client.Post(srv.URL+"/api/v1/auth/login", "application/json",
+		strings.NewReader(`{"username":"admin","password":"admin"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginResp.Body.Close()
 
 	// Initial ISO and image.
 	iso1, _ := isos.Create(ctx, model.ISO{Name: "Win11-original", OSType: "windows-11"})
@@ -101,7 +117,7 @@ func TestReimageFlowResolvesLatestDefinitions(t *testing.T) {
 	// Resolve the (still-bound) image now: should reflect the LATEST
 	// definition (Win11-updated), not the original. This is the design's
 	// "re-imaging is to the latest, not the bound snapshot" rule.
-	resp, _ = http.Get(srv.URL + "/api/v1/images/" + itoa(img.ID) + "/resolved")
+	resp, _ = client.Get(srv.URL + "/api/v1/images/" + itoa(img.ID) + "/resolved")
 	b, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if !strings.Contains(string(b), "Win11-updated") {

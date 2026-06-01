@@ -63,8 +63,8 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/download/{name}", handleAgentDownload(r))
-	mux.HandleFunc("POST /api/v1/server/update", handleServerUpdate(r))
-	mux.HandleFunc("POST /api/v1/server/install-agent", handleInstallAgent(r))
+	mux.HandleFunc("POST /api/v1/server/update", requireAuth(r, handleServerUpdate(r)))
+	mux.HandleFunc("POST /api/v1/server/install-agent", requireAuth(r, handleInstallAgent(r)))
 }
 
 // handleAgentDownload serves an agent binary (or its .sha256/.version
@@ -695,6 +695,3 @@ func baseURLFromRequest(req *http.Request) string {
 	}
 	return scheme + "://" + req.Host
 }
-
-// unused suppressor so refactors don't strand time imports.
-var _ = time.Now

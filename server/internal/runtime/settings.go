@@ -14,7 +14,6 @@ package runtime
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
@@ -395,7 +394,3 @@ func boolStr(b bool) string {
 	}
 	return "false"
 }
-
-// silence unused-import warning when sql is only used in the type
-// references above.
-var _ = sql.ErrNoRows
