@@ -404,7 +404,13 @@ func TestNameStrategies(t *testing.T) {
 	}{
 		{"random", "ignored", "<ComputerName>*</ComputerName>"},
 		{"literal", "LAB-01", "<ComputerName>LAB-01</ComputerName>"},
-		{"prefix", "LAB", "<ComputerName>LAB*</ComputerName>"},
+		// "prefix" is resolved to a concrete name server-side; at the
+		// generator level it must NEVER emit the invalid "PREFIX*" form.
+		// With no concrete name it falls back to fully-random "*".
+		{"prefix", "LAB", "<ComputerName>*</ComputerName>"},
+		// A literal strategy with an empty name also falls back to random
+		// rather than emitting an empty <ComputerName>.
+		{"literal", "", "<ComputerName>*</ComputerName>"},
 	}
 	for _, tc := range cases {
 		s := Defaults()
@@ -412,7 +418,11 @@ func TestNameStrategies(t *testing.T) {
 		s.ComputerName = tc.name
 		x, _ := Generate(s)
 		if !strings.Contains(string(x), tc.want) {
-			t.Errorf("strategy %s: missing %q in XML\n%s", tc.strat, tc.want, x)
+			t.Errorf("strategy %s name %q: missing %q in XML\n%s", tc.strat, tc.name, tc.want, x)
+		}
+		// The invalid partial-wildcard form must never appear.
+		if strings.Contains(string(x), tc.name+"*</ComputerName>") && tc.name != "" {
+			t.Errorf("strategy %s: emitted invalid PREFIX* form\n%s", tc.strat, x)
 		}
 	}
 }

@@ -109,3 +109,34 @@ func idStr2(id model.ID) string {
 	}
 	return string(buf[i:])
 }
+
+func TestComputerNameFromPrefix(t *testing.T) {
+	// Prefix + tail of the agent_id, NetBIOS-capped, no illegal chars.
+	got := computerNameFromPrefix("BA-AUT-", "1a2b3c4d-5e6f-7a8b-9c0d-aabbccddeeff")
+	if got == "" || len(got) > 15 {
+		t.Fatalf("name %q len %d (want non-empty, <=15)", got, len(got))
+	}
+	// Must start with the (sanitized) prefix and contain only legal chars.
+	if got[:7] != "BA-AUT-" {
+		t.Errorf("name %q should start with BA-AUT-", got)
+	}
+	for _, r := range got {
+		ok := r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !ok {
+			t.Errorf("name %q has illegal char %q", got, r)
+		}
+	}
+	// Stable for the same seed.
+	if computerNameFromPrefix("BA-AUT-", "1a2b3c4d-5e6f-7a8b-9c0d-aabbccddeeff") != got {
+		t.Error("name should be stable for the same seed")
+	}
+	// Empty seed + empty prefix -> "" (caller falls back to random "*").
+	if computerNameFromPrefix("", "") != "" {
+		t.Error("empty prefix+seed should yield empty name")
+	}
+	// Over-long prefix is capped to 15.
+	long := computerNameFromPrefix("VERYLONGPREFIXNAME", "deadbeef")
+	if len(long) > 15 {
+		t.Errorf("over-long name not capped: %q (%d)", long, len(long))
+	}
+}
