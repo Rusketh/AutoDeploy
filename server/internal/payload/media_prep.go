@@ -43,12 +43,45 @@ var splitWIM = func(ctx context.Context, src, firstPart string, chunkMiB int) er
 // in Err so the row still records what was found and the portal can show
 // "needs attention".
 type MediaPrep struct {
-	Format            string // "wim" | "esd" | "swm" | "" (no install image)
-	InstallRel        string // media-relative install image path, slash-separated
-	Bytes             int64  // size of the install image before any split
-	SWMParts          int    // 0 = not split (fit FAT32); N = split into N
-	BootloaderPresent bool   // efi/boot/bootx64.efi present (UEFI-bootable)
-	Err               string // non-empty => media not deploy-ready
+	Format            string   // "wim" | "esd" | "swm" | "" (no install image)
+	InstallRel        string   // media-relative install image path, slash-separated
+	Bytes             int64    // size of the install image before any split
+	SWMParts          int      // 0 = not split (fit FAT32); N = split into N
+	BootloaderPresent bool     // efi/boot/bootx64.efi present (UEFI-bootable)
+	Editions          []string // Windows edition names inside the install image
+	Err               string   // non-empty => media not deploy-ready
+}
+
+// wimEditions lists the Windows edition names (WIM image "Name:" fields) in
+// an install image via `wimlib-imagex info`. Works on .wim, .esd and .swm
+// (point it at the first part). Best-effort: a missing binary or parse
+// failure returns nil so prep still succeeds -- editions are descriptive,
+// not required for deploy. A package var so tests can stub it.
+var wimEditions = func(ctx context.Context, imagePath string) []string {
+	out, err := exec.CommandContext(ctx, "wimlib-imagex", "info", imagePath).CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	return parseWIMEditions(string(out))
+}
+
+// parseWIMEditions extracts the "Name:" value from each image block in
+// `wimlib-imagex info` output. Kept separate so it is unit-tested without
+// the binary.
+func parseWIMEditions(info string) []string {
+	var out []string
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "Name:")
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(rest)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // PrepareBootMedia inspects the extracted media tree under filesDir and,
@@ -74,6 +107,7 @@ func PrepareBootMedia(ctx context.Context, filesDir string) MediaPrep {
 		if fi, err := os.Stat(filepath.Join(sourcesDir, first)); err == nil {
 			mp.Bytes = fi.Size()
 		}
+		mp.Editions = wimEditions(ctx, filepath.Join(sourcesDir, first))
 		// Defence: if an oversized original is sitting next to the .swm
 		// parts (e.g. a re-extract re-created it), drop it -- it must not
 		// ship in the FAT32 boot media, where a >4 GiB file can't be
@@ -97,6 +131,8 @@ func PrepareBootMedia(ctx context.Context, filesDir string) MediaPrep {
 	}
 	mp.Bytes = fi.Size()
 	mp.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".") // wim|esd
+	// Enumerate editions from the original image BEFORE any split removes it.
+	mp.Editions = wimEditions(ctx, abs)
 
 	if fi.Size() < swmSplitThresholdBytes {
 		// Fits FAT32 as-is; no split needed.

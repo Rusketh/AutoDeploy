@@ -104,6 +104,7 @@ func applyPrep(ctx context.Context, isos *model.ISORepo, id model.ID, destAbs st
 	iso.InstallImageBytes = prep.Bytes
 	iso.SWMParts = prep.SWMParts
 	iso.BootloaderPresent = prep.BootloaderPresent
+	iso.Editions = prep.Editions
 	iso.PrepError = prep.Err
 	iso.MediaPreparedAt = &now
 	if prep.InstallRel != "" {

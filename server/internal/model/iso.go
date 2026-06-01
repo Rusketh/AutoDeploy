@@ -3,12 +3,36 @@ package model
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
+
+// marshalEditions serialises an editions slice to the JSON stored in
+// editions_json; nil/empty becomes "[]".
+func marshalEditions(e []string) string {
+	if len(e) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalEditions parses editions_json; bad/empty JSON yields nil.
+func unmarshalEditions(s string) []string {
+	if s == "" || s == "[]" {
+		return nil
+	}
+	var out []string
+	_ = json.Unmarshal([]byte(s), &out)
+	return out
+}
 
 // ISORepo is the repository for ISO rows.
 type ISORepo struct{ db *storage.DB }
@@ -43,18 +67,19 @@ func (r *ISORepo) Create(ctx context.Context, in ISO) (ISO, error) {
 func (r *ISORepo) Get(ctx context.Context, id ID) (ISO, error) {
 	var v ISO
 	var prepared sql.NullTime
+	var editions string
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, os_type, storage_path, size_bytes,
 		       created_at, updated_at,
 		       install_image_format, install_image_bytes, swm_parts,
 		       bootloader_present, prep_error, media_prepared_at,
-		       media_file_count, media_total_bytes, boot_wim_present
+		       media_file_count, media_total_bytes, boot_wim_present, editions_json
 		FROM iso WHERE id=?`, id).Scan(
 		&v.ID, &v.Name, &v.Description, &v.OSType, &v.StoragePath,
 		&v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 		&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
 		&v.BootloaderPresent, &v.PrepError, &prepared,
-		&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent)
+		&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent, &editions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ISO{}, fmt.Errorf("iso %d: %w", id, ErrNotFound)
 	}
@@ -64,6 +89,7 @@ func (r *ISORepo) Get(ctx context.Context, id ID) (ISO, error) {
 	if prepared.Valid {
 		v.MediaPreparedAt = &prepared.Time
 	}
+	v.Editions = unmarshalEditions(editions)
 	return v, nil
 }
 
@@ -74,7 +100,7 @@ func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 		       created_at, updated_at,
 		       install_image_format, install_image_bytes, swm_parts,
 		       bootloader_present, prep_error, media_prepared_at,
-		       media_file_count, media_total_bytes, boot_wim_present
+		       media_file_count, media_total_bytes, boot_wim_present, editions_json
 		FROM iso ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -84,16 +110,18 @@ func (r *ISORepo) List(ctx context.Context) ([]ISO, error) {
 	for rows.Next() {
 		var v ISO
 		var prepared sql.NullTime
+		var editions string
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.OSType,
 			&v.StoragePath, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 			&v.InstallImageFormat, &v.InstallImageBytes, &v.SWMParts,
 			&v.BootloaderPresent, &v.PrepError, &prepared,
-			&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent); err != nil {
+			&v.MediaFileCount, &v.MediaTotalBytes, &v.BootWimPresent, &editions); err != nil {
 			return nil, err
 		}
 		if prepared.Valid {
 			v.MediaPreparedAt = &prepared.Time
 		}
+		v.Editions = unmarshalEditions(editions)
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -117,12 +145,14 @@ func (r *ISORepo) Update(ctx context.Context, in ISO) error {
 		    install_image_format=?, install_image_bytes=?, swm_parts=?,
 		    bootloader_present=?, prep_error=?, media_prepared_at=?,
 		    media_file_count=?, media_total_bytes=?, boot_wim_present=?,
+		    editions_json=?,
 		    updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.Name, in.Description, in.OSType, in.StoragePath, in.SizeBytes,
 		in.InstallImageFormat, in.InstallImageBytes, in.SWMParts,
 		in.BootloaderPresent, in.PrepError, prepared,
-		in.MediaFileCount, in.MediaTotalBytes, in.BootWimPresent, in.ID)
+		in.MediaFileCount, in.MediaTotalBytes, in.BootWimPresent,
+		marshalEditions(in.Editions), in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("iso %q: %w", in.Name, ErrConflict)

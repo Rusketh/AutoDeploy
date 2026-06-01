@@ -237,3 +237,38 @@ func TestPrepareBootMediaSplitFailureRecorded(t *testing.T) {
 		t.Errorf("original must survive a failed split: %v", err)
 	}
 }
+
+func TestParseWIMEditions(t *testing.T) {
+	// Representative `wimlib-imagex info install.wim` output.
+	info := `
+WIM Information:
+----------------
+Image Count:    3
+
+Image:
+Index:          1
+Name:           Windows 10 Pro
+Description:    Windows 10 Pro
+
+Index:          2
+Name:           Windows 10 Pro Education
+Description:    Windows 10 Pro Education
+
+Index:          3
+Name:           Windows 10 Home
+`
+	got := parseWIMEditions(info)
+	want := []string{"Windows 10 Pro", "Windows 10 Pro Education", "Windows 10 Home"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("edition %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// No Name: lines -> nil.
+	if e := parseWIMEditions("Image Count: 0\n"); e != nil {
+		t.Errorf("expected nil for no editions, got %v", e)
+	}
+}

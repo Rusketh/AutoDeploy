@@ -93,6 +93,14 @@
         {{else if $iso.PrepError}}<span class="badge bad">split failed</span> — see prep error below.
         {{else}}<code>{{$iso.InstallImageFormat}}</code>{{if $iso.InstallImageBytes}} ({{humanBytes $iso.InstallImageBytes}}){{end}} — fits FAT32, no split needed.{{end}}
       </li>
+      <li>Windows editions in this image:
+        {{if $iso.Editions}}
+        <ul class="small" style="margin:4px 0 0 1.2em;">
+          {{range $iso.Editions}}<li><code>{{.}}</code></li>{{end}}
+        </ul>
+        <span class="hint">Use one of these exact names as the unattend edition (<code>/IMAGE/NAME</code>).</span>
+        {{else}}<span class="muted">none enumerated (re-prepare the ISO, or <code>wimlib-imagex</code> wasn't available at prep time)</span>{{end}}
+      </li>
       <li>UEFI bootloader (<code>efi/boot/bootx64.efi</code>):
         {{if $iso.BootloaderPresent}}<span class="badge ok">present</span>
         {{else}}<span class="badge bad">missing</span> — this media may not boot under UEFI.{{end}}

@@ -195,3 +195,33 @@ func TestRefCountBlocksISODelete(t *testing.T) {
 		t.Errorf("RefCount = %d, want 1", n)
 	}
 }
+
+func TestISOEditionsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := NewISORepo(openTestDB(t))
+	iso, err := repo.Create(ctx, ISO{Name: "Win10", OSType: "windows-10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fresh ISO: no editions yet.
+	if got, _ := repo.Get(ctx, iso.ID); len(got.Editions) != 0 {
+		t.Errorf("new ISO should have no editions, got %v", got.Editions)
+	}
+	// Prep enumerates editions -> Update -> Get sees them in order.
+	iso.Editions = []string{"Windows 10 Pro", "Windows 10 Pro Education", "Windows 10 Home"}
+	if err := repo.Update(ctx, iso); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, iso.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Editions) != 3 || got.Editions[1] != "Windows 10 Pro Education" {
+		t.Errorf("editions round-trip mismatch: %v", got.Editions)
+	}
+	// List also carries editions.
+	all, _ := repo.List(ctx)
+	if len(all) != 1 || len(all[0].Editions) != 3 {
+		t.Errorf("List should carry editions, got %+v", all)
+	}
+}
