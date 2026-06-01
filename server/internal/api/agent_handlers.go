@@ -73,6 +73,11 @@ type AgentSelfResponse struct {
 	// agent resets its poll ticker to this on each response. Omitted (0) when
 	// unset, in which case the agent keeps its current interval.
 	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty"`
+	// DeploymentID is the primary key of an open (in_progress) deployment row
+	// for this machine. Non-zero when the boot client opened a deployment that
+	// the agent hasn't closed yet. The agent uses this to report the final
+	// outcome once software installation completes.
+	DeploymentID model.ID `json:"deployment_id,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -157,6 +162,11 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 				resp.Software = items
 				resp.Warnings = append(resp.Warnings, warnings...)
 			}
+		}
+		// If this machine has an open (in_progress) deployment, include its
+		// ID so the agent can close it once software installation finishes.
+		if dep, derr := r.Inventory.LatestOpenDeployment(req.Context(), m.ID); derr == nil {
+			resp.DeploymentID = dep.ID
 		}
 		// Pending jobs, claimed the same way checkin does.
 		jobs, jerr := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)

@@ -560,6 +560,35 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 	return tx.Commit()
 }
 
+// LatestOpenDeployment returns the most recent in_progress deployment for the
+// machine, or ErrNotFound if there is none. Used by /api/v1/agent/self to tell
+// the resident agent about a deployment the boot client opened so the agent can
+// close it once software installation finishes.
+func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) (DeploymentRecord, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		FROM deployment_history
+		WHERE machine_id=? AND outcome='in_progress'
+		ORDER BY started_at DESC
+		LIMIT 1`, machineID)
+	var d DeploymentRecord
+	var imageID sql.NullInt64
+	var completed sql.NullTime
+	if err := row.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
+		&completed, &d.Outcome, &d.Notes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DeploymentRecord{}, ErrNotFound
+		}
+		return DeploymentRecord{}, err
+	}
+	d.ImageID = idPtr(imageID)
+	if completed.Valid {
+		t := completed.Time
+		d.CompletedAt = &t
+	}
+	return d, nil
+}
+
 // HistoryFor returns dated deployment rows for the machine, newest first.
 func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]DeploymentRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
