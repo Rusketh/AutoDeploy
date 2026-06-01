@@ -35,7 +35,11 @@ type AgentSoftwareItem struct {
 	// package, addressed by name relative to a per-package work
 	// directory. install_steps that contain bare filenames are
 	// resolved against this set on the agent.
-	Files          []AgentPackageFile     `json:"files,omitempty"`
+	Files []AgentPackageFile `json:"files,omitempty"`
+	// Bundles are zip archives the agent extracts into the package workdir
+	// before running steps, so their contents are referenceable by bare
+	// filename (e.g. a network-share installer pulled local instead of SMB).
+	Bundles        []AgentPackageFile     `json:"bundles,omitempty"`
 	DetectionRules []swspec.DetectionRule `json:"detection_rules"`
 	InstallSteps   []swspec.InstallStep   `json:"install_steps"`
 }
@@ -208,6 +212,7 @@ func expandSoftwareItems(ctx context.Context, r Repos, seeds []model.ID) ([]Agen
 			OrderValue:     int64(i), // dependency-aware install order
 			PayloadURL:     base + idStr(pkg.ID),
 			Files:          files,
+			Bundles:        listPackageBundles(r, pkg.ID, base),
 			DetectionRules: det,
 			InstallSteps:   steps,
 		})
@@ -234,6 +239,30 @@ func listPackageFiles(r Repos, id model.ID, base string) []AgentPackageFile {
 		out = append(out, AgentPackageFile{
 			Name:      e.Name,
 			URL:       base + idStr(id) + "/files/" + e.Name,
+			SizeBytes: e.Size,
+		})
+	}
+	return out
+}
+
+// listPackageBundles enumerates a package's bundle/ directory: zip archives
+// the agent extracts into its workdir before running steps, so an installer
+// with many support files (e.g. a network-share MSI) can be referenced
+// locally by bare filename instead of over SMB.
+func listPackageBundles(r Repos, id model.ID, base string) []AgentPackageFile {
+	if r.Blobs == nil {
+		return nil
+	}
+	rel := "software/" + idStr(id) + "/bundle"
+	entries, err := r.Blobs.ListDir(rel)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	out := make([]AgentPackageFile, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, AgentPackageFile{
+			Name:      e.Name,
+			URL:       base + idStr(id) + "/bundle/" + e.Name,
 			SizeBytes: e.Size,
 		})
 	}

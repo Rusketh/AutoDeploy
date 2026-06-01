@@ -30,7 +30,17 @@ func init() {
 		post("/portal/software/{id}/upload/delete", softwareUploadDelete(r))
 		// Multi-file: delete one named file from a package.
 		post("/portal/software/{id}/files/{name}/delete", softwareFileDelete(r))
+		// Bundle zips: uploaded once, extracted into the agent workdir.
+		post("/portal/software/{id}/bundle", softwareBundleUpload(r))
+		post("/portal/software/{id}/bundle/{name}/delete", softwareBundleDelete(r))
 	}
+}
+
+// softwarePackageBundleDir returns the BlobStore-relative path under which a
+// package's bundle zips live (extracted into the agent workdir at install
+// time), kept apart from files/ so the two upload paths can't collide.
+func softwarePackageBundleDir(id model.ID) string {
+	return filepath.ToSlash(filepath.Join("software", fmt.Sprint(int64(id)), "bundle"))
 }
 
 // softwarePackageFilesDir returns the BlobStore-relative path under
@@ -116,6 +126,10 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 			migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
 			files, _ = r.Blobs.ListDir(softwarePackageFilesDir(p.ID))
 		}
+		var bundles []storage.DirEntry
+		if !isNew && r.Blobs != nil {
+			bundles, _ = r.Blobs.ListDir(softwarePackageBundleDir(p.ID))
+		}
 		// Other packages, for the dependency picker, plus a set of the
 		// currently-selected dependency IDs so the template can mark them.
 		all, _ := r.Software.List(req.Context())
@@ -131,7 +145,7 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 		}
 		render(w, req, r, "software_form.html", title, map[string]any{
 			"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
-			"Files": files, "AllPackages": others, "DepSelected": depSel,
+			"Files": files, "Bundles": bundles, "AllPackages": others, "DepSelected": depSel,
 		})
 	}
 }
@@ -450,6 +464,87 @@ func softwareFileDelete(r Repos) http.HandlerFunc {
 			flash(w, "err", "Remove "+name+": "+err.Error())
 		} else {
 			flash(w, "ok", "Removed "+name+".")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+	}
+}
+
+// softwareBundleUpload stores a zip under the package's bundle/ directory.
+// The agent extracts every bundle into its package workdir before running
+// steps, so a multi-file installer (e.g. one that lives on a network share
+// the SYSTEM account can't reach) can be referenced by bare filename locally.
+func softwareBundleUpload(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if _, err := r.Software.Get(req.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		mr, err := req.MultipartReader()
+		if err != nil {
+			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			return
+		}
+		var uploaded int
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				flash(w, "err", err.Error())
+				break
+			}
+			if part.FormName() != "file" {
+				_, _ = io.Copy(io.Discard, part)
+				_ = part.Close()
+				continue
+			}
+			name, sanErr := sanitizeUploadFilename(part.FileName())
+			if sanErr != nil {
+				_, _ = io.Copy(io.Discard, part)
+				_ = part.Close()
+				flash(w, "err", "Upload rejected: "+sanErr.Error())
+				continue
+			}
+			if !strings.EqualFold(filepath.Ext(name), ".zip") {
+				_, _ = io.Copy(io.Discard, part)
+				_ = part.Close()
+				flash(w, "err", "Bundle must be a .zip file: "+name)
+				continue
+			}
+			rel := filepath.ToSlash(filepath.Join(softwarePackageBundleDir(id), name))
+			n, err := r.Blobs.WriteStream(rel, part)
+			_ = part.Close()
+			if err != nil {
+				flash(w, "err", err.Error())
+				break
+			}
+			uploaded++
+			flash(w, "ok", fmt.Sprintf("Uploaded bundle %s (%d bytes).", name, n))
+		}
+		if uploaded == 0 {
+			flash(w, "warn", "No bundle received in the upload.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+	}
+}
+
+// softwareBundleDelete removes one named bundle zip from a package.
+func softwareBundleDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		name, sanErr := sanitizeUploadFilename(req.PathValue("name"))
+		if sanErr != nil {
+			flash(w, "err", "Bad filename: "+sanErr.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
+			return
+		}
+		rel := filepath.ToSlash(filepath.Join(softwarePackageBundleDir(id), name))
+		if err := r.Blobs.Remove(rel); err != nil && !os.IsNotExist(err) {
+			flash(w, "err", "Remove "+name+": "+err.Error())
+		} else {
+			flash(w, "ok", "Removed bundle "+name+".")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 	}

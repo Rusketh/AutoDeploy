@@ -25,6 +25,15 @@ needs and define its detection rules and install steps.
 agent downloads every file into a per-package work directory on the target; in your install steps
 you reference each file by its bare filename and the agent resolves it to the on-disk path.
 
+**Package bundle (zip, auto-extracted).** For installers with many support files — or one that
+lives on a network share the deployed machine's **SYSTEM** account can't reach — upload a single
+**zip of everything the package needs**. The agent extracts it into the work directory *before*
+running steps, so you can reference any file inside it by its bare filename (e.g.
+`pc-client-admin-deploy.msi`). This is the reliable way to install from a UNC/SMB source: bring the
+files local instead of having the SYSTEM account authenticate to the share. Single-file uploads
+above and `unzip` install steps are unaffected — a bundle is auto-extracted, whereas an `unzip`
+step extracts a zip you reference to a destination you choose.
+
 **Dependencies.** A package can require other packages. They're installed before it and pulled in
 automatically even if not directly assigned to an image.
 
@@ -53,7 +62,10 @@ request a reboot). Step types:
 | powershell | Run a PowerShell script |
 
 Paths accept a bare uploaded filename, an absolute path, or Windows environment variables like
-`%ProgramFiles%`.
+`%ProgramFiles%` — these are expanded on the agent in **all** step paths, including **copy/unzip
+destinations** (so `%ProgramData%\Microsoft\Windows\Start Menu\...` resolves to the real folder).
+Copy and unzip **create the destination directory** if it doesn't exist, so dropping shortcuts or
+config into a not-yet-existing path just works.
 
 ![Editing a software package](../images/software-edit.png)
 

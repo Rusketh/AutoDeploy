@@ -3,6 +3,7 @@
 {{$new := .Data.IsNew}}
 {{$files := .Data.Files}}
 {{$hasfiles := gt (len $files) 0}}
+{{$bundles := .Data.Bundles}}
 <h2>{{if $new}}New software package{{else}}Edit software package: {{$p.Name}}{{end}}</h2>
 
 {{if not $new}}
@@ -59,6 +60,39 @@
     </form>
   </div>
   {{end}}
+</fieldset>
+
+<fieldset style="margin-bottom: var(--sp-4);">
+  <legend>Package bundle (zip, auto-extracted)</legend>
+  <p class="hint" style="margin-top:0;">
+    Upload <strong>one zip of everything the package needs</strong> — the agent extracts it into the package work directory <em>before</em> running steps, so you can reference any file inside it by its bare filename (e.g. <code>pc-client-admin-deploy.msi</code>). Ideal when an installer lives on a network share the deployed machine's <strong>SYSTEM</strong> account can't reach, or has too many support files to upload one by one. Single files above and <code>unzip</code> install steps still work as before.
+  </p>
+  {{if $bundles}}
+  <div class="tablewrap" style="margin-top: var(--sp-3);">
+    <table>
+      <thead><tr><th>Bundle</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
+      <tbody>
+        {{range $bundles}}
+        <tr>
+          <td><code style="font-size:0.95rem;">{{.Name}}</code></td>
+          <td class="num small muted">{{humanBytes .Size}}</td>
+          <td class="small muted">{{relTime .ModTime}}</td>
+          <td class="right">
+            <form method="POST" action="/portal/software/{{int64 $p.ID}}/bundle/{{.Name}}/delete"
+                  onsubmit="return confirm('Remove bundle {{.Name}} from this package?');" style="display:inline;">
+              <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+  <form class="std" style="margin-top: var(--sp-3);" method="POST" action="/portal/software/{{int64 $p.ID}}/bundle" enctype="multipart/form-data" data-upload-progress>
+    <label><span class="lbl">{{if $bundles}}Add another bundle{{else}}Upload a .zip bundle{{end}}</span><input type="file" name="file" accept=".zip,application/zip" required></label>
+    <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload bundle</button></div>
+  </form>
 </fieldset>
 {{end}}
 

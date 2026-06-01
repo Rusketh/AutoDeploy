@@ -505,11 +505,14 @@ type packageFile struct {
 // softwareItem mirrors the server's AgentSoftwareItem, shared by the
 // /software (legacy, by image-id) and /self (by agent-id) responses.
 type softwareItem struct {
-	PackageID      int64                  `json:"package_id"`
-	Name           string                 `json:"name"`
-	OrderValue     int64                  `json:"order_value"`
-	PayloadURL     string                 `json:"payload_url"`
-	Files          []packageFile          `json:"files,omitempty"`
+	PackageID  int64         `json:"package_id"`
+	Name       string        `json:"name"`
+	OrderValue int64         `json:"order_value"`
+	PayloadURL string        `json:"payload_url"`
+	Files      []packageFile `json:"files,omitempty"`
+	// Bundles are zip archives extracted into the package work dir before
+	// steps run, so their contents resolve by bare filename.
+	Bundles        []packageFile          `json:"bundles,omitempty"`
 	DetectionRules []swspec.DetectionRule `json:"detection_rules"`
 	InstallSteps   []swspec.InstallStep   `json:"install_steps"`
 }
@@ -564,8 +567,9 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		// Files list) fall back to the {payload} -> pkg-N.bin path.
 		pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
 		filesDir := filepath.Join(pkgDir, "files")
+		hasWorkdir := len(pkg.Files) > 0 || len(pkg.Bundles) > 0
 		var legacyPayloadPath string
-		if len(pkg.Files) > 0 {
+		if hasWorkdir {
 			if err := os.MkdirAll(filesDir, 0o755); err != nil {
 				log.Error("package.workdir",
 					slog.String("package", pkg.Name),
@@ -603,10 +607,49 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 					slog.String("file", pf.Name),
 					slog.String("path", fdst))
 			}
+			// Bundles: download each zip and extract it into the work dir so
+			// its contents resolve by bare filename. The unzip has zip-slip
+			// defence and creates directories as needed.
+			for _, bz := range pkg.Bundles {
+				url := bz.URL
+				if len(url) > 0 && url[0] == '/' {
+					url = f.server + url
+				}
+				zpath := filepath.Join(pkgDir, "bundle-"+bz.Name)
+				out, err := os.Create(zpath)
+				if err != nil {
+					log.Error("package.bundle.create",
+						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+						slog.String("error", err.Error()))
+					downloadOK = false
+					break
+				}
+				if err := c.Download(ctx, url, out); err != nil {
+					_ = out.Close()
+					log.Error("package.bundle.download",
+						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+						slog.String("error", err.Error()))
+					downloadOK = false
+					break
+				}
+				_ = out.Close()
+				if err := runner.Unzip(ctx, zpath, filesDir); err != nil {
+					log.Error("package.bundle.extract",
+						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+						slog.String("error", err.Error()))
+					downloadOK = false
+					break
+				}
+				log.Info("package.bundle.ok",
+					slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+					slog.String("dir", filesDir))
+			}
 			if !downloadOK {
 				continue
 			}
-			if len(pkg.Files) == 1 {
+			// A single plain file (no bundles) keeps the legacy {payload}
+			// convenience pointing at it.
+			if len(pkg.Files) == 1 && len(pkg.Bundles) == 0 {
 				legacyPayloadPath = filepath.Join(filesDir, pkg.Files[0].Name)
 			}
 		} else if pkg.PayloadURL != "" {
@@ -635,16 +678,17 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 				slog.String("path", legacyPayloadPath))
 		}
 
-		// Two-phase rewrite: substitute the legacy {payload} token, then
-		// resolve bare filenames against filesDir.
+		// Rewrite, in order: substitute the legacy {payload} token; resolve
+		// bare filenames against everything in the work dir (uploaded files +
+		// extracted bundle contents); then expand Windows %ENV% in path fields
+		// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
+		// the real location instead of a literal "%ProgramData%" folder.
 		rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
-		if len(pkg.Files) > 0 {
-			knownFiles := make(map[string]string, len(pkg.Files))
-			for _, pf := range pkg.Files {
-				knownFiles[pf.Name] = filepath.Join(filesDir, pf.Name)
-			}
+		if hasWorkdir {
+			knownFiles := mapWorkdirFiles(filesDir)
 			rewritten = resolveBareFilenames(rewritten, knownFiles)
 		}
+		rewritten = expandStepEnv(rewritten)
 
 		log.Info("package.install.start",
 			slog.String("actor", f.uuid),
@@ -1121,6 +1165,63 @@ func resolveBareFilenames(in []swspec.InstallStep, files map[string]string) []sw
 		out[i].MSIPath = resolveOne(out[i].MSIPath, files)
 		out[i].APPXPath = resolveOne(out[i].APPXPath, files)
 		out[i].ExePath = resolveOne(out[i].ExePath, files)
+	}
+	return out
+}
+
+// mapWorkdirFiles walks the package work dir and maps each file's BASENAME to
+// its absolute path, so a step can reference an uploaded file or a file from an
+// extracted bundle by bare name. On a basename collision the shallowest path
+// wins (a top-level installer beats a same-named file buried in a subfolder).
+func mapWorkdirFiles(dir string) map[string]string {
+	out := map[string]string{}
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil //nolint:nilerr // best-effort; unreadable entries are skipped
+		}
+		base := info.Name()
+		if existing, ok := out[base]; ok {
+			// Keep the shallower path (fewer separators).
+			if strings.Count(path, string(os.PathSeparator)) >= strings.Count(existing, string(os.PathSeparator)) {
+				return nil
+			}
+		}
+		out[base] = path
+		return nil
+	})
+	return out
+}
+
+// expandStepEnv expands Windows environment variables (%VAR%) in every install-
+// step path field, including copy/unzip DESTINATIONS. Go's own file ops don't
+// expand %VAR%, so without this a destination like %ProgramData%\... would be
+// taken literally and created in the wrong place. No-op off Windows.
+// envExpand is the function expandStepEnv applies; a package var so tests can
+// substitute a deterministic expander (the real one is platform-specific).
+var envExpand = expandEnv
+
+func expandStepEnv(in []swspec.InstallStep) []swspec.InstallStep {
+	out := make([]swspec.InstallStep, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].SourcePath = envExpand(out[i].SourcePath)
+		out[i].DestinationPath = envExpand(out[i].DestinationPath)
+		out[i].MSIPath = envExpand(out[i].MSIPath)
+		out[i].APPXPath = envExpand(out[i].APPXPath)
+		out[i].ExePath = envExpand(out[i].ExePath)
+		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs)
+		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs)
+	}
+	return out
+}
+
+func expandEnvAll(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = envExpand(s)
 	}
 	return out
 }
