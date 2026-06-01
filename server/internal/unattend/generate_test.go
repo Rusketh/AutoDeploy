@@ -398,32 +398,30 @@ func TestTargetOSCommentInHeader(t *testing.T) {
 	}
 }
 
-func TestNameStrategies(t *testing.T) {
-	cases := []struct {
-		strat, name, want string
-	}{
-		{"random", "ignored", "<ComputerName>*</ComputerName>"},
-		{"literal", "LAB-01", "<ComputerName>LAB-01</ComputerName>"},
-		// "prefix" is resolved to a concrete name server-side; at the
-		// generator level it must NEVER emit the invalid "PREFIX*" form.
-		// With no concrete name it falls back to fully-random "*".
-		{"prefix", "LAB", "<ComputerName>*</ComputerName>"},
-		// A literal strategy with an empty name also falls back to random
-		// rather than emitting an empty <ComputerName>.
-		{"literal", "", "<ComputerName>*</ComputerName>"},
+func TestNameTemplateGeneration(t *testing.T) {
+	// Empty template -> fully-random "*".
+	s := Defaults()
+	s.NameTemplate = ""
+	if x, _ := Generate(s); !strings.Contains(string(x), "<ComputerName>*</ComputerName>") {
+		t.Errorf("empty template should yield random *; got\n%s", x)
 	}
-	for _, tc := range cases {
-		s := Defaults()
-		s.NameStrategy = tc.strat
-		s.ComputerName = tc.name
-		x, _ := Generate(s)
-		if !strings.Contains(string(x), tc.want) {
-			t.Errorf("strategy %s name %q: missing %q in XML\n%s", tc.strat, tc.name, tc.want, x)
-		}
-		// The invalid partial-wildcard form must never appear.
-		if strings.Contains(string(x), tc.name+"*</ComputerName>") && tc.name != "" {
-			t.Errorf("strategy %s: emitted invalid PREFIX* form\n%s", tc.strat, x)
-		}
+	// Literal-only template -> verbatim.
+	s.NameTemplate = "LAB-01"
+	if x, _ := Generate(s); !strings.Contains(string(x), "<ComputerName>LAB-01</ComputerName>") {
+		t.Errorf("literal template lost; got\n%s", x)
+	}
+	// Machine-specific placeholders expand from NameIdentity.
+	s.NameTemplate = "PC-%serial(4)%"
+	s.NameIdentity = NameIdentity{Serial: "ABC123456"}
+	if x, _ := Generate(s); !strings.Contains(string(x), "<ComputerName>PC-3456</ComputerName>") {
+		t.Errorf("serial(4) expansion wrong; got\n%s", x)
+	}
+	// %random(N)% produces an N-char suffix and a valid (no '*') name.
+	s.NameTemplate = "LAB-%random(4)%"
+	s.NameIdentity = NameIdentity{}
+	x, _ := Generate(s)
+	if strings.Contains(string(x), "%random") || strings.Contains(string(x), "*</ComputerName>") {
+		t.Errorf("random template not expanded / left a wildcard; got\n%s", x)
 	}
 }
 
@@ -461,15 +459,35 @@ func TestDomainJoinIncluded(t *testing.T) {
 }
 
 func TestParseAppliesDefaults(t *testing.T) {
-	s, err := Parse(`{"computer_name":"LAB-01","name_strategy":"literal"}`)
+	s, err := Parse(`{"locale":"en-US"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Locale != "en-US" {
 		t.Errorf("default locale not applied: %+v", s)
 	}
-	if s.ComputerName != "LAB-01" {
-		t.Errorf("ComputerName lost: %+v", s)
+}
+
+func TestParseMigratesLegacyNaming(t *testing.T) {
+	// literal -> verbatim template.
+	s, _ := Parse(`{"computer_name":"LAB-01","name_strategy":"literal"}`)
+	if s.NameTemplate != "LAB-01" || s.NameStrategy != "" || s.ComputerName != "" {
+		t.Errorf("literal migration wrong: %+v", s)
+	}
+	// prefix -> "<name>%random(4)%" (NOT the invalid "<name>*").
+	s, _ = Parse(`{"computer_name":"BA-AUT-","name_strategy":"prefix"}`)
+	if s.NameTemplate != "BA-AUT-%random(4)%" {
+		t.Errorf("prefix migration = %q, want BA-AUT-%%random(4)%%", s.NameTemplate)
+	}
+	// random / empty -> empty template (fully-random name).
+	s, _ = Parse(`{"name_strategy":"random"}`)
+	if s.NameTemplate != "" {
+		t.Errorf("random migration should yield empty template, got %q", s.NameTemplate)
+	}
+	// An explicit new-style template is left untouched.
+	s, _ = Parse(`{"name_template":"PC-%uuid(6)%"}`)
+	if s.NameTemplate != "PC-%uuid(6)%" {
+		t.Errorf("new template clobbered: %q", s.NameTemplate)
 	}
 }
 

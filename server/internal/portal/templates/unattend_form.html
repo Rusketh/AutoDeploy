@@ -149,17 +149,20 @@
   </fieldset>
 
   <fieldset id="sec-name"><legend>8. Computer naming</legend>
-    <label><span class="lbl">Strategy</span>
-      <select name="name_strategy">
-        <option value="random"  {{if eq $s.NameStrategy "random"}}selected{{end}}>random (Windows default WIN-XXXXXXX)</option>
-        <option value="literal" {{if eq $s.NameStrategy "literal"}}selected{{end}}>literal (use the name below)</option>
-        <option value="prefix"  {{if eq $s.NameStrategy "prefix"}}selected{{end}}>prefix + Windows random suffix</option>
-      </select>
+    <label><span class="lbl">Name template</span>
+      <input type="text" name="name_template" value="{{$s.NameTemplate}}" placeholder="LAB-%random(4)%">
+      <span class="hint">Literal text plus placeholders, expanded per machine. Leave blank for a fully-random Windows name. Result is capped to 15 characters.</span>
     </label>
-    <label><span class="lbl">Computer name / prefix</span>
-      <input type="text" name="computer_name" value="{{$s.ComputerName}}" placeholder="LAB-01">
-      <span class="hint">Used by the literal and prefix strategies. The bulk-rename action can change it later.</span>
-    </label>
+    <div class="hint" style="margin-top:4px;">
+      Placeholders (case-insensitive):
+      <ul class="small" style="margin:4px 0 0 1.2em;">
+        <li><code>%random(N)%</code> — N random characters (default 6), e.g. <code>LAB-%random(4)%</code> → <code>LAB-7K2Q</code></li>
+        <li><code>%serial%</code> / <code>%serial(N)%</code> — SMBIOS serial, or its last N characters</li>
+        <li><code>%uuid%</code> / <code>%uuid(N)%</code> — SMBIOS UUID (hyphens removed), or its last N</li>
+        <li><code>%agent%</code> / <code>%agent(N)%</code> — the AutoDeploy machine ID</li>
+      </ul>
+      A specific machine's name (set on its inventory page) overrides this template.
+    </div>
   </fieldset>
 
   <fieldset id="sec-oobe"><legend>9. OOBE</legend>
