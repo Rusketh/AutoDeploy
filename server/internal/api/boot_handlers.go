@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -83,6 +84,15 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			// fires exactly once and the machine doesn't re-image on every
 			// subsequent network boot.
 			_ = r.Inventory.ClearReimagePending(req.Context(), m.ID)
+			// A (re)deploy rebuilds the OS, so the machine's previously
+			// reported runtime state is now stale. Reset it — software
+			// detection results, Windows-update compliance, and the agent
+			// job queue/results — so the portal shows the freshly-imaged
+			// machine accurately instead of carrying over data from its old
+			// OS. Deployment history and escrowed BitLocker keys are kept
+			// (audit/recovery). Best-effort: a cleanup hiccup must not block
+			// the deploy from starting.
+			clearReimagedState(req.Context(), r, m.ID)
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID, "deployment_id": id})
 			return
 		case "staged", "failed":
@@ -106,6 +116,24 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 		default:
 			http.Error(w, "status must be staging|staged|failed", http.StatusBadRequest)
 		}
+	}
+}
+
+// clearReimagedState resets the per-machine runtime state a (re)deploy
+// invalidates: software detection results, Windows-update compliance and
+// jobs, and bulk-job queue/results. Each step is best-effort and independent
+// so one repo being absent (nil) or erroring doesn't abort the others — the
+// deploy must proceed regardless. Deployment history and BitLocker escrow are
+// intentionally NOT touched.
+func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) {
+	if r.Inventory != nil {
+		_ = r.Inventory.ClearDetectedState(ctx, machineID)
+	}
+	if r.Bulk != nil {
+		_ = r.Bulk.DeleteJobsForMachine(ctx, machineID)
+	}
+	if r.Updates != nil {
+		_ = r.Updates.ClearMachineState(ctx, machineID)
 	}
 }
 

@@ -301,6 +301,16 @@ func (r *InventoryRepo) ClearReimagePending(ctx context.Context, machineID ID) e
 	return err
 }
 
+// ClearDetectedState deletes the machine's per-package software detection
+// results. Called when a (re)deploy is staged: the OS is being rebuilt, so
+// the last-known detection state from the previous install is stale. The
+// resident agent re-evaluates and re-reports after the new OS boots.
+func (r *InventoryRepo) ClearDetectedState(ctx context.Context, machineID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM machine_detected_state WHERE machine_id=?`, machineID)
+	return err
+}
+
 // ReimagePending reports whether the machine (by UUID) is flagged, and the
 // image to deploy (0 => use its binding). Used by the boot menu to decide
 // whether to auto-deploy.

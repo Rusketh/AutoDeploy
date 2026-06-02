@@ -309,6 +309,17 @@ func (r *BulkRepo) CompleteJob(ctx context.Context, jobID ID, status, resultJSON
 	return err
 }
 
+// DeleteJobsForMachine removes every bulk_job row for a machine. Called when
+// the machine is (re)imaged: queued jobs would otherwise run against the
+// freshly-built OS unexpectedly, and finished jobs' results describe an OS
+// that no longer exists. The parent bulk_operation rows (the operator's
+// fleet-wide intent) are left intact.
+func (r *BulkRepo) DeleteJobsForMachine(ctx context.Context, machineID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM bulk_job WHERE machine_id=?`, machineID)
+	return err
+}
+
 // ListOperations returns operations newest first.
 func (r *BulkRepo) ListOperations(ctx context.Context) ([]BulkOperation, error) {
 	rows, err := r.db.QueryContext(ctx, `
