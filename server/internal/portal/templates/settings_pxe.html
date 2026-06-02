@@ -79,11 +79,15 @@
   <code>arm64-sb/</code> subdirectory.
 </p>
 <p class="hint" style="background: var(--warn-soft, transparent);">
-  <strong>Note:</strong> under Secure Boot, the signed iPXE will only go
-  on to boot a <em>signed</em> kernel. The AutoDeploy boot-image kernel is
-  not yet signed, so the kernel stage currently needs Secure Boot off (or
-  the kernel enrolled). The shim still gives you a verified bootloader
-  today. See
+  <strong>End-to-end Secure Boot</strong> is verified bootloader →
+  kernel: <code>boot.ipxe</code> detects Secure Boot per machine and
+  registers the Microsoft-signed Ubuntu shim
+  (<code>autodeploy-shim.efi</code>, in the boot image) to verify the
+  Canonical-signed kernel. Ensure <code>autodeploy-shim.efi</code> is
+  present (re-run <code>fetch-ipxe.sh</code>). Caveats: only the kernel is
+  verified (not the initramfs), and under Secure Boot only signed
+  (Canonical) modules load — hardware needing out-of-tree drivers must
+  boot with Secure Boot off. See
   <a href="https://github.com/Rusketh/AutoDeploy/blob/main/docs/install/pxe-and-boot.md#uefi-secure-boot">PXE &amp; boot → Secure Boot</a>.
 </p>
 

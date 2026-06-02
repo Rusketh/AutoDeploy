@@ -39,10 +39,10 @@ firmware PXE/HTTP boot
 Because the bootstrap is served dynamically, the same signed iPXE binary works whether a machine
 boots over TFTP or UEFI HTTP — the server fills in the rest.
 
-On machines with **UEFI Secure Boot** enabled, one extra link is inserted at the front: the
-firmware loads a **Microsoft-signed shim** (`ipxe-shim.efi`), which verifies and launches
-`ipxe.efi` (signed with the iPXE CA the shim trusts). From there the chain is identical. See
-[UEFI Secure Boot](#uefi-secure-boot) below.
+On machines with **UEFI Secure Boot** enabled, the chain is signed end to end: the firmware loads a
+**Microsoft-signed shim** (`ipxe-shim.efi`) that verifies `ipxe.efi`, and `boot.ipxe` then uses a
+second Microsoft-signed shim to verify the Canonical-signed kernel. The same scripts handle SB-on,
+SB-off, and BIOS machines. See [UEFI Secure Boot](#uefi-secure-boot) below.
 
 ## What the server provides
 
@@ -157,25 +157,39 @@ the rest of the chain is identical.
 ## UEFI Secure Boot
 
 Modern machines often ship with **UEFI Secure Boot** enabled, which means the firmware will only
-launch a bootloader signed by a key it trusts. AutoDeploy ships the iPXE project's official signed
-release, so you can network-boot **without disabling Secure Boot** at the bootloader stage.
+launch code signed by a key it trusts. AutoDeploy ships the iPXE project's official signed release
+**and** a signed boot image, so you can network-boot and image **without disabling Secure Boot** —
+the chain is verified from firmware through to the kernel.
 
 ### How it works
 
-The trust chain has one extra link in front of iPXE:
+The trust chain is verified end to end — bootloader **and** kernel:
 
 ```
 firmware (Secure Boot on)
-  → loads ipxe-shim.efi      (a Microsoft-signed shim, trusted out of the box)
+  → loads ipxe-shim.efi        (Microsoft-signed iPXE shim, trusted out of the box)
   → shim verifies + loads ipxe.efi   (signed with the iPXE CA embedded in the shim)
-  → ipxe.efi fetches autoexec.ipxe and chainloads as usual
+  → ipxe.efi fetches autoexec.ipxe, chainloads boot.ipxe
+  → boot.ipxe sees Secure Boot is on and registers autodeploy-shim.efi
+       (a Microsoft-signed Ubuntu shim) via iPXE's `shim` command
+  → that shim verifies the Canonical-signed kernel, which boots and loads
+    the initramfs (autodeploy-boot)
 ```
 
-The shim is signed with the **Microsoft 3rd-Party UEFI CA**, which is enrolled by default on
-virtually all x86_64 machines — so no custom keys to enrol and no firmware changes. The shim
-decides which iPXE binary to load from the **filename it was handed**: `ipxe-shim.efi` loads
-`ipxe.efi`, and `snponly-shim.efi` loads `snponly.efi`. Both the shim and the iPXE binary it loads
-must live in the same directory (they do, by default).
+There are **two** Microsoft-signed shims in play, each trusted out of the box via the Microsoft
+3rd-Party UEFI CA — so no custom keys to enrol and no firmware changes:
+
+- `ipxe-shim.efi` (the iPXE project's shim) verifies **iPXE** itself. The shim picks which iPXE to
+  load from the **filename it was handed**: `ipxe-shim.efi` → `ipxe.efi`, `snponly-shim.efi` →
+  `snponly.efi`. Both must live in the same directory (they do, by default).
+- `autodeploy-shim.efi` (the Ubuntu shim, shipped in the boot image) verifies the **kernel**.
+  AutoDeploy's boot image uses Ubuntu's `linux-generic` kernel, which is **Canonical-signed** with
+  signed modules — so the kernel passes verification and its drivers load under Secure Boot.
+
+`boot.ipxe` detects Secure Boot **per machine** via the `${efi/SecureBoot}` UEFI variable, so the
+exact same script boots SB-on, SB-off, and legacy-BIOS machines — only SB machines take the shim
+path. (On the SB path iPXE may briefly print `Verification failed: Security Policy Violation`
+before the shim hand-off succeeds; this is a known cosmetic message.)
 
 ### What to hand out
 
@@ -189,20 +203,25 @@ Change only the DHCP **boot filename** for your UEFI clients:
 `next-server` (option 66) stays the same. On ARM64 with Secure Boot, use the shim under the
 `arm64-sb/` subdirectory (`arm64-sb/ipxe-shim.efi`).
 
-### Important: the kernel stage is not signed yet
+Make sure `fetch-ipxe.sh` has placed **`autodeploy-shim.efi`** in the iPXE directory — without it,
+the kernel stage can't be verified on Secure Boot machines. (Settings → PXE shows the boot files
+present.)
 
-A Secure-Boot-signed iPXE enforces the chain of trust **forwards**: it will only go on to boot a
-next stage that is itself signed. AutoDeploy's boot image (`autodeploy-kernel`) is **not yet
-signed**, so:
+### What it does and doesn't guarantee
 
-- The signed shim → iPXE chain works under Secure Boot today and gives you a **verified
-  bootloader**.
-- Booting the AutoDeploy kernel that iPXE chainloads still requires Secure Boot to be **off** (or
-  the kernel signed/enrolled via your own shim+MOK). Until a signed boot image ships, enable Secure
-  Boot for the bootloader stage but expect to disable it (or enrol the kernel) for the kernel to
-  load.
+- **It buys compatibility:** machines that mandate Secure Boot will network-boot and image without
+  anyone disabling firmware settings.
+- **It is not full pre-boot tamper-proofing.** Only the **kernel** is signature-verified; the
+  **initramfs and kernel command line are not**. An attacker who can tamper with the boot network
+  or the server's iPXE directory could alter them. Serve the boot environment over a trusted
+  network (and prefer HTTPS) accordingly.
+- **Kernel lockdown applies.** Under Secure Boot the kernel runs in lockdown and loads **only
+  signed (Canonical) modules**. `linux-generic` covers the common NIC / disk / hypervisor drivers,
+  but hardware that needs an out-of-tree or unsigned driver won't initialise under Secure Boot —
+  for those machines, boot with Secure Boot off (the same image works either way).
 
-This is the remaining step for fully end-to-end Secure Boot deployment and is tracked separately.
+> The Secure Boot path should be validated on real Secure-Boot hardware (or an OVMF VM with the
+> Microsoft keys enrolled) for your fleet, as firmware behaviour varies.
 
 ### Serving BIOS and UEFI from one DHCP scope
 

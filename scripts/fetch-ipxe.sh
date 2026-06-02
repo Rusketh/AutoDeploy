@@ -209,7 +209,11 @@ resolve_tag() {
 }
 resolve_tag
 
-BOOTIMG=("autodeploy-kernel" "autodeploy-initrd")
+# autodeploy-shim.efi is the Microsoft-signed Ubuntu shim used by the
+# boot.ipxe `shim` command to verify the kernel under UEFI Secure Boot.
+# Like the kernel/initrd it is a release-only asset; a missing one only
+# affects Secure Boot machines (a soft warning below).
+BOOTIMG=("autodeploy-kernel" "autodeploy-initrd" "autodeploy-shim.efi")
 bootimg_missing=0
 for f in "${BOOTIMG[@]}"; do
     if [ -n "$TAG" ]; then
@@ -225,9 +229,10 @@ for f in "${BOOTIMG[@]}"; do
     bootimg_missing=$((bootimg_missing+1))
 done
 if [ "$bootimg_missing" -gt 0 ]; then
-    echo "NOTE: Boot Client image incomplete. The PXE chain will load iPXE" >&2
-    echo "but have nothing to boot until autodeploy-kernel + autodeploy-initrd" >&2
-    echo "are present in $DATA_DIR. Re-run this with --tag vX.Y.Z once a release" >&2
+    echo "NOTE: Boot image asset(s) missing. iPXE will chainload but have" >&2
+    echo "nothing to boot until autodeploy-kernel + autodeploy-initrd are" >&2
+    echo "present in $DATA_DIR; autodeploy-shim.efi is additionally needed for" >&2
+    echo "UEFI Secure Boot machines. Re-run with --tag vX.Y.Z once a release" >&2
     echo "with those assets exists, or build them with build-initramfs.sh." >&2
 fi
 

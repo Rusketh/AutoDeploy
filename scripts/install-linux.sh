@@ -354,10 +354,11 @@ AutoDeploy is installed. Next steps:
      Change the password via Settings → Local accounts, then
      delete the bootstrap file.
 
-  5. The Boot Client kernel + initramfs were fetched automatically
-     into $DATA_DIR/ipxe/ as autodeploy-kernel + autodeploy-initrd.
+  5. The Boot Client image was fetched automatically into $DATA_DIR/ipxe/
+     as autodeploy-kernel + autodeploy-initrd, plus autodeploy-shim.efi
+     (the signed shim that verifies the kernel under UEFI Secure Boot).
      Verify:
-       ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd
+       ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd $DATA_DIR/ipxe/autodeploy-shim.efi
      If absent (older release), re-run fetch-ipxe.sh.
 
   6. Configure DHCP to hand out one official iPXE binary, pointing
@@ -370,9 +371,11 @@ AutoDeploy is installed. Next steps:
        - UEFI arm64:             ipxe-arm64.efi
      These come from the official signed iPXE release. See:
        docs/install/pxe-and-boot.md
-     NOTE: Secure Boot also requires a signed boot-image kernel; until
-     that lands the shim verifies iPXE but the kernel stage needs Secure
-     Boot off (or the kernel enrolled). See the doc above.
+     NOTE: Secure Boot is verified end to end (bootloader + kernel) via
+     the signed Ubuntu shim shipped in the boot image (autodeploy-shim.efi).
+     Caveats: only the kernel is verified (not the initramfs), and under
+     Secure Boot only signed modules load -- hardware needing out-of-tree
+     drivers must boot with Secure Boot off. See the doc above.
 
 Status: systemctl status autodeploy
 Logs:   journalctl -u autodeploy -f

@@ -197,6 +197,12 @@ chmod 0755 "$ROOTFS/usr/share/udhcpc/default.script"
 # and disks. The driver has to be loaded before we can DHCP the NIC --
 # that's what init does below; this section just ships the modules.
 #
+# NOTE (UEFI Secure Boot): a Secure-Boot kernel runs in lockdown and loads
+# only SIGNED modules. Build against a distro kernel whose modules are
+# signed by a key it trusts (e.g. Ubuntu's linux-generic -> Canonical-
+# signed) so they load on Secure Boot machines; out-of-tree / locally
+# built modules are refused under Secure Boot.
+#
 # We copy the whole modules tree (minus the build/source dev symlinks)
 # and re-run depmod against the staged root so modprobe can resolve
 # dependencies at boot. Copying everything trades initrd size for "it

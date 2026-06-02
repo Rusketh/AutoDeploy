@@ -39,9 +39,12 @@ is missing. See [Payloads → ISOs](../portal/payloads.md#isos).
 - Confirm the boot image (kernel + initramfs) is in place.
 - **UEFI Secure Boot:** if the firmware refuses the boot file (Secure Boot violation / "Access
   Denied"), hand out `ipxe-shim.efi` instead of `ipxe.efi` — the shim is Microsoft-signed. If iPXE
-  then loads but the **kernel** stage fails under Secure Boot, that's expected: the boot image is
-  not yet signed, so disable Secure Boot for the kernel stage (or enrol the kernel). See
-  [UEFI Secure Boot](../install/pxe-and-boot.md#uefi-secure-boot).
+  loads but the **kernel** stage then fails under Secure Boot, confirm `autodeploy-shim.efi` is
+  present in the iPXE directory (re-run `scripts/fetch-ipxe.sh`) — `boot.ipxe` needs it to verify
+  the kernel. A brief `Security Policy Violation` message before the kernel boots is cosmetic. If a
+  specific machine still fails to bring up its NIC/disk, its driver may be an unsigned/out-of-tree
+  module that kernel lockdown blocks under Secure Boot — boot that machine with Secure Boot off.
+  See [UEFI Secure Boot](../install/pxe-and-boot.md#uefi-secure-boot).
 - See [PXE & boot setup](../install/pxe-and-boot.md).
 
 ## A booting machine doesn't show the deploy menu
