@@ -78,12 +78,17 @@ func (s *Shipper) Enabled(ctx context.Context, lvl slog.Level) bool {
 	return s.base.Enabled(ctx, lvl)
 }
 
-// Handle writes the record through the underlying handler (so stdout
-// JSON still streams as before) AND queues a LogEvent for shipment.
+// Handle queues a LogEvent for shipment AND writes the record through
+// the underlying handler (so stdout/file JSON still streams).
+//
+// The event is buffered for shipment FIRST, before the local write.
+// Shipping records back to the server is the Shipper's entire reason to
+// exist, so a failure writing to the local sink must never cost us the
+// event. This matters under the Windows SCM: a service has no console,
+// so writes to os.Stdout fail -- if we buffered only on a successful
+// local write, every agent record would be dropped and the portal would
+// show no logs at all.
 func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
-	if err := s.base.Handle(ctx, r); err != nil {
-		return err
-	}
 	ev := LogEvent{
 		OccurredAt: r.Time,
 		Action:     r.Message,
@@ -116,6 +121,12 @@ func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
 		st.head = (st.head + 1) % cap
 	}
 	st.mu.Unlock()
+
+	// Write through to the local sink (stdout + rotating file) last. Its
+	// error is intentionally ignored: slog discards Handle errors anyway,
+	// and a dead local sink must not look like a logging failure now that
+	// the event is safely queued for shipment.
+	_ = s.base.Handle(ctx, r)
 	return nil
 }
 

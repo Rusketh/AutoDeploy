@@ -469,7 +469,7 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	if !resp.Join || resp.Domain == "" {
 		return false
 	}
-	if cur, joined := currentDomain(); joined && strings.EqualFold(cur, resp.Domain) {
+	if cur, joined := currentDomain(); joined && domainMatches(cur, resp.Domain) {
 		log.Info("domainjoin.already_member",
 			slog.String("current_domain", cur))
 		domainJoined = true // already a member of the target domain
@@ -493,6 +493,41 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	_, _ = runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", "AutoDeploy domain join"}, "")
 	return true
+}
+
+// domainMatches reports whether the machine's CURRENT domain (as read from
+// Win32_ComputerSystem.Domain -- typically the DNS FQDN, e.g.
+// "corp.example.com") refers to the same domain the operator configured for
+// the image, which may be given as the NetBIOS short name ("CORP") or the
+// FQDN. A bare case-insensitive equality misses the FQDN-vs-NetBIOS case, so
+// a machine that joined successfully is never recognised as a member: the
+// agent re-fetches credentials and re-attempts the join on every poll, and
+// (because a join schedules a reboot) the box can get stuck rebooting instead
+// of checking in. Matching the leading DNS label against the short name fixes
+// that without loosening the comparison to unrelated domains.
+func domainMatches(current, target string) bool {
+	current = strings.TrimSpace(current)
+	target = strings.TrimSpace(target)
+	if current == "" || target == "" {
+		return false
+	}
+	if strings.EqualFold(current, target) {
+		return true
+	}
+	// Two distinct FQDNs (both dotted) are genuinely different domains --
+	// never fuzzy-match them, or "corp.example.com" would wrongly equal
+	// "corp.contoso.com". The NetBIOS/FQDN reconciliation only applies when
+	// exactly one side is a bare short name (NetBIOS names carry no dots).
+	if strings.Contains(current, ".") && strings.Contains(target, ".") {
+		return false
+	}
+	firstLabel := func(s string) string {
+		if i := strings.IndexByte(s, '.'); i >= 0 {
+			return s[:i]
+		}
+		return s
+	}
+	return strings.EqualFold(firstLabel(current), firstLabel(target))
 }
 
 // hardwareReported guards reportHardwareOnce so the WMI sweep runs at most
