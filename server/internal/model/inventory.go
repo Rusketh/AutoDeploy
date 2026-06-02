@@ -561,6 +561,7 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 		`DELETE FROM bitlocker_recovery_key WHERE machine_id=?`,
 		`DELETE FROM machine_deploy_token WHERE machine_id=?`,
 		`DELETE FROM bulk_job WHERE machine_id=?`,
+		`DELETE FROM reimage_event WHERE machine_id=?`,
 		`DELETE FROM machine_record WHERE id=?`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {

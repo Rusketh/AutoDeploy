@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
@@ -107,6 +109,87 @@ func TestDeployStagingClearsReimagedState(t *testing.T) {
 	// Deployment history is preserved (the staging report itself adds a row).
 	if h, _ := inv.HistoryFor(ctx, m.ID); len(h) == 0 {
 		t.Error("deployment history should be preserved/created, got none")
+	}
+}
+
+// TestReimageRecordsHistoryAndPreservesPIN verifies that re-imaging a
+// remote-flagged machine records a re-image history event, clears the stale
+// recovery keys, and KEEPS the assigned BitLocker PIN (so the re-image
+// re-applies it). A first-time deploy, by contrast, records no event.
+func TestReimageRecordsHistoryAndPreservesPIN(t *testing.T) {
+	ctx := context.Background()
+	db, _ := storage.Open(ctx, ":memory:")
+	t.Cleanup(func() { _ = db.Close() })
+
+	isos := model.NewISORepo(db)
+	una := model.NewUnattendRepo(db)
+	imgs := model.NewImageRepo(db)
+	inv := model.NewInventoryRepo(db)
+	bx, err := secrets.Open("", filepath.Join(t.TempDir(), "k.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bl := model.NewBitLockerRepo(db, bx)
+	repos := Repos{
+		ISOs: isos, Unattend: una, Images: imgs, Inventory: inv, BitLocker: bl,
+		Resolver: resolve.New(imgs, isos, una),
+	}
+	mux := http.NewServeMux()
+	Register(mux, repos)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	iso, _ := isos.Create(ctx, model.ISO{Name: "W11", OSType: "windows-11"})
+	isoID := iso.ID
+	img, _ := imgs.Create(ctx, model.Image{Name: "lab", ISOID: &isoID})
+	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "ri-hist"})
+	_ = inv.UpsertBinding(ctx, model.MachineBinding{MachineID: m.ID, ImageID: &img.ID})
+
+	// Seed a BitLocker PIN + an escrowed recovery key from the prior install.
+	if err := bl.SetPIN(ctx, m.ID, "123456"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bl.EscrowRecoveryKey(ctx, m.ID, "OLD-RECOVERY-KEY", "deploy"); err != nil {
+		t.Fatal(err)
+	}
+
+	stage := func() {
+		sbody, _ := json.Marshal(map[string]any{
+			"identity": map[string]any{"system_uuid": "ri-hist"}, "status": "staging",
+		})
+		resp, _ := http.Post(srv.URL+"/api/v1/clients/deploy-status", "application/json", bytes.NewReader(sbody))
+		resp.Body.Close()
+	}
+
+	// First staging with NO re-image flag and no prior deploy = first install:
+	// no re-image event recorded.
+	stage()
+	if ev, _ := inv.ListReimageEvents(ctx, m.ID); len(ev) != 0 {
+		t.Fatalf("first install should record no re-image event, got %d", len(ev))
+	}
+
+	// Now flag a remote re-image and stage again.
+	if err := inv.SetReimagePending(ctx, m.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	stage()
+
+	events, _ := inv.ListReimageEvents(ctx, m.ID)
+	if len(events) != 1 {
+		t.Fatalf("want 1 re-image event after remote re-image, got %d", len(events))
+	}
+	if events[0].Source != model.ReimageSourceRemoteFlag {
+		t.Errorf("source = %q, want %q", events[0].Source, model.ReimageSourceRemoteFlag)
+	}
+
+	// Recovery keys are cleared (stale: the volume is rebuilt)...
+	if keys, _ := bl.ListRecoveryKeys(ctx, m.ID); len(keys) != 0 {
+		t.Errorf("recovery keys should be cleared on re-image, got %d", len(keys))
+	}
+	// ...but the assigned PIN is preserved so the re-image re-applies it.
+	pin, err := bl.RetrievePIN(ctx, m.ID)
+	if err != nil || pin != "123456" {
+		t.Errorf("PIN should be preserved across re-image: got %q err=%v", pin, err)
 	}
 }
 

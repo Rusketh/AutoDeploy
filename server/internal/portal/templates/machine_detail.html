@@ -180,6 +180,30 @@ function mActionChanged(sel){['rename','script','software_push','reimage'].forEa
 <p class="muted">No deployments recorded yet.</p>
 {{end}}
 
+<div class="section-head"><h3>Re-image history</h3><div class="line"></div></div>
+{{if .Data.Reimages}}
+<div class="tablewrap">
+<table data-sortable>
+  <thead><tr>
+    <th data-sort="num">When</th>
+    <th>Image</th>
+    <th>Triggered by</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Reimages}}
+    <tr>
+      <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
+      <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">bound image</span>{{end}}</td>
+      <td>{{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">This machine has not been re-imaged.</p>
+{{end}}
+
 <div class="section-head"><h3>Detected software state</h3><div class="line"></div></div>
 {{if .Data.Detected}}
 <div class="tablewrap">

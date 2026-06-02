@@ -74,6 +74,10 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 		}
 		switch in.Status {
 		case "staging":
+			// Classify the deploy as a re-image (and how it was triggered)
+			// BEFORE opening the new history row or clearing the remote flag,
+			// both of which would otherwise mask the signals.
+			reimageSource := reimageSourceFor(req.Context(), r, m.ID, in.Identity.SystemUUID)
 			// Open an in-progress deployment row the dashboard can show.
 			id, err := r.Inventory.RecordDeployment(req.Context(), m.ID, in.ImageID)
 			if err != nil {
@@ -84,6 +88,11 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			// fires exactly once and the machine doesn't re-image on every
 			// subsequent network boot.
 			_ = r.Inventory.ClearReimagePending(req.Context(), m.ID)
+			// Record one concise re-image history entry (only when this deploy
+			// actually rebuilds an existing machine, never on a first install).
+			if reimageSource != "" {
+				_ = r.Inventory.RecordReimageEvent(req.Context(), m.ID, in.ImageID, reimageSource)
+			}
 			// A (re)deploy rebuilds the OS, so the machine's previously
 			// reported runtime state is now stale. Reset it — software
 			// detection results, Windows-update compliance, and the agent
@@ -119,6 +128,27 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 	}
 }
 
+// reimageSourceFor classifies a staging deploy: "" for a first-time install,
+// or the trigger source when the machine is being re-imaged. A remote-flagged
+// machine is a remote re-image; otherwise a machine that already reached a
+// terminal deploy outcome is being rebuilt from the boot menu. Must be called
+// before the remote flag is cleared and before the new in_progress row is
+// opened.
+func reimageSourceFor(ctx context.Context, r Repos, machineID model.ID, uuid string) string {
+	if r.Inventory == nil {
+		return ""
+	}
+	if uuid != "" {
+		if pending, _, err := r.Inventory.ReimagePending(ctx, uuid); err == nil && pending {
+			return model.ReimageSourceRemoteFlag
+		}
+	}
+	if prior, err := r.Inventory.HasPriorDeployment(ctx, machineID); err == nil && prior {
+		return model.ReimageSourceBootMenu
+	}
+	return ""
+}
+
 // clearReimagedState resets the per-machine runtime state a (re)deploy
 // invalidates: software detection results, Windows-update compliance and
 // jobs, and bulk-job queue/results. Each step is best-effort and independent
@@ -134,6 +164,13 @@ func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) {
 	}
 	if r.Updates != nil {
 		_ = r.Updates.ClearMachineState(ctx, machineID)
+	}
+	// Drop escrowed BitLocker recovery keys — the wiped-and-re-encrypted
+	// volume gets a fresh key during the new deploy, so the old ones unlock
+	// a disk that no longer exists. The assigned PIN/password is kept so the
+	// re-image re-applies it to the device.
+	if r.BitLocker != nil {
+		_ = r.BitLocker.ClearRecoveryKeys(ctx, machineID)
 	}
 }
 
