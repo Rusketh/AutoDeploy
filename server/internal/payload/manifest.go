@@ -286,10 +286,14 @@ func (h *ManifestHandler) prepareAD(ctx context.Context, ua *model.Unattend, ide
 	settings, err := unattend.Parse(ua.SettingsJSON)
 	hasDomainJoin := err == nil && settings.DomainJoin != nil
 
-	// Also check the agent-driven join config for this image.
-	if !hasDomainJoin && h.DomainJoin != nil {
+	// Also check the agent-driven join config for this image, and capture
+	// its OU so we can fall back to it below. Agent-driven join (the common
+	// case) configures the OU once on the image rather than per-machine.
+	var imageJoinOU string
+	if h.DomainJoin != nil {
 		if cfg, derr := h.DomainJoin.Get(ctx, m.ImageID); derr == nil && cfg.Enabled && cfg.Domain != "" {
 			hasDomainJoin = true
+			imageJoinOU = cfg.OU
 		}
 	}
 	if !hasDomainJoin {
@@ -300,10 +304,23 @@ func (h *ManifestHandler) prepareAD(ctx context.Context, ua *model.Unattend, ide
 		return nil // no binding yet — nothing to prepare
 	}
 	binding, err := h.Inventory.GetBinding(ctx, machine.ID)
-	if err != nil || binding.MachineName == "" || binding.TargetOU == "" {
+	if err != nil || binding.MachineName == "" {
 		return nil
 	}
-	dn, err := h.AD.PrepareComputer(ctx, binding.MachineName, binding.TargetOU, binding.GroupMemberships)
+	// Effective OU: the per-machine binding overrides the image default,
+	// mirroring the domain-join credential handler. WITHOUT the image-level
+	// fallback, an agent-driven image (OU set on the image, no per-machine
+	// TargetOU) skipped AD cleanup entirely — so on a re-image the stale
+	// computer object survived and the agent's re-join failed with "access
+	// denied".
+	ou := binding.TargetOU
+	if ou == "" {
+		ou = imageJoinOU
+	}
+	if ou == "" {
+		return nil
+	}
+	dn, err := h.AD.PrepareComputer(ctx, binding.MachineName, ou, binding.GroupMemberships)
 	if err != nil {
 		return err
 	}
