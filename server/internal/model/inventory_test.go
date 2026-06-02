@@ -192,3 +192,53 @@ func TestDetectedStateUpsert(t *testing.T) {
 		t.Errorf("expected single not-detected row, got %+v", got)
 	}
 }
+
+// TestUpsertFromIdentityPreservesMakeModel guards the inventory make/model
+// display: the Boot Client reads SMBIOS make/model pre-boot, but the resident
+// agent (and other callers) later report an identity carrying only the UUID.
+// A UUID-only upsert must NOT wipe the previously captured SMBIOS fields.
+func TestUpsertFromIdentityPreservesMakeModel(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInventoryRepo(openTestDB(t))
+
+	// Boot Client captures full SMBIOS identity pre-boot.
+	full := match.Identity{
+		SystemUUID:         "mk-uuid",
+		SystemSerial:       "SN123",
+		SystemManufacturer: "Dell Inc.",
+		SystemProduct:      "Latitude 5520",
+		BIOSVendor:         "Dell",
+		BoardManufacturer:  "Dell",
+		BoardProduct:       "0ABCD",
+	}
+	if _, err := repo.UpsertFromIdentity(ctx, full); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resident agent checks in with only the UUID populated.
+	m, err := repo.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "mk-uuid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.SystemManufacturer != "Dell Inc." || m.SystemProduct != "Latitude 5520" {
+		t.Errorf("UUID-only upsert wiped make/model: got %q / %q",
+			m.SystemManufacturer, m.SystemProduct)
+	}
+	if m.SystemSerial != "SN123" || m.BoardProduct != "0ABCD" {
+		t.Errorf("UUID-only upsert wiped serial/board: got %q / %q",
+			m.SystemSerial, m.BoardProduct)
+	}
+
+	// A real SMBIOS report with changed (non-empty) values still updates.
+	m, err = repo.UpsertFromIdentity(ctx, match.Identity{
+		SystemUUID:         "mk-uuid",
+		SystemManufacturer: "Dell Inc.",
+		SystemProduct:      "Latitude 5530",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.SystemProduct != "Latitude 5530" {
+		t.Errorf("non-empty update did not apply: got %q", m.SystemProduct)
+	}
+}
