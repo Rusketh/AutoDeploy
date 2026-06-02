@@ -208,12 +208,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	pl.Register(mux)
 
 	mh := &payload.ManifestHandler{
-		Resolver:  r.Resolver,
-		AD:        adSvc,
-		Inventory: r.Inventory,
-		Unattend:  r.Unattend,
-		Software:  r.Software,
-		Mirrors:   r.Mirrors,
+		Resolver:   r.Resolver,
+		AD:         adSvc,
+		Inventory:  r.Inventory,
+		Unattend:   r.Unattend,
+		Software:   r.Software,
+		Mirrors:    r.Mirrors,
+		DomainJoin: r.DomainJoin,
 	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
 	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())

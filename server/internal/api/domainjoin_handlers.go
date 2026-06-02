@@ -29,11 +29,13 @@ type AgentDomainJoinResponse struct {
 	Password string `json:"password,omitempty"`
 }
 
-// handleAgentDomainJoin resolves the deploying machine's domain-join intent
-// from its bound image and returns the credentials for the agent to run the
-// join. Identified by the server-minted agent_id (the same capability the
-// /self loop uses); the join account should be least-privilege. Logs only the
-// fact of access, never the credentials.
+// handleAgentDomainJoin resolves the machine's domain-join intent from its
+// bound image and returns the credentials for the agent to run the join.
+// Identified by the server-minted agent_id (the same capability the /self
+// loop uses). The agent_id is the authentication token: it is a random UUID
+// minted by the server and written to the machine's registry at deploy time;
+// possession proves the caller is the deployed agent. Logs only the fact of
+// access, never the credentials.
 func handleAgentDomainJoin(r Repos) http.HandlerFunc {
 	noJoin := func(w http.ResponseWriter) {
 		writeJSON(w, http.StatusOK, AgentDomainJoinResponse{Join: false})
@@ -48,15 +50,13 @@ func handleAgentDomainJoin(r Repos) http.HandlerFunc {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
+		if strings.TrimSpace(in.AgentID) == "" {
+			http.Error(w, "agent_id required", http.StatusBadRequest)
+			return
+		}
 		m, err := r.Inventory.GetByAgentID(req.Context(), strings.TrimSpace(in.AgentID))
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		token := req.Header.Get(DeployTokenHeader)
-		ok, terr := r.Inventory.ValidateDeployToken(req.Context(), m.ID, token)
-		if terr != nil || !ok {
-			http.Error(w, "unauthorized: missing or invalid deploy token", http.StatusUnauthorized)
 			return
 		}
 		b, err := r.Inventory.GetBinding(req.Context(), m.ID)

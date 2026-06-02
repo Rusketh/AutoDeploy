@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -40,10 +39,6 @@ func TestAgentDomainJoinEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := inv.IssueDeployToken(ctx, m.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
 	img, err := images.Create(ctx, model.Image{Name: "win11-dj"})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +49,6 @@ func TestAgentDomainJoinEndpoint(t *testing.T) {
 		req, _ := http.NewRequest("POST", srv.URL+"/api/v1/agent/domain-join",
 			strings.NewReader(`{"agent_id":"`+m.AgentID+`"}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(DeployTokenHeader, token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

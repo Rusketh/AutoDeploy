@@ -64,6 +64,10 @@ type ManifestHandler struct {
 	// Mirrors lets the handler rewrite payload URLs to a site-local
 	// mirror. Nil disables mirror routing.
 	Mirrors *model.PayloadMirrorRepo
+	// DomainJoin stores per-image agent-driven AD join config. When set,
+	// prepareAD also fires for images that use agent-driven join (even
+	// when the unattend itself has no legacy DomainJoin block).
+	DomainJoin *model.DomainJoinRepo
 }
 
 // SiteHeader is the HTTP header the Boot Client / agent sets to tell
@@ -274,10 +278,21 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 
 // prepareAD inspects the resolved unattend for a domain_join section and,
 // if one is configured and the machine has a binding, calls the Domain
-// Integration Service to delete-and-replace the computer object.
+// Integration Service to delete-and-replace the computer object. Also
+// fires for agent-driven join (image_domain_join.enabled) even when the
+// unattend itself has no legacy DomainJoin block — the old AD object must
+// still be cleaned up before the agent re-joins.
 func (h *ManifestHandler) prepareAD(ctx context.Context, ua *model.Unattend, identity match.Identity, m *Manifest) error {
 	settings, err := unattend.Parse(ua.SettingsJSON)
-	if err != nil || settings.DomainJoin == nil {
+	hasDomainJoin := err == nil && settings.DomainJoin != nil
+
+	// Also check the agent-driven join config for this image.
+	if !hasDomainJoin && h.DomainJoin != nil {
+		if cfg, derr := h.DomainJoin.Get(ctx, m.ImageID); derr == nil && cfg.Enabled && cfg.Domain != "" {
+			hasDomainJoin = true
+		}
+	}
+	if !hasDomainJoin {
 		return nil
 	}
 	machine, err := h.Inventory.GetByUUID(ctx, identity.SystemUUID)
