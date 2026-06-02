@@ -4,10 +4,10 @@ import "testing"
 
 func TestFilterMatchesSystemSKU(t *testing.T) {
 	id := Identity{SystemManufacturer: "Dell Inc.", SystemProduct: "Latitude 5520", SystemSKU: "0A1B"}
-	if !(Filter{"system_sku": "0A1B"}).Matches(id) {
+	if !(Filter{"system_sku": {"0A1B"}}).Matches(id) {
 		t.Error("system_sku should match")
 	}
-	if (Filter{"system_sku": "ZZZZ"}).Matches(id) {
+	if (Filter{"system_sku": {"ZZZZ"}}).Matches(id) {
 		t.Error("wrong system_sku should not match")
 	}
 	// system_sku must be an allowed filter key (else ParseFilter rejects it).

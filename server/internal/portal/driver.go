@@ -69,11 +69,19 @@ func driverForm(r Repos, p model.DriverPackage, isNew bool) http.HandlerFunc {
 func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model.DriverPackage, isNew bool, preview map[string]any, extractMsg string) {
 	uf := make([]uiFilter, 0, len(p.Filters))
 	for _, f := range p.Filters {
-		var m map[string]string
-		_ = json.Unmarshal([]byte(f.FilterJSON), &m)
+		// A key may carry several values; render one editable row per
+		// value so the operator can see and tweak each one. Repeated rows
+		// for the same key are regrouped into an array on save.
+		parsed, _ := match.ParseFilter(f.FilterJSON)
 		u := uiFilter{ID: f.ID}
-		for k, v := range m {
-			u.Pairs = append(u.Pairs, uiPair{Key: k, Value: v})
+		for k, vs := range parsed {
+			if len(vs) == 0 {
+				u.Pairs = append(u.Pairs, uiPair{Key: k, Value: ""})
+				continue
+			}
+			for _, v := range vs {
+				u.Pairs = append(u.Pairs, uiPair{Key: k, Value: v})
+			}
 		}
 		uf = append(uf, u)
 	}
@@ -203,22 +211,64 @@ func buildDriverFromForm(req *http.Request) (model.DriverPackage, error) {
 	for _, idx := range req.Form["filter_index[]"] {
 		keys := req.Form["filter_keys_"+idx+"[]"]
 		vals := req.Form["filter_vals_"+idx+"[]"]
-		m := map[string]string{}
+		// Group values by key so a key listed several times (e.g. three
+		// models sharing this package) becomes one constraint with several
+		// acceptable values rather than silently keeping only the last.
+		grouped := map[string][]string{}
+		var order []string
 		for i := 0; i < len(keys) && i < len(vals); i++ {
 			k := strings.TrimSpace(keys[i])
 			v := strings.TrimSpace(vals[i])
 			if k == "" {
 				continue
 			}
-			m[k] = v
+			if _, seen := grouped[k]; !seen {
+				order = append(order, k)
+			}
+			grouped[k] = append(grouped[k], v)
 		}
-		if len(m) == 0 {
+		if len(grouped) == 0 {
 			continue
 		}
-		raw, _ := json.Marshal(m)
+		// Build the filter object. A single value serialises as a bare
+		// string (compact and backward compatible); multiple values
+		// serialise as an array. Duplicate and empty values are dropped,
+		// but a key with only a blank value is kept as a "" wildcard.
+		obj := map[string]any{}
+		for _, k := range order {
+			vs := dedupeNonEmpty(grouped[k])
+			switch len(vs) {
+			case 0:
+				obj[k] = ""
+			case 1:
+				obj[k] = vs[0]
+			default:
+				obj[k] = vs
+			}
+		}
+		raw, _ := json.Marshal(obj)
 		pkg.Filters = append(pkg.Filters, model.DriverFilter{FilterJSON: string(raw)})
 	}
 	return pkg, nil
+}
+
+// dedupeNonEmpty drops blank entries and case-insensitive duplicates while
+// preserving the first-seen order.
+func dedupeNonEmpty(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v == "" {
+			continue
+		}
+		key := strings.ToLower(v)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 func driverCreate(r Repos) http.HandlerFunc {

@@ -84,7 +84,7 @@ Extraction/boot-media fields (`install_image_format`, `swm_parts`, `bootloader_p
 |-------|----------|-------|
 | `name` | yes | Unique. |
 | `description` | no | |
-| `filters` | no | Array of `{ "filter_json": "<SMBIOS match JSON>" }`. Each `filter_json` is a JSON object of SMBIOS match keys. |
+| `filters` | no | Array of `{ "filter_json": "<SMBIOS match JSON>" }`. Each `filter_json` is a JSON object of SMBIOS match keys. A key's value may be a single string or an array of strings (matched as OR), e.g. `{"system_product":["Latitude 5520","Latitude 5530"]}`. |
 | `storage_path`, `size_bytes` | no | Managed as the package is uploaded. |
 
 ## Software

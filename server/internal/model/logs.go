@@ -165,13 +165,73 @@ func (r *LogRepo) Search(ctx context.Context, s LogSearch) ([]LogEvent, error) {
 	var out []LogEvent
 	for rows.Next() {
 		var v LogEvent
-		if err := rows.Scan(&v.ID, &v.OccurredAt, &v.Component, &v.Level,
+		var ts scanTime
+		if err := rows.Scan(&v.ID, &ts, &v.Component, &v.Level,
 			&v.Actor, &v.Action, &v.Target, &v.Fields); err != nil {
 			return nil, err
 		}
+		v.OccurredAt = ts.Time
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// scanTime reads a timestamp column tolerantly. The pure-Go SQLite driver
+// only auto-parses a narrow set of DATETIME layouts; for any other stored
+// string (or an empty value) it hands back the raw string, which then fails
+// a direct scan into *time.Time with "unsupported Scan". Routing occurred_at
+// through scanTime keeps the Logs page working regardless of how a row's
+// timestamp was written.
+type scanTime struct{ Time time.Time }
+
+func (s *scanTime) Scan(v any) error {
+	switch x := v.(type) {
+	case nil:
+		s.Time = time.Time{}
+	case time.Time:
+		s.Time = x
+	case []byte:
+		s.Time = parseDBTime(string(x))
+	case string:
+		s.Time = parseDBTime(x)
+	case int64:
+		s.Time = time.Unix(x, 0).UTC()
+	default:
+		return fmt.Errorf("unsupported timestamp value of type %T", v)
+	}
+	return nil
+}
+
+// dbTimeLayouts are the formats a stored timestamp might appear in: the Go
+// driver's own DATETIME forms, RFC 3339 (what clients ship), the SQLite text
+// default from CURRENT_TIMESTAMP, and Go's time.Time.String() output.
+var dbTimeLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999Z07:00",
+	"2006-01-02 15:04:05.999999999 -0700 MST",
+	"2006-01-02 15:04:05 -0700 MST",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02",
+}
+
+// parseDBTime turns a stored timestamp string into a time.Time, trying each
+// known layout. An empty or unrecognised value yields the zero time rather
+// than failing the whole query — one odd row should not break the page.
+func parseDBTime(str string) time.Time {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return time.Time{}
+	}
+	for _, layout := range dbTimeLayouts {
+		if t, err := time.Parse(layout, str); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // Prune deletes events older than cutoff. Returns the number removed.
