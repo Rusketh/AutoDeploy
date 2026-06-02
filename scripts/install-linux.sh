@@ -310,17 +310,6 @@ else
     echo "  is installed at /usr/local/sbin/autodeploy-update." >&2
 fi
 
-# Install the embedded-iPXE build helper alongside the binary. It's
-# not run automatically (the build pulls in ~300 MB of apt deps and
-# takes a few minutes) but operators on UniFi / OPNsense / consumer
-# routers that can't do conditional DHCP will need it -- the next-
-# steps banner below tells them so.
-EMBED_SRC="$HERE/build-embedded-ipxe.sh"
-if [ -f "$EMBED_SRC" ]; then
-    install -m 0755 "$EMBED_SRC" /usr/local/sbin/autodeploy-build-embedded-ipxe
-    echo "    installed /usr/local/sbin/autodeploy-build-embedded-ipxe"
-fi
-
 systemctl daemon-reload || true
 
 cat <<EOF
@@ -371,12 +360,19 @@ AutoDeploy is installed. Next steps:
        ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd
      If absent (older release), re-run fetch-ipxe.sh.
 
-  6. Configure DHCP to hand out one stock iPXE binary: undionly.kpxe
-     (BIOS) or ipxe.efi / snponly.efi (UEFI). The server serves
-     autoexec.ipxe, so no conditional DHCP and no custom-built binary
-     are needed -- just point next-server (option 66) at this host.
-     Best place to start:
-       docs/user-guide/tutorial-02-pxe.md
+  6. Configure DHCP to hand out one official iPXE binary, pointing
+     next-server (option 66) at this host. The server serves
+     autoexec.ipxe dynamically, so no conditional DHCP and no
+     custom-built binary are needed:
+       - Legacy BIOS:            undionly.kpxe
+       - UEFI x64:               ipxe.efi  (snponly.efi for some NICs)
+       - UEFI x64 + Secure Boot: ipxe-shim.efi  (Microsoft-signed shim)
+       - UEFI arm64:             ipxe-arm64.efi
+     These come from the official signed iPXE release. See:
+       docs/install/pxe-and-boot.md
+     NOTE: Secure Boot also requires a signed boot-image kernel; until
+     that lands the shim verifies iPXE but the kernel stage needs Secure
+     Boot off (or the kernel enrolled). See the doc above.
 
 Status: systemctl status autodeploy
 Logs:   journalctl -u autodeploy -f

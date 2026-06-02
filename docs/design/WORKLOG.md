@@ -2542,3 +2542,49 @@ override and enable/disable; generator suppression vs legacy emission.
 
 **NEXT.** Optional: agent-set AD group memberships; a per-image "test join"
 button; surface last join status on the machine page.
+
+---
+
+## 2026-06-02 — Migrate to official signed iPXE (UEFI Secure Boot)
+
+**WHAT.** Replaced AutoDeploy's custom, script-embedded iPXE builds with the
+iPXE project's **official signed release** (`ipxeboot.tar.gz`). `fetch-ipxe.sh`
+now downloads that archive and lays the binaries out in the iPXE dir with our
+serving names: signed `ipxe.efi`/`snponly.efi`, the Microsoft-signed shim as
+`shimx64.efi` + `ipxe-shim.efi`/`snponly-shim.efi` (one binary, three names —
+the shim picks its second stage from the name it's invoked as), BIOS
+`undionly.kpxe`/`ipxe.pxe`, `ipxe-arm64.efi`, and an `arm64-sb/` subdir for
+arm64 Secure Boot. Removed `.github/workflows/build-ipxe.yml` and
+`scripts/build-embedded-ipxe.sh`; dropped the embedded-build helper from
+`install-linux.sh`. Portal Settings → PXE now shows a **Secure Boot** column
+(MS-signed shim / iPXE-signed / n/a) instead of the old "Embedded?" marker, and
+the DHCP snippets gained Secure Boot bootfile guidance. Docs updated
+(`install/pxe-and-boot.md` gains a UEFI Secure Boot section, `portal/settings.md`,
+`operations/troubleshooting.md`).
+
+**WHY (assumptions / decisions).**
+- The embedded script was already redundant: the server serves `autoexec.ipxe`
+  dynamically (HTTP route + TFTP synth), so stock binaries chainload to
+  AutoDeploy on their own. Embedding also modifies the binary, which is
+  fundamentally incompatible with code signing — the blocker for Secure Boot.
+- iPXE v2.0.0+ ships a Microsoft-3rd-Party-UEFI-CA-signed shim that verifies and
+  loads an iPXE-CA-signed `ipxe.efi`. Chaining shim → ipxe.efi keeps the Secure
+  Boot chain intact with no key enrolment.
+- DECISION: flat layout using the SB-signed `ipxe.efi` as the default UEFI
+  binary — it boots directly when Secure Boot is off and via the shim when it's
+  on, so one file covers both. arm64 SB needs its own `ipxe.efi` next to its
+  shim, which collides with the x86_64 name in a flat dir, so it lives under
+  `arm64-sb/`.
+- KNOWN LIMITATION / NEXT: under Secure Boot, signed iPXE will only boot a
+  *signed* next stage. The boot image (`autodeploy-kernel`) is not yet signed,
+  so end-to-end Secure Boot still needs the kernel stage handled (signed kernel
+  / shim+MOK) or Secure Boot off for that stage. Documented prominently; the
+  signed shim still delivers a verified bootloader today.
+
+**STATE.** `go build ./...` green; `go test ./internal/portal/... ./internal/api/...
+./internal/tftp/...` green. `fetch-ipxe.sh` verified end-to-end against the real
+`ipxeboot.tar.gz` (correct files placed, sha256 sidecars written). Real PXE/
+Secure Boot boot not exercised in CI (no hardware/VM in this environment).
+
+**NEXT.** Sign the boot image (kernel) for full end-to-end Secure Boot; consider
+surfacing `arm64-sb/` contents in the portal PXE table.

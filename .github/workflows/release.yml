@@ -240,7 +240,7 @@ jobs:
             echo "**autodeploy-extras.tar.gz** — operator helpers and docs:"
             echo "- \`scripts/install-linux.sh\` — one-shot Linux installer (binary, system user, systemd unit, iPXE)."
             echo "- \`scripts/initramfs/build-initramfs.sh\` — assemble the Boot Client initramfs."
-            echo "- \`scripts/fetch-ipxe.sh\` — fetch iPXE bootstrap binaries (\`undionly.kpxe\`, \`ipxe.efi\`, …)."
+            echo "- \`scripts/fetch-ipxe.sh\` — fetch the official signed iPXE binaries (\`undionly.kpxe\`, \`ipxe.efi\`, \`ipxe-shim.efi\` for Secure Boot, …) and the boot image."
             echo "- \`scripts/systemd/\` — production systemd unit and example env file."
             echo "- \`scripts/windows/\` — Windows installer + uninstaller + backup (PowerShell) and env-file template."
             echo "- \`scripts/backup.sh\` — consistent backup of the SQLite store, secrets key, TLS material."

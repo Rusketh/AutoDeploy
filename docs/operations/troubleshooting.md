@@ -37,6 +37,11 @@ is missing. See [Payloads → ISOs](../portal/payloads.md#isos).
 - Verify DHCP points network clients at AutoDeploy's iPXE bootstrap and that the iPXE binaries are
   present under `<data-dir>/ipxe/` (re-run `scripts/fetch-ipxe.sh` if needed).
 - Confirm the boot image (kernel + initramfs) is in place.
+- **UEFI Secure Boot:** if the firmware refuses the boot file (Secure Boot violation / "Access
+  Denied"), hand out `ipxe-shim.efi` instead of `ipxe.efi` — the shim is Microsoft-signed. If iPXE
+  then loads but the **kernel** stage fails under Secure Boot, that's expected: the boot image is
+  not yet signed, so disable Secure Boot for the kernel stage (or enrol the kernel). See
+  [UEFI Secure Boot](../install/pxe-and-boot.md#uefi-secure-boot).
 - See [PXE & boot setup](../install/pxe-and-boot.md).
 
 ## A booting machine doesn't show the deploy menu

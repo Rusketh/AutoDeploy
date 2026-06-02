@@ -10,11 +10,13 @@ import (
 // clients:
 //
 //   - /autoexec.ipxe — the bootstrap. STOCK, unmodified iPXE binaries
-//     (boot.ipxe.org, distro packages, AutoDeploy's CI builds) probe
-//     for this file automatically right after they come up, over the
-//     same transport they booted from. Serving it means operators never
-//     have to build a custom iPXE with a script embedded — the binary
-//     stays generic and the server supplies the brains. The TFTP server
+//     (the iPXE project's official signed release, distro packages)
+//     probe for this file automatically right after they come up, over
+//     the same transport they booted from. Serving it means operators
+//     never have to build a custom iPXE with a script embedded — the
+//     binary stays generic (and its signature stays valid, which is what
+//     makes UEFI Secure Boot work) and the server supplies the brains.
+//     The TFTP server
 //     synthesises the same script for TFTP-booted clients (see
 //     IPXEAutoexecNextServer); this HTTP route covers UEFI HTTP Boot,
 //     where iPXE fetches autoexec.ipxe over HTTP from the URL it was

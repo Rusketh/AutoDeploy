@@ -186,8 +186,9 @@ A setup-and-diagnostics hub for the network-boot chain.
 It shows:
 
 - **iPXE binaries** currently served from the iPXE directory (filename, purpose, size, SHA-256,
-  last modified) with per-file download buttons, and a warning if the built-in TFTP listener isn't
-  configured.
+  Secure Boot role, last modified) with per-file download buttons, and a warning if the built-in
+  TFTP listener isn't configured. The binaries are the iPXE project's official signed builds,
+  including the Microsoft-signed Secure Boot shim (`ipxe-shim.efi`).
 - **DHCP configuration snippets** for common platforms (UniFi, dnsmasq, ISC dhcpd, Microsoft DHCP,
   OPNsense/pfSense), each pre-filled with this server's IP and copy-to-clipboard ready.
 - A **verification** recipe to confirm the chain works end-to-end.

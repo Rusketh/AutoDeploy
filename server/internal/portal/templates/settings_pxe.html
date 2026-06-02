@@ -36,7 +36,7 @@
     <th>Purpose</th>
     <th class="num">Size</th>
     <th>SHA-256</th>
-    <th>Embedded?</th>
+    <th>Secure Boot</th>
     <th>Modified</th>
     <th></th>
   </tr></thead>
@@ -47,7 +47,12 @@
       <td class="small">{{.Purpose}}</td>
       <td class="num small muted">{{humanBytes .Size}}</td>
       <td class="small muted">{{if .SHA256}}<code>{{slice .SHA256 0 12}}…</code><button class="copy" data-copy="{{.SHA256}}" aria-label="Copy SHA-256"><svg><use href="#i-copy"/></svg></button>{{else}}—{{end}}</td>
-      <td>{{if .HasEmbedded}}<span class="badge ok"><svg><use href="#i-check"/></svg>yes</span>{{else}}<span class="badge warn">vanilla</span>{{end}}</td>
+      <td>
+        {{if eq .SecureBoot "shim"}}<span class="badge ok"><svg><use href="#i-check"/></svg>MS-signed shim</span>
+        {{else if eq .SecureBoot "signed"}}<span class="badge ok">iPXE-signed</span>
+        {{else if eq .SecureBoot "n/a"}}<span class="badge">n/a (BIOS)</span>
+        {{else}}—{{end}}
+      </td>
       <td class="small muted">{{relTime .Modified}}</td>
       <td class="right"><a class="btn ghost sm" href="/portal/settings/pxe/download/{{.Name}}" title="Download {{.Name}}"><svg><use href="#i-download"/></svg></a></td>
     </tr>
@@ -57,16 +62,29 @@
 </div>
 
 <p class="hint" style="margin-top:var(--sp-3);">
-  <strong>Either kind works.</strong> This server serves an
-  <code>autoexec.ipxe</code> bootstrap (over TFTP and HTTP) that any
-  stock iPXE binary fetches and runs on boot — so you do
-  <strong>not</strong> need a custom-built binary or conditional
-  DHCP. The <strong>Embedded?</strong> column just notes whether a
-  binary also carries its own baked-in copy of that script
-  (harmless either way); <strong>vanilla</strong> upstream binaries
-  bootstrap exactly the same via the served <code>autoexec.ipxe</code>.
-  Just point DHCP's next-server (option 66) at this host and hand out
-  one binary.
+  <strong>These are the official, signed iPXE binaries.</strong> This
+  server serves an <code>autoexec.ipxe</code> bootstrap (over TFTP and
+  HTTP) that the stock signed iPXE fetches and runs on boot — so you do
+  <strong>not</strong> need a custom-built binary or conditional DHCP.
+  Just point DHCP's next-server (option 66) at this host and hand out one
+  binary.
+</p>
+<p class="hint">
+  <strong>UEFI Secure Boot:</strong> hand out <code>ipxe-shim.efi</code>
+  (a <em>Microsoft-signed</em> shim) instead of <code>ipxe.efi</code>.
+  The shim verifies and loads <code>ipxe.efi</code> (use
+  <code>snponly-shim.efi</code> to load <code>snponly.efi</code>); both
+  must stay in this directory. With Secure Boot <em>off</em>, hand out
+  <code>ipxe.efi</code> directly. arm64 Secure Boot uses the
+  <code>arm64-sb/</code> subdirectory.
+</p>
+<p class="hint" style="background: var(--warn-soft, transparent);">
+  <strong>Note:</strong> under Secure Boot, the signed iPXE will only go
+  on to boot a <em>signed</em> kernel. The AutoDeploy boot-image kernel is
+  not yet signed, so the kernel stage currently needs Secure Boot off (or
+  the kernel enrolled). The shim still gives you a verified bootloader
+  today. See
+  <a href="https://github.com/Rusketh/AutoDeploy/blob/main/docs/install/pxe-and-boot.md#uefi-secure-boot">PXE &amp; boot → Secure Boot</a>.
 </p>
 
 {{else}}
@@ -76,9 +94,9 @@
   <p>Expected files in <code>{{.Data.IPXEDir}}</code>. Run the
   fetch helper to grab them:</p>
   <pre style="text-align:left; max-width: 720px; margin: var(--sp-3) auto;">{{if .Data.FetchHelperPath}}sudo {{.Data.FetchHelperPath}}{{else}}sudo /etc/autodeploy/scripts/fetch-ipxe.sh{{end}}</pre>
-  <p class="small muted">Pre-built embedded binaries are pulled from
-  the matching GitHub release first, then boot.ipxe.org as a
-  fallback.</p>
+  <p class="small muted">The official signed iPXE binaries (including
+  the Microsoft-signed Secure Boot shim) are pulled from the iPXE
+  project's release archive.</p>
 </div>
 {{end}}
 
@@ -100,7 +118,8 @@
     <thead><tr><th>Fleet</th><th>Boot File</th></tr></thead>
     <tbody>
       <tr><td>Modern UEFI x64 (~2015+)</td><td><code>ipxe.efi</code></td></tr>
-      <tr><td>UEFI x64 with NIC driver issues / Hyper-V Gen2</td><td><code>snponly.efi</code></td></tr>
+      <tr><td>UEFI x64 + <strong>Secure Boot</strong></td><td><code>ipxe-shim.efi</code></td></tr>
+      <tr><td>UEFI x64 with NIC driver issues / Hyper-V Gen2</td><td><code>snponly.efi</code> (Secure Boot: <code>snponly-shim.efi</code>)</td></tr>
       <tr><td>Legacy BIOS</td><td><code>undionly.kpxe</code></td></tr>
       <tr><td>UEFI arm64</td><td><code>ipxe-arm64.efi</code></td></tr>
     </tbody>
@@ -122,7 +141,9 @@ dhcp-match=set:uefi64,option:client-arch,9
 dhcp-match=set:uefiarm,option:client-arch,11
 dhcp-boot=tag:bios,undionly.kpxe,,{{.Data.ServerIP}}
 dhcp-boot=tag:uefi64,ipxe.efi,,{{.Data.ServerIP}}
-dhcp-boot=tag:uefiarm,ipxe-arm64.efi,,{{.Data.ServerIP}}</pre>
+dhcp-boot=tag:uefiarm,ipxe-arm64.efi,,{{.Data.ServerIP}}
+# Secure Boot UEFI x64: hand out the Microsoft-signed shim instead:
+#   dhcp-boot=tag:uefi64,ipxe-shim.efi,,{{.Data.ServerIP}}</pre>
   <button class="btn ghost sm" type="button" data-copy-snippet="snippet-dnsmasq"><svg><use href="#i-copy"/></svg>Copy</button>
 </div>
 
@@ -138,6 +159,8 @@ subnet &lt;your-subnet&gt; netmask &lt;your-netmask&gt; {
     if exists user-class and option user-class = "iPXE" {
         filename "http://{{.Data.ServerIP}}{{if .Data.HTTPPort}}:{{.Data.HTTPPort}}{{end}}/ipxe/boot.ipxe";
     } elsif option arch = 00:07 or option arch = 00:09 {
+        # UEFI x64. For Secure Boot machines, hand out the signed shim
+        # instead: filename "ipxe-shim.efi";
         filename "ipxe.efi";
     } elsif option arch = 00:0b {
         filename "ipxe-arm64.efi";
@@ -153,7 +176,7 @@ subnet &lt;your-subnet&gt; netmask &lt;your-netmask&gt; {
   <ol class="small muted">
     <li>DHCP console → right-click the scope → <strong>Configure Options</strong> → <strong>Advanced</strong>.</li>
     <li>Option <strong>066</strong> (Boot Server Host Name): <code>{{.Data.ServerIP}}</code></li>
-    <li>Option <strong>067</strong> (Bootfile Name): <code>ipxe.efi</code> (or the right file for your fleet from the table above).</li>
+    <li>Option <strong>067</strong> (Bootfile Name): <code>ipxe.efi</code>, or <code>ipxe-shim.efi</code> for Secure Boot (or the right file for your fleet from the table above).</li>
   </ol>
   <p class="small muted">For per-arch branching, create a Vendor Class matching DHCP options 60/93 and override option 067 per class.</p>
 </div>

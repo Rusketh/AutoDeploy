@@ -18,7 +18,8 @@ machine's firmware and the Boot Client. The chain has four links:
    file to hand out and which server to fetch it from.
 2. **iPXE → bootstrap script.** Once iPXE is running, it automatically fetches an
    `autoexec.ipxe` bootstrap script. AutoDeploy **generates this script for you** — you never have
-   to build a custom iPXE binary with a script baked in. The stock iPXE binaries work as-is.
+   to build a custom iPXE binary with a script baked in, so the **official signed iPXE binaries
+   work as-is** (which is what makes UEFI Secure Boot possible).
 3. **Bootstrap → boot image.** The bootstrap chainloads `http://<your-server>/ipxe/boot.ipxe`,
    which loads the **boot image**: a Linux kernel (`autodeploy-kernel`) and an initramfs
    (`autodeploy-initrd`) that contains the Boot Client.
@@ -35,8 +36,13 @@ firmware PXE/HTTP boot
   → the initramfs runs autodeploy-boot, which calls back to /api/v1/...
 ```
 
-Because the bootstrap is served dynamically, the same generic iPXE binary works whether a machine
+Because the bootstrap is served dynamically, the same signed iPXE binary works whether a machine
 boots over TFTP or UEFI HTTP — the server fills in the rest.
+
+On machines with **UEFI Secure Boot** enabled, one extra link is inserted at the front: the
+firmware loads a **Microsoft-signed shim** (`ipxe-shim.efi`), which verifies and launches
+`ipxe.efi` (signed with the iPXE CA the shim trusts). From there the chain is identical. See
+[UEFI Secure Boot](#uefi-secure-boot) below.
 
 ## What the server provides
 
@@ -47,8 +53,9 @@ The Linux installer ([Installing the AutoDeploy server](linux-server.md)) sets m
   Neither requires a file on disk.
 - **The chainload script**, `GET /ipxe/boot.ipxe`, which loads the boot image.
 - **A built-in TFTP server** so you don't have to run a separate TFTP daemon (see below).
-- **Static boot files** under the iPXE directory: the iPXE binaries and the boot image. The
-  installer's `fetch-ipxe.sh` helper downloads these.
+- **Static boot files** under the iPXE directory: the official signed iPXE binaries (including the
+  Microsoft-signed Secure Boot shim) and the boot image. The installer's `fetch-ipxe.sh` helper
+  downloads these from the iPXE project's signed release and the AutoDeploy release respectively.
 
 You can confirm everything is in place from the portal at
 **[Settings → PXE](../portal/settings.md#pxe)**, which shows whether each boot file is present and
@@ -74,20 +81,23 @@ in.
 
 ### The iPXE binaries
 
-`fetch-ipxe.sh` downloads stock iPXE binaries into the iPXE directory. The ones you hand out via
-DHCP depend on the client's firmware:
+`fetch-ipxe.sh` downloads the **official, signed iPXE binaries** (from the iPXE project's
+`ipxeboot.tar.gz` release) into the iPXE directory. The ones you hand out via DHCP depend on the
+client's firmware and whether UEFI Secure Boot is enabled:
 
-| File | Firmware / use |
-|------|----------------|
-| `undionly.kpxe` | Legacy BIOS PXE (chainloaded by the NIC's PXE ROM) |
-| `ipxe.pxe` | Legacy BIOS (alternative NBP, a fallback for flaky NICs) |
-| `ipxe.efi` | UEFI PXE / UEFI HTTP Boot |
-| `snponly.efi` | UEFI PXE via the firmware's SNP network driver (a fallback for Hyper-V Gen2 and some NICs) |
-| `ipxe-arm64.efi` | UEFI PXE on ARM64 hardware |
+| File | Firmware / use | Secure Boot |
+|------|----------------|-------------|
+| `undionly.kpxe` | Legacy BIOS PXE (chainloaded by the NIC's PXE ROM) | n/a (BIOS) |
+| `ipxe.pxe` | Legacy BIOS (alternative NBP, a fallback for flaky NICs) | n/a (BIOS) |
+| `ipxe.efi` | UEFI PXE / UEFI HTTP Boot | iPXE-signed; loaded directly when Secure Boot is **off** |
+| `snponly.efi` | UEFI PXE via the firmware's SNP network driver (a fallback for Hyper-V Gen2 and some NICs) | iPXE-signed |
+| `shimx64.efi` / `ipxe-shim.efi` | UEFI PXE with **Secure Boot on** — hand this out instead of `ipxe.efi` | **Microsoft-signed shim** → loads `ipxe.efi` |
+| `snponly-shim.efi` | Secure Boot variant that loads `snponly.efi` | Microsoft-signed shim |
+| `ipxe-arm64.efi` | UEFI PXE on ARM64 hardware | iPXE-signed (arm64 Secure Boot lives in `arm64-sb/`) |
 
-These are unmodified, generic iPXE builds. The script fetches from the AutoDeploy release first
-and falls back to `boot.ipxe.org`; either works the same way, because the script is served by the
-server, not embedded.
+These are the iPXE project's own signed builds — **not** custom AutoDeploy builds with a script
+baked in. The boot script is served dynamically by the server (`autoexec.ipxe`, below), so the
+signed binary stays unmodified and the signature stays valid.
 
 ### The boot image
 
@@ -135,11 +145,64 @@ to `ipxe.efi` (or `snponly.efi` if your firmware's network stack needs the SNP b
 - **next-server / option 66:** the AutoDeploy host's IP address
 - **boot filename / option 67:** `ipxe.efi`
 
+> If the client has **UEFI Secure Boot enabled**, hand out `ipxe-shim.efi` instead of `ipxe.efi`.
+> See [UEFI Secure Boot](#uefi-secure-boot).
+
 **UEFI HTTP Boot.** Some UEFI firmware can boot directly over HTTP instead of TFTP. In that case,
 hand the client an HTTP URL to the iPXE binary (for example
 `http://<your-server>/ipxe/static/ipxe.efi` if you serve it over HTTP, or your own HTTP boot
 source). Once iPXE is running it fetches `autoexec.ipxe` over HTTP from the server it reached, so
 the rest of the chain is identical.
+
+## UEFI Secure Boot
+
+Modern machines often ship with **UEFI Secure Boot** enabled, which means the firmware will only
+launch a bootloader signed by a key it trusts. AutoDeploy ships the iPXE project's official signed
+release, so you can network-boot **without disabling Secure Boot** at the bootloader stage.
+
+### How it works
+
+The trust chain has one extra link in front of iPXE:
+
+```
+firmware (Secure Boot on)
+  → loads ipxe-shim.efi      (a Microsoft-signed shim, trusted out of the box)
+  → shim verifies + loads ipxe.efi   (signed with the iPXE CA embedded in the shim)
+  → ipxe.efi fetches autoexec.ipxe and chainloads as usual
+```
+
+The shim is signed with the **Microsoft 3rd-Party UEFI CA**, which is enrolled by default on
+virtually all x86_64 machines — so no custom keys to enrol and no firmware changes. The shim
+decides which iPXE binary to load from the **filename it was handed**: `ipxe-shim.efi` loads
+`ipxe.efi`, and `snponly-shim.efi` loads `snponly.efi`. Both the shim and the iPXE binary it loads
+must live in the same directory (they do, by default).
+
+### What to hand out
+
+Change only the DHCP **boot filename** for your UEFI clients:
+
+| Secure Boot | UEFI x64 boot filename |
+|-------------|------------------------|
+| **On**  | `ipxe-shim.efi` (or `snponly-shim.efi` for the SNP driver) |
+| **Off** | `ipxe.efi` (or `snponly.efi`) — the firmware loads it directly |
+
+`next-server` (option 66) stays the same. On ARM64 with Secure Boot, use the shim under the
+`arm64-sb/` subdirectory (`arm64-sb/ipxe-shim.efi`).
+
+### Important: the kernel stage is not signed yet
+
+A Secure-Boot-signed iPXE enforces the chain of trust **forwards**: it will only go on to boot a
+next stage that is itself signed. AutoDeploy's boot image (`autodeploy-kernel`) is **not yet
+signed**, so:
+
+- The signed shim → iPXE chain works under Secure Boot today and gives you a **verified
+  bootloader**.
+- Booting the AutoDeploy kernel that iPXE chainloads still requires Secure Boot to be **off** (or
+  the kernel signed/enrolled via your own shim+MOK). Until a signed boot image ships, enable Secure
+  Boot for the bootloader stage but expect to disable it (or enrol the kernel) for the kernel to
+  load.
+
+This is the remaining step for fully end-to-end Secure Boot deployment and is tracked separately.
 
 ### Serving BIOS and UEFI from one DHCP scope
 

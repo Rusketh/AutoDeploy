@@ -25,10 +25,9 @@ import (
 // Operators landing here for the first time should be able to set
 // up PXE end-to-end without leaving the page.
 type pxePageData struct {
-	// Binaries currently in $DATA_DIR/ipxe/. The table also flags
-	// whether each one looks like an embedded build (compares the
-	// file's bytes for our embedded-script marker) -- non-embedded
-	// binaries require conditional DHCP to chainload to AutoDeploy.
+	// Binaries currently in $DATA_DIR/ipxe/. Each row flags its
+	// Secure Boot role (Microsoft-signed shim, iPXE-CA-signed binary,
+	// or a legacy BIOS NBP for which Secure Boot does not apply).
 	Binaries []pxeBinary
 
 	// IPXEDir is the resolved path on disk (per-category overrides
@@ -65,11 +64,16 @@ type pxeBinary struct {
 	Size     int64
 	SHA256   string
 	Modified time.Time
-	// HasEmbedded is true when the binary contains the AutoDeploy
-	// embedded-script marker. Embedded binaries chainload to the
-	// server without needing conditional DHCP -- the recommended
-	// path for UniFi / consumer routers.
-	HasEmbedded bool
+	// SecureBoot classifies the file's role in the UEFI Secure Boot
+	// chain, for the portal table. One of:
+	//   "shim"   — a Microsoft-signed shim; hand this out as the DHCP
+	//              bootfile on Secure Boot machines.
+	//   "signed" — an iPXE binary signed with the iPXE CA; the shim
+	//              verifies and loads it (and the firmware loads it
+	//              directly when Secure Boot is off).
+	//   "n/a"    — legacy BIOS NBP; BIOS has no Secure Boot.
+	//   ""       — unrecognised.
+	SecureBoot string
 	// Purpose is the short human-readable description we put next
 	// to the filename ("legacy BIOS", "UEFI x64", "UEFI x64 (SNP
 	// fallback)", "UEFI arm64"). Populated from the filename;
@@ -160,35 +164,42 @@ func scanIPXEDir(dir string) []pxeBinary {
 	if err != nil {
 		return nil
 	}
-	knownPurposes := map[string]string{
-		"undionly.kpxe":  "Legacy BIOS PXE",
-		"ipxe.pxe":       "Legacy BIOS (NBP variant, fallback for flaky NICs)",
-		"ipxe.efi":       "UEFI x64",
-		"snponly.efi":    "UEFI x64 (SNP-only driver, fallback for Hyper-V / some NICs)",
-		"ipxe-arm64.efi": "UEFI arm64",
+	// known maps each filename AutoDeploy serves to its human-readable
+	// purpose and Secure Boot role. These come from the official signed
+	// iPXE release (ipxeboot.tar.gz) fetched by scripts/fetch-ipxe.sh.
+	type info struct{ purpose, secureBoot string }
+	known := map[string]info{
+		"undionly.kpxe":    {"Legacy BIOS PXE", "n/a"},
+		"ipxe.pxe":         {"Legacy BIOS (NBP variant, fallback for flaky NICs)", "n/a"},
+		"ipxe.efi":         {"UEFI x64 (iPXE; loaded directly when Secure Boot is off)", "signed"},
+		"snponly.efi":      {"UEFI x64 (SNP-only driver, fallback for Hyper-V / some NICs)", "signed"},
+		"shimx64.efi":      {"UEFI x64 Secure Boot shim → ipxe.efi", "shim"},
+		"ipxe-shim.efi":    {"UEFI x64 Secure Boot shim → ipxe.efi (hand this out for Secure Boot)", "shim"},
+		"snponly-shim.efi": {"UEFI x64 Secure Boot shim → snponly.efi", "shim"},
+		"ipxe-arm64.efi":   {"UEFI arm64 (iPXE; arm64 Secure Boot trio lives in arm64-sb/)", "signed"},
 	}
 	var out []pxeBinary
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		purpose, known := knownPurposes[e.Name()]
-		if !known {
+		meta, ok := known[e.Name()]
+		if !ok {
 			continue
 		}
-		info, ierr := e.Info()
+		fi, ierr := e.Info()
 		if ierr != nil {
 			continue
 		}
 		full := filepath.Join(dir, e.Name())
 		out = append(out, pxeBinary{
-			Name:        e.Name(),
-			Path:        full,
-			Size:        info.Size(),
-			Modified:    info.ModTime(),
-			SHA256:      pxeFileSHA256Hex(full),
-			HasEmbedded: pxeFileHasEmbeddedMarker(full),
-			Purpose:     purpose,
+			Name:       e.Name(),
+			Path:       full,
+			Size:       fi.Size(),
+			Modified:   fi.ModTime(),
+			SHA256:     pxeFileSHA256Hex(full),
+			SecureBoot: meta.secureBoot,
+			Purpose:    meta.purpose,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -208,29 +219,6 @@ func pxeFileSHA256Hex(path string) string {
 		return ""
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// pxeFileHasEmbeddedMarker returns true when the iPXE binary
-// contains the unique string we put in the embedded boot script
-// shipped by .github/workflows/build-ipxe.yml. Used as a quick
-// "is this AutoDeploy's embedded build or a vanilla iPXE?" check
-// for the operator -- vanilla binaries need conditional DHCP to
-// reach AutoDeploy, embedded ones don't.
-func pxeFileHasEmbeddedMarker(path string) bool {
-	const marker = "AutoDeploy bootstrap (embedded)"
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	// Read in chunks; iPXE binaries are ~1 MB and the marker can
-	// land anywhere in the embedded section. ReadAll is fine for
-	// the size class.
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(b), marker)
 }
 
 // guessPrimaryIP returns the operator's IP we use to pre-fill the
