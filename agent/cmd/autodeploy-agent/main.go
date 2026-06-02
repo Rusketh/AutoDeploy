@@ -444,6 +444,9 @@ var domainJoined bool
 // per-call and NEVER logged; failures are logged and retried on the next poll.
 func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
 	if domainJoined || f.agentID == "" {
+		log.Info("domainjoin.skip",
+			slog.Bool("already_joined", domainJoined),
+			slog.Bool("no_agent_id", f.agentID == ""))
 		return false
 	}
 	var resp struct {
@@ -458,10 +461,17 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		log.Warn("domainjoin.fetch", slog.String("error", err.Error()))
 		return false
 	}
+	log.Info("domainjoin.response",
+		slog.Bool("join", resp.Join),
+		slog.String("domain", resp.Domain),
+		slog.Bool("has_user", resp.User != ""),
+		slog.Bool("has_password", resp.Password != ""))
 	if !resp.Join || resp.Domain == "" {
 		return false
 	}
 	if cur, joined := currentDomain(); joined && strings.EqualFold(cur, resp.Domain) {
+		log.Info("domainjoin.already_member",
+			slog.String("current_domain", cur))
 		domainJoined = true // already a member of the target domain
 		return false
 	}
