@@ -127,14 +127,26 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 	}
 	existing, err := r.GetByUUID(ctx, id.SystemUUID)
 	if err == nil {
-		// Update identity fields (a firmware update can change vendor
-		// strings) and last_seen. Backfill agent_id if this is a row that
+		// Update identity fields and last_seen. Only non-empty incoming
+		// values overwrite what's stored: the SMBIOS make/model are read
+		// pre-boot by the Boot Client, but the resident agent (and several
+		// other callers) report an identity carrying only the UUID. Without
+		// COALESCE those empty fields would wipe the make/model on the very
+		// next agent check-in. A real SMBIOS report (e.g. after a firmware
+		// update that changes vendor strings) still updates them, because
+		// those values are non-empty. Backfill agent_id if this is a row that
 		// predates migration 0012 (still empty); never overwrite an id
 		// already minted.
 		_, err := r.db.ExecContext(ctx, `
 			UPDATE machine_record
-			SET system_serial=?, system_manufacturer=?, system_product=?,
-			    bios_vendor=?, bios_version=?, board_manufacturer=?, board_product=?, board_serial=?,
+			SET system_serial       = COALESCE(NULLIF(?, ''), system_serial),
+			    system_manufacturer = COALESCE(NULLIF(?, ''), system_manufacturer),
+			    system_product      = COALESCE(NULLIF(?, ''), system_product),
+			    bios_vendor         = COALESCE(NULLIF(?, ''), bios_vendor),
+			    bios_version        = COALESCE(NULLIF(?, ''), bios_version),
+			    board_manufacturer  = COALESCE(NULLIF(?, ''), board_manufacturer),
+			    board_product       = COALESCE(NULLIF(?, ''), board_product),
+			    board_serial        = COALESCE(NULLIF(?, ''), board_serial),
 			    agent_id=CASE WHEN agent_id='' THEN ? ELSE agent_id END,
 			    last_seen=CURRENT_TIMESTAMP
 			WHERE id=?`,
