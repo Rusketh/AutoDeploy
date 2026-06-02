@@ -224,6 +224,29 @@ func (r *WindowsUpdateRepo) UpsertMachineStatuses(ctx context.Context, machineID
 	return tx.Commit()
 }
 
+// ClearMachineState removes a machine's Windows-update state: its per-KB
+// compliance rows and its queued/finished update-deployment jobs. Called
+// when the machine is (re)imaged — the new OS image starts at a clean patch
+// baseline, so the old compliance and job history no longer describe it. The
+// fleet-wide windows_update and update_deployment rows are left intact; the
+// agent re-reports installed KBs after the new OS boots.
+func (r *WindowsUpdateRepo) ClearMachineState(ctx context.Context, machineID ID) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM machine_update_status WHERE machine_id=?`, machineID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM update_deployment_job WHERE machine_id=?`, machineID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ListMachineStatuses returns all KB statuses for a machine.
 func (r *WindowsUpdateRepo) ListMachineStatuses(ctx context.Context, machineID ID) ([]MachineUpdateStatus, error) {
 	rows, err := r.db.QueryContext(ctx, `

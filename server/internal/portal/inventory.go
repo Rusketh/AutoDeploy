@@ -280,6 +280,7 @@ func machineDetail(r Repos) http.HandlerFunc {
 		}
 		binding, _ := r.Inventory.GetBinding(req.Context(), id)
 		history, _ := r.Inventory.HistoryFor(req.Context(), id)
+		reimages, _ := r.Inventory.ListReimageEvents(req.Context(), id)
 		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
 		bl, _ := r.BitLocker.PINStatus(req.Context(), id)
 		recovery, _ := r.BitLocker.ListRecoveryKeys(req.Context(), id)
@@ -304,6 +305,7 @@ func machineDetail(r Repos) http.HandlerFunc {
 		}
 		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
 			"M": m, "Binding": binding, "History": history,
+			"Reimages": reimages,
 			"Detected": detected, "Packages": pkgs,
 			"BL": bl, "Recovery": recovery,
 			"Images": images, "KBStatuses": kbStatuses,

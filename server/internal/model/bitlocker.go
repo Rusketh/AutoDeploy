@@ -144,6 +144,18 @@ func (r *BitLockerRepo) EscrowRecoveryKey(ctx context.Context, machineID ID, key
 	return err
 }
 
+// ClearRecoveryKeys deletes a machine's escrowed recovery keys. Called when
+// the machine is re-imaged: the volume is wiped and re-encrypted, so every
+// previously escrowed key unlocks a disk that no longer exists. The agent
+// escrows a fresh key during the new deploy. The assigned PIN/password
+// (bitlocker_pin) is deliberately NOT touched — re-imaging re-applies the
+// same PIN to the rebuilt device.
+func (r *BitLockerRepo) ClearRecoveryKeys(ctx context.Context, machineID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM bitlocker_recovery_key WHERE machine_id=?`, machineID)
+	return err
+}
+
 // ListRecoveryKeys returns the escrow history for a machine, newest
 // first. Key values are NOT decrypted; the Key field is empty.
 func (r *BitLockerRepo) ListRecoveryKeys(ctx context.Context, machineID ID) ([]RecoveryKeyRecord, error) {
