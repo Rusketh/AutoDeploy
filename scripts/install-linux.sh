@@ -310,17 +310,6 @@ else
     echo "  is installed at /usr/local/sbin/autodeploy-update." >&2
 fi
 
-# Install the embedded-iPXE build helper alongside the binary. It's
-# not run automatically (the build pulls in ~300 MB of apt deps and
-# takes a few minutes) but operators on UniFi / OPNsense / consumer
-# routers that can't do conditional DHCP will need it -- the next-
-# steps banner below tells them so.
-EMBED_SRC="$HERE/build-embedded-ipxe.sh"
-if [ -f "$EMBED_SRC" ]; then
-    install -m 0755 "$EMBED_SRC" /usr/local/sbin/autodeploy-build-embedded-ipxe
-    echo "    installed /usr/local/sbin/autodeploy-build-embedded-ipxe"
-fi
-
 systemctl daemon-reload || true
 
 cat <<EOF
@@ -365,18 +354,28 @@ AutoDeploy is installed. Next steps:
      Change the password via Settings → Local accounts, then
      delete the bootstrap file.
 
-  5. The Boot Client kernel + initramfs were fetched automatically
-     into $DATA_DIR/ipxe/ as autodeploy-kernel + autodeploy-initrd.
+  5. The Boot Client image was fetched automatically into $DATA_DIR/ipxe/
+     as autodeploy-kernel + autodeploy-initrd, plus autodeploy-shim.efi
+     (the signed shim that verifies the kernel under UEFI Secure Boot).
      Verify:
-       ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd
+       ls -l $DATA_DIR/ipxe/autodeploy-kernel $DATA_DIR/ipxe/autodeploy-initrd $DATA_DIR/ipxe/autodeploy-shim.efi
      If absent (older release), re-run fetch-ipxe.sh.
 
-  6. Configure DHCP to hand out one stock iPXE binary: undionly.kpxe
-     (BIOS) or ipxe.efi / snponly.efi (UEFI). The server serves
-     autoexec.ipxe, so no conditional DHCP and no custom-built binary
-     are needed -- just point next-server (option 66) at this host.
-     Best place to start:
-       docs/user-guide/tutorial-02-pxe.md
+  6. Configure DHCP to hand out one official iPXE binary, pointing
+     next-server (option 66) at this host. The server serves
+     autoexec.ipxe dynamically, so no conditional DHCP and no
+     custom-built binary are needed:
+       - Legacy BIOS:            undionly.kpxe
+       - UEFI x64:               ipxe.efi  (snponly.efi for some NICs)
+       - UEFI x64 + Secure Boot: ipxe-shim.efi  (Microsoft-signed shim)
+       - UEFI arm64:             ipxe-arm64.efi
+     These come from the official signed iPXE release. See:
+       docs/install/pxe-and-boot.md
+     NOTE: Secure Boot is verified end to end (bootloader + kernel) via
+     the signed Ubuntu shim shipped in the boot image (autodeploy-shim.efi).
+     Caveats: only the kernel is verified (not the initramfs), and under
+     Secure Boot only signed modules load -- hardware needing out-of-tree
+     drivers must boot with Secure Boot off. See the doc above.
 
 Status: systemctl status autodeploy
 Logs:   journalctl -u autodeploy -f

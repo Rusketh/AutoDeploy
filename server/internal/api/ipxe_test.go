@@ -74,7 +74,20 @@ func TestBootIPXEStillServed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "set base http://host:8080") {
-		t.Errorf("boot.ipxe should set base from request host:\n%s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "set base http://host:8080") {
+		t.Errorf("boot.ipxe should set base from request host:\n%s", body)
+	}
+	// Secure Boot machines must register the signed shim before booting
+	// the kernel; BIOS / SB-off machines fall through to the kernel.
+	for _, want := range []string{
+		"iseq ${efi/SecureBoot:int8} 1 || goto bootkernel",
+		"shim ${base}/ipxe/static/autodeploy-shim.efi",
+		":bootkernel",
+		"kernel ${base}/ipxe/static/autodeploy-kernel",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("boot.ipxe missing %q\n%s", want, body)
+		}
 	}
 }

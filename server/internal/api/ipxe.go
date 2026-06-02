@@ -10,11 +10,13 @@ import (
 // clients:
 //
 //   - /autoexec.ipxe — the bootstrap. STOCK, unmodified iPXE binaries
-//     (boot.ipxe.org, distro packages, AutoDeploy's CI builds) probe
-//     for this file automatically right after they come up, over the
-//     same transport they booted from. Serving it means operators never
-//     have to build a custom iPXE with a script embedded — the binary
-//     stays generic and the server supplies the brains. The TFTP server
+//     (the iPXE project's official signed release, distro packages)
+//     probe for this file automatically right after they come up, over
+//     the same transport they booted from. Serving it means operators
+//     never have to build a custom iPXE with a script embedded — the
+//     binary stays generic (and its signature stays valid, which is what
+//     makes UEFI Secure Boot work) and the server supplies the brains.
+//     The TFTP server
 //     synthesises the same script for TFTP-booted clients (see
 //     IPXEAutoexecNextServer); this HTTP route covers UEFI HTTP Boot,
 //     where iPXE fetches autoexec.ipxe over HTTP from the URL it was
@@ -58,10 +60,23 @@ func RegisterIPXE(mux *http.ServeMux) {
 # Place autodeploy-kernel and autodeploy-initrd under
 # AUTODEPLOY_DATA_DIR/ipxe/ on the server.
 
-set base %s
+set base %[1]s
 echo
 echo AutoDeploy boot - chainloading client from ${base}
 echo
+
+# UEFI Secure Boot: ${efi/SecureBoot} is 1 only on a UEFI machine with
+# Secure Boot enabled (unset on BIOS, 0 when disabled). When it is on,
+# register the Microsoft-signed shim (autodeploy-shim.efi) so the
+# Canonical-signed kernel passes verification via the shim lock protocol.
+# Everyone else boots the kernel directly -- this path is unchanged.
+# (iPXE may briefly print "Security Policy Violation" before the shim
+# hand-off succeeds; that message is cosmetic.)
+iseq ${efi/SecureBoot:int8} 1 || goto bootkernel
+echo Secure Boot detected - verifying the kernel via the signed shim
+shim ${base}/ipxe/static/autodeploy-shim.efi ||
+
+:bootkernel
 kernel ${base}/ipxe/static/autodeploy-kernel console=ttyS0,115200 console=tty1 autodeploy.server=${base} autodeploy.uuid=${uuid}
 initrd ${base}/ipxe/static/autodeploy-initrd
 boot || goto fail
@@ -69,6 +84,9 @@ boot || goto fail
 :fail
 echo
 echo Chainload failed - dropping to iPXE prompt.
+echo If this machine has Secure Boot on, confirm autodeploy-shim.efi is
+echo present in the iPXE directory (re-run fetch-ipxe.sh) and that the
+echo boot image is the signed build.
 shell
 `, base)
 	})

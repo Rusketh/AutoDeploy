@@ -20,6 +20,9 @@ name: Build Boot Client image
 #   - autodeploy-initrd        initramfs bundling autodeploy-boot, the
 #                              imaging tools, and the kernel's modules
 #                              (loaded by init at boot)
+#   - autodeploy-shim.efi      Microsoft-signed Ubuntu shim; iPXE's `shim`
+#                              command verifies the Canonical-signed kernel
+#                              through it under UEFI Secure Boot
 #   - <name>.sha256            sha256 sidecar per file
 #
 # x86_64 only for now: the overwhelming majority of imaging targets are
@@ -57,8 +60,12 @@ jobs:
           # efibootmgr:          register the staged partition with firmware.
           # unzip:               expand driver packages onto the media.
           # cpio/gzip:           pack the initramfs.
+          # shim-signed: Microsoft-signed Ubuntu shim, shipped as
+          #   autodeploy-shim.efi for UEFI Secure Boot (iPXE `shim` command
+          #   verifies the Canonical-signed kernel through it).
           sudo apt-get install -y \
               linux-image-generic \
+              shim-signed \
               kmod busybox-static cpio gzip \
               gdisk dosfstools efibootmgr unzip
 
@@ -90,9 +97,18 @@ jobs:
           sudo chown "$USER" bootimage/autodeploy-kernel
           chmod 0644 bootimage/autodeploy-kernel
           cp out/initrd.img bootimage/autodeploy-initrd
+          # Microsoft-signed Ubuntu shim for Secure Boot (prefer .latest).
+          shim_src=$(ls -1 /usr/lib/shim/shimx64.efi.signed.latest \
+                            /usr/lib/shim/shimx64.efi.signed 2>/dev/null | head -1)
+          if [ -n "$shim_src" ]; then
+              cp "$shim_src" bootimage/autodeploy-shim.efi
+              echo "Staged signed shim from $shim_src"
+          else
+              echo "::warning::shim-signed not found; autodeploy-shim.efi omitted"
+          fi
           cd bootimage
-          for f in autodeploy-kernel autodeploy-initrd; do
-              sha256sum "$f" > "$f.sha256"
+          for f in autodeploy-kernel autodeploy-initrd autodeploy-shim.efi; do
+              [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
           done
           echo "Kernel:  $(stat -c%s autodeploy-kernel) bytes"
           echo "Initrd:  $(stat -c%s autodeploy-initrd) bytes"
