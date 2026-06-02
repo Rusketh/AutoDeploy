@@ -130,7 +130,11 @@ provider, and version.
 A package can have several **filters**. The matching rule is:
 
 - A package **applies when any one filter matches**.
-- A filter **matches when all of its constraints match**.
+- A filter **matches when all of its keys match**.
+- A key **matches when the reported value equals any one of its listed values**. List the same
+  field more than once in a filter to cover several models that share one driver package — e.g. a
+  filter with `system_manufacturer = Dell Inc.` plus three `system_product` rows (`Latitude 5520`,
+  `Latitude 5530`, `Latitude 5540`) matches any of those three models.
 - An **empty filter never matches** (a safety default — a package with no filters won't be applied
   to anything).
 

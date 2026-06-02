@@ -13,7 +13,7 @@
   </fieldset>
 
   <fieldset><legend>SMBIOS filters</legend>
-    <p class="hint">A package applies when <strong>any</strong> filter matches. A filter matches when <strong>all</strong> its constraints match. Empty filter never matches (safety).</p>
+    <p class="hint">A package applies when <strong>any</strong> filter matches. A filter matches when <strong>all</strong> its constraints match. Listing the <strong>same field more than once</strong> in a filter (e.g. Model) matches when <strong>any</strong> of those values is reported — use this to cover several models that share one driver package. Empty filter never matches (safety).</p>
     {{if .Data.Machines}}
     <div class="row" style="background: var(--accent-soft); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); margin: 0 0 var(--sp-3); align-items:center; gap: var(--sp-2);">
       <label style="flex:1; margin: 0;"><span class="lbl" style="margin-bottom:2px;">Use a known machine as a filter</span>
