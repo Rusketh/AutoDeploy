@@ -109,6 +109,8 @@ func machineItems(r Repos, req *http.Request, machines []model.MachineRecord) []
 // bulkParams collects the action payload, target and schedule from a create or
 // edit form. flashErr is set (and the caller redirects) when validation fails.
 type bulkParams struct {
+	Name           string
+	Description    string
 	Action         string
 	Payload        string
 	Target         model.BulkTarget
@@ -126,6 +128,10 @@ func parseBulkForm(req *http.Request) (bulkParams, error) {
 		return bulkParams{}, err
 	}
 	var p bulkParams
+	// Optional label + notes. Blank is fine -- the model fills a sensible
+	// default from the action and target.
+	p.Name = strings.TrimSpace(req.FormValue("name"))
+	p.Description = strings.TrimSpace(req.FormValue("description"))
 	p.Action = req.FormValue("action")
 
 	// Schedule.
@@ -269,6 +275,8 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		}
 		user, _ := sessionUser(req, r)
 		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
+			Name:           p.Name,
+			Description:    p.Description,
 			Action:         p.Action,
 			Payload:        p.Payload,
 			Target:         p.Target,
@@ -336,6 +344,8 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 		}
 		if err := r.Bulk.UpdateOperation(req.Context(), model.BulkOperation{
 			ID:             id,
+			Name:           p.Name,
+			Description:    p.Description,
 			Action:         p.Action,
 			Payload:        p.Payload,
 			Target:         p.Target,
@@ -485,6 +495,8 @@ func pathStr(req *http.Request) string { return req.PathValue("id") }
 // picker and schedule controls. op is nil for a new operation.
 func formPrefill(op *model.BulkOperation) map[string]any {
 	ap := map[string]any{
+		"Name":              "",
+		"Description":       "",
 		"Action":            "rename",
 		"RenameFind":        "",
 		"RenameReplace":     "",
@@ -507,6 +519,7 @@ func formPrefill(op *model.BulkOperation) map[string]any {
 	if op == nil {
 		return ap
 	}
+	ap["Name"], ap["Description"] = op.Name, op.Description
 	ap["Action"] = op.Action
 	switch op.Action {
 	case model.BulkActionRename:

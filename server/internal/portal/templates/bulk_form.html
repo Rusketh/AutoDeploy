@@ -7,6 +7,13 @@
 
 <form class="std" method="POST" action="{{.Data.FormAction}}" id="bulk-form" onsubmit="return onSubmit()">
 
+  <div class="section-head"><h3>Details</h3><div class="line"></div></div>
+  <p class="hint">Give this task a short name (and optional notes) so it's easy to find and sort later. Leave blank and AutoDeploy fills in a sensible default from the action and target.</p>
+  <div class="row">
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$ap.Name}}" maxlength="120" placeholder="e.g. Nightly lab re-image"></label>
+  </div>
+  <label><span class="lbl">Description</span><textarea name="description" rows="2" maxlength="500" placeholder="Optional notes about what this task does and why">{{$ap.Description}}</textarea></label>
+
   <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
   <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. For a re-evaluated recurring task (chosen under <em>When</em>) these filter fields are saved and re-run each time instead of a fixed list.</p>
   <div class="row">

@@ -50,7 +50,7 @@ func TestBulkFormRenders(t *testing.T) {
 		"AP":          formPrefill(nil),
 		"SelInitJSON": "[]",
 	})
-	for _, want := range []string{`name="action"`, `name="schedule_kind"`, "action-picker", "Recurring", "Run once"} {
+	for _, want := range []string{`name="name"`, `name="description"`, `name="action"`, `name="schedule_kind"`, "action-picker", "Recurring", "Run once"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_form missing %q", want)
 		}
@@ -60,14 +60,16 @@ func TestBulkFormRenders(t *testing.T) {
 func TestBulkListRendersWithProgress(t *testing.T) {
 	next := time.Now().Add(time.Hour)
 	ops := []model.BulkOperation{{
-		ID: 1, Action: "script", Status: model.BulkStatusActive, ScheduleKind: "now",
+		ID: 1, Name: "Nightly script", Description: "runs the cleanup", Action: "script",
+		Status: model.BulkStatusActive, ScheduleKind: "now",
 		CreatedBy: "alice", Progress: model.BulkProgress{Total: 4, OK: 2, Failed: 1, Queued: 1},
 	}, {
-		ID: 2, Action: "reimage", Status: model.BulkStatusScheduled, ScheduleKind: "once",
+		ID: 2, Name: "Lab rebuild", Action: "reimage", Status: model.BulkStatusScheduled, ScheduleKind: "once",
 		CreatedBy: "bob", NextRunAt: &next,
 	}}
 	out := renderBulk(t, "bulk_list.html", map[string]any{"Ops": ops})
-	for _, want := range []string{"Clear completed", "bulk-bar", "scheduled", "active", "/portal/bulk/2/edit"} {
+	for _, want := range []string{"Clear completed", "bulk-bar", "scheduled", "active", "/portal/bulk/2/edit",
+		"Nightly script", "runs the cleanup", "Lab rebuild"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_list missing %q", want)
 		}
@@ -77,7 +79,8 @@ func TestBulkListRendersWithProgress(t *testing.T) {
 func TestBulkDetailRenders(t *testing.T) {
 	now := time.Now()
 	op := model.BulkOperation{
-		ID: 5, Action: "script", Status: model.BulkStatusActive, ScheduleKind: "recurring",
+		ID: 5, Name: "Weekly patch run", Description: "patches the fleet", Action: "script",
+		Status: model.BulkStatusActive, ScheduleKind: "recurring",
 		TargetMode: "filter", CreatedBy: "alice", CreatedAt: now, Payload: "{}",
 		NextRunAt: &now, Progress: model.BulkProgress{Total: 2, OK: 1, Queued: 1},
 	}
@@ -90,7 +93,8 @@ func TestBulkDetailRenders(t *testing.T) {
 		"Jobs": []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}},
 		"Runs": []*run{{No: 1, Jobs: []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}}}},
 	})
-	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "re-evaluated each run"} {
+	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "re-evaluated each run",
+		"Weekly patch run", "patches the fleet"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_detail missing %q", want)
 		}

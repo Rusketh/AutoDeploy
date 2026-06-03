@@ -312,6 +312,7 @@ func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error 
 	if err := validateSchedule(in); err != nil {
 		return err
 	}
+	applyBulkNameDefaults(&in)
 	cur, _, err := r.GetOperation(ctx, in.ID)
 	if err != nil {
 		return err
@@ -344,10 +345,12 @@ func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error 
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE bulk_operation
 		SET action=?, payload=?, target_json=?, target_mode=?, schedule_kind=?,
-		    run_at=?, recur_spec=?, next_run_at=?, reimage_image_id=?, status=?
+		    run_at=?, recur_spec=?, next_run_at=?, reimage_image_id=?, status=?,
+		    name=?, description=?
 		WHERE id=?`,
 		in.Action, in.Payload, string(targetJSON), in.TargetMode, in.ScheduleKind,
-		in.RunAt, in.RecurSpec, nextRunAt, int64(in.ReimageImageID), status, int64(in.ID))
+		in.RunAt, in.RecurSpec, nextRunAt, int64(in.ReimageImageID), status,
+		in.Name, in.Description, int64(in.ID))
 	return err
 }
 
