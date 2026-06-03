@@ -210,7 +210,7 @@ func main() {
 	// Kept in memory only; never written to disk; never logged.
 	c.DeployToken = openResp.DeployToken
 
-	packageReports, failed := installPackages(ctx, log, c, f, resp.Items)
+	packageReports, failed := installPackages(ctx, log, c, f, resp.Items, nil)
 
 	// BitLocker (Phase 12): if the server has a PIN configured for this
 	// machine, enable encryption and escrow the recovery key. Off-Windows
@@ -308,6 +308,13 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// it and we're not already in the domain, join and reboot. Done before
 	// software/jobs so a reboot doesn't interrupt a half-finished install; the
 	// credentials are fetched per-call and never logged.
+	// As soon as the agent is alive and the boot client left an open
+	// deployment, tell the server Windows is installed and the agent is
+	// running, so the portal advances off the Setup phases immediately --
+	// even if a domain-join reboot follows before software installs.
+	if resp.DeploymentID != 0 {
+		reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
+	}
 	if maybeDomainJoin(ctx, log, c, f) {
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
 	}
@@ -318,7 +325,17 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	var packageReports []pkgReport
 	var pkgFailed bool
 	if len(resp.Software) > 0 {
-		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software)
+		// Drive the live progress bar through the software phase: "installing
+		// (done/total)" for each package. The server scales the bar across the
+		// install band and renders the fraction.
+		onProgress := func(done, total int, name string) {
+			notes := "Installing software"
+			if name != "" {
+				notes = "Installing " + name
+			}
+			reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "installing", done, total, notes)
+		}
+		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software, onProgress)
 	}
 	// If the server told us about an open deployment (opened by the boot
 	// client), report the final outcome so the dashboard row transitions
@@ -369,6 +386,28 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		return time.Duration(resp.PollIntervalSeconds) * time.Second
 	}
 	return 0
+}
+
+// reportDeployProgress posts a best-effort live-progress update for an open
+// deployment so the portal's bar advances through the agent-run phases
+// (agent-online, then installing done/total) without closing the row -- the
+// terminal ok/failed still goes via /api/v1/agent/report. A no-op when there is
+// no open deployment (depID == 0); failures are logged, never fatal.
+func reportDeployProgress(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, depID int64, phase string, done, total int, notes string) {
+	if depID == 0 {
+		return
+	}
+	var ignore struct{}
+	if err := c.PostJSON(ctx, "/api/v1/agent/deploy-progress", map[string]any{
+		"identity":      map[string]any{"system_uuid": f.uuid},
+		"deployment_id": depID,
+		"phase":         phase,
+		"done":          done,
+		"total":         total,
+		"notes":         notes,
+	}, &ignore); err != nil {
+		log.Warn("deploy.progress", slog.String("error", err.Error()))
+	}
 }
 
 var kbScanCounter int
@@ -715,13 +754,22 @@ type pkgReport struct {
 // steps for each package not already present. Shared by the legacy
 // deploy-time flow and the resident /self loop. Returns per-package
 // reports and whether any package failed.
-func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, items []softwareItem) ([]pkgReport, bool) {
+// installPackages installs each item, returning a per-package report and an
+// overall failed flag. progress, if non-nil, is called once before each package
+// (done = packages finished so far, total = len(items), name = the upcoming
+// package) and once more at the end with done == total, so a caller can drive a
+// live "installing (done/total)" progress indicator. It is best-effort: a
+// progress callback never affects the install outcome.
+func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, items []softwareItem, progress func(done, total int, name string)) ([]pkgReport, bool) {
 	eval := &detect.Evaluator{Backend: detect.DefaultBackend()}
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	var packageReports []pkgReport
 	failed := false
 
-	for _, pkg := range items {
+	for i, pkg := range items {
+		if progress != nil {
+			progress(i, len(items), pkg.Name)
+		}
 		// Detection first — skip already-installed.
 		installed, err := eval.EvaluatePackage(ctx, pkg.DetectionRules)
 		if err != nil {
@@ -924,6 +972,9 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 			})
 			failed = true
 		}
+	}
+	if progress != nil && len(items) > 0 {
+		progress(len(items), len(items), "")
 	}
 	return packageReports, failed
 }
@@ -1254,7 +1305,7 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		for _, wn := range resp.Warnings {
 			log.Warn("software_push.warning", slog.String("message", wn))
 		}
-		reports, failed := installPackages(ctx, log, c, f, resp.Items)
+		reports, failed := installPackages(ctx, log, c, f, resp.Items, nil)
 		out, _ := json.Marshal(reports)
 		if failed {
 			return "failed", string(out)

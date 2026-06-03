@@ -32,6 +32,56 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 	// name and AD distinguished name. Stored on the record and synced into
 	// the binding so the inventory tracks manual renames and AD moves.
 	mux.HandleFunc("POST /api/v1/agent/identity", handleAgentIdentity(r))
+
+	// Agent-facing deploy-progress report: advance the live progress bar
+	// through the agent-run phases (agent-online, then installing done/total)
+	// without closing the deployment row. The final ok/failed still goes via
+	// /api/v1/agent/report.
+	mux.HandleFunc("POST /api/v1/agent/deploy-progress", handleAgentDeployProgress(r))
+}
+
+// AgentDeployProgressRequest is posted by the running agent to advance a
+// still-open deployment through the software phase. It never closes the row;
+// the terminal ok/failed report (AgentReportRequest) does that.
+type AgentDeployProgressRequest struct {
+	Identity     match.Identity `json:"identity"`
+	DeploymentID model.ID       `json:"deployment_id"`
+	// Phase is one of the agent-driven tokens: "agent-online" (the agent is
+	// alive, so Windows is installed) or "installing" (running the software
+	// set). Other values are rejected so a bad token can't park the bar.
+	Phase string `json:"phase"`
+	Done  int    `json:"done"`  // packages installed so far (installing phase)
+	Total int    `json:"total"` // packages to install for this deploy
+	Notes string `json:"notes,omitempty"`
+}
+
+func handleAgentDeployProgress(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in AgentDeployProgressRequest
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		if in.Phase != "agent-online" && in.Phase != "installing" {
+			http.Error(w, "phase must be agent-online|installing", http.StatusBadRequest)
+			return
+		}
+		if in.DeploymentID == 0 {
+			http.Error(w, "deployment_id required", http.StatusBadRequest)
+			return
+		}
+		// Touch last_seen so the dashboard's stall detection stays fresh through
+		// a long software install. Best-effort: a missing/blank identity must
+		// not block the progress update, which is keyed by deployment id.
+		if in.Identity.SystemUUID != "" {
+			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
+		}
+		if err := r.Inventory.SetDeploymentProgress(req.Context(), in.DeploymentID, in.Phase, in.Notes, in.Done, in.Total); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
 }
 
 // AgentIdentityRequest is the body the running agent POSTs each poll with its

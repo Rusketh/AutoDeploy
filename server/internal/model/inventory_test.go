@@ -19,7 +19,9 @@ func TestDeployPhaseProgress(t *testing.T) {
 		{"staging", "in_progress", "Staging media", 10, false},
 		{"staged", "in_progress", "Rebooting into Setup", 30, false},
 		{"specialize", "in_progress", "Windows Setup (specialize)", 55, false},
-		{"first-logon", "in_progress", "Installing software", 80, false},
+		{"first-logon", "in_progress", "First logon (OOBE)", 65, false},
+		{"agent-online", "in_progress", "Windows installed — agent running", 70, false},
+		{"installing", "in_progress", "Installing software", 75, false}, // no counts -> band low end
 		{"complete", "in_progress", "Finishing up", 95, false},
 		{"first-logon", "ok", "Done", 100, false},   // outcome wins over phase
 		{"staging", "failed", "Failed", 100, false}, // outcome wins over phase
@@ -32,6 +34,39 @@ func TestDeployPhaseProgress(t *testing.T) {
 			t.Errorf("DeployPhaseProgress(%q,%q) = (%q,%d,%v), want (%q,%d,%v)",
 				c.phase, c.outcome, label, pct, indet, c.wantLabel, c.wantPct, c.wantIndet)
 		}
+	}
+}
+
+func TestDeployRecordProgressInstallingOverlay(t *testing.T) {
+	cases := []struct {
+		done, total int
+		wantLabel   string
+		wantPct     int
+	}{
+		{0, 5, "Installing software (0/5)", 75}, // band low
+		{1, 5, "Installing software (1/5)", 78}, // 75 + 17*1/5 = 78.4 -> 78
+		{5, 5, "Installing software (5/5)", 92}, // band high
+		{9, 5, "Installing software (5/5)", 92}, // clamp overshoot
+		{2, 4, "Installing software (2/4)", 83}, // 75 + 17/2 = 83.5 -> 83
+	}
+	for _, c := range cases {
+		d := DeploymentRecord{Outcome: "in_progress", Phase: "installing",
+			ProgressDone: c.done, ProgressTotal: c.total}
+		label, pct, indet := DeployRecordProgress(d)
+		if label != c.wantLabel || pct != c.wantPct || indet {
+			t.Errorf("DeployRecordProgress(done=%d,total=%d) = (%q,%d,%v), want (%q,%d,false)",
+				c.done, c.total, label, pct, indet, c.wantLabel, c.wantPct)
+		}
+	}
+	// total==0 -> no overlay, falls back to the plain "installing" base.
+	base := DeploymentRecord{Outcome: "in_progress", Phase: "installing"}
+	if label, pct, _ := DeployRecordProgress(base); label != "Installing software" || pct != 75 {
+		t.Errorf("installing with no total = (%q,%d), want (Installing software,75)", label, pct)
+	}
+	// A non-installing phase is unchanged by the overlay.
+	spec := DeploymentRecord{Outcome: "in_progress", Phase: "specialize", ProgressTotal: 5}
+	if label, pct, _ := DeployRecordProgress(spec); label != "Windows Setup (specialize)" || pct != 55 {
+		t.Errorf("specialize overlay leaked: (%q,%d)", label, pct)
 	}
 }
 

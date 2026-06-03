@@ -313,7 +313,7 @@ func machineDetail(r Repos) http.HandlerFunc {
 		deployLabel, deployPercent, deployIndeterminate := "", 0, false
 		if open, oerr := r.Inventory.LatestOpenDeployment(req.Context(), id); oerr == nil {
 			deployActive = true
-			deployLabel, deployPercent, deployIndeterminate = model.DeployPhaseProgress(open.Phase, open.Outcome)
+			deployLabel, deployPercent, deployIndeterminate = model.DeployRecordProgress(open)
 		}
 		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
 		bl, _ := r.BitLocker.PINStatus(req.Context(), id)
@@ -379,7 +379,7 @@ func machineDeployStatus(r Repos) http.HandlerFunc {
 			})
 			return
 		}
-		label, percent, indeterminate := model.DeployPhaseProgress(open.Phase, open.Outcome)
+		label, percent, indeterminate := model.DeployRecordProgress(open)
 		stalled := false
 		if m, merr := r.Inventory.Get(req.Context(), id); merr == nil {
 			stalled = time.Since(m.LastSeen) > deployStallAfter
@@ -388,6 +388,7 @@ func machineDeployStatus(r Repos) http.HandlerFunc {
 			"active": true, "finished": false,
 			"phase": open.Phase, "label": label, "percent": percent,
 			"indeterminate": indeterminate, "outcome": open.Outcome,
+			"done": open.ProgressDone, "total": open.ProgressTotal,
 			"stalled": stalled,
 		})
 	}
