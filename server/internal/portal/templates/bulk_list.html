@@ -6,6 +6,9 @@
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
   <div class="right">
+    <form method="post" action="/portal/bulk/clear-completed" data-confirm="Remove all completed and cancelled operations? This deletes their job history.">
+      <button type="submit" class="ghost sm"><svg><use href="#i-trash"/></svg>Clear completed</button>
+    </form>
     <a class="btn" href="/portal/bulk/new"><svg><use href="#i-plus"/></svg>New bulk operation</a>
   </div>
 </div>
@@ -15,20 +18,49 @@
   <thead><tr>
     <th class="num" data-sort="num">ID</th>
     <th>Action</th>
-    <th>Target</th>
+    <th>Status</th>
+    <th>Progress</th>
+    <th>Schedule</th>
+    <th>Next run</th>
     <th>Created by</th>
-    <th data-sort="num">Created</th>
     <th data-nosort></th>
   </tr></thead>
   <tbody>
     {{range .Data.Ops}}
+    {{$st := .Status}}
     <tr>
       <td class="num"><code>#{{int64 .ID}}</code></td>
       <td><span class="badge accent">{{.Action}}</span></td>
-      <td class="small muted">{{if .Target.NameRegex}}name=<code>{{.Target.NameRegex}}</code> {{end}}{{if .Target.OU}}ou=<code>{{.Target.OU}}</code> {{end}}{{if .Target.Group}}group=<code>{{.Target.Group}}</code>{{end}}</td>
+      <td>
+        {{if eq $st "completed"}}<span class="badge ok">completed</span>
+        {{else if eq $st "cancelled"}}<span class="badge muted">cancelled</span>
+        {{else if eq $st "scheduled"}}<span class="badge accent">scheduled</span>
+        {{else if eq $st "paused"}}<span class="badge muted">paused</span>
+        {{else}}<span class="badge warn">active</span>{{end}}
+      </td>
+      <td data-sort-value="{{.Progress.Percent}}" style="min-width:150px;">
+        {{if .Progress.Total}}
+        <div class="bulk-prog">
+          <progress class="bulk-bar" value="{{.Progress.Done}}" max="{{.Progress.Total}}"></progress>
+          <span class="small muted">{{.Progress.OK}} ok · {{.Progress.Failed}} fail · {{.Progress.Queued}} queued</span>
+        </div>
+        {{else}}<span class="muted small">—</span>{{end}}
+      </td>
+      <td class="small muted">
+        {{if eq .ScheduleKind "once"}}<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-clock"/></svg> once
+        {{else if eq .ScheduleKind "recurring"}}<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-repeat"/></svg> recurring
+        {{else}}now{{end}}
+      </td>
+      <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{formatTime (deref .NextRunAt)}}{{else}}—{{end}}</td>
       <td class="small">{{.CreatedBy}}</td>
-      <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
-      <td class="actions"><a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a></td>
+      <td class="actions">
+        <a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a>
+        {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg></a>{{end}}
+        {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
+        <form method="post" action="/portal/bulk/{{int64 .ID}}/cancel" data-confirm="Cancel this operation? Queued and running jobs will be stopped.">
+          <button type="submit" class="danger sm"><svg><use href="#i-x"/></svg></button>
+        </form>{{end}}
+      </td>
     </tr>
     {{end}}
   </tbody>
@@ -38,7 +70,7 @@
 <div class="empty">
   <svg class="empty-icon"><use href="#i-bolt"/></svg>
   <h3>No bulk operations yet</h3>
-  <p>Queue a rename, software-push or script across a fleet selection. The server coordinates AD renames; agents pull each job at check-in time.</p>
+  <p>Queue a rename, software-push, script or re-image across a fleet selection — run it now, schedule it, or repeat it on a cadence. The server coordinates AD renames; agents pull each job at check-in time.</p>
   <a class="btn" href="/portal/bulk/new"><svg><use href="#i-plus"/></svg>Create operation</a>
 </div>
 {{end}}

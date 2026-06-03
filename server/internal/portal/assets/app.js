@@ -635,6 +635,64 @@
     tick();
   })();
 
+  // ---- Action / schedule picker -------------------------------------
+  // A <fieldset class="action-picker"> of radio tiles, immediately followed
+  // by a <div class="action-panels"> whose [data-action-panel="value"] blocks
+  // are shown/hidden to match the checked radio. Replaces the old per-page
+  // <select onchange> show/hide scripts; works for the action picker, the
+  // schedule picker, and any future tile group.
+  document.querySelectorAll('.action-picker').forEach(function (fs) {
+    var panels = fs.nextElementSibling;
+    if (!panels || !panels.classList.contains('action-panels')) return;
+    function sync() {
+      var sel = fs.querySelector('input[type=radio]:checked');
+      var v = sel ? sel.value : '';
+      panels.querySelectorAll('[data-action-panel]').forEach(function (p) {
+        p.hidden = p.getAttribute('data-action-panel') !== v;
+      });
+      fs.querySelectorAll('.action-tile').forEach(function (t) {
+        var r = t.querySelector('input[type=radio]');
+        t.classList.toggle('selected', !!(r && r.checked));
+      });
+    }
+    fs.addEventListener('change', sync);
+    sync();
+  });
+
+  // ---- Bulk operation progress --------------------------------------
+  // The bulk detail page has <div data-bulk-progress data-op-id>. Poll the
+  // operation's progress endpoint, drive the rollup bar/counts, and reload
+  // once it reaches a terminal state so the settled view (final job rows)
+  // appears.
+  (function initBulkProgress() {
+    var box = document.querySelector('[data-bulk-progress][data-op-id]');
+    if (!box) return;
+    var id = box.getAttribute('data-op-id');
+    var bar = box.querySelector('[data-prog-bar]');
+    var counts = box.querySelector('[data-prog-counts]');
+    var pct = box.querySelector('[data-prog-pct]');
+    function schedule() { setTimeout(tick, 2500); }
+    function tick() {
+      fetch('/portal/bulk/' + id + '/progress', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (s) {
+          if (!s) { schedule(); return; }
+          if (bar) { bar.value = (s.ok + s.failed + s.cancelled) || 0; bar.max = s.total || 1; }
+          if (counts) {
+            counts.textContent = s.ok + ' ok · ' + s.failed + ' failed · ' + s.running +
+              ' running · ' + s.queued + ' queued' + (s.cancelled ? ' · ' + s.cancelled + ' cancelled' : '');
+          }
+          if (pct) pct.textContent = (s.percent || 0) + '%';
+          // Keep polling while work is outstanding; reload once it settles so
+          // the status badge and per-job results refresh from the server.
+          if (s.running > 0 || s.queued > 0) { schedule(); }
+          else if (s.finished) { /* terminal — leave as is */ }
+        })
+        .catch(function () { schedule(); });
+    }
+    schedule();
+  })();
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

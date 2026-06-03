@@ -81,39 +81,9 @@
 
 <div class="section-head"><h3>Run an action on this machine</h3><div class="line"></div></div>
 <form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
-  <label><span class="lbl">Action</span>
-    <select name="action" onchange="mActionChanged(this)">
-      <option value="rename">Rename</option>
-      <option value="script">Run a script (cmd / powershell)</option>
-      <option value="software_push">Push software</option>
-      <option value="reimage">Re-image (rebuild from image)</option>
-    </select>
-  </label>
-  <div id="m-rename">
-    <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-01"></label>
-    <p class="hint">Renames this machine and reboots it. AD coordination happens server-side before the local rename job is queued.</p>
-  </div>
-  <div id="m-script" style="display:none">
-    <label><span class="lbl">Shell</span><select name="script_shell"><option value="powershell">powershell</option><option value="cmd">cmd</option></select></label>
-    <label><span class="lbl">Body</span><textarea name="script_body" rows="5" placeholder="Get-Service"></textarea></label>
-  </div>
-  <div id="m-software_push" style="display:none">
-    <label><span class="lbl">Package</span>
-      <select name="software_package_id"><option value="">— choose a package —</option>{{range .Data.Packages}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
-    </label>
-    <p class="hint">Installs the package and its dependencies; detection rules skip what's already present.</p>
-  </div>
-  <div id="m-reimage" style="display:none">
-    <label><span class="lbl">Image (optional)</span>
-      <select name="reimage_image_id"><option value="">— use this machine's bound image —</option>{{range .Data.Images}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}</select>
-    </label>
-    <p class="hint"><strong>Destructive.</strong> The machine reboots on its next check-in (≤5 min), network-boots into AutoDeploy, and re-images automatically. It must be configured to network-boot.</p>
-  </div>
+  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "AP" .Data.AP)}}
   <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
-<script>
-function mActionChanged(sel){['rename','script','software_push','reimage'].forEach(function(a){document.getElementById('m-'+a).style.display=(sel.value===a)?'':'none';});}
-</script>
 
 <div class="section-head"><h3>BitLocker</h3><div class="line"></div></div>
 <p>Current state:

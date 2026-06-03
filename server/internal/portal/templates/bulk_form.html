@@ -1,34 +1,36 @@
 {{define "body"}}
+{{$ap := .Data.AP}}
 <div class="toolbar">
-  <h2>New bulk operation</h2>
+  <h2>{{if .Data.Editing}}Edit bulk operation{{else}}New bulk operation{{end}}</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
 </div>
 
-<div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
-<p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. The filter is just a search tool — the action runs on your selection, not on whatever currently matches.</p>
-<form class="std" onsubmit="runSearch(); return false;">
-  <label><span class="lbl">Name regex</span><input type="text" id="f_name" placeholder="^LAB-"></label>
-  <label><span class="lbl">OU (DN)</span><input type="text" id="f_ou" placeholder="OU=Lab,DC=corp,DC=example"></label>
-  <label><span class="lbl">AD group</span><input type="text" id="f_group" placeholder="Lab-Computers"></label>
-  <div class="actions">
-    <button type="submit" class="secondary"><svg><use href="#i-search"/></svg>Search</button>
+<form class="std" method="POST" action="{{.Data.FormAction}}" id="bulk-form" onsubmit="return onSubmit()">
+
+  <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
+  <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. For a re-evaluated recurring task (chosen under <em>When</em>) these filter fields are saved and re-run each time instead of a fixed list.</p>
+  <div class="row">
+    <label><span class="lbl">Name regex</span><input type="text" id="filter_name" name="filter_name" value="{{$ap.FilterName}}" placeholder="^LAB-"></label>
+    <label><span class="lbl">OU (DN)</span><input type="text" id="filter_ou" name="filter_ou" value="{{$ap.FilterOU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
+    <label><span class="lbl">AD group</span><input type="text" id="filter_group" name="filter_group" value="{{$ap.FilterGroup}}" placeholder="Lab-Computers"></label>
+  </div>
+  <div class="actions" style="justify-content:flex-start;">
+    <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
     <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
   </div>
-</form>
 
-<div id="results-wrap" style="display:none;">
-  <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
-  <div class="tablewrap" style="max-height: 260px; overflow-y: auto;">
-    <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
-      <tbody id="results-body"></tbody>
-    </table>
+  <div id="results-wrap" style="display:none;">
+    <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
+    <div class="tablewrap" style="max-height: 240px; overflow-y: auto;">
+      <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
   </div>
-</div>
 
-<form class="std" method="POST" action="/portal/bulk" id="bulk-form" onsubmit="return onSubmit()" style="margin-top: var(--sp-4);">
   <div class="section-head"><h3>2. Selection (<span id="sel-count">0</span> machine<span id="sel-plural">s</span>)</h3><div class="line"></div></div>
   <div id="sel-empty" class="muted">No machines selected yet. Search above and add some.</div>
-  <div class="tablewrap" id="sel-wrap" style="display:none; max-height: 260px; overflow-y: auto;">
+  <div class="tablewrap" id="sel-wrap" style="display:none; max-height: 240px; overflow-y: auto;">
     <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
       <tbody id="sel-body"></tbody>
     </table>
@@ -36,70 +38,90 @@
   <div id="sel-inputs"></div>
 
   <div class="section-head"><h3>3. Action</h3><div class="line"></div></div>
-  <fieldset>
-    <label><span class="lbl">Action type</span>
-      <select name="action" id="action" onchange="actionChanged(this)">
-        <option value="rename">Rename machine</option>
-        <option value="script">Run a script (cmd / powershell)</option>
-        <option value="software_push">Push software</option>
-        <option value="reimage">Re-image (rebuild from image)</option>
-      </select>
+  {{template "action_picker" (dict "Mode" "bulk" "Packages" .Data.Packages "Images" .Data.Images "AP" $ap)}}
+
+  <div class="section-head"><h3>4. When</h3><div class="line"></div></div>
+  <fieldset class="action-picker" role="radiogroup" aria-label="Schedule">
+    <label class="action-tile">
+      <input type="radio" name="schedule_kind" value="now" {{if eq $ap.ScheduleKind "now"}}checked{{end}}>
+      <svg><use href="#i-bolt"/></svg><span class="t">Run now</span>
     </label>
-    <div id="act-rename">
-      <p class="hint">Fleet rename by find/replace (regex) on each machine's current name. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code> renames LAB-A-01 → LAB-B-01, LAB-A-02 → LAB-B-02. To rename a <em>single</em> machine to a literal name, use the action on that machine's page instead.</p>
-      <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" placeholder="^LAB-A-"></label>
-      <label><span class="lbl">Replace</span><input type="text" name="rename_replace" placeholder="LAB-B-"></label>
-      <p class="small muted">Each targeted machine is renamed and rebooted. AD coordination happens server-side via the Domain Integration Service before the local rename job is queued for the agent.</p>
-    </div>
-    <div id="act-script" style="display:none">
-      <label><span class="lbl">Shell</span>
-        <select name="script_shell"><option value="powershell">powershell</option><option value="cmd">cmd</option></select>
-      </label>
-      <label><span class="lbl">Body</span><textarea name="script_body" rows="6" placeholder="Get-Service"></textarea></label>
-      <p class="small muted">Highest-risk action; every script run is fully audited.</p>
-    </div>
-    <div id="act-software_push" style="display:none">
-      <label><span class="lbl">Software package</span>
-        <select name="software_package_id">
-          <option value="">— choose a package —</option>
-          {{range .Data.Packages}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
-        </select>
-      </label>
-      <p class="hint">The agent installs this package and its dependencies (deps first), evaluating detection rules so already-installed packages are skipped.</p>
-    </div>
-    <div id="act-reimage" style="display:none">
-      <label><span class="lbl">Image (optional)</span>
-        <select name="reimage_image_id">
-          <option value="">— use each machine's bound image —</option>
-          {{range .Data.Images}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
-        </select>
-      </label>
-      <p class="small muted"><strong>Destructive.</strong> Each selected machine reboots and re-images on its next agent check-in (≤5 min). It network-boots into AutoDeploy and auto-deploys the image without operator interaction. The machine must be configured to network-boot.</p>
-    </div>
+    <label class="action-tile">
+      <input type="radio" name="schedule_kind" value="once" {{if eq $ap.ScheduleKind "once"}}checked{{end}}>
+      <svg><use href="#i-clock"/></svg><span class="t">Run once</span>
+    </label>
+    <label class="action-tile">
+      <input type="radio" name="schedule_kind" value="recurring" {{if eq $ap.ScheduleKind "recurring"}}checked{{end}}>
+      <svg><use href="#i-repeat"/></svg><span class="t">Recurring</span>
+    </label>
   </fieldset>
+  <div class="action-panels">
+    <div class="action-panel" data-action-panel="now" {{if ne $ap.ScheduleKind "now"}}hidden{{end}}>
+      <p class="small muted">Jobs are queued immediately; agents pick them up at their next check-in.</p>
+    </div>
+    <div class="action-panel" data-action-panel="once" {{if ne $ap.ScheduleKind "once"}}hidden{{end}}>
+      <label><span class="lbl">Run at (server time)</span><input type="datetime-local" name="run_at" value="{{$ap.RunAtLocal}}"></label>
+    </div>
+    <div class="action-panel" data-action-panel="recurring" {{if ne $ap.ScheduleKind "recurring"}}hidden{{end}}>
+      <div class="row">
+        <label><span class="lbl">Every</span><input type="number" name="recur_every" min="1" value="{{$ap.RecurEvery}}"></label>
+        <label><span class="lbl">Unit</span>
+          <select name="recur_unit" id="recur_unit" onchange="recurUnitChanged()">
+            <option value="hour" {{if eq $ap.RecurUnit "hour"}}selected{{end}}>hour(s)</option>
+            <option value="day" {{if eq $ap.RecurUnit "day"}}selected{{end}}>day(s)</option>
+            <option value="week" {{if eq $ap.RecurUnit "week"}}selected{{end}}>week(s)</option>
+          </select>
+        </label>
+        <label id="recur-at-wrap"><span class="lbl">At (server time)</span><input type="time" name="recur_at" value="{{$ap.RecurAt}}"></label>
+        <label id="recur-weekday-wrap"><span class="lbl">On</span>
+          <select name="recur_weekday">
+            {{$wd := $ap.RecurWeekday}}
+            <option value="0" {{if eq $wd 0}}selected{{end}}>Sunday</option>
+            <option value="1" {{if eq $wd 1}}selected{{end}}>Monday</option>
+            <option value="2" {{if eq $wd 2}}selected{{end}}>Tuesday</option>
+            <option value="3" {{if eq $wd 3}}selected{{end}}>Wednesday</option>
+            <option value="4" {{if eq $wd 4}}selected{{end}}>Thursday</option>
+            <option value="5" {{if eq $wd 5}}selected{{end}}>Friday</option>
+            <option value="6" {{if eq $wd 6}}selected{{end}}>Saturday</option>
+          </select>
+        </label>
+      </div>
+      <details {{if $ap.RecurCron}}open{{end}}><summary class="small muted">Advanced — cron expression</summary>
+        <label><span class="lbl">Cron (min hour dom month dow) — overrides the preset above</span>
+          <input type="text" name="recur_cron" value="{{$ap.RecurCron}}" placeholder="0 2 * * 1"></label>
+      </details>
+      <fieldset style="margin-top:var(--sp-3);">
+        <legend>Targets each run</legend>
+        <label class="check" style="display:flex;gap:.4rem;align-items:center;">
+          <input type="radio" name="target_mode" value="selection" {{if ne $ap.TargetMode "filter"}}checked{{end}}>
+          <span>Fixed selection — replay exactly the machines chosen above every run.</span>
+        </label>
+        <label class="check" style="display:flex;gap:.4rem;align-items:center;">
+          <input type="radio" name="target_mode" value="filter" {{if eq $ap.TargetMode "filter"}}checked{{end}}>
+          <span>Re-evaluate filter — re-run the name/OU/group search each time so new machines are picked up.</span>
+        </label>
+      </fieldset>
+      <p class="small warn" id="reimage-recur-warn" hidden><svg style="width:14px;height:14px;vertical-align:-2px"><use href="#i-alert"/></svg> A recurring re-image will <strong>repeatedly wipe and rebuild</strong> every targeted machine. Use only for kiosk/lab "reset to clean image" scenarios.</p>
+    </div>
+  </div>
+
   <div class="actions">
     <a class="btn secondary" href="/portal/bulk">Cancel</a>
-    <button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue operation</button>
+    <button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>{{if .Data.Editing}}Save changes{{else}}Queue operation{{end}}</button>
   </div>
 </form>
 
 <script>
-var selection = {}; // id -> {name, make, product}
-
-function actionChanged(sel){
-  ['rename','script','software_push','reimage'].forEach(function(a){
-    document.getElementById('act-'+a).style.display = (sel.value===a)?'block':'none';
-  });
-}
+var selection = {}; // id -> {id,name,make,product}
 
 function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
 
 var lastResults = [];
 function runSearch(){
   var q = new URLSearchParams({
-    name_regex: document.getElementById('f_name').value,
-    ou: document.getElementById('f_ou').value,
-    group: document.getElementById('f_group').value
+    name_regex: document.getElementById('filter_name').value,
+    ou: document.getElementById('filter_ou').value,
+    group: document.getElementById('filter_group').value
   });
   fetch('/portal/bulk/search?'+q.toString(), {credentials:'same-origin'})
     .then(function(r){ return r.json(); })
@@ -119,10 +141,7 @@ function runSearch(){
     .catch(function(){ alert('Search failed.'); });
 }
 
-function addOne(id){
-  var m = lastResults.find(function(x){ return x.id===id; });
-  if(m){ selection[id] = m; renderSelection(); }
-}
+function addOne(id){ var m = lastResults.find(function(x){ return x.id===id; }); if(m){ selection[id]=m; renderSelection(); } }
 function addAllResults(){ lastResults.forEach(function(m){ selection[m.id]=m; }); renderSelection(); }
 function removeOne(id){ delete selection[id]; renderSelection(); }
 
@@ -144,9 +163,37 @@ function renderSelection(){
   });
 }
 
+// Seed the basket on edit.
+(function(){ try{ (JSON.parse({{.Data.SelInitJSON}})||[]).forEach(function(m){ selection[m.id]=m; }); }catch(_){} renderSelection(); })();
+
+function recurUnitChanged(){
+  var u = document.getElementById('recur_unit').value;
+  document.getElementById('recur-at-wrap').style.display = (u==='hour') ? 'none' : '';
+  document.getElementById('recur-weekday-wrap').style.display = (u==='week') ? '' : 'none';
+}
+recurUnitChanged();
+
+function currentSchedule(){ var el=document.querySelector('input[name=schedule_kind]:checked'); return el?el.value:'now'; }
+function currentTargetMode(){ var el=document.querySelector('input[name=target_mode]:checked'); return el?el.value:'selection'; }
+function currentAction(){ var el=document.querySelector('input[name=action]:checked'); return el?el.value:''; }
+
+// Show the recurring re-image warning when both are selected.
+function syncReimageWarn(){
+  var warn = document.getElementById('reimage-recur-warn');
+  if(warn){ warn.hidden = !(currentAction()==='reimage' && currentSchedule()==='recurring'); }
+}
+document.getElementById('bulk-form').addEventListener('change', syncReimageWarn);
+syncReimageWarn();
+
 function onSubmit(){
-  if(Object.keys(selection).length===0){ alert('Add at least one machine to the selection.'); return false; }
-  return confirm('Queue this operation against '+Object.keys(selection).length+' machine(s)?');
+  var sched = currentSchedule();
+  var usingFilter = (sched==='recurring' && currentTargetMode()==='filter');
+  if(!usingFilter && Object.keys(selection).length===0){ alert('Add at least one machine to the selection.'); return false; }
+  if(currentAction()==='reimage' && sched==='recurring'){
+    return confirm('Recurring RE-IMAGE will repeatedly wipe and rebuild every targeted machine. Are you sure?');
+  }
+  if(sched==='now'){ return confirm('Queue this operation against '+Object.keys(selection).length+' machine(s)?'); }
+  return true;
 }
 </script>
 {{end}}

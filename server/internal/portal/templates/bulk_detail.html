@@ -1,20 +1,64 @@
 {{define "body"}}
 {{$op := .Data.Op}}
+{{$st := $op.Status}}
 <div class="toolbar">
   <h2>Bulk operation #{{int64 $op.ID}}</h2>
-  <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
+  <div class="right">
+    {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 $op.ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>{{end}}
+    {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
+    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/run-now" data-confirm="Queue a run of this operation right now?">
+      <button type="submit" class="secondary sm"><svg><use href="#i-bolt"/></svg>Run now</button>
+    </form>{{end}}
+    {{if eq $op.ScheduleKind "recurring"}}
+      {{if eq $st "paused"}}
+      <form method="post" action="/portal/bulk/{{int64 $op.ID}}/resume"><button type="submit" class="secondary sm"><svg><use href="#i-play"/></svg>Resume</button></form>
+      {{else if or (eq $st "active") (eq $st "scheduled")}}
+      <form method="post" action="/portal/bulk/{{int64 $op.ID}}/pause"><button type="submit" class="secondary sm"><svg><use href="#i-pause"/></svg>Pause</button></form>
+      {{end}}
+    {{end}}
+    {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
+    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/cancel" data-confirm="Cancel this operation? Queued and running jobs will be stopped.">
+      <button type="submit" class="danger sm"><svg><use href="#i-x"/></svg>Cancel</button>
+    </form>{{end}}
+    <a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back</a>
+  </div>
+</div>
+
+{{$p := $op.Progress}}
+<div class="card" data-bulk-progress data-op-id="{{int64 $op.ID}}" style="margin-bottom:var(--sp-4);">
+  <div class="deploy-progress-head">
+    <strong>Progress</strong>
+    <span class="small muted" data-prog-counts>{{$p.OK}} ok · {{$p.Failed}} failed · {{$p.Running}} running · {{$p.Queued}} queued{{if $p.Cancelled}} · {{$p.Cancelled}} cancelled{{end}}</span>
+  </div>
+  <progress class="deploy-bar" data-prog-bar value="{{$p.Done}}" max="{{if $p.Total}}{{$p.Total}}{{else}}1{{end}}"></progress>
+  <div style="margin-top:var(--sp-2);">
+    {{if eq $st "completed"}}<span class="badge ok">completed</span>
+    {{else if eq $st "cancelled"}}<span class="badge muted">cancelled</span>
+    {{else if eq $st "scheduled"}}<span class="badge accent">scheduled</span>
+    {{else if eq $st "paused"}}<span class="badge muted">paused</span>
+    {{else}}<span class="badge warn">active</span>{{end}}
+    <span class="small muted" data-prog-pct>{{$p.Percent}}%</span>
+  </div>
 </div>
 
 <dl class="kv">
   <dt>Action</dt><dd><span class="badge accent">{{$op.Action}}</span></dd>
-  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code>{{end}}</dd>
+  <dt>Schedule</dt><dd>
+    {{if eq $op.ScheduleKind "once"}}One-time{{else if eq $op.ScheduleKind "recurring"}}Recurring{{else}}Run now{{end}}
+    {{if $op.NextRunAt}} · next run {{formatTime (deref $op.NextRunAt)}}{{end}}
+    {{if $op.LastRunAt}} · last run {{formatTime (deref $op.LastRunAt)}}{{end}}
+    {{if eq $op.ScheduleKind "recurring"}} · target {{if eq $op.TargetMode "filter"}}re-evaluated each run{{else}}fixed selection{{end}}{{end}}
+  </dd>
+  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code> {{end}}{{if $op.Target.MachineIDs}}{{len $op.Target.MachineIDs}} machine(s){{end}}</dd>
   <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
   <dt>Created</dt><dd>{{formatTime $op.CreatedAt}}</dd>
   <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>
 </dl>
 
-<div class="section-head"><h3>Jobs ({{len .Data.Jobs}})</h3><div class="line"></div></div>
 {{if .Data.Jobs}}
+{{$multi := gt (len .Data.Runs) 1}}
+{{range .Data.Runs}}
+<div class="section-head"><h3>{{if $multi}}Run #{{.No}} ({{len .Jobs}} jobs){{else}}Jobs ({{len .Jobs}}){{end}}</h3><div class="line"></div></div>
 <div class="tablewrap">
 <table data-sortable>
   <thead><tr>
@@ -26,11 +70,11 @@
     <th data-nosort>Result</th>
   </tr></thead>
   <tbody>
-    {{range .Data.Jobs}}
+    {{range .Jobs}}
     <tr>
       <td class="num"><code>#{{int64 .ID}}</code></td>
       <td><a href="/portal/machines/{{int64 .MachineID}}"><code>#{{int64 .MachineID}}</code></a></td>
-      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{end}}">{{.Status}}</span></td>
+      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{else if eq .Status "cancelled"}}muted{{end}}">{{.Status}}</span></td>
       <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}—{{end}}</td>
       <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}—{{end}}</td>
       <td class="small"><code>{{.ResultJSON}}</code></td>
@@ -39,11 +83,12 @@
   </tbody>
 </table>
 </div>
+{{end}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-bolt"/></svg>
-  <h3>No jobs queued</h3>
-  <p>The target selection matched no machines, or the jobs are still being created.</p>
+  <h3>No jobs yet</h3>
+  <p>{{if eq $st "scheduled"}}This operation is scheduled — jobs are created when it first runs.{{else}}The target selection matched no machines, or the jobs are still being created.{{end}}</p>
 </div>
 {{end}}
 {{end}}

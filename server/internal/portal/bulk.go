@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
@@ -16,7 +17,15 @@ func init() {
 		get("/portal/bulk/new", bulkFormNew(r))
 		get("/portal/bulk/search", bulkSearch(r))
 		post("/portal/bulk", bulkCreate(r))
+		post("/portal/bulk/clear-completed", bulkClearCompleted(r))
 		get("/portal/bulk/{id}", bulkDetail(r))
+		get("/portal/bulk/{id}/edit", bulkEditForm(r))
+		post("/portal/bulk/{id}/edit", bulkEditSave(r))
+		get("/portal/bulk/{id}/progress", bulkProgress(r))
+		post("/portal/bulk/{id}/cancel", bulkCancel(r))
+		post("/portal/bulk/{id}/pause", bulkPause(r))
+		post("/portal/bulk/{id}/resume", bulkResume(r))
+		post("/portal/bulk/{id}/run-now", bulkRunNow(r))
 	}
 }
 
@@ -33,7 +42,7 @@ func writeJSONErr(w http.ResponseWriter, code int, msg string) {
 
 func bulkList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		ops, err := r.Bulk.ListOperations(req.Context())
+		ops, err := r.Bulk.ListOperationsWithProgress(req.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -47,8 +56,12 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 		pkgs, _ := r.Software.List(req.Context())
 		imgs, _ := r.Images.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Packages": pkgs,
-			"Images":   imgs,
+			"Packages":    pkgs,
+			"Images":      imgs,
+			"FormAction":  "/portal/bulk",
+			"Editing":     false,
+			"AP":          formPrefill(nil),
+			"SelInitJSON": "[]",
 		})
 	}
 }
@@ -69,33 +82,89 @@ func bulkSearch(r Repos) http.HandlerFunc {
 			writeJSONErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		type item struct {
-			ID      int64  `json:"id"`
-			Name    string `json:"name"`
-			UUID    string `json:"uuid"`
-			Make    string `json:"make"`
-			Product string `json:"product"`
-		}
-		out := make([]item, 0, len(machines))
-		for _, m := range machines {
-			b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
-			out = append(out, item{
-				ID: int64(m.ID), Name: b.MachineName, UUID: m.SystemUUID,
-				Make: m.SystemManufacturer, Product: m.SystemProduct,
-			})
-		}
-		writeJSONResp(w, out)
+		writeJSONResp(w, machineItems(r, req, machines))
 	}
 }
 
-func bulkCreate(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+type machineItem struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	UUID    string `json:"uuid"`
+	Make    string `json:"make"`
+	Product string `json:"product"`
+}
+
+func machineItems(r Repos, req *http.Request, machines []model.MachineRecord) []machineItem {
+	out := make([]machineItem, 0, len(machines))
+	for _, m := range machines {
+		b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+		out = append(out, machineItem{
+			ID: int64(m.ID), Name: b.MachineName, UUID: m.SystemUUID,
+			Make: m.SystemManufacturer, Product: m.SystemProduct,
+		})
+	}
+	return out
+}
+
+// bulkParams collects the action payload, target and schedule from a create or
+// edit form. flashErr is set (and the caller redirects) when validation fails.
+type bulkParams struct {
+	Action         string
+	Payload        string
+	Target         model.BulkTarget
+	TargetMode     string
+	ReimageImageID model.ID
+	ScheduleKind   string
+	RunAt          *time.Time
+	RecurSpec      string
+}
+
+// parseBulkForm reads the shared action + target + schedule fields. It returns
+// a human-readable error suitable for a flash on failure.
+func parseBulkForm(req *http.Request) (bulkParams, error) {
+	if err := req.ParseForm(); err != nil {
+		return bulkParams{}, err
+	}
+	var p bulkParams
+	p.Action = req.FormValue("action")
+
+	// Schedule.
+	p.ScheduleKind = req.FormValue("schedule_kind")
+	if p.ScheduleKind == "" {
+		p.ScheduleKind = model.BulkScheduleNow
+	}
+	switch p.ScheduleKind {
+	case model.BulkScheduleNow:
+	case model.BulkScheduleOnce:
+		t, err := parseLocalDateTime(req.FormValue("run_at"))
+		if err != nil {
+			return p, fmt.Errorf("choose when the one-time operation should run")
 		}
-		// The operator built an explicit selection basket (machine_ids);
-		// that -- not the search filter -- is what the action runs on.
+		p.RunAt = &t
+	case model.BulkScheduleRecurring:
+		spec, err := recurSpecFromForm(req)
+		if err != nil {
+			return p, err
+		}
+		p.RecurSpec = spec
+	default:
+		return p, fmt.Errorf("unknown schedule type")
+	}
+
+	// Target. A recurring "filter" task stores the live filter so each run
+	// re-resolves it; everything else uses the explicit selection basket.
+	p.TargetMode = req.FormValue("target_mode")
+	if p.ScheduleKind == model.BulkScheduleRecurring && p.TargetMode == model.BulkTargetFilter {
+		p.Target = model.BulkTarget{
+			NameRegex: strings.TrimSpace(req.FormValue("filter_name")),
+			OU:        strings.TrimSpace(req.FormValue("filter_ou")),
+			Group:     strings.TrimSpace(req.FormValue("filter_group")),
+		}
+		if p.Target.NameRegex == "" && p.Target.OU == "" && p.Target.Group == "" {
+			return p, fmt.Errorf("a re-evaluated recurring task needs a name, OU or group filter")
+		}
+	} else {
+		p.TargetMode = model.BulkTargetSelection
 		var ids []model.ID
 		for _, s := range req.Form["machine_ids"] {
 			if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
@@ -103,70 +172,274 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			}
 		}
 		if len(ids) == 0 {
-			flash(w, "err", "Add at least one machine to the selection.")
-			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
-			return
+			return p, fmt.Errorf("add at least one machine to the selection")
 		}
-		t := model.BulkTarget{MachineIDs: ids}
-		action := req.FormValue("action")
-		var payload string
-		switch action {
-		case model.BulkActionRename:
-			// Bulk rename is fleet-only: a regex find/replace applied to
-			// each machine's current name. Renaming one machine to a
-			// literal name is done from that machine's own page.
-			find := strings.TrimSpace(req.FormValue("rename_find"))
-			if find == "" {
-				flash(w, "err", "Bulk rename requires a find pattern. To rename one machine to a literal name, use its machine page.")
-				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
-				return
-			}
-			b, _ := json.Marshal(map[string]string{
-				"rename_find":    find,
-				"rename_replace": req.FormValue("rename_replace"),
-			})
-			payload = string(b)
-		case model.BulkActionScript:
-			shell := req.FormValue("script_shell")
-			body := req.FormValue("script_body")
-			if body == "" {
-				flash(w, "err", "Script body required.")
-				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
-				return
-			}
-			b, _ := json.Marshal(map[string]string{"shell": shell, "body": body})
-			payload = string(b)
-		case model.BulkActionSoftwarePush:
-			// Operator picks a software package; the agent fetches its
-			// install items (plus dependencies) and runs them.
-			pid, err := strconv.ParseInt(req.FormValue("software_package_id"), 10, 64)
-			if err != nil || pid <= 0 {
-				flash(w, "err", "Choose a software package to push.")
-				http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
-				return
-			}
-			b, _ := json.Marshal(map[string]int64{"package_id": pid})
-			payload = string(b)
-		case model.BulkActionReimage:
-			// Image to deploy is carried on the operation; job payload is "{}".
-			payload = "{}"
-		default:
-			flash(w, "err", "Unknown action.")
+		p.Target = model.BulkTarget{MachineIDs: ids}
+	}
+
+	// Action payload (shared with single-machine actions, minus the
+	// literal single-machine rename which bulk forbids).
+	switch p.Action {
+	case model.BulkActionRename:
+		find := strings.TrimSpace(req.FormValue("rename_find"))
+		if find == "" {
+			return p, fmt.Errorf("bulk rename requires a find pattern. To rename one machine to a literal name, use its machine page")
+		}
+		b, _ := json.Marshal(map[string]string{
+			"rename_find":    find,
+			"rename_replace": req.FormValue("rename_replace"),
+		})
+		p.Payload = string(b)
+	case model.BulkActionScript:
+		body := req.FormValue("script_body")
+		if strings.TrimSpace(body) == "" {
+			return p, fmt.Errorf("script body required")
+		}
+		b, _ := json.Marshal(map[string]string{"shell": req.FormValue("script_shell"), "body": body})
+		p.Payload = string(b)
+	case model.BulkActionSoftwarePush:
+		pid, err := strconv.ParseInt(req.FormValue("software_package_id"), 10, 64)
+		if err != nil || pid <= 0 {
+			return p, fmt.Errorf("choose a software package to push")
+		}
+		b, _ := json.Marshal(map[string]int64{"package_id": pid})
+		p.Payload = string(b)
+	case model.BulkActionReimage:
+		p.Payload = "{}"
+		p.ReimageImageID = reimageImageIDFromForm(req)
+	default:
+		return p, fmt.Errorf("unknown action")
+	}
+	return p, nil
+}
+
+// parseLocalDateTime parses an <input type=datetime-local> value (no zone) in
+// the server's local timezone.
+func parseLocalDateTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty")
+	}
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("bad datetime %q", s)
+}
+
+// recurSpecFromForm builds the RecurSpec JSON from the friendly preset fields
+// (or an advanced cron expression when supplied).
+func recurSpecFromForm(req *http.Request) (string, error) {
+	if cron := strings.TrimSpace(req.FormValue("recur_cron")); cron != "" {
+		b, _ := json.Marshal(model.RecurSpec{Cron: cron})
+		return string(b), nil
+	}
+	every, _ := strconv.Atoi(strings.TrimSpace(req.FormValue("recur_every")))
+	if every < 1 {
+		every = 1
+	}
+	unit := req.FormValue("recur_unit")
+	switch unit {
+	case "hour", "day", "week":
+	default:
+		return "", fmt.Errorf("choose how often the recurring task runs")
+	}
+	rs := model.RecurSpec{Every: every, Unit: unit}
+	if unit == "day" || unit == "week" {
+		rs.At = strings.TrimSpace(req.FormValue("recur_at"))
+		if rs.At == "" {
+			rs.At = "00:00"
+		}
+	}
+	if unit == "week" {
+		rs.Weekday, _ = strconv.Atoi(req.FormValue("recur_weekday"))
+	}
+	b, _ := json.Marshal(rs)
+	return string(b), nil
+}
+
+func bulkCreate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		p, err := parseBulkForm(req)
+		if err != nil {
+			flash(w, "err", err.Error())
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 			return
 		}
 		user, _ := sessionUser(req, r)
 		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
-			Action: action, Payload: payload, Target: t, CreatedBy: user.Username,
-			ReimageImageID: reimageImageIDFromForm(req),
+			Action:         p.Action,
+			Payload:        p.Payload,
+			Target:         p.Target,
+			TargetMode:     p.TargetMode,
+			CreatedBy:      user.Username,
+			ReimageImageID: p.ReimageImageID,
+			ScheduleKind:   p.ScheduleKind,
+			RunAt:          p.RunAt,
+			RecurSpec:      p.RecurSpec,
 		})
 		if err != nil {
 			flash(w, "err", err.Error())
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 			return
 		}
-		flash(w, "ok", "Operation queued.")
+		switch p.ScheduleKind {
+		case model.BulkScheduleOnce:
+			flash(w, "ok", "Operation scheduled for "+op.RunAt.Local().Format("Mon 2 Jan 15:04")+".")
+		case model.BulkScheduleRecurring:
+			flash(w, "ok", "Recurring operation scheduled.")
+		default:
+			flash(w, "ok", "Operation queued.")
+		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", op.ID), http.StatusFound)
+	}
+}
+
+func bulkEditForm(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		op, _, err := r.Bulk.GetOperation(req.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		pkgs, _ := r.Software.List(req.Context())
+		imgs, _ := r.Images.List(req.Context())
+		// Pre-resolve the frozen selection so the basket is populated.
+		var selInit []machineItem
+		if len(op.Target.MachineIDs) > 0 {
+			ms, _ := r.Bulk.PreviewTargets(req.Context(), model.BulkTarget{MachineIDs: op.Target.MachineIDs})
+			selInit = machineItems(r, req, ms)
+		}
+		selJSON, _ := json.Marshal(selInit)
+		render(w, req, r, "bulk_form.html", fmt.Sprintf("Edit bulk operation #%d", int64(id)), map[string]any{
+			"Packages":    pkgs,
+			"Images":      imgs,
+			"FormAction":  fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
+			"Editing":     true,
+			"Op":          op,
+			"AP":          formPrefill(&op),
+			"SelInitJSON": string(selJSON),
+		})
+	}
+}
+
+func bulkEditSave(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		p, err := parseBulkForm(req)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
+			return
+		}
+		if err := r.Bulk.UpdateOperation(req.Context(), model.BulkOperation{
+			ID:             id,
+			Action:         p.Action,
+			Payload:        p.Payload,
+			Target:         p.Target,
+			TargetMode:     p.TargetMode,
+			ReimageImageID: p.ReimageImageID,
+			ScheduleKind:   p.ScheduleKind,
+			RunAt:          p.RunAt,
+			RecurSpec:      p.RecurSpec,
+		}); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
+			return
+		}
+		flash(w, "ok", "Operation updated.")
+		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
+	}
+}
+
+func bulkCancel(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if err := r.Bulk.CancelOperation(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Operation cancelled. Queued and running jobs were stopped.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
+	}
+}
+
+func bulkPause(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if err := r.Bulk.PauseOperation(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Recurring operation paused.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
+	}
+}
+
+func bulkResume(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if err := r.Bulk.ResumeOperation(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", "Recurring operation resumed.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
+	}
+}
+
+func bulkRunNow(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if _, err := r.Bulk.RunOperationNow(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			_ = r.Bulk.AdvanceSchedule(req.Context(), id, time.Now())
+			flash(w, "ok", "A run was queued now.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
+	}
+}
+
+func bulkClearCompleted(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		n, err := r.Bulk.ClearCompleted(req.Context())
+		if err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("Cleared %d finished operation(s).", n))
+		}
+		http.Redirect(w, req, "/portal/bulk", http.StatusFound)
+	}
+}
+
+func bulkProgress(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		op, _, err := r.Bulk.GetOperation(req.Context(), id)
+		if err != nil {
+			writeJSONErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		p, err := r.Bulk.ProgressFor(req.Context(), id)
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		finished := op.Status == model.BulkStatusCompleted || op.Status == model.BulkStatusCancelled
+		writeJSONResp(w, map[string]any{
+			"status":    op.Status,
+			"percent":   p.Percent(),
+			"total":     p.Total,
+			"queued":    p.Queued,
+			"running":   p.Running,
+			"ok":        p.OK,
+			"failed":    p.Failed,
+			"cancelled": p.Cancelled,
+			"finished":  finished,
+		})
 	}
 }
 
@@ -178,10 +451,105 @@ func bulkDetail(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		prog, _ := r.Bulk.ProgressFor(req.Context(), id)
+		op.Progress = prog
+		// Group jobs by run number (newest run first) for recurring history.
+		type run struct {
+			No   int
+			Jobs []model.BulkJob
+		}
+		order := []int{}
+		byRun := map[int]*run{}
+		for _, j := range jobs {
+			n := j.RunNo
+			if byRun[n] == nil {
+				byRun[n] = &run{No: n}
+				order = append(order, n)
+			}
+			byRun[n].Jobs = append(byRun[n].Jobs, j)
+		}
+		// order ascending by appearance (jobs come ORDER BY id); present newest run first.
+		runs := make([]*run, 0, len(order))
+		for i := len(order) - 1; i >= 0; i-- {
+			runs = append(runs, byRun[order[i]])
+		}
 		render(w, req, r, "bulk_detail.html", "Bulk operation #"+pathStr(req), map[string]any{
-			"Op": op, "Jobs": jobs,
+			"Op": op, "Jobs": jobs, "Runs": runs,
 		})
 	}
 }
 
 func pathStr(req *http.Request) string { return req.PathValue("id") }
+
+// formPrefill builds the values the create/edit form needs to seed the action
+// picker and schedule controls. op is nil for a new operation.
+func formPrefill(op *model.BulkOperation) map[string]any {
+	ap := map[string]any{
+		"Action":            "rename",
+		"RenameFind":        "",
+		"RenameReplace":     "",
+		"ScriptShell":       "powershell",
+		"ScriptBody":        "",
+		"SoftwarePackageID": int64(0),
+		"ReimageImageID":    int64(0),
+		"ScheduleKind":      "now",
+		"TargetMode":        "selection",
+		"RunAtLocal":        "",
+		"RecurEvery":        1,
+		"RecurUnit":         "week",
+		"RecurAt":           "02:00",
+		"RecurWeekday":      0,
+		"RecurCron":         "",
+		"FilterName":        "",
+		"FilterOU":          "",
+		"FilterGroup":       "",
+	}
+	if op == nil {
+		return ap
+	}
+	ap["Action"] = op.Action
+	switch op.Action {
+	case model.BulkActionRename:
+		var p struct{ Find, Replace string }
+		var raw map[string]string
+		_ = json.Unmarshal([]byte(op.Payload), &raw)
+		p.Find, p.Replace = raw["rename_find"], raw["rename_replace"]
+		ap["RenameFind"], ap["RenameReplace"] = p.Find, p.Replace
+	case model.BulkActionScript:
+		var raw map[string]string
+		_ = json.Unmarshal([]byte(op.Payload), &raw)
+		if raw["shell"] != "" {
+			ap["ScriptShell"] = raw["shell"]
+		}
+		ap["ScriptBody"] = raw["body"]
+	case model.BulkActionSoftwarePush:
+		var raw map[string]int64
+		_ = json.Unmarshal([]byte(op.Payload), &raw)
+		ap["SoftwarePackageID"] = raw["package_id"]
+	}
+	ap["ReimageImageID"] = int64(op.ReimageImageID)
+	ap["ScheduleKind"] = op.ScheduleKind
+	if op.TargetMode != "" {
+		ap["TargetMode"] = op.TargetMode
+	}
+	if op.RunAt != nil {
+		ap["RunAtLocal"] = op.RunAt.Local().Format("2006-01-02T15:04")
+	}
+	if op.RecurSpec != "" {
+		var rs model.RecurSpec
+		_ = json.Unmarshal([]byte(op.RecurSpec), &rs)
+		if rs.Every > 0 {
+			ap["RecurEvery"] = rs.Every
+		}
+		if rs.Unit != "" {
+			ap["RecurUnit"] = rs.Unit
+		}
+		if rs.At != "" {
+			ap["RecurAt"] = rs.At
+		}
+		ap["RecurWeekday"] = rs.Weekday
+		ap["RecurCron"] = rs.Cron
+	}
+	ap["FilterName"], ap["FilterOU"], ap["FilterGroup"] = op.Target.NameRegex, op.Target.OU, op.Target.Group
+	return ap
+}

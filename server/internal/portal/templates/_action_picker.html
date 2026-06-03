@@ -1,0 +1,67 @@
+{{define "action_picker"}}
+{{- /* dict params: Mode ("bulk"|"single"), Packages, Images, AP (prefill map) */ -}}
+{{$mode := .Mode}}
+{{$ap := .AP}}
+<fieldset class="action-picker" role="radiogroup" aria-label="Action">
+  <label class="action-tile">
+    <input type="radio" name="action" value="rename" {{if eq $ap.Action "rename"}}checked{{end}}>
+    <svg><use href="#i-pencil"/></svg><span class="t">Rename</span>
+  </label>
+  <label class="action-tile">
+    <input type="radio" name="action" value="script" {{if eq $ap.Action "script"}}checked{{end}}>
+    <svg><use href="#i-gear"/></svg><span class="t">Run script</span>
+  </label>
+  <label class="action-tile">
+    <input type="radio" name="action" value="software_push" {{if eq $ap.Action "software_push"}}checked{{end}}>
+    <svg><use href="#i-box"/></svg><span class="t">Push software</span>
+  </label>
+  <label class="action-tile danger">
+    <input type="radio" name="action" value="reimage" {{if eq $ap.Action "reimage"}}checked{{end}}>
+    <svg><use href="#i-alert"/></svg><span class="t">Re-image</span>
+  </label>
+</fieldset>
+
+<div class="action-panels">
+  <div class="action-panel" data-action-panel="rename" {{if ne $ap.Action "rename"}}hidden{{end}}>
+    {{if eq $mode "single"}}
+    <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-01"></label>
+    <p class="hint">Renames this machine and reboots it. AD coordination happens server-side before the local rename job is queued.</p>
+    {{else}}
+    <p class="hint">Fleet rename by find/replace (regex) on each machine's current name. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code> renames LAB-A-01 → LAB-B-01. To rename a <em>single</em> machine to a literal name, use that machine's page.</p>
+    <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" value="{{$ap.RenameFind}}" placeholder="^LAB-A-"></label>
+    <label><span class="lbl">Replace</span><input type="text" name="rename_replace" value="{{$ap.RenameReplace}}" placeholder="LAB-B-"></label>
+    {{end}}
+  </div>
+
+  <div class="action-panel" data-action-panel="script" {{if ne $ap.Action "script"}}hidden{{end}}>
+    <label><span class="lbl">Shell</span>
+      <select name="script_shell">
+        <option value="powershell" {{if eq $ap.ScriptShell "powershell"}}selected{{end}}>powershell</option>
+        <option value="cmd" {{if eq $ap.ScriptShell "cmd"}}selected{{end}}>cmd</option>
+      </select>
+    </label>
+    <label><span class="lbl">Body</span><textarea name="script_body" rows="6" placeholder="Get-Service">{{$ap.ScriptBody}}</textarea></label>
+    <p class="small muted">Highest-risk action; every script run is fully audited.</p>
+  </div>
+
+  <div class="action-panel" data-action-panel="software_push" {{if ne $ap.Action "software_push"}}hidden{{end}}>
+    <label><span class="lbl">Software package</span>
+      <select name="software_package_id">
+        <option value="">— choose a package —</option>
+        {{range .Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $ap.SoftwarePackageID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <p class="hint">The agent installs this package and its dependencies (deps first), skipping anything already present per detection rules.</p>
+  </div>
+
+  <div class="action-panel" data-action-panel="reimage" {{if ne $ap.Action "reimage"}}hidden{{end}}>
+    <label><span class="lbl">Image (optional)</span>
+      <select name="reimage_image_id">
+        <option value="">— use each machine's bound image —</option>
+        {{range .Images}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $ap.ReimageImageID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <p class="small muted"><strong>Destructive.</strong> Each selected machine reboots and re-images on its next agent check-in (≤5 min), network-booting into AutoDeploy and auto-deploying the image. The machine must be configured to network-boot.</p>
+  </div>
+</div>
+{{end}}
