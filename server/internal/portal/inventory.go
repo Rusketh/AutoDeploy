@@ -17,6 +17,7 @@ func init() {
 		get("/portal/machines", machineList(r))
 		get("/portal/machines.csv", machineCSV(r))
 		get("/portal/machines/{id}", machineDetail(r))
+		get("/portal/machines/{id}/deploy-status", machineDeployStatus(r))
 		post("/portal/machines/{id}/binding", machineBindingSubmit(r))
 		post("/portal/machines/{id}/action", machineAction(r))
 		post("/portal/machines/{id}/delete", machineDelete(r))
@@ -295,6 +296,25 @@ func machineDetail(r Repos) http.HandlerFunc {
 			historyRows[i] = historyRow{DeploymentRecord: h, Stalled: h.Outcome == "in_progress" && machineStalled}
 		}
 		reimages, _ := r.Inventory.ListReimageEvents(req.Context(), id)
+
+		// At-a-glance summary scalars. History is newest-first, so [0] is the
+		// latest deployment and reimages[0] (newest-first) the last re-image.
+		var latestDeploy *model.DeploymentRecord
+		if len(history) > 0 {
+			latestDeploy = &history[0]
+		}
+		var lastReimage *model.ReimageEvent
+		if len(reimages) > 0 {
+			lastReimage = &reimages[0]
+		}
+		// Live deploy progress for the initial paint (the JS poller takes over
+		// after load). Active only when there's an open in_progress row.
+		deployActive := false
+		deployLabel, deployPercent, deployIndeterminate := "", 0, false
+		if open, oerr := r.Inventory.LatestOpenDeployment(req.Context(), id); oerr == nil {
+			deployActive = true
+			deployLabel, deployPercent, deployIndeterminate = model.DeployPhaseProgress(open.Phase, open.Outcome)
+		}
 		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
 		bl, _ := r.BitLocker.PINStatus(req.Context(), id)
 		recovery, _ := r.BitLocker.ListRecoveryKeys(req.Context(), id)
@@ -325,6 +345,49 @@ func machineDetail(r Repos) http.HandlerFunc {
 			"Images": images, "KBStatuses": kbStatuses,
 			"SWDetected": swDetected, "SWTotal": swTotal,
 			"KBInstalled": kbInstalled, "KBTotal": len(kbStatuses),
+			"LatestDeploy": latestDeploy, "DeployCount": len(history),
+			"LastReimage": lastReimage, "MachineStalled": machineStalled,
+			"DeployActive": deployActive, "DeployLabel": deployLabel,
+			"DeployPercent": deployPercent, "DeployIndeterminate": deployIndeterminate,
+		})
+	}
+}
+
+// machineDeployStatus serves the live deploy progress as JSON for the machine
+// detail page's progress poller, mirroring isoPrepStatus. When there's an open
+// in_progress deployment it returns its phase/label/percent (and a stall flag);
+// otherwise it reports the latest row's final outcome with finished=true so the
+// poller knows to reload into the settled at-a-glance view.
+func machineDeployStatus(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := pathID(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		open, oerr := r.Inventory.LatestOpenDeployment(req.Context(), id)
+		if oerr != nil {
+			// No open deployment: report the latest outcome (if any) as finished.
+			outcome := "none"
+			if hist, herr := r.Inventory.HistoryFor(req.Context(), id); herr == nil && len(hist) > 0 {
+				outcome = hist[0].Outcome
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"active": false, "finished": true, "outcome": outcome,
+			})
+			return
+		}
+		label, percent, indeterminate := model.DeployPhaseProgress(open.Phase, open.Outcome)
+		stalled := false
+		if m, merr := r.Inventory.Get(req.Context(), id); merr == nil {
+			stalled = time.Since(m.LastSeen) > deployStallAfter
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"active": true, "finished": false,
+			"phase": open.Phase, "label": label, "percent": percent,
+			"indeterminate": indeterminate, "outcome": open.Outcome,
+			"stalled": stalled,
 		})
 	}
 }

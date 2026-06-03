@@ -102,6 +102,40 @@ type DeploymentRecord struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	Outcome     string     `json:"outcome"` // in_progress | ok | failed
 	Notes       string     `json:"notes,omitempty"`
+	// Phase is the canonical milestone token for an in_progress deploy, used
+	// to drive the live progress bar: staging | staged | specialize |
+	// first-logon | complete. Empty on legacy rows written before the column
+	// existed (rendered as an indeterminate bar while still in_progress).
+	Phase string `json:"phase,omitempty"`
+}
+
+// DeployPhaseProgress maps a deployment's phase + outcome to a human label and
+// a percent for the progress bar. indeterminate is true for legacy in_progress
+// rows with no recorded phase, where the caller should render a value-less
+// <progress> rather than 0%. It is the single source of truth shared by the
+// machine detail page render and the live deploy-status endpoint.
+func DeployPhaseProgress(phase, outcome string) (label string, percent int, indeterminate bool) {
+	switch outcome {
+	case "ok":
+		return "Done", 100, false
+	case "failed":
+		return "Failed", 100, false
+	}
+	// outcome is in_progress (or unknown) from here.
+	switch phase {
+	case "staging":
+		return "Staging media", 10, false
+	case "staged":
+		return "Rebooting into Setup", 30, false
+	case "specialize":
+		return "Windows Setup (specialize)", 55, false
+	case "first-logon":
+		return "Installing software", 80, false
+	case "complete":
+		return "Finishing up", 95, false
+	default:
+		return "In progress", 0, true
+	}
 }
 
 // DetectedState is one package's last-known detection result for a machine.
@@ -438,7 +472,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		args[i] = id
 	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
 		 FROM deployment_history
 		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)
 		 ORDER BY started_at DESC`, args...)
@@ -452,7 +486,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		var imageID sql.NullInt64
 		var completed sql.NullTime
 		if err := rows.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-			&completed, &d.Outcome, &d.Notes); err != nil {
+			&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
 			return nil, err
 		}
 		d.ImageID = idPtr(imageID)
@@ -514,8 +548,8 @@ func (r *InventoryRepo) UpsertBinding(ctx context.Context, b MachineBinding) err
 // The agent calls CompleteDeployment when the deployment finishes.
 func (r *InventoryRepo) RecordDeployment(ctx context.Context, machineID ID, imageID *ID) (ID, error) {
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO deployment_history (machine_id, image_id, outcome)
-		VALUES (?, ?, 'in_progress')`,
+		INSERT INTO deployment_history (machine_id, image_id, outcome, phase)
+		VALUES (?, ?, 'in_progress', 'staging')`,
 		machineID, nullID(imageID))
 	if err != nil {
 		return 0, err
@@ -528,7 +562,7 @@ func (r *InventoryRepo) RecordDeployment(ctx context.Context, machineID ID, imag
 func (r *InventoryRepo) CompleteDeployment(ctx context.Context, id ID, outcome, notes string) error {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE deployment_history
-		SET outcome=?, notes=?, completed_at=CURRENT_TIMESTAMP
+		SET outcome=?, notes=?, phase='complete', completed_at=CURRENT_TIMESTAMP
 		WHERE id=?`, outcome, notes, id)
 	if err != nil {
 		return err
@@ -540,19 +574,19 @@ func (r *InventoryRepo) CompleteDeployment(ctx context.Context, id ID, outcome, 
 	return nil
 }
 
-// UpdateLatestDeployment sets the outcome/notes on the machine's most
+// UpdateLatestDeployment sets the outcome/notes/phase on the machine's most
 // recent deployment row. Used by the Boot Client to update a staging row
 // it opened (staged -> note, failed -> failed). No open row is a no-op.
-func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID, outcome, notes string) error {
+func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID, outcome, notes, phase string) error {
 	completed := "completed_at=CURRENT_TIMESTAMP"
 	if outcome == "in_progress" {
 		completed = "completed_at=NULL"
 	}
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE deployment_history SET outcome=?, notes=?, `+completed+`
+		UPDATE deployment_history SET outcome=?, notes=?, phase=?, `+completed+`
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
 		            ORDER BY started_at DESC LIMIT 1)`,
-		outcome, notes, machineID)
+		outcome, notes, phase, machineID)
 	return err
 }
 
@@ -563,13 +597,13 @@ func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID
 // closed the row (ok/failed), the milestone arrives late and must be a no-op
 // rather than resurrecting the row. The `AND outcome='in_progress'` guard on
 // the outer UPDATE is that race protection.
-func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineID ID, notes string) error {
+func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineID ID, notes, phase string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE deployment_history SET notes=?
+		UPDATE deployment_history SET notes=?, phase=?
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
 		            ORDER BY started_at DESC LIMIT 1)
 		  AND outcome='in_progress'`,
-		notes, machineID)
+		notes, phase, machineID)
 	return err
 }
 
@@ -606,7 +640,7 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 // close it once software installation finishes.
 func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) (DeploymentRecord, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
 		FROM deployment_history
 		WHERE machine_id=? AND outcome='in_progress'
 		ORDER BY started_at DESC
@@ -615,7 +649,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 	var imageID sql.NullInt64
 	var completed sql.NullTime
 	if err := row.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-		&completed, &d.Outcome, &d.Notes); err != nil {
+		&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DeploymentRecord{}, ErrNotFound
 		}
@@ -632,7 +666,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 // HistoryFor returns dated deployment rows for the machine, newest first.
 func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]DeploymentRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
 		FROM deployment_history
 		WHERE machine_id=?
 		ORDER BY started_at DESC`, machineID)
@@ -646,7 +680,7 @@ func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]Deploym
 		var imageID sql.NullInt64
 		var completed sql.NullTime
 		if err := rows.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-			&completed, &d.Outcome, &d.Notes); err != nil {
+			&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
 			return nil, err
 		}
 		d.ImageID = idPtr(imageID)

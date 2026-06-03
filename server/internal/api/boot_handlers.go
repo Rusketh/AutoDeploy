@@ -123,7 +123,7 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			if notes == "" && in.Status == "staged" {
 				notes = "media staged; rebooting into Setup"
 			}
-			if err := r.Inventory.UpdateLatestDeployment(req.Context(), m.ID, outcome, notes); err != nil {
+			if err := r.Inventory.UpdateLatestDeployment(req.Context(), m.ID, outcome, notes, in.Status); err != nil {
 				writeError(w, err)
 				return
 			}
@@ -139,7 +139,7 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			if notes == "" {
 				notes = "Windows Setup: " + in.Status
 			}
-			if err := r.Inventory.UpdateLatestInProgressNote(req.Context(), m.ID, notes); err != nil {
+			if err := r.Inventory.UpdateLatestInProgressNote(req.Context(), m.ID, notes, in.Status); err != nil {
 				writeError(w, err)
 				return
 			}

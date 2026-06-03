@@ -392,6 +392,26 @@ form.std input[type="checkbox"] {
   margin-right: 0.4rem;
   accent-color: var(--accent);
 }
+/* .checklist: a scrollable column of checkbox rows used where a
+ * multi-select would otherwise let the user accidentally clear the
+ * whole selection (e.g. software dependencies). */
+.checklist {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  padding: var(--sp-2);
+}
+.checklist .check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.checklist .check:hover { background: var(--bg); }
+.checklist .check input[type="checkbox"] { margin: 0; }
 form.std textarea {
   min-height: 6.5rem;
   font: 13px/1.45 var(--font-mono);
@@ -825,3 +845,31 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 .upload-progress-bar::-moz-progress-bar { background: var(--accent); transition: width 120ms linear; }
 .upload-progress-label { font-variant-numeric: tabular-nums; }
 .upload-progress-error { color: var(--bad); }
+
+/* ---- Deployment progress ----
+ * The live imaging / software-install bar on the machine detail page,
+ * driven by app.js polling /portal/machines/{id}/deploy-status. Reuses
+ * the accent-filled bar styling of the upload progress bar.
+ */
+.deploy-progress-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sp-2); }
+.deploy-bar { width: 100%; height: 14px; appearance: none; -webkit-appearance: none; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2); overflow: hidden; }
+.deploy-bar::-webkit-progress-bar { background: var(--surface-2); }
+.deploy-bar::-webkit-progress-value { background: var(--accent); transition: width 240ms linear; }
+.deploy-bar::-moz-progress-bar { background: var(--accent); }
+.deploy-progress.stalled .deploy-bar::-webkit-progress-value { background: var(--fg-muted); }
+.deploy-progress.stalled .deploy-bar::-moz-progress-bar { background: var(--fg-muted); }
+
+/* ---- Collapsible detail sections ----
+ * <details class="detail-section"> wrappers around the full history tables,
+ * keeping the page at-a-glance until expanded. */
+.detail-section { margin: var(--sp-3) 0; }
+.detail-section > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--fg-muted);
+  padding: var(--sp-2) 0;
+  user-select: none;
+}
+.detail-section > summary:hover { color: var(--fg); }
+.detail-section[open] > summary { margin-bottom: var(--sp-2); }

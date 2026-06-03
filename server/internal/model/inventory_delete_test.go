@@ -40,11 +40,11 @@ func TestUpdateLatestDeployment(t *testing.T) {
 	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "upd-1"})
 	_, _ = inv.RecordDeployment(ctx, m.ID, nil)
 
-	if err := inv.UpdateLatestDeployment(ctx, m.ID, "failed", "boom"); err != nil {
+	if err := inv.UpdateLatestDeployment(ctx, m.ID, "failed", "boom", "failed"); err != nil {
 		t.Fatal(err)
 	}
 	hist, _ := inv.HistoryFor(ctx, m.ID)
-	if len(hist) != 1 || hist[0].Outcome != "failed" || hist[0].Notes != "boom" {
+	if len(hist) != 1 || hist[0].Outcome != "failed" || hist[0].Notes != "boom" || hist[0].Phase != "failed" {
 		t.Errorf("latest deployment not updated: %+v", hist)
 	}
 }
