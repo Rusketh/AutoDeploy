@@ -152,56 +152,92 @@ function mActionChanged(sel){['rename','script','software_push','reimage'].forEa
 <p class="small muted" style="margin-top: var(--sp-2);">Retrieving a recovery key emits a <code>secret.access</code> audit event recording who, when, and which row — never the value.</p>
 {{end}}
 
-<div class="section-head"><h3>Deployment history</h3><div class="line"></div></div>
-{{if .Data.History}}
-<div class="tablewrap">
-<table data-sortable>
-  <thead><tr>
-    <th data-sort="num">Started</th>
-    <th data-sort="num">Completed</th>
-    <th>Image</th>
-    <th>Outcome</th>
-    <th data-nosort>Notes</th>
-  </tr></thead>
-  <tbody>
-    {{range .Data.History}}
-    <tr>
-      <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{formatTime .StartedAt}}</td>
-      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
-      <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
-      <td class="small">{{.Notes}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+<div class="section-head"><h3>Deployment</h3><div class="line"></div></div>
+
+{{/* Live progress bar — shown while a deployment is in flight (imaging or
+     installing software). The JS poller in app.js drives it from
+     /portal/machines/{id}/deploy-status and reloads the page on completion. */}}
+<div class="card deploy-progress" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}} style="margin-bottom:var(--sp-4);">
+  <div class="deploy-progress-head">
+    <strong class="deploy-phase">{{.Data.DeployLabel}}</strong>
+    <span class="deploy-pct muted small">{{if not .Data.DeployIndeterminate}}{{.Data.DeployPercent}}%{{end}}</span>
+  </div>
+  <progress class="deploy-bar" max="100" {{if not .Data.DeployIndeterminate}}value="{{.Data.DeployPercent}}"{{end}}></progress>
 </div>
-{{else}}
-<p class="muted">No deployments recorded yet.</p>
+
+{{/* At-a-glance summary: the headline facts without scrolling a table.
+     Full detail lives in the expanders below. */}}
+<dl class="kv">
+  <dt>Latest deployment</dt>
+  <dd>
+    {{with .Data.LatestDeploy}}
+      {{if eq .Outcome "in_progress"}}{{if $.Data.MachineStalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}
+      {{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}
+      <span class="small muted">{{if .CompletedAt}}{{relTime (deref .CompletedAt)}}{{else}}started {{relTime .StartedAt}}{{end}}</span>
+    {{else}}<span class="muted">No deployments recorded yet.</span>{{end}}
+  </dd>
+  <dt>Total deployments</dt><dd>{{.Data.DeployCount}}</dd>
+  <dt>Last re-image</dt>
+  <dd>
+    {{with .Data.LastReimage}}
+      <span class="small muted">{{relTime .CreatedAt}}</span>
+      {{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{end}}
+    {{else}}<span class="muted">Never re-imaged</span>{{end}}
+  </dd>
+</dl>
+
+{{if .Data.History}}
+<details class="detail-section">
+  <summary>View full deployment history ({{.Data.DeployCount}})</summary>
+  <div class="tablewrap">
+  <table data-sortable>
+    <thead><tr>
+      <th data-sort="num">Started</th>
+      <th data-sort="num">Completed</th>
+      <th>Image</th>
+      <th>Phase</th>
+      <th>Outcome</th>
+      <th data-nosort>Notes</th>
+    </tr></thead>
+    <tbody>
+      {{range .Data.History}}
+      <tr>
+        <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{formatTime .StartedAt}}</td>
+        <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
+        <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="small muted">{{if .Phase}}{{.Phase}}{{else}}—{{end}}</td>
+        <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
+        <td class="small">{{.Notes}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+</details>
 {{end}}
 
-<div class="section-head"><h3>Re-image history</h3><div class="line"></div></div>
 {{if .Data.Reimages}}
-<div class="tablewrap">
-<table data-sortable>
-  <thead><tr>
-    <th data-sort="num">When</th>
-    <th>Image</th>
-    <th>Triggered by</th>
-  </tr></thead>
-  <tbody>
-    {{range .Data.Reimages}}
-    <tr>
-      <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
-      <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">bound image</span>{{end}}</td>
-      <td>{{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{else}}<span class="muted">—</span>{{end}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-</div>
-{{else}}
-<p class="muted">This machine has not been re-imaged.</p>
+<details class="detail-section">
+  <summary>View re-image history ({{len .Data.Reimages}})</summary>
+  <div class="tablewrap">
+  <table data-sortable>
+    <thead><tr>
+      <th data-sort="num">When</th>
+      <th>Image</th>
+      <th>Triggered by</th>
+    </tr></thead>
+    <tbody>
+      {{range .Data.Reimages}}
+      <tr>
+        <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
+        <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">bound image</span>{{end}}</td>
+        <td>{{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{else}}<span class="muted">—</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+</details>
 {{end}}
 
 <div class="section-head"><h3>Detected software state</h3><div class="line"></div></div>

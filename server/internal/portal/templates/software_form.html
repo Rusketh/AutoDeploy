@@ -103,11 +103,13 @@
   </fieldset>
 
   <fieldset><legend>Dependencies</legend>
-    <p class="hint">Packages this one requires. They're installed <strong>before</strong> this package and are pulled in automatically even if not directly assigned to an image. Ctrl/Cmd-click to select multiple.</p>
+    <p class="hint">Packages this one requires. They're installed <strong>before</strong> this package and are pulled in automatically even if not directly assigned to an image. Tick every package this one depends on.</p>
     {{if .Data.AllPackages}}
-    <select name="depends_on" multiple size="6" style="width:100%;">
-      {{range .Data.AllPackages}}<option value="{{.ID}}" {{if index $.Data.DepSelected .ID}}selected{{end}}>{{.Name}}</option>{{end}}
-    </select>
+    <div class="checklist" style="max-height: 14rem; overflow-y: auto;">
+      {{range .Data.AllPackages}}
+      <label class="check"><input type="checkbox" name="depends_on" value="{{.ID}}" {{if index $.Data.DepSelected .ID}}checked{{end}}><span>{{.Name}}</span></label>
+      {{end}}
+    </div>
     {{else}}
     <p class="hint">No other packages exist yet.</p>
     {{end}}
@@ -133,7 +135,7 @@
       <ul class="small" style="margin: 0 0 var(--sp-2) 0; padding-left: 1.4rem;">
         <li><strong>Absolute paths</strong> like <code>C:\Program Files\Acme\foo.exe</code> -- used verbatim.</li>
         <li><strong>Windows env vars</strong> like <code>%ProgramFiles%\Acme\foo.exe</code> -- expanded by the agent.</li>
-        <li><code>%pkgdir%</code> -- the package work directory the files were downloaded into. Works in <strong>any</strong> field of <strong>any</strong> step (args too), e.g. <code>/configure %pkgdir%\NoTeams.xml</code>. Steps already run with this as their working directory, so a plain relative arg like <code>NoTeams.xml</code> works as well.</li>
+        <li><code>%pkgdir%</code> -- the package work directory the files were downloaded into. Works in <strong>any</strong> field of <strong>any</strong> step (args too), e.g. <code>/configure %pkgdir%\config.xml</code>. Steps already run with this as their working directory, so a plain relative arg like <code>config.xml</code> works as well.</li>
         <li><code>{payload}</code> (legacy single-file token) -- still works when the package has exactly one file; ambiguous otherwise.</li>
       </ul>
       {{else}}
@@ -205,7 +207,7 @@ function addRule(){
     '<select name="rule_' + idx + '_script_shell"><option>powershell</option><option>cmd</option></select></label>' +
     '<label><span class="lbl">Body</span><textarea name="rule_' + idx + '_script_body"></textarea></label></div>' +
     '<div class="rule-winget" style="display:none"><label><span class="lbl">Winget package ID</span>' +
-    '<input type="text" name="rule_' + idx + '_winget_id" placeholder="Microsoft.VisualStudioCode"></label>' +
+    '<input type="text" name="rule_' + idx + '_winget_id" placeholder="Publisher.AppName"></label>' +
     '<span class="hint">Exact match against <code>winget list --id &lt;id&gt; --exact</code>. Winget must be installed on the target machine.</span></div></div>';
   var wrap = document.createElement('div'); wrap.innerHTML = html;
   document.getElementById('rules').appendChild(wrap.firstChild);
@@ -224,7 +226,7 @@ function addStep(){
     '<option value="cmd">Run a cmd.exe script</option>' +
     '<option value="powershell">Run a PowerShell script</option>' +
     '<option value="winget">Install via winget</option></select></label>' +
-    '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install VS Code"></label>' +
+    '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install <app>"></label>' +
     '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
     '<label><span class="lbl">If this step fails…</span><select name="step_' + idx + '_continue"><option value="">Abort the whole package</option><option value="1">Continue with the next step</option></select></label></div>' +
@@ -240,7 +242,7 @@ function addStep(){
     '<div class="step-exe" style="display:none"><label><span class="lbl">EXE file path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="setup.exe"></label>' +
     '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args" placeholder="/S /quiet"></label>' +
     '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div>' +
-    '<div class="step-winget" style="display:none"><label><span class="lbl">Winget package ID</span><input type="text" name="step_' + idx + '_winget_id" placeholder="Microsoft.VisualStudioCode"></label>' +
+    '<div class="step-winget" style="display:none"><label><span class="lbl">Winget package ID</span><input type="text" name="step_' + idx + '_winget_id" placeholder="Publisher.AppName"></label>' +
     '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_winget_args" placeholder="--scope machine"></label>' +
     '<span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span></div></div>';
   var wrap = document.createElement('div'); wrap.innerHTML = html;
@@ -308,7 +310,7 @@ function addStep(){
     <label><span class="lbl">Body (exit 0 = detected)</span><textarea name="rule_{{$i}}_script_body">{{$r.ScriptBody}}</textarea></label>
   </div>
   <div class="rule-winget" {{if ne $r.Type "winget"}}style="display:none"{{end}}>
-    <label><span class="lbl">Winget package ID</span><input type="text" name="rule_{{$i}}_winget_id" value="{{$r.WingetID}}" placeholder="Microsoft.VisualStudioCode"></label>
+    <label><span class="lbl">Winget package ID</span><input type="text" name="rule_{{$i}}_winget_id" value="{{$r.WingetID}}" placeholder="Publisher.AppName"></label>
     <span class="hint">Exact match against <code>winget list --id &lt;id&gt; --exact</code>. Winget must be installed on the target machine.</span>
   </div>
 </div>
@@ -331,7 +333,7 @@ function addStep(){
         <option value="winget"     {{if eq $s.Type "winget"}}selected{{end}}>Install via winget</option>
       </select>
     </label>
-    <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install VS Code"></label>
+    <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install <app>"></label>
     <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
   </div>
   <div class="row">
@@ -371,7 +373,7 @@ function addStep(){
     <span class="hint">Runs the EXE with the given args. If you uploaded the installer above, just write <code>{payload}</code>; common silent-install flags are <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, or <code>/VERYSILENT</code> depending on the installer.</span>
   </div>
   <div class="step-winget" {{if ne $s.Type "winget"}}style="display:none"{{end}}>
-    <label><span class="lbl">Winget package ID</span><input type="text" name="step_{{$i}}_winget_id" value="{{$s.WingetID}}" placeholder="Microsoft.VisualStudioCode"></label>
+    <label><span class="lbl">Winget package ID</span><input type="text" name="step_{{$i}}_winget_id" value="{{$s.WingetID}}" placeholder="Publisher.AppName"></label>
     <label><span class="lbl">Extra args</span><input type="text" name="step_{{$i}}_winget_args" value="{{range $j, $a := $s.WingetArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="--scope machine"></label>
     <span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span>
   </div>

@@ -53,7 +53,7 @@ func TestDeployMilestoneUpdatesOpenRow(t *testing.T) {
 		t.Fatalf("specialize milestone = %d", code)
 	}
 	hist, _ := inv.HistoryFor(ctx, m.ID)
-	if hist[0].Outcome != "in_progress" || hist[0].CompletedAt != nil || hist[0].Notes != "reached specialize" {
+	if hist[0].Outcome != "in_progress" || hist[0].CompletedAt != nil || hist[0].Notes != "reached specialize" || hist[0].Phase != "specialize" {
 		t.Errorf("after milestone: %+v", hist[0])
 	}
 
@@ -65,7 +65,7 @@ func TestDeployMilestoneUpdatesOpenRow(t *testing.T) {
 		t.Fatalf("late milestone = %d", code)
 	}
 	hist, _ = inv.HistoryFor(ctx, m.ID)
-	if hist[0].Outcome != "ok" || hist[0].Notes != "done" {
+	if hist[0].Outcome != "ok" || hist[0].Notes != "done" || hist[0].Phase != "complete" {
 		t.Errorf("late milestone mutated closed row: %+v", hist[0])
 	}
 }

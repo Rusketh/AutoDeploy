@@ -592,6 +592,49 @@
     tick();
   })();
 
+  // ---- Machine deploy progress --------------------------------------
+  // On the machine detail page a deployment may be in flight (imaging or
+  // installing software). Poll deploy-status, drive the .deploy-bar, and
+  // reload the page once it finishes so the at-a-glance summary settles.
+  // We only reload if we actually observed an active deploy, so a page
+  // loaded after completion doesn't loop.
+  (function initDeployProgress() {
+    const box = document.querySelector('.deploy-progress[data-machine-id]');
+    if (!box) return;
+    const id = box.getAttribute('data-machine-id');
+    const bar = box.querySelector('.deploy-bar');
+    const phaseEl = box.querySelector('.deploy-phase');
+    const pctEl = box.querySelector('.deploy-pct');
+    let sawActive = false;
+
+    function schedule() { setTimeout(tick, 1500); }
+
+    function tick() {
+      fetch('/portal/machines/' + id + '/deploy-status', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (s) {
+          if (!s) { schedule(); return; }
+          if (s.active) {
+            sawActive = true;
+            box.hidden = false;
+            box.classList.toggle('stalled', !!s.stalled);
+            if (phaseEl) phaseEl.textContent = s.stalled ? 'Stalled — no recent check-in' : (s.label || 'In progress');
+            if (bar) {
+              if (s.indeterminate) { bar.removeAttribute('value'); }
+              else { bar.value = s.percent || 0; }
+            }
+            if (pctEl) pctEl.textContent = s.indeterminate ? '' : ((s.percent || 0) + '%');
+            schedule();
+          } else if (s.finished && sawActive) {
+            window.location.reload();
+          }
+          // Not active and never saw active: nothing in flight; stop polling.
+        })
+        .catch(function () { schedule(); });
+    }
+    tick();
+  })();
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

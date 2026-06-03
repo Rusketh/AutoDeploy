@@ -9,6 +9,32 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/match"
 )
 
+func TestDeployPhaseProgress(t *testing.T) {
+	cases := []struct {
+		phase, outcome string
+		wantLabel      string
+		wantPct        int
+		wantIndet      bool
+	}{
+		{"staging", "in_progress", "Staging media", 10, false},
+		{"staged", "in_progress", "Rebooting into Setup", 30, false},
+		{"specialize", "in_progress", "Windows Setup (specialize)", 55, false},
+		{"first-logon", "in_progress", "Installing software", 80, false},
+		{"complete", "in_progress", "Finishing up", 95, false},
+		{"first-logon", "ok", "Done", 100, false},   // outcome wins over phase
+		{"staging", "failed", "Failed", 100, false}, // outcome wins over phase
+		{"", "in_progress", "In progress", 0, true}, // legacy row -> indeterminate
+		{"bogus", "in_progress", "In progress", 0, true},
+	}
+	for _, c := range cases {
+		label, pct, indet := DeployPhaseProgress(c.phase, c.outcome)
+		if label != c.wantLabel || pct != c.wantPct || indet != c.wantIndet {
+			t.Errorf("DeployPhaseProgress(%q,%q) = (%q,%d,%v), want (%q,%d,%v)",
+				c.phase, c.outcome, label, pct, indet, c.wantLabel, c.wantPct, c.wantIndet)
+		}
+	}
+}
+
 func TestDeployTokenIssueAndValidate(t *testing.T) {
 	ctx := context.Background()
 	repo := NewInventoryRepo(openTestDB(t))
@@ -254,29 +280,29 @@ func TestUpdateLatestInProgressNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// While in_progress: the note updates, completed_at stays NULL, outcome
-	// stays in_progress.
-	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "reached specialize"); err != nil {
+	// While in_progress: the note + phase update, completed_at stays NULL,
+	// outcome stays in_progress.
+	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "reached specialize", "specialize"); err != nil {
 		t.Fatal(err)
 	}
 	hist, _ := inv.HistoryFor(ctx, m.ID)
 	if len(hist) != 1 {
 		t.Fatalf("want 1 history row, got %d", len(hist))
 	}
-	if hist[0].Outcome != "in_progress" || hist[0].CompletedAt != nil || hist[0].Notes != "reached specialize" {
+	if hist[0].Outcome != "in_progress" || hist[0].CompletedAt != nil || hist[0].Notes != "reached specialize" || hist[0].Phase != "specialize" {
 		t.Errorf("after milestone: %+v", hist[0])
 	}
 
 	// Agent closes the row ok. A late milestone must NOT resurrect or alter
-	// it (race guard).
+	// it (race guard) — neither notes nor phase.
 	if err := inv.CompleteDeployment(ctx, depID, "ok", "done"); err != nil {
 		t.Fatal(err)
 	}
-	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "late specialize callback"); err != nil {
+	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "late specialize callback", "first-logon"); err != nil {
 		t.Fatal(err)
 	}
 	hist, _ = inv.HistoryFor(ctx, m.ID)
-	if hist[0].Outcome != "ok" || hist[0].Notes != "done" || hist[0].CompletedAt == nil {
+	if hist[0].Outcome != "ok" || hist[0].Notes != "done" || hist[0].CompletedAt == nil || hist[0].Phase != "complete" {
 		t.Errorf("late milestone must not mutate a closed row: %+v", hist[0])
 	}
 }
