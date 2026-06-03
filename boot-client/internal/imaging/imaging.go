@@ -116,6 +116,13 @@ type MediaPlan struct {
 	// it post-Setup. Both empty = deploy without an agent.
 	AgentPath         string
 	SetupCompletePath string
+	// CallbackScriptPath is adcb.ps1, the install-status milestone reporter
+	// staged into C:\Windows\Setup\Scripts via the $OEM$ tree and invoked by
+	// the generated unattend during the specialize and first-logon passes.
+	// Empty = don't stage it (the dashboard then only gets the boot client's
+	// staging/staged and the agent's final ok/failed, with no Setup-phase
+	// milestones).
+	CallbackScriptPath string
 	// WorkDir is a scratch directory for the mount point.
 	WorkDir string
 }
@@ -202,6 +209,9 @@ func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath stri
 	}
 	if err := stageAgent(ctx, plan, r, mountPath); err != nil {
 		return fmt.Errorf("stage agent: %w", err)
+	}
+	if err := stageCallbackScript(ctx, plan, r, mountPath); err != nil {
+		return fmt.Errorf("stage callback script: %w", err)
 	}
 	// Flush before unmount so writeback of several GB of media doesn't race
 	// the unmount.
@@ -347,6 +357,26 @@ func stageAgent(ctx context.Context, plan MediaPlan, r Runner, mount string) err
 		}
 	}
 	return nil
+}
+
+// stageCallbackScript injects adcb.ps1 -- the install-status milestone
+// reporter -- into the installed OS via the $OEM$ tree, landing it at
+// C:\Windows\Setup\Scripts\adcb.ps1. The generated unattend invokes it by
+// that path during the specialize and first-logon passes. It is staged
+// unconditionally of the agent (an agent-less deploy still reports
+// milestones); a no-op when CallbackScriptPath is empty.
+func stageCallbackScript(ctx context.Context, plan MediaPlan, r Runner, mount string) error {
+	if plan.CallbackScriptPath == "" {
+		return nil
+	}
+	// $$ maps to %WINDIR%, so this lands at C:\Windows\Setup\Scripts. The
+	// dir may already exist from stageAgent's SetupComplete.cmd; mkdir -p is
+	// idempotent.
+	scriptsDir := filepath.Join(mount, "sources", "$OEM$", "$$", "Setup", "Scripts")
+	if err := r.Exec(ctx, "mkdir", "-p", scriptsDir); err != nil {
+		return err
+	}
+	return r.Exec(ctx, "cp", plan.CallbackScriptPath, filepath.Join(scriptsDir, "adcb.ps1"))
 }
 
 func partName(disk string, n int) string {
