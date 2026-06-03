@@ -29,8 +29,17 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 		"idEq":       func(p *model.ID, v int64) bool { return p != nil && int64(*p) == v },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"relTime":    func(tm time.Time) string { return "just now" },
+		"dict": func(args ...any) map[string]any {
+			m := map[string]any{}
+			for i := 0; i+1 < len(args); i += 2 {
+				k, _ := args[i].(string)
+				m[k] = args[i+1]
+			}
+			return m
+		},
 	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/machine_detail.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
+		"templates/machine_detail.html", "templates/_action_picker.html")
 	if err != nil {
 		t.Fatalf("parse machine_detail.html: %v", err)
 	}
@@ -57,6 +66,7 @@ func baseMachineData() map[string]any {
 		"DeployCount": 0, "MachineStalled": false,
 		"LatestDeploy": nil, "LastReimage": nil,
 		"DeployActive": false, "DeployLabel": "", "DeployPercent": 0, "DeployIndeterminate": false,
+		"AP": formPrefill(nil),
 	}
 }
 

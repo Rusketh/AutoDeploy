@@ -859,6 +859,60 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 .deploy-progress.stalled .deploy-bar::-webkit-progress-value { background: var(--fg-muted); }
 .deploy-progress.stalled .deploy-bar::-moz-progress-bar { background: var(--fg-muted); }
 
+/* ---- Action / schedule tile picker ----
+ * A row of selectable cards backed by a hidden radio. :has() drives the
+ * highlight on modern browsers; app.js also toggles a .selected class as a
+ * fallback. Used by the bulk form (action + schedule) and the machine page. */
+.action-picker {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  border: 0;
+  padding: 0;
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+.action-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: var(--sp-3) var(--sp-4);
+  min-width: 120px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--tx-fast), box-shadow var(--tx-fast), background var(--tx-fast);
+}
+.action-tile:hover { background: var(--surface-2); }
+.action-tile input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+.action-tile svg { width: 22px; height: 22px; color: var(--fg-muted); }
+.action-tile .t { font-size: var(--fs-sm); font-weight: 600; }
+.action-tile:has(input:checked), .action-tile.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--surface);
+}
+.action-tile:has(input:checked) svg, .action-tile.selected svg { color: var(--accent); }
+.action-tile.danger:has(input:checked), .action-tile.danger.selected {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px var(--bad-soft);
+}
+.action-tile.danger:has(input:checked) svg, .action-tile.danger.selected svg { color: var(--bad); }
+.action-panels .action-panel { margin-bottom: var(--sp-2); }
+
+/* ---- Bulk progress bar (list + detail rollup) ---- */
+.bulk-prog { display: flex; flex-direction: column; gap: 2px; }
+.bulk-bar {
+  width: 100%; height: 10px; appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); overflow: hidden;
+}
+.bulk-bar::-webkit-progress-bar { background: var(--surface-2); }
+.bulk-bar::-webkit-progress-value { background: var(--accent); transition: width 240ms linear; }
+.bulk-bar::-moz-progress-bar { background: var(--accent); }
+
 /* ---- Collapsible detail sections ----
  * <details class="detail-section"> wrappers around the full history tables,
  * keeping the page at-a-glance until expanded. */

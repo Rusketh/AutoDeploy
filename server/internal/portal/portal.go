@@ -503,7 +503,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 // current user, the brand, and any flash message.
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
-		assetsFS, "templates/_layout.html", "templates/_icons.html", "templates/"+page)
+		assetsFS, "templates/_layout.html", "templates/_icons.html",
+		"templates/_action_picker.html", "templates/"+page)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return

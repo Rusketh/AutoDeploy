@@ -18,6 +18,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/api"
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/branding"
+	"github.com/rusketh/autodeploy/server/internal/bulksched"
 	"github.com/rusketh/autodeploy/server/internal/config"
 	"github.com/rusketh/autodeploy/server/internal/httpx"
 	"github.com/rusketh/autodeploy/server/internal/logging"
@@ -184,10 +185,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	api.Register(mux, apiRepos)
 
 	pl := &payload.Service{
-		Blobs:     blobs,
-		ISOs:      r.ISOs,
-		Drivers:   r.Drivers,
-		Software:  r.Software,
+		Blobs:      blobs,
+		ISOs:       r.ISOs,
+		Drivers:    r.Drivers,
+		Software:   r.Software,
 		Resolver:   r.Resolver,
 		Inventory:  r.Inventory,
 		DomainJoin: r.DomainJoin,
@@ -266,6 +267,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	go sch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
 		slog.Int("log_retention_days", rt.LogRetentionDays()))
+
+	// Start the bulk-operation scheduler. It fires one-time and recurring
+	// bulk operations when their next_run_at arrives, materialising a fresh
+	// run of agent jobs for each.
+	bsch := &bulksched.Scheduler{Bulk: r.Bulk, Logger: logger}
+	go bsch.Start(ctx)
+	logger.LogAttrs(ctx, slog.LevelInfo, "bulksched.scheduler_started")
 
 	// Apply portal-managed network overrides. The runtime settings
 	// layer seeds from env on first start, so env-only installs work
@@ -361,20 +369,20 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 type appRepos struct {
-	ISOs      *model.ISORepo
-	Unattend  *model.UnattendRepo
-	Drivers   *model.DriverPackageRepo
-	Software  *model.SoftwarePackageRepo
-	Loadouts  *model.SoftwareLoadoutRepo
-	Images    *model.ImageRepo
-	Inventory *model.InventoryRepo
-	Resolver  *resolve.Resolver
-	Users     *auth.Repo
-	Settings  *auth.SettingsRepo
-	BitLocker *model.BitLockerRepo
-	Bulk      *model.BulkRepo
-	Logs      *model.LogRepo
-	Branding  *branding.Repo
+	ISOs       *model.ISORepo
+	Unattend   *model.UnattendRepo
+	Drivers    *model.DriverPackageRepo
+	Software   *model.SoftwarePackageRepo
+	Loadouts   *model.SoftwareLoadoutRepo
+	Images     *model.ImageRepo
+	Inventory  *model.InventoryRepo
+	Resolver   *resolve.Resolver
+	Users      *auth.Repo
+	Settings   *auth.SettingsRepo
+	BitLocker  *model.BitLockerRepo
+	Bulk       *model.BulkRepo
+	Logs       *model.LogRepo
+	Branding   *branding.Repo
 	Mirrors    *model.PayloadMirrorRepo
 	Runtime    *runtime.Settings
 	DomainJoin *model.DomainJoinRepo
