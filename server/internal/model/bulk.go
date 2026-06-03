@@ -25,6 +25,82 @@ const (
 	BulkActionReimage = "reimage"
 )
 
+// BulkActionLabel is a short human label for an action token, used in default
+// names/descriptions and the UI.
+func BulkActionLabel(action string) string {
+	switch action {
+	case BulkActionRename:
+		return "Rename"
+	case BulkActionSoftwarePush:
+		return "Install software"
+	case BulkActionScript:
+		return "Run script"
+	case BulkActionReimage:
+		return "Re-image"
+	default:
+		return action
+	}
+}
+
+// bulkTargetSummary describes a target selection in a few words, for default
+// names/descriptions: a machine count for an explicit basket, or the active
+// name/OU/group filters for a re-evaluated target.
+func bulkTargetSummary(t BulkTarget) string {
+	if n := len(t.MachineIDs); n > 0 {
+		if n == 1 {
+			return "1 machine"
+		}
+		return fmt.Sprintf("%d machines", n)
+	}
+	var parts []string
+	if t.NameRegex != "" {
+		parts = append(parts, "name /"+t.NameRegex+"/")
+	}
+	if t.OU != "" {
+		parts = append(parts, "OU "+t.OU)
+	}
+	if t.Group != "" {
+		parts = append(parts, "group "+t.Group)
+	}
+	if len(parts) == 0 {
+		return "no targets"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// defaultBulkName builds a sortable fallback name from the action and target,
+// e.g. "Re-image — 12 machines" or "Run script — group Lab-Computers".
+func defaultBulkName(op BulkOperation) string {
+	return BulkActionLabel(op.Action) + " — " + bulkTargetSummary(op.Target)
+}
+
+// defaultBulkDescription builds a fuller fallback description from the action,
+// target and schedule, e.g. "Re-image on 12 machines, scheduled once."
+func defaultBulkDescription(op BulkOperation) string {
+	when := "run immediately"
+	switch op.ScheduleKind {
+	case BulkScheduleOnce:
+		when = "scheduled once"
+	case BulkScheduleRecurring:
+		when = "recurring"
+	}
+	return fmt.Sprintf("%s on %s, %s.", BulkActionLabel(op.Action), bulkTargetSummary(op.Target), when)
+}
+
+// applyBulkNameDefaults fills Name/Description from the action and target when
+// the operator left them blank, and trims whitespace otherwise. Shared by
+// CreateOperation and UpdateOperation so both paths get the same defaults.
+func applyBulkNameDefaults(op *BulkOperation) {
+	op.Name = strings.TrimSpace(op.Name)
+	if op.Name == "" {
+		op.Name = defaultBulkName(*op)
+	}
+	op.Description = strings.TrimSpace(op.Description)
+	if op.Description == "" {
+		op.Description = defaultBulkDescription(*op)
+	}
+}
+
 // Operation lifecycle status. An operation moves scheduled -> active as the
 // scheduler materialises its first run; active -> completed once every job is
 // terminal (non-recurring only); cancelled/paused are operator-driven.
@@ -66,12 +142,18 @@ type BulkTarget struct {
 
 // BulkOperation is the operator's intent.
 type BulkOperation struct {
-	ID        ID         `json:"id"`
-	Action    string     `json:"action"`
-	Payload   string     `json:"payload"`
-	Target    BulkTarget `json:"target"`
-	CreatedBy string     `json:"created_by"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID ID `json:"id"`
+	// Name is the operator-facing label and Description is optional free text;
+	// together they make scheduled tasks easy to scan and sort. When the
+	// operator leaves them blank, CreateOperation/UpdateOperation fill sensible
+	// defaults from the action and target (see defaultBulkName/Description).
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Action      string     `json:"action"`
+	Payload     string     `json:"payload"`
+	Target      BulkTarget `json:"target"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
 	// ReimageImageID is the image to deploy for a reimage operation; 0
 	// means "use each machine's existing binding". Persisted on the row so
 	// a scheduled/recurring reimage can re-apply the flag on each run.
@@ -209,6 +291,7 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 	if err := validateSchedule(op); err != nil {
 		return BulkOperation{}, nil, err
 	}
+	applyBulkNameDefaults(&op)
 	targetJSON, err := json.Marshal(op.Target)
 	if err != nil {
 		return BulkOperation{}, nil, err
@@ -246,11 +329,11 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 		`INSERT INTO bulk_operation
 		   (action, payload, target_json, created_by, status, schedule_kind,
 		    target_mode, run_at, recur_spec, next_run_at, last_run_at, run_count,
-		    reimage_image_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    reimage_image_id, name, description)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		op.Action, op.Payload, string(targetJSON), op.CreatedBy, status, op.ScheduleKind,
 		op.TargetMode, op.RunAt, op.RecurSpec, nextRun, nil, runCount,
-		int64(op.ReimageImageID))
+		int64(op.ReimageImageID), op.Name, op.Description)
 	if err != nil {
 		return BulkOperation{}, nil, err
 	}
@@ -295,7 +378,7 @@ func (r *BulkRepo) insertJobsTx(ctx context.Context, tx *sql.Tx, opID ID, action
 // sync with scanOperation.
 const bulkOpColumns = `id, action, payload, target_json, created_by, created_at,
 	status, schedule_kind, target_mode, run_at, recur_spec, next_run_at,
-	last_run_at, run_count, reimage_image_id`
+	last_run_at, run_count, reimage_image_id, name, description`
 
 // scanOperation reads a bulk_operation row in bulkOpColumns order.
 func scanOperation(s interface{ Scan(...any) error }) (BulkOperation, error) {
@@ -305,7 +388,7 @@ func scanOperation(s interface{ Scan(...any) error }) (BulkOperation, error) {
 	var reimageID int64
 	if err := s.Scan(&v.ID, &v.Action, &v.Payload, &targetJSON, &v.CreatedBy, &v.CreatedAt,
 		&v.Status, &v.ScheduleKind, &v.TargetMode, &runAt, &v.RecurSpec, &nextRun,
-		&lastRun, &v.RunCount, &reimageID); err != nil {
+		&lastRun, &v.RunCount, &reimageID, &v.Name, &v.Description); err != nil {
 		return BulkOperation{}, err
 	}
 	_ = json.Unmarshal([]byte(targetJSON), &v.Target)

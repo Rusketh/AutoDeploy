@@ -103,17 +103,29 @@ type DeploymentRecord struct {
 	Outcome     string     `json:"outcome"` // in_progress | ok | failed
 	Notes       string     `json:"notes,omitempty"`
 	// Phase is the canonical milestone token for an in_progress deploy, used
-	// to drive the live progress bar: staging | staged | specialize |
-	// first-logon | complete. Empty on legacy rows written before the column
-	// existed (rendered as an indeterminate bar while still in_progress).
+	// to drive the live progress bar:
+	//   staging | staged | specialize | first-logon | agent-online |
+	//   installing | complete
+	// Empty on legacy rows written before the column existed (rendered as an
+	// indeterminate bar while still in_progress).
 	Phase string `json:"phase,omitempty"`
+	// ProgressDone / ProgressTotal track the agent-run software phase: how many
+	// of the machine's assigned packages have been installed so far, out of the
+	// total it set out to install. Both 0 until the agent reports the
+	// "installing" phase. They scale the bar and render "(done/total)".
+	ProgressDone  int `json:"progress_done,omitempty"`
+	ProgressTotal int `json:"progress_total,omitempty"`
 }
 
 // DeployPhaseProgress maps a deployment's phase + outcome to a human label and
 // a percent for the progress bar. indeterminate is true for legacy in_progress
 // rows with no recorded phase, where the caller should render a value-less
-// <progress> rather than 0%. It is the single source of truth shared by the
-// machine detail page render and the live deploy-status endpoint.
+// <progress> rather than 0%.
+//
+// For the agent-run "installing" phase the per-package fraction is not known
+// here (it lives on the DeploymentRecord); callers with the record should use
+// DeployRecordProgress, which overlays "(done/total)" and scales the bar. This
+// function is the shared base both that and the static renders build on.
 func DeployPhaseProgress(phase, outcome string) (label string, percent int, indeterminate bool) {
 	switch outcome {
 	case "ok":
@@ -130,12 +142,47 @@ func DeployPhaseProgress(phase, outcome string) (label string, percent int, inde
 	case "specialize":
 		return "Windows Setup (specialize)", 55, false
 	case "first-logon":
-		return "Installing software", 80, false
+		return "First logon (OOBE)", 65, false
+	case "agent-online":
+		return "Windows installed — agent running", 70, false
+	case "installing":
+		// No counts here: the band's low end. DeployRecordProgress scales it.
+		return "Installing software", installBandLo, false
 	case "complete":
 		return "Finishing up", 95, false
 	default:
 		return "In progress", 0, true
 	}
+}
+
+// installBandLo/installBandHi bound the progress-bar percent for the agent-run
+// software-install phase: 0/total sits at Lo, total/total at Hi, just below
+// the "complete" (95%) finishing step.
+const (
+	installBandLo = 75
+	installBandHi = 92
+)
+
+// DeployRecordProgress is DeployPhaseProgress plus the software-install overlay:
+// for an in_progress "installing" row with a known package total it renders
+// "Installing software (done/total)" and scales the bar across the install band
+// by the fraction installed. For every other phase it is exactly
+// DeployPhaseProgress. It is the single source of truth for the machine detail
+// page render and the live deploy-status endpoint.
+func DeployRecordProgress(d DeploymentRecord) (label string, percent int, indeterminate bool) {
+	label, percent, indeterminate = DeployPhaseProgress(d.Phase, d.Outcome)
+	if d.Outcome == "in_progress" && d.Phase == "installing" && d.ProgressTotal > 0 {
+		done := d.ProgressDone
+		if done < 0 {
+			done = 0
+		}
+		if done > d.ProgressTotal {
+			done = d.ProgressTotal
+		}
+		percent = installBandLo + (installBandHi-installBandLo)*done/d.ProgressTotal
+		label = fmt.Sprintf("Installing software (%d/%d)", done, d.ProgressTotal)
+	}
+	return label, percent, indeterminate
 }
 
 // DetectedState is one package's last-known detection result for a machine.
@@ -472,7 +519,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		args[i] = id
 	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
+		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		 FROM deployment_history
 		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)
 		 ORDER BY started_at DESC`, args...)
@@ -486,7 +533,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		var imageID sql.NullInt64
 		var completed sql.NullTime
 		if err := rows.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-			&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
+			&completed, &d.Outcome, &d.Notes, &d.Phase, &d.ProgressDone, &d.ProgressTotal); err != nil {
 			return nil, err
 		}
 		d.ImageID = idPtr(imageID)
@@ -607,6 +654,21 @@ func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineI
 	return err
 }
 
+// SetDeploymentProgress updates the phase, notes and software-install counters
+// on a specific deployment row, addressed by its id (the agent learns it from
+// /api/v1/agent/self). Like UpdateLatestInProgressNote it is race-safe: the
+// `AND outcome='in_progress'` guard makes a late progress post a no-op once the
+// agent's final ok/failed report has already closed the row. Used by the
+// agent's deploy-progress callback to drive the live bar through the software
+// phase (agent-online, then installing done/total).
+func (r *InventoryRepo) SetDeploymentProgress(ctx context.Context, id ID, phase, notes string, done, total int) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE deployment_history SET phase=?, notes=?, progress_done=?, progress_total=?
+		WHERE id=? AND outcome='in_progress'`,
+		phase, notes, done, total, id)
+	return err
+}
+
 // Delete removes a machine and all rows that reference it (binding,
 // deployment history, detected state, deploy tokens, bitlocker). Done in
 // one transaction so inventory can never be left with dangling references.
@@ -640,7 +702,7 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 // close it once software installation finishes.
 func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) (DeploymentRecord, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=? AND outcome='in_progress'
 		ORDER BY started_at DESC
@@ -649,7 +711,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 	var imageID sql.NullInt64
 	var completed sql.NullTime
 	if err := row.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-		&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
+		&completed, &d.Outcome, &d.Notes, &d.Phase, &d.ProgressDone, &d.ProgressTotal); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DeploymentRecord{}, ErrNotFound
 		}
@@ -666,7 +728,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 // HistoryFor returns dated deployment rows for the machine, newest first.
 func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]DeploymentRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase
+		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=?
 		ORDER BY started_at DESC`, machineID)
@@ -680,7 +742,7 @@ func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]Deploym
 		var imageID sql.NullInt64
 		var completed sql.NullTime
 		if err := rows.Scan(&d.ID, &d.MachineID, &imageID, &d.StartedAt,
-			&completed, &d.Outcome, &d.Notes, &d.Phase); err != nil {
+			&completed, &d.Outcome, &d.Notes, &d.Phase, &d.ProgressDone, &d.ProgressTotal); err != nil {
 			return nil, err
 		}
 		d.ImageID = idPtr(imageID)

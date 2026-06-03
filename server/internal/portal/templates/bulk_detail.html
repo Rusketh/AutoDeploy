@@ -2,7 +2,7 @@
 {{$op := .Data.Op}}
 {{$st := $op.Status}}
 <div class="toolbar">
-  <h2>Bulk operation #{{int64 $op.ID}}</h2>
+  <h2>{{if $op.Name}}{{$op.Name}}{{else}}Bulk operation #{{int64 $op.ID}}{{end}} <span class="muted small">#{{int64 $op.ID}}</span></h2>
   <div class="right">
     {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 $op.ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>{{end}}
     {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
@@ -42,6 +42,7 @@
 </div>
 
 <dl class="kv">
+  {{if $op.Description}}<dt>Description</dt><dd>{{$op.Description}}</dd>{{end}}
   <dt>Action</dt><dd><span class="badge accent">{{$op.Action}}</span></dd>
   <dt>Schedule</dt><dd>
     {{if eq $op.ScheduleKind "once"}}One-time{{else if eq $op.ScheduleKind "recurring"}}Recurring{{else}}Run now{{end}}

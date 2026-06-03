@@ -17,6 +17,7 @@
 <table id="tbl" data-sortable>
   <thead><tr>
     <th class="num" data-sort="num">ID</th>
+    <th>Name</th>
     <th>Action</th>
     <th>Status</th>
     <th>Progress</th>
@@ -30,6 +31,10 @@
     {{$st := .Status}}
     <tr>
       <td class="num"><code>#{{int64 .ID}}</code></td>
+      <td>
+        <a href="/portal/bulk/{{int64 .ID}}"><strong>{{if .Name}}{{.Name}}{{else}}{{.Action}}{{end}}</strong></a>
+        {{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}
+      </td>
       <td><span class="badge accent">{{.Action}}</span></td>
       <td>
         {{if eq $st "completed"}}<span class="badge ok">completed</span>
