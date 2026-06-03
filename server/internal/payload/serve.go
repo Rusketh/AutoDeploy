@@ -174,6 +174,16 @@ func (s *Service) serveUnattend(w http.ResponseWriter, r *http.Request) {
 	if uuid := strings.TrimSpace(r.URL.Query().Get("uuid")); uuid != "" && s.Inventory != nil {
 		applyBindingIdentity(r, s.Inventory, uuid, &settings)
 	}
+	// Install-status callback wiring. The generator embeds a best-effort
+	// callback (Windows Setup -> /api/v1/clients/deploy-status) only when
+	// both a reachable server URL and a machine UUID are known. baseURL(r)
+	// reconstructs the address the boot client reached us at; the uuid query
+	// param (added by the manifest builder) identifies the machine. Both are
+	// absent in the portal preview, where the callback is intentionally
+	// suppressed. Set outside the binding block so a machine with no binding
+	// still reports.
+	settings.ServerURL = baseURL(r)
+	settings.CallbackUUID = strings.TrimSpace(r.URL.Query().Get("uuid"))
 	xml, err := unattend.Generate(settings)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

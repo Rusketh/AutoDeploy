@@ -79,6 +79,13 @@ const (
 	flashCookieName   = "autodeploy_flash"
 )
 
+// deployStallAfter is how long a deployment may sit in_progress with no
+// machine check-in before the dashboard treats it as stalled / likely-failed.
+// Chosen longer than a realistic Windows install so a slow-but-healthy deploy
+// isn't flagged; the state is derived (not persisted), so it clears itself the
+// moment the machine checks back in.
+const deployStallAfter = 45 * time.Minute
+
 // ctxKeyUser is the private context key for the authenticated portal user.
 type ctxKeyUser struct{}
 
@@ -326,8 +333,14 @@ func dashboardPage(r Repos) http.HandlerFunc {
 			allIDs[i] = m.ID
 		}
 		allHistory, _ := r.Inventory.ListHistoryForMachines(req.Context(), allIDs)
-		var ok, failed, inProgress int
+		var ok, failed, inProgress, stalled int
 		for _, m := range machines {
+			// A machine that hasn't checked in for longer than deployStallAfter
+			// while a deploy is still in_progress has most likely failed Setup
+			// (or is powered off) — Windows Setup can't always self-report a
+			// catastrophic failure, so we derive it here from last_seen rather
+			// than persist a possibly-premature "failed".
+			machineStalled := time.Since(m.LastSeen) > deployStallAfter
 			for _, h := range allHistory[m.ID] {
 				if time.Since(h.StartedAt) > 24*time.Hour {
 					break
@@ -338,7 +351,11 @@ func dashboardPage(r Repos) http.HandlerFunc {
 				case "failed":
 					failed++
 				case "in_progress":
-					inProgress++
+					if machineStalled {
+						stalled++
+					} else {
+						inProgress++
+					}
 				}
 			}
 		}
@@ -367,6 +384,7 @@ func dashboardPage(r Repos) http.HandlerFunc {
 				"ok":          ok,
 				"failed":      failed,
 				"in_progress": inProgress,
+				"stalled":     stalled,
 			},
 			"OSBreakdown":   osBreakdown,
 			"SWFull":        swFull,

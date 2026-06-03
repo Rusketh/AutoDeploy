@@ -7,11 +7,19 @@ import (
 	"html"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 // PowerSchemeHighPerformance is the well-known Windows GUID for the
 // High Performance scheme.
 const PowerSchemeHighPerformance = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+
+// Install-status milestone names. These are the wire contract with the
+// server's /api/v1/clients/deploy-status handler.
+const (
+	statusSpecialize = "specialize"
+	statusFirstLogon = "first-logon"
+)
 
 // Generate writes a complete Windows unattend.xml for s.
 //
@@ -220,6 +228,13 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 		order++
 	}
 
+	// Report the specialize milestone first, so the dashboard records that
+	// the machine reached Windows Setup even if a later specialize command
+	// (KMS, operator-supplied) hangs. Best-effort; suppressed in preview.
+	if cb := buildStatusCallbackCommand(s, statusSpecialize, "Windows Setup reached specialize"); cb != "" {
+		push("AutoDeploy: report specialize milestone", cb)
+	}
+
 	if IsWindows11Family(s.TargetOS) && s.BypassNRO {
 		push("Windows 11: bypass OOBE network requirement",
 			`reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f`)
@@ -351,6 +366,62 @@ func buildSetupCompleteWriter(cmds []SetupCompleteCommand) string {
 	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + ps + "\""
 }
 
+// psSingleQuote escapes a string for embedding inside a PowerShell
+// single-quoted literal: the only metacharacter there is the single quote
+// itself, escaped by doubling it.
+func psSingleQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
+
+// utf16LE encodes s as little-endian UTF-16 bytes — the form PowerShell's
+// -EncodedCommand expects.
+func utf16LE(s string) []byte {
+	u := utf16.Encode([]rune(s))
+	b := make([]byte, len(u)*2)
+	for i, r := range u {
+		b[i*2] = byte(r)
+		b[i*2+1] = byte(r >> 8)
+	}
+	return b
+}
+
+// buildStatusCallbackCommand returns a single command line that posts an
+// install-status milestone back to the AutoDeploy server, or "" when the
+// per-machine server URL / UUID are unknown (the portal preview, where the
+// callback is intentionally suppressed).
+//
+// The command is best-effort by construction: an 8s timeout, the whole body
+// wrapped in try/catch, and an unconditional `exit 0`. A slow or unreachable
+// server, a DNS failure, or an HTTP error must never stall or fail the
+// Windows Setup pass it runs in.
+//
+// TLS: the boot client reaches this same server with certificate
+// verification disabled (the server may carry a self-signed cert), so the
+// callback mirrors that by accepting any server certificate. This runs inside
+// the freshly-imaged OS calling back to the operator's own server — a scoped,
+// deliberate trust choice. The ServicePointManager callback is used because
+// Windows Setup ships Windows PowerShell 5.1 (Invoke-RestMethod's
+// -SkipCertificateCheck is PowerShell 7+ only).
+//
+// The script is emitted as a PowerShell -EncodedCommand (base64 of UTF-16LE)
+// to sidestep XML- and cmd-quoting entirely — the same robustness motivation
+// as buildSetupCompleteWriter.
+func buildStatusCallbackCommand(s Settings, status, notes string) string {
+	if s.ServerURL == "" || s.CallbackUUID == "" {
+		return ""
+	}
+	var ps bytes.Buffer
+	ps.WriteString("try {")
+	ps.WriteString("try { [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } } catch {};")
+	ps.WriteString("try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {};")
+	fmt.Fprintf(&ps, "$b = @{ identity = @{ system_uuid = '%s' }; status = '%s'; notes = '%s' } | ConvertTo-Json -Compress;",
+		psSingleQuote(s.CallbackUUID), psSingleQuote(status), psSingleQuote(notes))
+	fmt.Fprintf(&ps, "Invoke-RestMethod -Uri '%s/api/v1/clients/deploy-status' -Method Post -Body $b -ContentType 'application/json' -TimeoutSec 8 | Out-Null",
+		psSingleQuote(strings.TrimRight(s.ServerURL, "/")))
+	ps.WriteString("} catch {}; exit 0")
+
+	enc := base64.StdEncoding.EncodeToString(utf16LE(ps.String()))
+	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + enc
+}
+
 func writeDomainJoin(b *bytes.Buffer, d *DomainJoin) {
 	fmt.Fprint(b, `    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <Identification>
@@ -414,6 +485,16 @@ func writeOOBE(b *bytes.Buffer, s Settings) {
 	// pointless and some Setup builds dislike it).
 	cmds := append([]FirstLogonCommand(nil), s.FirstLogonCommands...)
 	sort.SliceStable(cmds, func(i, j int) bool { return cmds[i].Order < cmds[j].Order })
+	// Prepend a best-effort first-logon milestone callback so the dashboard
+	// gets a second signal — just before the agent takes over — even when the
+	// operator defined no first-logon commands. When present it forces the
+	// block to be emitted; suppressed in preview (empty callback).
+	if cb := buildStatusCallbackCommand(s, statusFirstLogon, "OOBE reached; handing off to agent"); cb != "" {
+		cmds = append([]FirstLogonCommand{{
+			Description: "AutoDeploy: report first-logon milestone",
+			CommandLine: cb,
+		}}, cmds...)
+	}
 	if len(cmds) > 0 {
 		fmt.Fprint(b, `      <FirstLogonCommands>
 `)

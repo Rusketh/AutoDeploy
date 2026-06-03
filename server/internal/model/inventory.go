@@ -556,6 +556,23 @@ func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID
 	return err
 }
 
+// UpdateLatestInProgressNote sets the notes on the machine's most recent
+// deployment row ONLY IF that row is still in_progress. It never sets
+// completed_at and never changes the outcome. Used by the unattend's
+// install-status milestone callbacks: if the post-install agent has already
+// closed the row (ok/failed), the milestone arrives late and must be a no-op
+// rather than resurrecting the row. The `AND outcome='in_progress'` guard on
+// the outer UPDATE is that race protection.
+func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineID ID, notes string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE deployment_history SET notes=?
+		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
+		            ORDER BY started_at DESC LIMIT 1)
+		  AND outcome='in_progress'`,
+		notes, machineID)
+	return err
+}
+
 // Delete removes a machine and all rows that reference it (binding,
 // deployment history, detected state, deploy tokens, bitlocker). Done in
 // one transaction so inventory can never be left with dangling references.
