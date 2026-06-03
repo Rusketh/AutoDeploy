@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"net/url"
 	"sort"
 	"strings"
-	"unicode/utf16"
 )
 
 // PowerSchemeHighPerformance is the well-known Windows GUID for the
@@ -231,7 +231,7 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 	// Report the specialize milestone first, so the dashboard records that
 	// the machine reached Windows Setup even if a later specialize command
 	// (KMS, operator-supplied) hangs. Best-effort; suppressed in preview.
-	if cb := buildStatusCallbackCommand(s, statusSpecialize, "Windows Setup reached specialize"); cb != "" {
+	if cb := buildStatusCallbackCommand(s, statusSpecialize); cb != "" {
 		push("AutoDeploy: report specialize milestone", cb)
 	}
 
@@ -366,60 +366,85 @@ func buildSetupCompleteWriter(cmds []SetupCompleteCommand) string {
 	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + ps + "\""
 }
 
-// psSingleQuote escapes a string for embedding inside a PowerShell
-// single-quoted literal: the only metacharacter there is the single quote
-// itself, escaped by doubling it.
-func psSingleQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
-
-// utf16LE encodes s as little-endian UTF-16 bytes — the form PowerShell's
-// -EncodedCommand expects.
-func utf16LE(s string) []byte {
-	u := utf16.Encode([]rune(s))
-	b := make([]byte, len(u)*2)
-	for i, r := range u {
-		b[i*2] = byte(r)
-		b[i*2+1] = byte(r >> 8)
-	}
-	return b
-}
+// callbackScriptPath is where the boot client stages the milestone reporter
+// (adcb.ps1) inside the installed OS via the media's $OEM$ tree
+// (sources\$OEM$\$$\Setup\Scripts -> C:\Windows\Setup\Scripts). The unattend
+// invokes it by this fixed path during the specialize and first-logon passes.
+const callbackScriptPath = `C:\Windows\Setup\Scripts\adcb.ps1`
 
 // buildStatusCallbackCommand returns a single command line that posts an
 // install-status milestone back to the AutoDeploy server, or "" when the
-// per-machine server URL / UUID are unknown (the portal preview, where the
-// callback is intentionally suppressed).
+// per-machine server URL / UUID are unknown (the portal preview) or fail
+// validation.
 //
-// The command is best-effort by construction: an 8s timeout, the whole body
-// wrapped in try/catch, and an unconditional `exit 0`. A slow or unreachable
-// server, a DNS failure, or an HTTP error must never stall or fail the
-// Windows Setup pass it runs in.
+// It invokes the staged adcb.ps1 by short path, passing the server base URL,
+// SMBIOS UUID and status as positional args. This keeps the whole command
+// well under the unattend RunSynchronousCommand/Path limit of 259 characters.
+// The earlier form inlined the whole script as `powershell -EncodedCommand
+// <~1.5 KB base64>`, which blew that limit, so Windows rejected the answer
+// file at the specialize pass (WCM 0x80220005, "value is invalid") and looped
+// Setup. adcb.ps1 itself carries the self-signed-TLS trust, the 8s timeout,
+// the try/catch and the `exit 0` (Windows Setup ships PowerShell 5.1, whose
+// Invoke-RestMethod lacks -SkipCertificateCheck).
 //
-// TLS: the boot client reaches this same server with certificate
-// verification disabled (the server may carry a self-signed cert), so the
-// callback mirrors that by accepting any server certificate. This runs inside
-// the freshly-imaged OS calling back to the operator's own server — a scoped,
-// deliberate trust choice. The ServicePointManager callback is used because
-// Windows Setup ships Windows PowerShell 5.1 (Invoke-RestMethod's
-// -SkipCertificateCheck is PowerShell 7+ only).
+// The invocation is wrapped in `cmd /c "... & exit 0"` so that even a missing
+// script — e.g. an older boot client that did not stage adcb.ps1 — returns
+// exit 0 and can never fail the specialize pass. The callback stays strictly
+// best-effort.
 //
-// The script is emitted as a PowerShell -EncodedCommand (base64 of UTF-16LE)
-// to sidestep XML- and cmd-quoting entirely — the same robustness motivation
-// as buildSetupCompleteWriter.
-func buildStatusCallbackCommand(s Settings, status, notes string) string {
-	if s.ServerURL == "" || s.CallbackUUID == "" {
+// ServerURL and CallbackUUID are externally influenced (the request Host
+// header and the ?uuid= query param), so both are strictly validated before
+// being placed on the command line; an unsafe value suppresses the callback
+// rather than risk cmd-metacharacter injection into a SYSTEM-context command.
+func buildStatusCallbackCommand(s Settings, status string) string {
+	base, ok := safeCallbackBase(s.ServerURL)
+	if !ok {
 		return ""
 	}
-	var ps bytes.Buffer
-	ps.WriteString("try {")
-	ps.WriteString("try { [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } } catch {};")
-	ps.WriteString("try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {};")
-	fmt.Fprintf(&ps, "$b = @{ identity = @{ system_uuid = '%s' }; status = '%s'; notes = '%s' } | ConvertTo-Json -Compress;",
-		psSingleQuote(s.CallbackUUID), psSingleQuote(status), psSingleQuote(notes))
-	fmt.Fprintf(&ps, "Invoke-RestMethod -Uri '%s/api/v1/clients/deploy-status' -Method Post -Body $b -ContentType 'application/json' -TimeoutSec 8 | Out-Null",
-		psSingleQuote(strings.TrimRight(s.ServerURL, "/")))
-	ps.WriteString("} catch {}; exit 0")
+	uuid, ok := safeCallbackUUID(s.CallbackUUID)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(`cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File %s %s %s %s & exit 0"`,
+		callbackScriptPath, base, uuid, status)
+}
 
-	enc := base64.StdEncoding.EncodeToString(utf16LE(ps.String()))
-	return "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + enc
+// safeCallbackBase validates raw as an http(s) URL whose authority is a bare
+// hostname[:port] with no other URL components, returning the canonical
+// "scheme://host" (no trailing path) for use on the callback command line.
+// Anything else — a bad scheme, empty host, userinfo, a path/query/fragment,
+// or unsafe host characters — is rejected so the value can never carry cmd
+// metacharacters.
+func safeCallbackBase(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", false
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", false
+	}
+	for _, c := range u.Host {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '.' || c == '-' || c == ':') {
+			return "", false
+		}
+	}
+	return u.Scheme + "://" + u.Host, true
+}
+
+// safeCallbackUUID accepts only an SMBIOS-style UUID (hex digits and hyphens,
+// bounded length); anything else is rejected.
+func safeCallbackUUID(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > 64 {
+		return "", false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '-') {
+			return "", false
+		}
+	}
+	return s, true
 }
 
 func writeDomainJoin(b *bytes.Buffer, d *DomainJoin) {
@@ -489,7 +514,7 @@ func writeOOBE(b *bytes.Buffer, s Settings) {
 	// gets a second signal — just before the agent takes over — even when the
 	// operator defined no first-logon commands. When present it forces the
 	// block to be emitted; suppressed in preview (empty callback).
-	if cb := buildStatusCallbackCommand(s, statusFirstLogon, "OOBE reached; handing off to agent"); cb != "" {
+	if cb := buildStatusCallbackCommand(s, statusFirstLogon); cb != "" {
 		cmds = append([]FirstLogonCommand{{
 			Description: "AutoDeploy: report first-logon milestone",
 			CommandLine: cb,

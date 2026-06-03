@@ -9,13 +9,14 @@ import (
 func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	rec := &Recorder{}
 	plan := MediaPlan{
-		TargetDisk:        "/dev/sda",
-		MediaBytes:        6 * 1024 * 1024 * 1024, // 6 GiB media
-		UnattendPath:      "/tmp/unattend.xml",
-		DriverPaths:       []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
-		AgentPath:         "/tmp/payload-agent.exe",
-		SetupCompletePath: "/tmp/SetupComplete.cmd",
-		WorkDir:           "/tmp/work",
+		TargetDisk:         "/dev/sda",
+		MediaBytes:         6 * 1024 * 1024 * 1024, // 6 GiB media
+		UnattendPath:       "/tmp/unattend.xml",
+		DriverPaths:        []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
+		AgentPath:          "/tmp/payload-agent.exe",
+		SetupCompletePath:  "/tmp/SetupComplete.cmd",
+		CallbackScriptPath: "/tmp/adcb.ps1",
+		WorkDir:            "/tmp/work",
 	}
 	// Prepare partition first; the caller streams media onto the returned
 	// mount path (not exercised here), then finalizes.
@@ -55,6 +56,8 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		"cp /tmp/payload-agent.exe /tmp/work/media/sources/$OEM$/$$/AutoDeploy/autodeploy-agent.exe",
 		"mkdir -p /tmp/work/media/sources/$OEM$/$$/Setup/Scripts",
 		"cp /tmp/SetupComplete.cmd /tmp/work/media/sources/$OEM$/$$/Setup/Scripts/SetupComplete.cmd",
+		// Install-status milestone reporter staged into the same Scripts dir.
+		"cp /tmp/adcb.ps1 /tmp/work/media/sources/$OEM$/$$/Setup/Scripts/adcb.ps1",
 		"sync",
 		"umount /tmp/work/media",
 		// Firmware boot entry for Windows Setup.

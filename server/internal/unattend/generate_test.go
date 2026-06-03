@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"strings"
 	"testing"
 )
@@ -594,46 +595,6 @@ func TestSkipAutoActivationNotInShellSetup(t *testing.T) {
 	}
 }
 
-// decodeEncodedCommand extracts the base64 payload following the first
-// "-EncodedCommand " token in the generated XML and decodes it from the
-// UTF-16LE form PowerShell expects, returning the original script text.
-func decodeEncodedCommand(x string) (string, error) {
-	const marker = "-EncodedCommand "
-	i := strings.Index(x, marker)
-	if i < 0 {
-		return "", fmt.Errorf("no -EncodedCommand token found")
-	}
-	rest := x[i+len(marker):]
-	// The base64 runs until the next XML delimiter (end of <Path>).
-	j := strings.IndexAny(rest, "<\" ")
-	if j < 0 {
-		return "", fmt.Errorf("unterminated -EncodedCommand payload")
-	}
-	raw, err := base64.StdEncoding.DecodeString(rest[:j])
-	if err != nil {
-		return "", err
-	}
-	// Decode UTF-16LE back to a Go string.
-	if len(raw)%2 != 0 {
-		return "", fmt.Errorf("odd-length UTF-16LE payload")
-	}
-	u := make([]uint16, len(raw)/2)
-	for k := range u {
-		u[k] = uint16(raw[k*2]) | uint16(raw[k*2+1])<<8
-	}
-	return string(utf16Decode(u)), nil
-}
-
-// utf16Decode mirrors unicode/utf16.Decode without importing it into the
-// test (kept local so the test reads standalone).
-func utf16Decode(s []uint16) []rune {
-	out := make([]rune, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		out = append(out, rune(s[i]))
-	}
-	return out
-}
-
 func TestGenerateStatusCallbackInSpecialize(t *testing.T) {
 	s := Defaults()
 	s.ServerURL = "https://deploy.example.com"
@@ -644,31 +605,53 @@ func TestGenerateStatusCallbackInSpecialize(t *testing.T) {
 	}
 	out := string(x)
 	// The callback must be the first specialize RunSynchronousCommand.
-	if !strings.Contains(out, "AutoDeploy: report specialize milestone") {
-		t.Fatalf("specialize milestone command missing; got\n%s", out)
-	}
 	if !strings.Contains(out, "<Order>1</Order><Description>AutoDeploy: report specialize milestone</Description>") {
 		t.Errorf("specialize milestone should be Order 1; got\n%s", out)
 	}
-	if !strings.Contains(out, "-EncodedCommand ") {
-		t.Fatalf("callback should use powershell -EncodedCommand; got\n%s", out)
+	// It must invoke the staged adcb.ps1 by short path, NOT inline a giant
+	// -EncodedCommand. The inline form was ~1.5 KB and exceeded the unattend
+	// RunSynchronousCommand/Path 259-char limit, so Windows rejected the
+	// answer file at specialize (0x80220005) and looped Setup.
+	if strings.Contains(out, "-EncodedCommand ") {
+		t.Fatalf("callback must not inline -EncodedCommand; got\n%s", out)
 	}
-	script, err := decodeEncodedCommand(out)
-	if err != nil {
-		t.Fatalf("decode encoded command: %v", err)
+	p := specializeCallbackPath(out)
+	if p == "" {
+		t.Fatalf("could not extract specialize callback Path; got\n%s", out)
 	}
 	for _, want := range []string{
-		"/api/v1/clients/deploy-status",
+		`cmd /c "powershell`,
+		`-File C:\Windows\Setup\Scripts\adcb.ps1`,
+		"https://deploy.example.com",
 		s.CallbackUUID,
-		"status = 'specialize'",
-		"-TimeoutSec 8",
-		"ServerCertificateValidationCallback",
-		"exit 0",
+		"specialize",
+		"& exit 0",
 	} {
-		if !strings.Contains(script, want) {
-			t.Errorf("decoded callback missing %q; got\n%s", want, script)
+		if !strings.Contains(p, want) {
+			t.Errorf("specialize callback Path missing %q; got\n%s", want, p)
 		}
 	}
+	// Guard the regression directly: the Path Windows parses must stay under
+	// the 259-character schema limit.
+	if len(p) >= 259 {
+		t.Errorf("specialize callback Path is %d chars; must be < 259", len(p))
+	}
+}
+
+// specializeCallbackPath returns the unescaped <Path> value of the specialize
+// milestone RunSynchronousCommand, or "" if not present.
+func specializeCallbackPath(xmlStr string) string {
+	const marker = "AutoDeploy: report specialize milestone</Description><Path>"
+	i := strings.Index(xmlStr, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := xmlStr[i+len(marker):]
+	j := strings.Index(rest, "</Path>")
+	if j < 0 {
+		return ""
+	}
+	return html.UnescapeString(rest[:j])
 }
 
 func TestGenerateStatusCallbackFirstLogon(t *testing.T) {
@@ -685,12 +668,38 @@ func TestGenerateStatusCallbackFirstLogon(t *testing.T) {
 	}
 }
 
+func TestGenerateCallbackSuppressesUnsafeServerOrUUID(t *testing.T) {
+	// ServerURL (from the Host header) and CallbackUUID (from ?uuid=) are
+	// externally influenced and land on a SYSTEM-context command line, so an
+	// unsafe value must suppress the callback rather than inject. None of
+	// these should ever produce a callback command.
+	bad := []struct {
+		name, url, uuid string
+	}{
+		{"cmd-injection in host", `https://h & calc.exe`, "11111111-2222-3333-4444-555555555555"},
+		{"quote in host", `https://h" & calc &"`, "11111111-2222-3333-4444-555555555555"},
+		{"url with path", "https://h/a/b", "11111111-2222-3333-4444-555555555555"},
+		{"non-http scheme", "file:///etc/passwd", "11111111-2222-3333-4444-555555555555"},
+		{"injection in uuid", "https://deploy.example.com", "1111 & calc.exe"},
+		{"empty url", "", "11111111-2222-3333-4444-555555555555"},
+	}
+	for _, b := range bad {
+		s := Defaults()
+		s.ServerURL = b.url
+		s.CallbackUUID = b.uuid
+		out := string(mustGen(t, s))
+		if strings.Contains(out, "adcb.ps1") || strings.Contains(out, "AutoDeploy: report") {
+			t.Errorf("%s: callback should be suppressed; got\n%s", b.name, out)
+		}
+	}
+}
+
 func TestGenerateNoCallbackWithoutServerOrUUID(t *testing.T) {
 	// Preview path: no ServerURL/CallbackUUID -> no callback anywhere, and
 	// the empty FirstLogonCommands block stays omitted.
 	x, _ := Generate(Defaults())
 	out := string(x)
-	if strings.Contains(out, "deploy-status") || strings.Contains(out, "AutoDeploy: report") {
+	if strings.Contains(out, "adcb.ps1") || strings.Contains(out, "AutoDeploy: report") {
 		t.Errorf("no callback should be emitted in preview; got\n%s", out)
 	}
 	if strings.Contains(out, "<FirstLogonCommands>") {
@@ -699,7 +708,7 @@ func TestGenerateNoCallbackWithoutServerOrUUID(t *testing.T) {
 	// Only server URL, no UUID -> still suppressed.
 	s := Defaults()
 	s.ServerURL = "https://deploy.example.com"
-	if strings.Contains(string(mustGen(t, s)), "deploy-status") {
+	if strings.Contains(string(mustGen(t, s)), "adcb.ps1") {
 		t.Errorf("callback should be suppressed when UUID is empty")
 	}
 }
