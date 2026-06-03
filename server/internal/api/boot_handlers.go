@@ -49,13 +49,20 @@ func RegisterBoot(mux *http.ServeMux, r Repos) {
 // DeployStatusRequest is what the Boot Client posts during a deploy so the
 // dashboard sees a machine before its OS (and agent) ever come up: at
 // staging start, on a staging failure, and when the media is staged and
-// it's about to reboot into Setup. The agent reports the final "ok" once
-// the installed OS boots.
+// it's about to reboot into Setup. During Windows Setup the unattend's
+// install-status callbacks post milestone updates too. The agent reports the
+// final "ok" once the installed OS boots.
 type DeployStatusRequest struct {
 	Identity match.Identity `json:"identity"`
 	ImageID  *model.ID      `json:"image_id,omitempty"`
-	// Status: "staging" (open a row), "staged" (media ready, rebooting),
-	// or "failed". Mapped to deployment_history outcomes.
+	// Status:
+	//   "staging"     — open an in_progress row (Boot Client).
+	//   "staged"      — media ready, rebooting into Setup (Boot Client).
+	//   "specialize"  — Windows Setup reached specialize (unattend callback).
+	//   "first-logon" — OOBE reached, handing to agent (unattend callback).
+	//   "failed"      — staging failed (Boot Client).
+	// staging opens a row; staged/specialize/first-logon update the open
+	// row's note (still in_progress); failed closes it failed.
 	Status string `json:"status"`
 	Notes  string `json:"notes,omitempty"`
 }
@@ -122,8 +129,24 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
 			return
+		case "specialize", "first-logon":
+			// Milestone callbacks from the unattend during Windows Setup. They
+			// advance the open in_progress row's note only — never close it and
+			// never overwrite a row the agent already marked ok/failed (the
+			// repo guards the race). UpsertFromIdentity above also bumped
+			// last_seen, which feeds the dashboard's stall detection.
+			notes := in.Notes
+			if notes == "" {
+				notes = "Windows Setup: " + in.Status
+			}
+			if err := r.Inventory.UpdateLatestInProgressNote(req.Context(), m.ID, notes); err != nil {
+				writeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
+			return
 		default:
-			http.Error(w, "status must be staging|staged|failed", http.StatusBadRequest)
+			http.Error(w, "status must be staging|staged|specialize|first-logon|failed", http.StatusBadRequest)
 		}
 	}
 }

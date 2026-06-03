@@ -242,3 +242,41 @@ func TestUpsertFromIdentityPreservesMakeModel(t *testing.T) {
 		t.Errorf("non-empty update did not apply: got %q", m.SystemProduct)
 	}
 }
+
+func TestUpdateLatestInProgressNote(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	inv := NewInventoryRepo(db)
+
+	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "milestone-uuid"})
+	depID, err := inv.RecordDeployment(ctx, m.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// While in_progress: the note updates, completed_at stays NULL, outcome
+	// stays in_progress.
+	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "reached specialize"); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ := inv.HistoryFor(ctx, m.ID)
+	if len(hist) != 1 {
+		t.Fatalf("want 1 history row, got %d", len(hist))
+	}
+	if hist[0].Outcome != "in_progress" || hist[0].CompletedAt != nil || hist[0].Notes != "reached specialize" {
+		t.Errorf("after milestone: %+v", hist[0])
+	}
+
+	// Agent closes the row ok. A late milestone must NOT resurrect or alter
+	// it (race guard).
+	if err := inv.CompleteDeployment(ctx, depID, "ok", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.UpdateLatestInProgressNote(ctx, m.ID, "late specialize callback"); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ = inv.HistoryFor(ctx, m.ID)
+	if hist[0].Outcome != "ok" || hist[0].Notes != "done" || hist[0].CompletedAt == nil {
+		t.Errorf("late milestone must not mutate a closed row: %+v", hist[0])
+	}
+}

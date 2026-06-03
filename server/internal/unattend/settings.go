@@ -98,6 +98,16 @@ type Settings struct {
 	// the machine record before generation. Empty in the portal preview.
 	NameIdentity NameIdentity `json:"-"`
 
+	// ServerURL is the reachable AutoDeploy base URL (scheme+host) that the
+	// install-status callback posts to. It is NOT persisted (json:"-");
+	// serve.go fills it from the incoming request before generation. Empty
+	// in the portal preview, which suppresses the callback.
+	ServerURL string `json:"-"`
+	// CallbackUUID is the SMBIOS UUID the install-status callback reports as
+	// its identity. NOT persisted (json:"-"); serve.go fills it from the
+	// ?uuid= query param. Empty in the portal preview.
+	CallbackUUID string `json:"-"`
+
 	// --- Disk ---
 	DiskID int `json:"disk_id"`
 

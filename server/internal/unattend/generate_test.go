@@ -593,3 +593,122 @@ func TestSkipAutoActivationNotInShellSetup(t *testing.T) {
 		t.Errorf("SkipAutoActivation should be in Security-SPP-UX; got\n%s", xs)
 	}
 }
+
+// decodeEncodedCommand extracts the base64 payload following the first
+// "-EncodedCommand " token in the generated XML and decodes it from the
+// UTF-16LE form PowerShell expects, returning the original script text.
+func decodeEncodedCommand(x string) (string, error) {
+	const marker = "-EncodedCommand "
+	i := strings.Index(x, marker)
+	if i < 0 {
+		return "", fmt.Errorf("no -EncodedCommand token found")
+	}
+	rest := x[i+len(marker):]
+	// The base64 runs until the next XML delimiter (end of <Path>).
+	j := strings.IndexAny(rest, "<\" ")
+	if j < 0 {
+		return "", fmt.Errorf("unterminated -EncodedCommand payload")
+	}
+	raw, err := base64.StdEncoding.DecodeString(rest[:j])
+	if err != nil {
+		return "", err
+	}
+	// Decode UTF-16LE back to a Go string.
+	if len(raw)%2 != 0 {
+		return "", fmt.Errorf("odd-length UTF-16LE payload")
+	}
+	u := make([]uint16, len(raw)/2)
+	for k := range u {
+		u[k] = uint16(raw[k*2]) | uint16(raw[k*2+1])<<8
+	}
+	return string(utf16Decode(u)), nil
+}
+
+// utf16Decode mirrors unicode/utf16.Decode without importing it into the
+// test (kept local so the test reads standalone).
+func utf16Decode(s []uint16) []rune {
+	out := make([]rune, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		out = append(out, rune(s[i]))
+	}
+	return out
+}
+
+func TestGenerateStatusCallbackInSpecialize(t *testing.T) {
+	s := Defaults()
+	s.ServerURL = "https://deploy.example.com"
+	s.CallbackUUID = "11111111-2222-3333-4444-555555555555"
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(x)
+	// The callback must be the first specialize RunSynchronousCommand.
+	if !strings.Contains(out, "AutoDeploy: report specialize milestone") {
+		t.Fatalf("specialize milestone command missing; got\n%s", out)
+	}
+	if !strings.Contains(out, "<Order>1</Order><Description>AutoDeploy: report specialize milestone</Description>") {
+		t.Errorf("specialize milestone should be Order 1; got\n%s", out)
+	}
+	if !strings.Contains(out, "-EncodedCommand ") {
+		t.Fatalf("callback should use powershell -EncodedCommand; got\n%s", out)
+	}
+	script, err := decodeEncodedCommand(out)
+	if err != nil {
+		t.Fatalf("decode encoded command: %v", err)
+	}
+	for _, want := range []string{
+		"/api/v1/clients/deploy-status",
+		s.CallbackUUID,
+		"status = 'specialize'",
+		"-TimeoutSec 8",
+		"ServerCertificateValidationCallback",
+		"exit 0",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("decoded callback missing %q; got\n%s", want, script)
+		}
+	}
+}
+
+func TestGenerateStatusCallbackFirstLogon(t *testing.T) {
+	s := Defaults()
+	s.ServerURL = "https://deploy.example.com"
+	s.CallbackUUID = "aaaa-bbbb"
+	x, _ := Generate(s)
+	out := string(x)
+	// Even with no operator first-logon commands, the milestone forces the
+	// block to be emitted.
+	if !strings.Contains(out, "<FirstLogonCommands>") ||
+		!strings.Contains(out, "AutoDeploy: report first-logon milestone") {
+		t.Errorf("first-logon milestone should be emitted; got\n%s", out)
+	}
+}
+
+func TestGenerateNoCallbackWithoutServerOrUUID(t *testing.T) {
+	// Preview path: no ServerURL/CallbackUUID -> no callback anywhere, and
+	// the empty FirstLogonCommands block stays omitted.
+	x, _ := Generate(Defaults())
+	out := string(x)
+	if strings.Contains(out, "deploy-status") || strings.Contains(out, "AutoDeploy: report") {
+		t.Errorf("no callback should be emitted in preview; got\n%s", out)
+	}
+	if strings.Contains(out, "<FirstLogonCommands>") {
+		t.Errorf("FirstLogonCommands should stay omitted in preview; got\n%s", out)
+	}
+	// Only server URL, no UUID -> still suppressed.
+	s := Defaults()
+	s.ServerURL = "https://deploy.example.com"
+	if strings.Contains(string(mustGen(t, s)), "deploy-status") {
+		t.Errorf("callback should be suppressed when UUID is empty")
+	}
+}
+
+func mustGen(t *testing.T, s Settings) []byte {
+	t.Helper()
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return x
+}

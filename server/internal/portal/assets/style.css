@@ -656,6 +656,7 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
 .badge.ok   { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .badge.bad  { background: var(--bad-soft);  color: var(--bad);  border-color: transparent; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.muted { background: var(--grey-100); color: var(--fg-muted); border-color: transparent; }
 .badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 .badge svg { width: 12px; height: 12px; }
 
@@ -668,6 +669,7 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
 .dot.ok   { background: var(--good); box-shadow: 0 0 0 4px var(--good-soft); }
 .dot.bad  { background: var(--bad);  box-shadow: 0 0 0 4px var(--bad-soft); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+.dot.muted { background: var(--fg-muted); box-shadow: 0 0 0 4px var(--grey-100); }
 
 /* Empty state */
 .empty {

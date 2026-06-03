@@ -167,9 +167,9 @@ function mActionChanged(sel){['rename','script','software_push','reimage'].forEa
     {{range .Data.History}}
     <tr>
       <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{formatTime .StartedAt}}</td>
-      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}<span class="badge warn">in progress</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
       <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td><span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span></td>
+      <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
       <td class="small">{{.Notes}}</td>
     </tr>
     {{end}}

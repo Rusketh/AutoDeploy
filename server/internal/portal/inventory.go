@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
@@ -280,6 +281,19 @@ func machineDetail(r Repos) http.HandlerFunc {
 		}
 		binding, _ := r.Inventory.GetBinding(req.Context(), id)
 		history, _ := r.Inventory.HistoryFor(req.Context(), id)
+		// Derive a per-row "stalled" flag for display: an in_progress row
+		// whose machine hasn't checked in for longer than deployStallAfter has
+		// most likely failed Setup (or is powered off). Computed here rather
+		// than persisted so it self-corrects if the machine checks back in.
+		type historyRow struct {
+			model.DeploymentRecord
+			Stalled bool
+		}
+		machineStalled := time.Since(m.LastSeen) > deployStallAfter
+		historyRows := make([]historyRow, len(history))
+		for i, h := range history {
+			historyRows[i] = historyRow{DeploymentRecord: h, Stalled: h.Outcome == "in_progress" && machineStalled}
+		}
 		reimages, _ := r.Inventory.ListReimageEvents(req.Context(), id)
 		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
 		bl, _ := r.BitLocker.PINStatus(req.Context(), id)
@@ -304,7 +318,7 @@ func machineDetail(r Repos) http.HandlerFunc {
 			}
 		}
 		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
-			"M": m, "Binding": binding, "History": history,
+			"M": m, "Binding": binding, "History": historyRows,
 			"Reimages": reimages,
 			"Detected": detected, "Packages": pkgs,
 			"BL": bl, "Recovery": recovery,
