@@ -119,17 +119,36 @@ func (e *Evaluator) evaluateRegistry(r swspec.DetectionRule) (bool, error) {
 }
 
 func evaluateScript(ctx context.Context, r swspec.DetectionRule) (bool, error) {
-	var cmd *exec.Cmd
+	// Write the body to a script file and run THAT, rather than passing it
+	// inline. An inline `cmd /C <body>` runs only the first line of a
+	// multi-line script and, worse, Go escapes embedded quotes as \" which
+	// cmd.exe doesn't understand -- so a one-liner like
+	//   if exist "C:\Program Files (x86)\Vendor\app.exe" exit 0
+	// (a quoted path with spaces) is mangled and the rule never matches. A
+	// real script file sidesteps both; PowerShell runs it with -ExecutionPolicy
+	// Bypass so an unsigned .ps1 still executes.
+	var name, ext string
 	switch r.ScriptShell {
 	case "cmd":
-		cmd = exec.CommandContext(ctx, "cmd", "/C", r.ScriptBody)
+		name, ext = "cmd", ".cmd"
 	case "powershell":
-		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
-			"-ExecutionPolicy", "Bypass", "-Command", r.ScriptBody)
+		name, ext = "powershell", ".ps1"
 	default:
 		return false, fmt.Errorf("script shell %q not supported", r.ScriptShell)
 	}
-	err := cmd.Run()
+	path, err := writeScriptFile(ext, r.ScriptBody)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = os.Remove(path) }()
+	var cmd *exec.Cmd
+	if name == "cmd" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", path)
+	} else {
+		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+			"-ExecutionPolicy", "Bypass", "-File", path)
+	}
+	err = cmd.Run()
 	if err == nil {
 		return true, nil
 	}
@@ -151,6 +170,29 @@ func evaluateWinget(ctx context.Context, r swspec.DetectionRule) (bool, error) {
 		return false, err
 	}
 	return strings.Contains(string(out), r.WingetID), nil
+}
+
+// writeScriptFile writes a cmd/powershell detection-script body to a fresh
+// temp file with the given extension and returns its path. Newlines are
+// normalised to CRLF so a multi-line body runs reliably as a Windows batch /
+// PowerShell script. The caller removes the file once the script has run.
+func writeScriptFile(ext, body string) (string, error) {
+	f, err := os.CreateTemp("", "autodeploy-detect-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\n", "\r\n")
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 func sha256File(path string) (string, error) {

@@ -63,7 +63,9 @@ Present if an MSI product with the given product code is installed.
 
 ### `script`
 
-Runs a script; a non-zero exit code means "not detected".
+Runs a script; a non-zero exit code means "not detected". The body is written to a temporary
+`.cmd` / `.ps1` file on the target and that file is run (so multi-line scripts and quoted paths
+with spaces work, and PowerShell runs with its execution policy bypassed).
 
 | Field | Required | Description |
 |-------|----------|-------------|
