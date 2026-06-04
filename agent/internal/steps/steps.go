@@ -238,6 +238,13 @@ func extractZipEntry(absDst string, f *zip.File) error {
 
 // Copy implements Runner.
 func (r *OSRunner) Copy(_ context.Context, src, dst string) error {
+	// If dst is an existing directory, copy INTO it under the source's
+	// basename (cp semantics). Without this, os.OpenFile(dst) below fails
+	// with a cryptic "open <dir>: is a directory". (To EXTRACT an archive
+	// into a folder, use an unzip step -- copy writes the file as-is.)
+	if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
+		dst = filepath.Join(dst, filepath.Base(src))
+	}
 	if r.Log != nil {
 		r.Log.Info("steps.copy",
 			slog.String("actor", "agent"),

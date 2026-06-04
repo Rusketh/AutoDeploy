@@ -97,6 +97,28 @@ func TestRunScriptUnknownShell(t *testing.T) {
 	}
 }
 
+// Copy to an existing-directory destination lands the file INSIDE it (cp
+// semantics) instead of failing with "is a directory".
+func TestCopyIntoDirectoryDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "shortcut.lnk")
+	if err := os.WriteFile(src, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destDir := filepath.Join(dir, "StartMenu")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &OSRunner{}
+	if err := r.Copy(context.Background(), src, destDir); err != nil {
+		t.Fatalf("copy into dir: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(destDir, "shortcut.lnk"))
+	if err != nil || string(got) != "data" {
+		t.Errorf("expected file copied into dir under its basename: %q err=%v", got, err)
+	}
+}
+
 func TestExecuteAbortsOnFailureByDefault(t *testing.T) {
 	rec := &Recorder{ExitMap: map[string]int{"cmd": 5}}
 	list := []swspec.InstallStep{
