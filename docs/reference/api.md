@@ -204,6 +204,30 @@ information).
 | `GET /api/v1/settings/access-pin` | Whether a PXE access PIN is set. |
 | `PUT /api/v1/settings/access-pin` | Set the PIN: `{ "pin": "1234" }`. An empty string clears it. |
 
+## Notifications
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/v1/notifications` | List the current user's notifications (supports `?severity`, `?event`, `?unread=1`, `?limit`, `?offset`). |
+| `GET /api/v1/notifications/unread-count` | Returns `{ "count": N }` for badge polling. |
+| `POST /api/v1/notifications/mark-read` | Mark specific IDs as read: `{ "ids": [1, 2, 3] }`. |
+| `POST /api/v1/notifications/mark-all-read` | Mark all of the current user's notifications as read. |
+| `GET /api/v1/notifications/preferences` | Get the current user's per-event channel preferences. |
+| `PUT /api/v1/notifications/preferences` | Update preferences: `[{ "event": "deploy.failed", "portal": true, "email": true }]`. |
+| `GET /api/v1/notifications/events` | List all event types and categories. |
+
+## Webhooks
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/v1/webhooks` | List all configured webhook endpoints. |
+| `POST /api/v1/webhooks` | Create a webhook: `{ "name", "url", "secret", "events", "min_severity", "enabled" }`. |
+| `GET /api/v1/webhooks/{id}` | Get a webhook (secret is redacted; `has_secret` indicates presence). |
+| `PUT /api/v1/webhooks/{id}` | Update a webhook. |
+| `DELETE /api/v1/webhooks/{id}` | Delete a webhook and its delivery log. |
+| `POST /api/v1/webhooks/{id}/test` | Send a test `system.test` event to the webhook. |
+| `GET /api/v1/webhooks/{id}/deliveries` | List recent delivery attempts (supports `?limit`). |
+
 ## Logs
 
 | Method & path | Purpose |

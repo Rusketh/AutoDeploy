@@ -39,9 +39,18 @@ The audit log can grow over time. Set `AUTODEPLOY_LOG_RETENTION_DAYS` to automat
 entries older than the given number of days; `0` (the default) keeps everything. This is
 configurable under [Settings → Operational](../portal/settings.md#operational).
 
+## Notification retention
+
+In-portal notifications are pruned separately from the audit log. Set the retention period under
+[Settings → Notifications](../portal/settings.md#notifications) (default: 30 days, `0` = keep
+forever). Webhook delivery logs are automatically pruned after 30 days.
+
+Both run on the same hourly scheduler tick as log retention.
+
 ## Related
 
 - [Configuration reference](../reference/configuration.md)
 - [Security](security.md)
 - [Logs](../portal/logs.md)
+- [Notifications](../portal/notifications.md)
 </content>

@@ -7,6 +7,7 @@ overridden in the portal and take effect on next restart. This page documents ea
 
 - [Accounts](#accounts)
 - [Access PIN](#access-pin)
+- [Notifications](#notifications)
 - [Branding](#branding)
 - [Active Directory](#active-directory)
 - [Network](#network)
@@ -15,7 +16,7 @@ overridden in the portal and take effect on next restart. This page documents ea
 - [Updates](#updates)
 - [PXE](#pxe)
 
-![Settings hub](../images/settings.png)
+![Settings hub](../images/settings-index.png)
 
 ## Accounts
 
@@ -46,6 +47,25 @@ Leave the field **empty** to remove the PIN. The PIN is hashed at rest and rate-
 
 > Server-initiated re-images (for example, a [bulk re-image](bulk-operations.md)) are already
 > authorised by an operator and don't prompt for the PIN at the machine.
+
+## Notifications
+
+A three-channel notification system that fires when significant events occur across the deployment
+lifecycle. Operators configure which events trigger notifications, who receives them, and through
+which channels. For the full guide, see [Notifications](notifications.md).
+
+![Notification settings](../images/settings-notifications.png)
+
+The settings page is split into three areas:
+
+| Area | Description |
+|------|-------------|
+| **In-portal** | Master toggle and retention period for the bell-icon notifications |
+| **Email (SMTP)** | SMTP host, port, credentials, TLS mode, from address; a **Send test** button verifies the config |
+| **Webhooks** | List of configured webhook endpoints with add / edit / test / delivery-log actions |
+
+Each user can also configure per-event preferences (which events → which channels) from
+**My preferences**. See [Notification preferences](notifications.md#per-user-preferences) for details.
 
 ## Branding
 
