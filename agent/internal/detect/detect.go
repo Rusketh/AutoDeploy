@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/rusketh/autodeploy/agent/internal/swspec"
+	"github.com/rusketh/autodeploy/agent/internal/winenv"
 )
 
 // Backend abstracts the host-specific bits of detection.
@@ -73,13 +74,14 @@ func (e *Evaluator) evaluateRule(ctx context.Context, r swspec.DetectionRule) (b
 }
 
 func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
-	// Expand %ProgramFiles%, %LOCALAPPDATA%, $HOME, etc once at the
-	// top so the three host APIs below (Stat, FileVersion, SHA-256)
-	// all see the same resolved path. Doing it here instead of inside
-	// each Backend means the backends stay narrowly host-API specific
-	// and the expansion semantics are testable through the fake
-	// backend with no Windows syscall needed.
-	path := expandPath(r.FilePath)
+	// Expand %ProgramFiles%, %ProgramFiles(x86)%, %LOCALAPPDATA%, $HOME,
+	// etc once at the top so the three host APIs below (Stat, FileVersion,
+	// SHA-256) all see the same resolved path. Doing it here instead of
+	// inside each Backend means the backends stay narrowly host-API
+	// specific. winenv.Expand also resolves the synthetic Program Files
+	// variables a service's environment can lack (see that package), which
+	// is why a %ProgramFiles(x86)%\... rule could previously never match.
+	path := winenv.Expand(r.FilePath)
 	present, err := e.Backend.FileExists(path)
 	if err != nil || !present {
 		return false, err

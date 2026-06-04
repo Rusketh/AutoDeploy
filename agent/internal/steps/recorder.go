@@ -34,6 +34,21 @@ func (r *Recorder) Run(_ context.Context, name string, args []string, stdin stri
 	return 0, nil
 }
 
+func (r *Recorder) RunScript(_ context.Context, shell, body string) (int, error) {
+	r.Calls = append(r.Calls, shell+" (script) "+body)
+	if r.ErrorMap != nil {
+		if err, ok := r.ErrorMap[shell]; ok {
+			return -1, err
+		}
+	}
+	if r.ExitMap != nil {
+		if c, ok := r.ExitMap[shell]; ok {
+			return c, nil
+		}
+	}
+	return 0, nil
+}
+
 func (r *Recorder) Copy(_ context.Context, src, dst string) error {
 	r.Copies = append(r.Copies, fmt.Sprintf("%s -> %s", src, dst))
 	return nil

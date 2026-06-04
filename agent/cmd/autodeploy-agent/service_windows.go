@@ -34,6 +34,10 @@ func (s *agentService) Execute(_ []string, req <-chan svc.ChangeRequest, status 
 	status <- svc.Status{State: svc.StartPending}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Guarantee the run loop's context is cancelled on every return path
+	// (the explicit cancel() on Stop below still fires first, so the loop
+	// is signalled before we wait on done; a second cancel is a no-op).
+	defer cancel()
 	done := make(chan struct{})
 	go func() {
 		s.run(ctx)
