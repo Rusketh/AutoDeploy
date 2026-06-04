@@ -65,7 +65,10 @@ Install an AppX / MSIX package.
 
 ### `cmd`, `powershell`
 
-Run an inline script.
+Run a script. The body is written to a temporary `.cmd` / `.ps1` file on the target and that file is
+executed (`cmd /C <file>` or `powershell -ExecutionPolicy Bypass -File <file>`), so **multi-line
+scripts work** and PowerShell runs even where the machine's execution policy would otherwise block an
+unsigned script. The temporary file is deleted once the script has run.
 
 | Field | Required | Description |
 |-------|----------|-------------|

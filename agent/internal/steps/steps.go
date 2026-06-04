@@ -24,9 +24,16 @@ import (
 // Runner is the boundary between the executor and the host shell.
 type Runner interface {
 	// Run executes name with args, returning the process exit code.
-	// shellInput, if non-empty, is piped to the process's stdin (used for
-	// cmd/powershell steps with inline script bodies).
+	// shellInput, if non-empty, is piped to the process's stdin.
 	Run(ctx context.Context, name string, args []string, shellInput string) (int, error)
+	// RunScript persists a cmd/powershell script body to a file and runs
+	// that file, returning the process exit code. shell is "cmd" or
+	// "powershell". Writing the body to a real script -- rather than
+	// passing it inline as `cmd /C <body>` or on PowerShell's stdin --
+	// is what lets multi-line bodies and embedded quoting survive; the
+	// PowerShell case runs with -ExecutionPolicy Bypass so an unsigned
+	// .ps1 still executes.
+	RunScript(ctx context.Context, shell, body string) (int, error)
 	// Copy duplicates src to dst. Goes through the runner so tests can
 	// record copies and dry-run can log without touching disk.
 	Copy(ctx context.Context, src, dst string) error
@@ -80,6 +87,74 @@ func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInp
 		return ee.ExitCode(), nil
 	}
 	return -1, err
+}
+
+// RunScript implements Runner. It writes body to a scratch script file
+// (CRLF-normalised, under WorkDir when set so it's cleaned up with the rest
+// of the package payload) and executes it: `cmd /C <file>.cmd` or
+// `powershell ... -ExecutionPolicy Bypass -File <file>.ps1`. The file is
+// removed once the shell has run it.
+func (r *OSRunner) RunScript(ctx context.Context, shell, body string) (int, error) {
+	var ext string
+	switch shell {
+	case "cmd":
+		ext = ".cmd"
+	case "powershell":
+		ext = ".ps1"
+	default:
+		return -1, fmt.Errorf("unknown script shell %q", shell)
+	}
+	if r.Log != nil {
+		r.Log.Info("steps.script",
+			slog.String("actor", "agent"),
+			slog.String("shell", shell),
+			slog.String("dir", r.WorkDir),
+			slog.Bool("dry_run", r.DryRun),
+			slog.Int("body_bytes", len(body)),
+		)
+	}
+	if r.DryRun {
+		return 0, nil
+	}
+	path, err := writeScriptFile(r.WorkDir, ext, body)
+	if err != nil {
+		return -1, fmt.Errorf("write %s script: %w", shell, err)
+	}
+	// The script file is scratch -- drop it once the shell has run it.
+	defer func() { _ = os.Remove(path) }()
+	if shell == "cmd" {
+		return r.Run(ctx, "cmd", []string{"/C", path}, "")
+	}
+	return r.Run(ctx, "powershell",
+		[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path}, "")
+}
+
+// writeScriptFile writes a cmd/powershell body to a fresh file under dir (or
+// the OS temp dir when dir is empty) with the given extension, returning its
+// path. Newlines are normalised to CRLF so a body authored with LF newlines
+// runs reliably as a Windows batch / PowerShell script.
+func writeScriptFile(dir, ext, body string) (string, error) {
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+	}
+	f, err := os.CreateTemp(dir, "autodeploy-step-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\n", "\r\n")
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // Unzip implements Runner. archive/zip from the stdlib is enough --
@@ -248,13 +323,14 @@ func runOne(ctx context.Context, s swspec.InstallStep, r Runner) Result {
 		res.ExitCode, res.Error = r.Run(ctx, "powershell",
 			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body}, "")
 	case "cmd":
-		res.ExitCode, res.Error = r.Run(ctx, "cmd", []string{"/C", s.ScriptBody}, "")
+		// Write the body to a .cmd and run it; a multi-line script passed
+		// inline as `cmd /C <body>` only runs its first line.
+		res.ExitCode, res.Error = r.RunScript(ctx, "cmd", s.ScriptBody)
 	case "powershell":
-		// Pass the script via stdin so the body can be arbitrary length
-		// and contain quotes safely.
-		res.ExitCode, res.Error = r.Run(ctx, "powershell",
-			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"},
-			s.ScriptBody)
+		// Write the body to a .ps1 and run it with -ExecutionPolicy Bypass;
+		// a real script file handles arbitrary length, multiple lines and
+		// embedded quoting cleanly.
+		res.ExitCode, res.Error = r.RunScript(ctx, "powershell", s.ScriptBody)
 	case "exe":
 		res.ExitCode, res.Error = r.Run(ctx, s.ExePath, s.ExeArgs, "")
 	case "winget":

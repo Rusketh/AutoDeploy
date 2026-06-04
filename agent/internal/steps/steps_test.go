@@ -34,8 +34,8 @@ func TestExecuteAllStepTypes(t *testing.T) {
 	mustCall := []string{
 		"msiexec /i C:\\pkg\\a.msi /quiet /norestart TARGETDIR=C:\\Foo",
 		"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command Add-AppxPackage",
-		"cmd /C echo hi",
-		"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
+		"cmd (script) echo hi",
+		"powershell (script) Write-Host hi",
 		`C:\pkg\a.exe /S`,
 	}
 	for _, want := range mustCall {
@@ -52,6 +52,48 @@ func TestExecuteAllStepTypes(t *testing.T) {
 	}
 	if len(rec.Copies) != 1 || !strings.Contains(rec.Copies[0], "src.dat -> dst.dat") {
 		t.Errorf("expected copy src.dat -> dst.dat\n%s", rec.Dump())
+	}
+}
+
+// cmd/powershell steps write the body to a real script file (so multi-line
+// bodies survive -- an inline `cmd /C <body>` only runs the first line). The
+// file-writing helper normalises to CRLF and keeps the requested extension.
+func TestWriteScriptFileCRLF(t *testing.T) {
+	dir := t.TempDir()
+	path, err := writeScriptFile(dir, ".cmd", "echo one\necho two\r\necho three")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(path) != dir {
+		t.Errorf("script written to %q, want under %q", path, dir)
+	}
+	if filepath.Ext(path) != ".cmd" {
+		t.Errorf("extension = %q, want .cmd", filepath.Ext(path))
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "echo one\r\necho two\r\necho three"
+	if string(b) != want {
+		t.Errorf("body = %q, want %q", b, want)
+	}
+}
+
+// A DryRun runner reports success without writing or executing anything.
+func TestRunScriptDryRun(t *testing.T) {
+	r := &OSRunner{DryRun: true}
+	code, err := r.RunScript(context.Background(), "powershell", "Write-Host hi")
+	if err != nil || code != 0 {
+		t.Errorf("dry-run RunScript = (%d,%v), want (0,nil)", code, err)
+	}
+}
+
+// An unknown shell is a clear error, not a silent no-op.
+func TestRunScriptUnknownShell(t *testing.T) {
+	r := &OSRunner{}
+	if _, err := r.RunScript(context.Background(), "bash", "echo hi"); err == nil {
+		t.Error("expected error for unknown shell")
 	}
 }
 

@@ -95,7 +95,7 @@ func TestFileSHA256(t *testing.T) {
 	}
 }
 
-// File detection runs expandPath on the rule's file_path before
+// File detection runs winenv.Expand on the rule's file_path before
 // touching the host. On Linux (dev / CI) os.ExpandEnv handles
 // $VAR and ${VAR}; %VAR% (the Windows-style production syntax)
 // passes through untouched -- by design, a rule that expects

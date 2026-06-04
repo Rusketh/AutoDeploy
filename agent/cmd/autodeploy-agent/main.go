@@ -32,6 +32,7 @@ import (
 	"github.com/rusketh/autodeploy/agent/internal/steps"
 	"github.com/rusketh/autodeploy/agent/internal/swspec"
 	"github.com/rusketh/autodeploy/agent/internal/updates"
+	"github.com/rusketh/autodeploy/agent/internal/winenv"
 )
 
 type agentFlags struct {
@@ -770,206 +771,11 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		if progress != nil {
 			progress(i, len(items), pkg.Name)
 		}
-		// Detection first — skip already-installed.
-		installed, err := eval.EvaluatePackage(ctx, pkg.DetectionRules)
-		if err != nil {
-			log.Warn("detect.error",
-				slog.String("package", pkg.Name),
-				slog.String("error", err.Error()))
+		rep, didFail := installOnePackage(ctx, log, c, f, eval, runner, pkg)
+		if rep != nil {
+			packageReports = append(packageReports, *rep)
 		}
-		if installed {
-			log.Info("package.skip",
-				slog.String("actor", f.uuid),
-				slog.String("target", pkg.Name),
-				slog.String("reason", "detection rules report already installed"))
-			packageReports = append(packageReports, pkgReport{
-				PackageID: pkg.PackageID, Detected: true, Skipped: true,
-			})
-			continue
-		}
-		if len(pkg.DetectionRules) == 0 {
-			log.Warn("package.no_detection",
-				slog.String("package", pkg.Name),
-				slog.String("note", "no detection rules; package will install every time"))
-		}
-
-		// Multi-file packages: download every file the server advertises
-		// into a per-package work directory, then resolve bare filenames in
-		// install-step paths against it. Legacy single-file packages (no
-		// Files list) fall back to the {payload} -> pkg-N.bin path.
-		pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
-		filesDir := filepath.Join(pkgDir, "files")
-		hasWorkdir := len(pkg.Files) > 0 || len(pkg.Bundles) > 0
-		var legacyPayloadPath string
-		if hasWorkdir {
-			if err := os.MkdirAll(filesDir, 0o755); err != nil {
-				log.Error("package.workdir",
-					slog.String("package", pkg.Name),
-					slog.String("error", err.Error()))
-				continue
-			}
-			downloadOK := true
-			for _, pf := range pkg.Files {
-				url := pf.URL
-				if len(url) > 0 && url[0] == '/' {
-					url = f.server + url
-				}
-				fdst := filepath.Join(filesDir, pf.Name)
-				out, err := os.Create(fdst)
-				if err != nil {
-					log.Error("package.download.create",
-						slog.String("package", pkg.Name),
-						slog.String("file", pf.Name),
-						slog.String("error", err.Error()))
-					downloadOK = false
-					break
-				}
-				if err := c.Download(ctx, url, out); err != nil {
-					_ = out.Close()
-					log.Error("package.download",
-						slog.String("package", pkg.Name),
-						slog.String("file", pf.Name),
-						slog.String("error", err.Error()))
-					downloadOK = false
-					break
-				}
-				_ = out.Close()
-				log.Info("package.download.ok",
-					slog.String("package", pkg.Name),
-					slog.String("file", pf.Name),
-					slog.String("path", fdst))
-			}
-			// Bundles: download each zip and extract it into the work dir so
-			// its contents resolve by bare filename. The unzip has zip-slip
-			// defence and creates directories as needed.
-			for _, bz := range pkg.Bundles {
-				url := bz.URL
-				if len(url) > 0 && url[0] == '/' {
-					url = f.server + url
-				}
-				zpath := filepath.Join(pkgDir, "bundle-"+bz.Name)
-				out, err := os.Create(zpath)
-				if err != nil {
-					log.Error("package.bundle.create",
-						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
-						slog.String("error", err.Error()))
-					downloadOK = false
-					break
-				}
-				if err := c.Download(ctx, url, out); err != nil {
-					_ = out.Close()
-					log.Error("package.bundle.download",
-						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
-						slog.String("error", err.Error()))
-					downloadOK = false
-					break
-				}
-				_ = out.Close()
-				if err := runner.Unzip(ctx, zpath, filesDir); err != nil {
-					log.Error("package.bundle.extract",
-						slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
-						slog.String("error", err.Error()))
-					downloadOK = false
-					break
-				}
-				log.Info("package.bundle.ok",
-					slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
-					slog.String("dir", filesDir))
-			}
-			if !downloadOK {
-				continue
-			}
-			// A single plain file (no bundles) keeps the legacy {payload}
-			// convenience pointing at it.
-			if len(pkg.Files) == 1 && len(pkg.Bundles) == 0 {
-				legacyPayloadPath = filepath.Join(filesDir, pkg.Files[0].Name)
-			}
-		} else if pkg.PayloadURL != "" {
-			legacyPayloadPath = filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
-			url := pkg.PayloadURL
-			if len(url) > 0 && url[0] == '/' {
-				url = f.server + url
-			}
-			out, err := os.Create(legacyPayloadPath)
-			if err != nil {
-				log.Error("package.download.create",
-					slog.String("package", pkg.Name),
-					slog.String("error", err.Error()))
-				continue
-			}
-			if err := c.Download(ctx, url, out); err != nil {
-				_ = out.Close()
-				log.Error("package.download",
-					slog.String("package", pkg.Name),
-					slog.String("error", err.Error()))
-				continue
-			}
-			_ = out.Close()
-			log.Info("package.download.ok",
-				slog.String("package", pkg.Name),
-				slog.String("path", legacyPayloadPath))
-		}
-
-		// Rewrite, in order: substitute the legacy {payload} token; resolve
-		// bare filenames against everything in the work dir (uploaded files +
-		// extracted bundle contents); then expand Windows %ENV% in path fields
-		// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
-		// the real location instead of a literal "%ProgramData%" folder.
-		rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
-		if hasWorkdir {
-			// %pkgdir% -> the work dir (any field, any step type); then resolve
-			// remaining bare filenames against everything in the work dir
-			// (uploaded files + extracted bundle contents).
-			rewritten = expandPkgDir(rewritten, filesDir)
-			knownFiles := mapWorkdirFiles(filesDir)
-			rewritten = resolveBareFilenames(rewritten, knownFiles)
-		}
-		rewritten = expandStepEnv(rewritten)
-
-		log.Info("package.install.start",
-			slog.String("actor", f.uuid),
-			slog.String("target", pkg.Name),
-			slog.Int("steps", len(rewritten)))
-		// Run steps from the package work dir so an installer's relative args
-		// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
-		// resolve against the downloaded/extracted files, not the service's CWD.
-		if hasWorkdir {
-			runner.WorkDir = filesDir
-		} else {
-			runner.WorkDir = f.workDir
-		}
-		results := steps.Execute(ctx, rewritten, runner)
-		ok := true
-		for i, r := range results {
-			lvl := slog.LevelInfo
-			if r.Error != nil || r.Aborted {
-				lvl = slog.LevelError
-				ok = false
-			}
-			log.Log(ctx, lvl, "package.step",
-				slog.String("package", pkg.Name),
-				slog.Int("step", i+1),
-				slog.String("type", r.Step.Type),
-				slog.Int("exit_code", r.ExitCode),
-				slog.Bool("aborted", r.Aborted),
-				slog.Any("error", r.Error),
-			)
-		}
-		if ok {
-			log.Info("package.install.ok",
-				slog.String("actor", f.uuid),
-				slog.String("target", pkg.Name))
-			postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
-			packageReports = append(packageReports, pkgReport{
-				PackageID: pkg.PackageID, Installed: true, Detected: postDetected,
-			})
-		} else {
-			log.Error("package.install.fail",
-				slog.String("actor", f.uuid),
-				slog.String("target", pkg.Name))
-			packageReports = append(packageReports, pkgReport{
-				PackageID: pkg.PackageID, Failed: true,
-			})
+		if didFail {
 			failed = true
 		}
 	}
@@ -977,6 +783,214 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		progress(len(items), len(items), "")
 	}
 	return packageReports, failed
+}
+
+// installOnePackage evaluates detection for pkg, downloads its payload, runs
+// its install steps and returns the report to post back -- or nil when the
+// package was neither installed nor skipped (e.g. a download error) -- plus
+// whether it failed. The downloaded payload (the per-package work dir and any
+// legacy single-file pkg-N.bin) is removed on the way out: once the steps have
+// run, leaving it on disk just wastes space on the target.
+func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, eval *detect.Evaluator, runner *steps.OSRunner, pkg softwareItem) (*pkgReport, bool) {
+	pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
+	filesDir := filepath.Join(pkgDir, "files")
+	legacyBinPath := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
+	defer func() {
+		_ = os.RemoveAll(pkgDir)
+		_ = os.Remove(legacyBinPath)
+	}()
+
+	// Detection first — skip already-installed.
+	installed, err := eval.EvaluatePackage(ctx, pkg.DetectionRules)
+	if err != nil {
+		log.Warn("detect.error",
+			slog.String("package", pkg.Name),
+			slog.String("error", err.Error()))
+	}
+	if installed {
+		log.Info("package.skip",
+			slog.String("actor", f.uuid),
+			slog.String("target", pkg.Name),
+			slog.String("reason", "detection rules report already installed"))
+		return &pkgReport{PackageID: pkg.PackageID, Detected: true, Skipped: true}, false
+	}
+	if len(pkg.DetectionRules) == 0 {
+		log.Warn("package.no_detection",
+			slog.String("package", pkg.Name),
+			slog.String("note", "no detection rules; package will install every time"))
+	}
+
+	// Multi-file packages: download every file the server advertises
+	// into a per-package work directory, then resolve bare filenames in
+	// install-step paths against it. Legacy single-file packages (no
+	// Files list) fall back to the {payload} -> pkg-N.bin path.
+	hasWorkdir := len(pkg.Files) > 0 || len(pkg.Bundles) > 0
+	var legacyPayloadPath string
+	if hasWorkdir {
+		if err := os.MkdirAll(filesDir, 0o755); err != nil {
+			log.Error("package.workdir",
+				slog.String("package", pkg.Name),
+				slog.String("error", err.Error()))
+			return nil, false
+		}
+		downloadOK := true
+		for _, pf := range pkg.Files {
+			url := pf.URL
+			if len(url) > 0 && url[0] == '/' {
+				url = f.server + url
+			}
+			fdst := filepath.Join(filesDir, pf.Name)
+			out, err := os.Create(fdst)
+			if err != nil {
+				log.Error("package.download.create",
+					slog.String("package", pkg.Name),
+					slog.String("file", pf.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
+			if err := c.Download(ctx, url, out); err != nil {
+				_ = out.Close()
+				log.Error("package.download",
+					slog.String("package", pkg.Name),
+					slog.String("file", pf.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
+			_ = out.Close()
+			log.Info("package.download.ok",
+				slog.String("package", pkg.Name),
+				slog.String("file", pf.Name),
+				slog.String("path", fdst))
+		}
+		// Bundles: download each zip and extract it into the work dir so
+		// its contents resolve by bare filename. The unzip has zip-slip
+		// defence and creates directories as needed.
+		for _, bz := range pkg.Bundles {
+			url := bz.URL
+			if len(url) > 0 && url[0] == '/' {
+				url = f.server + url
+			}
+			zpath := filepath.Join(pkgDir, "bundle-"+bz.Name)
+			out, err := os.Create(zpath)
+			if err != nil {
+				log.Error("package.bundle.create",
+					slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
+			if err := c.Download(ctx, url, out); err != nil {
+				_ = out.Close()
+				log.Error("package.bundle.download",
+					slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
+			_ = out.Close()
+			if err := runner.Unzip(ctx, zpath, filesDir); err != nil {
+				log.Error("package.bundle.extract",
+					slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
+			log.Info("package.bundle.ok",
+				slog.String("package", pkg.Name), slog.String("bundle", bz.Name),
+				slog.String("dir", filesDir))
+		}
+		if !downloadOK {
+			return nil, false
+		}
+		// A single plain file (no bundles) keeps the legacy {payload}
+		// convenience pointing at it.
+		if len(pkg.Files) == 1 && len(pkg.Bundles) == 0 {
+			legacyPayloadPath = filepath.Join(filesDir, pkg.Files[0].Name)
+		}
+	} else if pkg.PayloadURL != "" {
+		legacyPayloadPath = legacyBinPath
+		url := pkg.PayloadURL
+		if len(url) > 0 && url[0] == '/' {
+			url = f.server + url
+		}
+		out, err := os.Create(legacyPayloadPath)
+		if err != nil {
+			log.Error("package.download.create",
+				slog.String("package", pkg.Name),
+				slog.String("error", err.Error()))
+			return nil, false
+		}
+		if err := c.Download(ctx, url, out); err != nil {
+			_ = out.Close()
+			log.Error("package.download",
+				slog.String("package", pkg.Name),
+				slog.String("error", err.Error()))
+			return nil, false
+		}
+		_ = out.Close()
+		log.Info("package.download.ok",
+			slog.String("package", pkg.Name),
+			slog.String("path", legacyPayloadPath))
+	}
+
+	// Rewrite, in order: substitute the legacy {payload} token; resolve
+	// bare filenames against everything in the work dir (uploaded files +
+	// extracted bundle contents); then expand Windows %ENV% in path fields
+	// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
+	// the real location instead of a literal "%ProgramData%" folder.
+	rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
+	if hasWorkdir {
+		// %pkgdir% -> the work dir (any field, any step type); then resolve
+		// remaining bare filenames against everything in the work dir
+		// (uploaded files + extracted bundle contents).
+		rewritten = expandPkgDir(rewritten, filesDir)
+		knownFiles := mapWorkdirFiles(filesDir)
+		rewritten = resolveBareFilenames(rewritten, knownFiles)
+	}
+	rewritten = expandStepEnv(rewritten)
+
+	log.Info("package.install.start",
+		slog.String("actor", f.uuid),
+		slog.String("target", pkg.Name),
+		slog.Int("steps", len(rewritten)))
+	// Run steps from the package work dir so an installer's relative args
+	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
+	// resolve against the downloaded/extracted files, not the service's CWD.
+	if hasWorkdir {
+		runner.WorkDir = filesDir
+	} else {
+		runner.WorkDir = f.workDir
+	}
+	results := steps.Execute(ctx, rewritten, runner)
+	ok := true
+	for i, r := range results {
+		lvl := slog.LevelInfo
+		if r.Error != nil || r.Aborted {
+			lvl = slog.LevelError
+			ok = false
+		}
+		log.Log(ctx, lvl, "package.step",
+			slog.String("package", pkg.Name),
+			slog.Int("step", i+1),
+			slog.String("type", r.Step.Type),
+			slog.Int("exit_code", r.ExitCode),
+			slog.Bool("aborted", r.Aborted),
+			slog.Any("error", r.Error),
+		)
+	}
+	if ok {
+		log.Info("package.install.ok",
+			slog.String("actor", f.uuid),
+			slog.String("target", pkg.Name))
+		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
+		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
+	}
+	log.Error("package.install.fail",
+		slog.String("actor", f.uuid),
+		slog.String("target", pkg.Name))
+	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
 }
 
 // maybeEnableBitLocker fetches the assigned PIN (if any) and enables
@@ -1229,12 +1243,10 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		var code int
 		var rerr error
 		switch p.Shell {
-		case "cmd":
-			code, rerr = runner.Run(ctx, "cmd", []string{"/C", p.Body}, "")
-		case "powershell":
-			code, rerr = runner.Run(ctx, "powershell",
-				[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"},
-				p.Body)
+		case "cmd", "powershell":
+			// Run from a script file (not inline) so multi-line bodies work
+			// and PowerShell gets its ExecutionPolicy bypassed.
+			code, rerr = runner.RunScript(ctx, p.Shell, p.Body)
 		default:
 			return "failed", `{"error":"unknown shell"}`
 		}
@@ -1456,10 +1468,12 @@ func mapWorkdirFiles(dir string) map[string]string {
 // expandStepEnv expands Windows environment variables (%VAR%) in every install-
 // step path field, including copy/unzip DESTINATIONS. Go's own file ops don't
 // expand %VAR%, so without this a destination like %ProgramData%\... would be
-// taken literally and created in the wrong place. No-op off Windows.
+// taken literally and created in the wrong place. winenv.Expand also resolves
+// the synthetic Program Files variables a service's environment can lack (e.g.
+// %ProgramFiles(x86)%), so install paths match detection.
 // envExpand is the function expandStepEnv applies; a package var so tests can
 // substitute a deterministic expander (the real one is platform-specific).
-var envExpand = expandEnv
+var envExpand = winenv.Expand
 
 func expandStepEnv(in []swspec.InstallStep) []swspec.InstallStep {
 	out := make([]swspec.InstallStep, len(in))
