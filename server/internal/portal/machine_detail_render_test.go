@@ -92,8 +92,28 @@ func TestMachineDetailPINReveal(t *testing.T) {
 		if !strings.Contains(out, `class="reveal-pin-value"`) {
 			t.Error("want an (empty) value placeholder element")
 		}
-		if !strings.Contains(out, "secret.access") {
-			t.Error("want the audit-event hint near the reveal control")
+	})
+}
+
+// TestMachineDetailRecoveryKeys: the recovery-keys section always renders so an
+// admin can find escrowed keys (or see that none are escrowed yet) -- the
+// server keeps its own copy independent of any GPO-driven AD backup.
+func TestMachineDetailRecoveryKeys(t *testing.T) {
+	t.Run("no keys: section with empty state", func(t *testing.T) {
+		out := renderMachineDetail(t, baseMachineData())
+		if !strings.Contains(out, "Recovery keys") {
+			t.Error("want a Recovery keys section even when none are escrowed")
+		}
+		if !strings.Contains(out, "No recovery keys escrowed for this machine yet") {
+			t.Error("want the empty-state explanation")
+		}
+	})
+	t.Run("with keys: retrieve link", func(t *testing.T) {
+		d := baseMachineData()
+		d["Recovery"] = []model.RecoveryKeyRecord{{ID: 5, EscrowedAt: time.Now(), Note: "deploy"}}
+		out := renderMachineDetail(t, d)
+		if !strings.Contains(out, "/api/v1/recovery-keys/5") || !strings.Contains(out, "Retrieve key") {
+			t.Errorf("want a retrieve link for escrowed keys; got:\n%s", out)
 		}
 	})
 }

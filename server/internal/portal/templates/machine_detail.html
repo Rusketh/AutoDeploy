@@ -99,7 +99,6 @@
     <svg><use href="#i-eye"/></svg><span class="reveal-pin-label">Reveal PIN</span>
   </button>
   <code class="reveal-pin-value" hidden style="user-select:all; margin-left: var(--sp-2); font-size: 1.05em;"></code>
-  <p class="hint" style="margin-top: var(--sp-1);">Fetched on demand, never embedded in the page, and hidden again automatically. Each reveal records a <code>secret.access</code> audit event (who and when — never the value).</p>
 </div>
 {{end}}
 <form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
@@ -115,8 +114,8 @@
   </div>
 </form>
 
+<div class="section-head"><h4>Recovery keys</h4><div class="line"></div></div>
 {{if .Data.Recovery}}
-<div class="section-head"><h4>Recovery-key history (append-only)</h4><div class="line"></div></div>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Escrowed</th><th>Note</th><th></th></tr></thead>
@@ -131,7 +130,9 @@
   </tbody>
 </table>
 </div>
-<p class="small muted" style="margin-top: var(--sp-2);">Retrieving a recovery key emits a <code>secret.access</code> audit event recording who, when, and which row — never the value.</p>
+<p class="small muted" style="margin-top: var(--sp-2);">The server keeps its own encrypted copy of every BitLocker recovery key it's been sent (append-only history above). Retrieving one emits a <code>secret.access</code> audit event recording who, when, and which row — never the value. Any AD backup configured via GPO is separate and unaffected.</p>
+{{else}}
+<p class="small muted">No recovery keys escrowed for this machine yet. The agent sends the BitLocker recovery key to the server when it enables encryption — on deploy, or when you set a PIN above on an already-running machine — and it appears here. Any AD backup configured via GPO is separate and unaffected.</p>
 {{end}}
 
 <div class="section-head"><h3>Deployment</h3><div class="line"></div></div>
