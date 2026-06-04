@@ -1,0 +1,78 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>{{if .Data.Edit}}Edit webhook{{else}}New webhook{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings/notifications/webhooks"><svg><use href="#i-arrow-left"/></svg>Webhooks</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if .Data.Edit}}/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}{{else}}/portal/settings/notifications/webhooks/new{{end}}">
+  <fieldset><legend>Endpoint</legend>
+    <label><span class="lbl">Name</span>
+      <input type="text" name="name" value="{{.Data.Webhook.Name}}" required placeholder="e.g. Slack #ops-deploys">
+    </label>
+    <label><span class="lbl">URL</span>
+      <input type="url" name="url" value="{{.Data.Webhook.URL}}" required placeholder="https://hooks.slack.com/...">
+    </label>
+    <label><span class="lbl">Secret (optional, for HMAC-SHA256 signature)</span>
+      <input type="password" name="secret" placeholder="{{if .Data.Edit}}(stored, leave blank to keep){{else}}shared secret{{end}}">
+    </label>
+    <label style="display:flex;align-items:center;gap:0.5rem;">
+      <input type="checkbox" name="enabled" value="1"{{if .Data.Webhook.Enabled}} checked{{end}}>
+      <span class="lbl">Enabled</span>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Severity filter</legend>
+    <label><span class="lbl">Minimum severity</span>
+      <select name="min_severity">
+        <option value="info"{{if eq .Data.Webhook.MinSeverity "info"}} selected{{end}}>Info (all events)</option>
+        <option value="success"{{if eq .Data.Webhook.MinSeverity "success"}} selected{{end}}>Success and above</option>
+        <option value="warning"{{if eq .Data.Webhook.MinSeverity "warning"}} selected{{end}}>Warning and above</option>
+        <option value="error"{{if eq .Data.Webhook.MinSeverity "error"}} selected{{end}}>Error only</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset><legend>Events</legend>
+    <p class="hint">Select which events trigger this webhook. Check "All events" to receive everything.</p>
+    <label style="display:flex;align-items:center;gap:0.3rem;margin-bottom:0.5rem;">
+      <input type="checkbox" name="events" value="*"{{range .Data.Webhook.Events}}{{if eq . "*"}} checked{{end}}{{end}}>
+      <strong>All events</strong>
+    </label>
+    {{range .Data.Categories}}
+      <div style="margin-bottom:0.75rem;">
+        <strong class="small muted">{{.Label}}</strong>
+        {{$whEvents := $.Data.Webhook.Events}}
+        {{range .Events}}
+          <label style="display:flex;align-items:center;gap:0.3rem;margin-left:1rem;">
+            <input type="checkbox" name="events" value="{{.}}">
+            <code>{{.}}</code>
+          </label>
+        {{end}}
+      </div>
+    {{end}}
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings/notifications/webhooks">Cancel</a>
+    {{if .Data.Edit}}
+      <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
+    {{else}}
+      <button type="submit"><svg><use href="#i-plus"/></svg>Create</button>
+    {{end}}
+  </div>
+</form>
+
+{{if .Data.Edit}}
+<hr style="margin:2rem 0;">
+<div style="display:flex;gap:1rem;">
+  <form method="POST" action="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/test">
+    <button type="submit" class="btn sm"><svg><use href="#i-bolt"/></svg>Send test</button>
+  </form>
+  <a class="btn sm ghost" href="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/deliveries">View deliveries</a>
+  <form method="POST" action="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/delete"
+        onsubmit="return confirm('Delete this webhook?');">
+    <button type="submit" class="btn sm" style="background:var(--danger,#dc3545);border-color:var(--danger,#dc3545);">Delete</button>
+  </form>
+</div>
+{{end}}
+{{end}}

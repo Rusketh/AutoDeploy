@@ -23,6 +23,12 @@ type Scheduler struct {
 	Logger        *slog.Logger
 	// SessionPrune, when set, deletes expired sessions on each tick.
 	SessionPrune func(ctx context.Context) error
+	// Notifications, when set, prunes old notification rows.
+	Notifications *model.NotificationRepo
+	// NotifyRetentionDays returns the notification retention period.
+	NotifyRetentionDays func() int
+	// WebhookRepo, when set, prunes old webhook delivery rows.
+	WebhookRepo *model.WebhookRepo
 }
 
 // Start runs the scheduler until ctx is cancelled.
@@ -66,6 +72,33 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		if err := s.SessionPrune(ctx); err != nil {
 			s.log().Warn("retention.session_prune.fail",
 				slog.String("error", err.Error()))
+		}
+	}
+
+	if s.Notifications != nil && s.NotifyRetentionDays != nil {
+		nd := s.NotifyRetentionDays()
+		if nd > 0 {
+			cutoff := time.Now().Add(-time.Duration(nd) * 24 * time.Hour)
+			n, err := s.Notifications.Prune(ctx, cutoff)
+			if err != nil {
+				s.log().Warn("retention.notification_prune.fail",
+					slog.String("error", err.Error()))
+			} else if n > 0 {
+				s.log().Info("retention.notification_prune.ok",
+					slog.Int64("removed", n), slog.Int("days", nd))
+			}
+		}
+	}
+
+	if s.WebhookRepo != nil {
+		cutoff := time.Now().Add(-30 * 24 * time.Hour)
+		n, err := s.WebhookRepo.PruneDeliveries(ctx, cutoff)
+		if err != nil {
+			s.log().Warn("retention.webhook_delivery_prune.fail",
+				slog.String("error", err.Error()))
+		} else if n > 0 {
+			s.log().Info("retention.webhook_delivery_prune.ok",
+				slog.Int64("removed", n))
 		}
 	}
 }

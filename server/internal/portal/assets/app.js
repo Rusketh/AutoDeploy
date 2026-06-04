@@ -733,6 +733,31 @@
     clearTimeout(btn._pinTimer);
   }
 
+  // ---- Notification badge poll ---------------------------------------
+  (function initNotifyBadge() {
+    var badge = document.getElementById('notify-badge');
+    if (!badge) return;
+    function poll() {
+      fetch('/api/v1/notifications/unread-count', {
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'fetch' },
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          if (d.count > 0) {
+            badge.textContent = d.count > 99 ? '99+' : d.count;
+            badge.style.display = '';
+          } else {
+            badge.style.display = 'none';
+          }
+        })
+        .catch(function () {});
+    }
+    poll();
+    setInterval(poll, 30000);
+  })();
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

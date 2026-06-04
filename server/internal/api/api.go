@@ -15,6 +15,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/storage"
@@ -60,6 +61,12 @@ type Repos struct {
 	DomainJoin *model.DomainJoinRepo
 	// Updates manages Windows Update KB patches and deployment jobs.
 	Updates *model.WindowsUpdateRepo
+	// Notifications handles in-portal notification CRUD and preferences.
+	Notifications *model.NotificationRepo
+	// WebhookRepo manages webhook endpoints and delivery logs.
+	WebhookRepo *model.WebhookRepo
+	// Emitter fans out events to all notification channels.
+	Emitter *notify.Emitter
 }
 
 // Register mounts /api/v1/* routes on mux.
@@ -76,6 +83,8 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterVersion(mux, r)
 	RegisterDomainJoin(mux, r)
 	RegisterWindowsUpdates(mux, r)
+	RegisterNotifications(mux, r)
+	RegisterWebhooks(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", requireAuth(r, handleListISOs(r)))

@@ -49,6 +49,19 @@ const (
 	keyNetExternalAccess  = "net.external_access"
 	keyNetTLSCertPath     = "net.tls_cert_path"
 	keyNetTLSKeyPath      = "net.tls_key_path"
+
+	// Notification settings.
+	keyNotifyPortalEnabled     = "notify.portal.enabled"
+	keyNotifyPortalRetention   = "notify.portal.retention_days"
+	keyNotifyEmailEnabled      = "notify.email.enabled"
+	keyNotifyEmailSMTPHost     = "notify.email.smtp_host"
+	keyNotifyEmailSMTPPort     = "notify.email.smtp_port"
+	keyNotifyEmailSMTPUser     = "notify.email.smtp_user"
+	keyNotifyEmailSMTPPassEnc  = "notify.email.smtp_password_enc"
+	keyNotifyEmailSMTPTLS      = "notify.email.smtp_tls"
+	keyNotifyEmailFromAddr     = "notify.email.from_address"
+	keyNotifyEmailFromName     = "notify.email.from_name"
+	keyNotifyMachineOfflineMin = "notify.machine_offline_minutes"
 )
 
 // StorageCategories is the closed set of relocatable category prefixes
@@ -503,4 +516,140 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// --- Notification settings ---
+
+// NotifyPortalEnabled returns whether in-portal notifications are on (default true).
+func (s *Settings) NotifyPortalEnabled() bool {
+	v := s.get(keyNotifyPortalEnabled)
+	return v == "" || v == "true"
+}
+
+func (s *Settings) SetNotifyPortalEnabled(ctx context.Context, on bool) error {
+	return s.setRaw(ctx, keyNotifyPortalEnabled, boolStr(on))
+}
+
+// NotifyPortalRetentionDays returns how many days to keep notifications (default 30).
+func (s *Settings) NotifyPortalRetentionDays() int {
+	v := s.get(keyNotifyPortalRetention)
+	if v == "" {
+		return 30
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 30
+	}
+	return n
+}
+
+func (s *Settings) SetNotifyPortalRetentionDays(ctx context.Context, days int) error {
+	if days < 0 {
+		return errors.New("notification retention days must be >= 0")
+	}
+	return s.setRaw(ctx, keyNotifyPortalRetention, strconv.Itoa(days))
+}
+
+// NotifyEmailEnabled returns whether email notifications are on (default false).
+func (s *Settings) NotifyEmailEnabled() bool {
+	return s.get(keyNotifyEmailEnabled) == "true"
+}
+
+func (s *Settings) SetNotifyEmailEnabled(ctx context.Context, on bool) error {
+	return s.setRaw(ctx, keyNotifyEmailEnabled, boolStr(on))
+}
+
+// EmailConfig holds SMTP settings for email notifications.
+type EmailConfig struct {
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	TLSMode     string
+	FromAddress string
+	FromName    string
+}
+
+func (s *Settings) NotifyEmailConfig(ctx context.Context) EmailConfig {
+	port := 587
+	if v := s.get(keyNotifyEmailSMTPPort); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			port = n
+		}
+	}
+	cfg := EmailConfig{
+		Host:        s.get(keyNotifyEmailSMTPHost),
+		Port:        port,
+		User:        s.get(keyNotifyEmailSMTPUser),
+		TLSMode:     s.get(keyNotifyEmailSMTPTLS),
+		FromAddress: s.get(keyNotifyEmailFromAddr),
+		FromName:    s.get(keyNotifyEmailFromName),
+	}
+	if enc := s.get(keyNotifyEmailSMTPPassEnc); enc != "" && s.bx != nil {
+		if pt, err := s.bx.Decrypt(enc); err == nil {
+			cfg.Password = pt
+		}
+	}
+	if cfg.TLSMode == "" {
+		cfg.TLSMode = "starttls"
+	}
+	return cfg
+}
+
+func (s *Settings) SetNotifyEmailConfig(ctx context.Context, cfg EmailConfig) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, kv := range []struct{ k, v string }{
+		{keyNotifyEmailSMTPHost, cfg.Host},
+		{keyNotifyEmailSMTPPort, strconv.Itoa(cfg.Port)},
+		{keyNotifyEmailSMTPUser, cfg.User},
+		{keyNotifyEmailSMTPTLS, cfg.TLSMode},
+		{keyNotifyEmailFromAddr, cfg.FromAddress},
+		{keyNotifyEmailFromName, cfg.FromName},
+	} {
+		if err := s.setRawTx(ctx, tx, kv.k, kv.v); err != nil {
+			return err
+		}
+	}
+	if cfg.Password != "" {
+		if s.bx == nil {
+			return errors.New("no secrets box configured; cannot store SMTP password")
+		}
+		ct, err := s.bx.Encrypt(cfg.Password)
+		if err != nil {
+			return fmt.Errorf("encrypt SMTP password: %w", err)
+		}
+		if err := s.setRawTx(ctx, tx, keyNotifyEmailSMTPPassEnc, ct); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit email config: %w", err)
+	}
+	return s.refresh(ctx)
+}
+
+// NotifyMachineOfflineMinutes returns the threshold before a machine.offline event fires.
+func (s *Settings) NotifyMachineOfflineMinutes() int {
+	v := s.get(keyNotifyMachineOfflineMin)
+	if v == "" {
+		return 30
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 30
+	}
+	return n
+}
+
+func (s *Settings) SetNotifyMachineOfflineMinutes(ctx context.Context, minutes int) error {
+	if minutes < 1 {
+		return errors.New("offline threshold must be >= 1 minute")
+	}
+	return s.setRaw(ctx, keyNotifyMachineOfflineMin, strconv.Itoa(minutes))
 }

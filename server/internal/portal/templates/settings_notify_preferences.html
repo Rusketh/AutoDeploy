@@ -1,0 +1,44 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-gear"/></svg>Notification preferences</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/settings/notifications"><svg><use href="#i-arrow-left"/></svg>Notification settings</a></div>
+</div>
+
+<p class="muted" style="max-width:720px;">Choose which events generate in-portal and email notifications for your account. Defaults: portal on, email off.</p>
+
+<form class="std" method="POST" action="/portal/settings/notifications/preferences">
+  <fieldset><legend>Your email address</legend>
+    <label><span class="lbl">Email</span>
+      <input type="email" name="email" value="{{.Data.User.Email}}" placeholder="you@example.com">
+      <span class="hint">Required for email notifications.</span>
+    </label>
+  </fieldset>
+
+  {{range .Data.Categories}}
+  <fieldset><legend>{{.Label}}</legend>
+    <table style="width:100%;">
+      <thead><tr><th>Event</th><th style="width:80px;text-align:center;">Portal</th><th style="width:80px;text-align:center;">Email</th></tr></thead>
+      <tbody>
+      {{range .Events}}
+        {{$p := index $.Data.Prefs .}}
+        <tr>
+          <td><code>{{.}}</code></td>
+          <td style="text-align:center;">
+            <input type="checkbox" name="portal_{{.}}" value="1"{{if or (not $p.Event) $p.Portal}} checked{{end}}>
+          </td>
+          <td style="text-align:center;">
+            <input type="checkbox" name="email_{{.}}" value="1"{{if $p.Email}} checked{{end}}>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </fieldset>
+  {{end}}
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/settings/notifications">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Save preferences</button>
+  </div>
+</form>
+{{end}}
