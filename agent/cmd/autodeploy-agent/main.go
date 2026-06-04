@@ -273,6 +273,14 @@ type selfResponse struct {
 	DeploymentID int64 `json:"deployment_id"`
 	// UpdateJobs are pending Windows Update deployment jobs.
 	UpdateJobs []updateJob `json:"update_jobs,omitempty"`
+	// DeployToken is a fresh, short-lived token the server mints when a
+	// PIN is configured, so the agent can fetch the cleartext PIN.
+	DeployToken string `json:"deploy_token,omitempty"`
+	// BitLocker carries the PIN-set flag and version for reconciliation.
+	BitLocker *struct {
+		PINSet  bool  `json:"pin_set"`
+		Version int64 `json:"version"`
+	} `json:"bitlocker,omitempty"`
 }
 
 type updateJob struct {
@@ -339,6 +347,7 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		}
 		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software, onProgress)
 	}
+	identityBody := map[string]any{"system_uuid": f.uuid}
 	// If the server told us about an open deployment (opened by the boot
 	// client), report the final outcome so the dashboard row transitions
 	// from "in_progress" to "ok" or "failed". This fires at most once per
@@ -349,7 +358,6 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		if pkgFailed {
 			outcome = "failed"
 		}
-		identityBody := map[string]any{"system_uuid": f.uuid}
 		var ignore struct{}
 		if err := c.PostJSON(ctx, "/api/v1/agent/report", map[string]any{
 			"identity":      identityBody,
@@ -365,6 +373,20 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				slog.Int64("deployment_id", resp.DeploymentID),
 				slog.String("outcome", outcome))
 		}
+	}
+	// BitLocker: accept the deploy token so secret-returning endpoints
+	// (BitLocker config) are accessible in this poll cycle.
+	if resp.DeployToken != "" {
+		c.DeployToken = resp.DeployToken
+	}
+	// During an active deployment, enable BitLocker (Phase 12) the same
+	// way the legacy deploy path does. On subsequent polls (no open
+	// deployment), reconcile: apply a PIN set/changed/cleared in the
+	// portal after deploy.
+	if resp.DeploymentID != 0 {
+		maybeEnableBitLocker(ctx, log, c, f, identityBody)
+	} else if resp.BitLocker != nil {
+		reconcileBitLocker(ctx, log, c, f, identityBody, resp.BitLocker.PINSet, resp.BitLocker.Version)
 	}
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
