@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,6 +36,11 @@ type Backend interface {
 // Evaluator runs a package's detection rules through a Backend.
 type Evaluator struct {
 	Backend Backend
+	// Log, when set, records why a file rule did NOT match -- the raw
+	// rule path and the resolved path it actually checked -- so an operator
+	// can tell an env-var/space/typo problem (wrong resolved path) from a
+	// genuinely-absent file (right path, not installed). Optional.
+	Log *slog.Logger
 }
 
 // EvaluatePackage reports whether ALL rules report Present == true. Zero
@@ -83,8 +89,15 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 	// is why a %ProgramFiles(x86)%\... rule could previously never match.
 	path := winenv.Expand(r.FilePath)
 	present, err := e.Backend.FileExists(path)
-	if err != nil || !present {
+	if err != nil {
 		return false, err
+	}
+	if !present {
+		// Logs the resolved path so a wrong expansion (env var not set,
+		// path truncated, typo) is distinguishable from a file that's
+		// simply not installed yet. Both read as "not detected".
+		e.logNotDetected("file_absent", r.FilePath, path)
+		return false, nil
 	}
 	if r.FileVersion != "" {
 		v, err := e.Backend.FileVersion(path)
@@ -92,6 +105,8 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 			return false, err
 		}
 		if v != r.FileVersion {
+			e.logNotDetected("file_version_mismatch", r.FilePath, path,
+				slog.String("want_version", r.FileVersion), slog.String("got_version", v))
 			return false, nil
 		}
 	}
@@ -101,10 +116,30 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 			return false, err
 		}
 		if got != r.FileSHA256 {
+			e.logNotDetected("file_sha256_mismatch", r.FilePath, path)
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// logNotDetected records, when a logger is attached, why a file rule did not
+// match. The resolved path is the key field: it shows exactly what was
+// checked on disk after %VAR% expansion.
+func (e *Evaluator) logNotDetected(reason, rulePath, resolved string, extra ...slog.Attr) {
+	if e.Log == nil {
+		return
+	}
+	attrs := []any{
+		slog.String("actor", "agent"),
+		slog.String("reason", reason),
+		slog.String("rule_path", rulePath),
+		slog.String("resolved_path", resolved),
+	}
+	for _, a := range extra {
+		attrs = append(attrs, a)
+	}
+	e.Log.Info("detect.file.not_detected", attrs...)
 }
 
 func (e *Evaluator) evaluateRegistry(r swspec.DetectionRule) (bool, error) {

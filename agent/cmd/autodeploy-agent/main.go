@@ -762,7 +762,7 @@ type pkgReport struct {
 // live "installing (done/total)" progress indicator. It is best-effort: a
 // progress callback never affects the install outcome.
 func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, items []softwareItem, progress func(done, total int, name string)) ([]pkgReport, bool) {
-	eval := &detect.Evaluator{Backend: detect.DefaultBackend()}
+	eval := &detect.Evaluator{Backend: detect.DefaultBackend(), Log: log}
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	var packageReports []pkgReport
 	failed := false
