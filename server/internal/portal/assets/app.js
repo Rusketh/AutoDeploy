@@ -693,6 +693,46 @@
     schedule();
   })();
 
+  // ----- Reveal BitLocker PIN ---------------------------------------------
+  // The pre-boot PIN is never embedded in the page. A reveal button fetches
+  // it from the audited /api endpoint on demand, shows it inline, and
+  // auto-hides it after a short delay so it doesn't linger on screen. A
+  // second click hides it immediately.
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-reveal-pin]');
+    if (!btn) return;
+    const wrap = btn.closest('.reveal-pin');
+    const out = wrap && wrap.querySelector('.reveal-pin-value');
+    const label = btn.querySelector('.reveal-pin-label');
+    if (!out) return;
+    if (!out.hidden) { hidePin(btn, out, label); return; }
+    const id = btn.getAttribute('data-reveal-pin');
+    btn.disabled = true;
+    fetch('/api/v1/machines/' + id + '/bitlocker/pin', {
+      credentials: 'same-origin', headers: { Accept: 'application/json' },
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        btn.disabled = false;
+        out.textContent = (d && typeof d.pin === 'string' && d.pin !== '') ? d.pin : 'unavailable';
+        out.hidden = false;
+        if (label) label.textContent = 'Hide PIN';
+        clearTimeout(btn._pinTimer);
+        btn._pinTimer = setTimeout(function () { hidePin(btn, out, label); }, 30000);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        out.textContent = 'error retrieving PIN';
+        out.hidden = false;
+      });
+  });
+  function hidePin(btn, out, label) {
+    out.hidden = true;
+    out.textContent = '';
+    if (label) label.textContent = 'Reveal PIN';
+    clearTimeout(btn._pinTimer);
+  }
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

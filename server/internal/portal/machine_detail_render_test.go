@@ -70,6 +70,34 @@ func baseMachineData() map[string]any {
 	}
 }
 
+// TestMachineDetailPINReveal covers the BitLocker pre-boot PIN reveal control:
+// it renders only when a PIN is configured, and the cleartext PIN is never
+// embedded in the page (it's fetched on demand from the audited endpoint).
+func TestMachineDetailPINReveal(t *testing.T) {
+	t.Run("no PIN: no reveal control", func(t *testing.T) {
+		out := renderMachineDetail(t, baseMachineData())
+		if strings.Contains(out, "data-reveal-pin") {
+			t.Errorf("reveal control must not render when no PIN is set; got:\n%s", out)
+		}
+	})
+	t.Run("PIN set: reveal button, value placeholder empty", func(t *testing.T) {
+		d := baseMachineData()
+		d["BL"] = map[string]any{"PINSet": true}
+		out := renderMachineDetail(t, d)
+		if !strings.Contains(out, "data-reveal-pin") || !strings.Contains(out, "Reveal PIN") {
+			t.Errorf("want a reveal button when a PIN is set; got:\n%s", out)
+		}
+		// The value element is present but empty -- the PIN is fetched
+		// on demand, never baked into the rendered HTML.
+		if !strings.Contains(out, `class="reveal-pin-value"`) {
+			t.Error("want an (empty) value placeholder element")
+		}
+		if !strings.Contains(out, "secret.access") {
+			t.Error("want the audit-event hint near the reveal control")
+		}
+	})
+}
+
 // TestMachineDetailAtAGlance covers the reworked deployment section: the live
 // progress bar when a deploy is active, the at-a-glance summary, and the
 // collapsible detail expanders.

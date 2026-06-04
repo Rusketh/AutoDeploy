@@ -90,6 +90,18 @@
 {{if .Data.BL.PINSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN configured</span>
 {{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}
 </p>
+{{if .Data.BL.PINSet}}
+{{/* Reveal control: the cleartext PIN is NEVER rendered into the page. The
+     button fetches it on demand from the audited endpoint, shows it inline,
+     and app.js hides it again automatically so it doesn't linger on screen. */}}
+<div class="reveal-pin" style="margin-bottom: var(--sp-3);">
+  <button type="button" class="btn ghost sm" data-reveal-pin="{{int64 $m.ID}}">
+    <svg><use href="#i-eye"/></svg><span class="reveal-pin-label">Reveal PIN</span>
+  </button>
+  <code class="reveal-pin-value" hidden style="user-select:all; margin-left: var(--sp-2); font-size: 1.05em;"></code>
+  <p class="hint" style="margin-top: var(--sp-1);">Fetched on demand, never embedded in the page, and hidden again automatically. Each reveal records a <code>secret.access</code> audit event (who and when — never the value).</p>
+</div>
+{{end}}
 <form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
   <label><span class="lbl">Pre-boot PIN</span>
     <input type="password" name="pin" autocomplete="new-password" placeholder="{{if .Data.BL.PINSet}}Type a new PIN to replace the existing one{{else}}Type a PIN to enable BitLocker on this machine{{end}}">
