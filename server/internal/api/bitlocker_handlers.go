@@ -163,6 +163,10 @@ type agentBLConfigReq struct {
 type agentBLConfigResp struct {
 	PINSet bool   `json:"pin_set"`
 	PIN    string `json:"pin,omitempty"` // present only if pin_set
+	// Version is the PIN's updated_at as a unix timestamp (0 when no PIN).
+	// The resident agent records it after applying a PIN so it can tell,
+	// on a later check-in, whether the operator has changed the PIN since.
+	Version int64 `json:"version"`
 }
 
 // DeployTokenHeader is the header the agent sets to authenticate to
@@ -184,9 +188,11 @@ func handleAgentBitLockerConfig(r Repos) http.HandlerFunc {
 		}
 		// Bearer-token check. SMBIOS UUID alone is too weak a
 		// credential to disclose a cleartext PIN -- the audit
-		// (§10.2) flagged this. The token was issued to the agent
-		// during the open report at the start of this deploy, so
-		// only the freshly deploying client has it.
+		// (§10.2) flagged this. The token is issued at deploy time
+		// (open report) and, so the resident agent can apply a PIN
+		// set/changed after deploy, re-minted by the check-in endpoint
+		// for machines that have a PIN configured. Either way the
+		// caller must present a currently-valid token here.
 		token := req.Header.Get(DeployTokenHeader)
 		ok, err := r.Inventory.ValidateDeployToken(req.Context(), m.ID, token)
 		if err != nil {
@@ -209,6 +215,7 @@ func handleAgentBitLockerConfig(r Repos) http.HandlerFunc {
 		}
 		out := agentBLConfigResp{PINSet: st.PINSet}
 		if st.PINSet {
+			out.Version = st.UpdatedAt.Unix()
 			pin, err := r.BitLocker.RetrievePIN(req.Context(), m.ID)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -226,9 +233,9 @@ func handleAgentBitLockerConfig(r Repos) http.HandlerFunc {
 }
 
 type agentEscrowReq struct {
-	Identity     match.Identity `json:"identity"`
-	RecoveryKey  string         `json:"recovery_key"`
-	Note         string         `json:"note,omitempty"`
+	Identity    match.Identity `json:"identity"`
+	RecoveryKey string         `json:"recovery_key"`
+	Note        string         `json:"note,omitempty"`
 }
 
 func handleAgentEscrowRecoveryKey(r Repos) http.HandlerFunc {

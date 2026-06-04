@@ -41,6 +41,70 @@ Write-Output $key`, escape(drive), escape(drive))
 	return key, nil
 }
 
+// driverState reports protection status and whether a TPM+PIN protector
+// exists. Output is "<protection>|<hasTpmPin>" where protection is the
+// integer ProtectionStatus (1 = On) and hasTpmPin is 0/1.
+func driverState(ctx context.Context, drive string) (State, error) {
+	scriptBody := fmt.Sprintf(`$v = Get-BitLockerVolume -MountPoint '%s' -ErrorAction Stop
+$pin = @($v.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'TpmPin' }).Count
+Write-Output ("{0}|{1}" -f [int]$v.ProtectionStatus, [int]($pin -gt 0))`, escape(drive))
+	cmd := exec.CommandContext(ctx, "powershell",
+		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", scriptBody)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+	if err := cmd.Run(); err != nil {
+		return State{}, fmt.Errorf("Get-BitLockerVolume: %w", err)
+	}
+	fields := strings.Split(strings.TrimSpace(out.String()), "|")
+	if len(fields) != 2 {
+		return State{}, fmt.Errorf("unexpected BitLocker state output %q", out.String())
+	}
+	return State{
+		Protected: strings.TrimSpace(fields[0]) == "1",
+		HasTPMPIN: strings.TrimSpace(fields[1]) == "1",
+	}, nil
+}
+
+// driverChangePIN swaps the TPM+PIN protector for one with the new PIN. It
+// removes existing TpmPin protectors and adds a fresh one; the
+// recovery-password protector (and its GPO/AD backup) is never touched, so
+// a site that backs recovery keys up to AD keeps doing so unaffected. The
+// recovery password also keeps the volume protected during the swap.
+func driverChangePIN(ctx context.Context, drive, pin string) error {
+	scriptBody := fmt.Sprintf(`$p = $input | Out-String
+$p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
+$v = Get-BitLockerVolume -MountPoint '%s' -ErrorAction Stop
+foreach ($k in @($v.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'TpmPin' })) {
+    Remove-BitLockerKeyProtector -MountPoint '%s' -KeyProtectorId $k.KeyProtectorId | Out-Null
+}
+Add-BitLockerKeyProtector -MountPoint '%s' -TpmAndPinProtector -Pin $p | Out-Null`,
+		escape(drive), escape(drive), escape(drive))
+	cmd := exec.CommandContext(ctx, "powershell",
+		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", scriptBody)
+	cmd.Stdin = strings.NewReader(pin)
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{} // do not log; may reference protectors
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("change BitLocker PIN: %w", err)
+	}
+	return nil
+}
+
+// driverDisable turns BitLocker off and decrypts the drive.
+func driverDisable(ctx context.Context, drive string) error {
+	scriptBody := fmt.Sprintf(
+		`Disable-BitLocker -MountPoint '%s' -ErrorAction Stop | Out-Null`, escape(drive))
+	cmd := exec.CommandContext(ctx, "powershell",
+		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", scriptBody)
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Disable-BitLocker: %w", err)
+	}
+	return nil
+}
+
 func escape(s string) string {
 	// Single-quoted PowerShell strings need single-quote doubling.
 	return strings.ReplaceAll(s, `'`, `''`)

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -999,17 +1000,8 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 // rule). The recovery key is escrowed back to the server; only the FACT
 // of encryption is logged.
 func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any) {
-	type cfgResp struct {
-		PINSet bool   `json:"pin_set"`
-		PIN    string `json:"pin,omitempty"`
-	}
-	var cfg cfgResp
-	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/config",
-		map[string]any{"identity": identityBody}, &cfg); err != nil {
-		log.Warn("bitlocker.config.fetch", slog.String("error", err.Error()))
-		return
-	}
-	if !cfg.PINSet {
+	pin, version, ok := fetchBitLockerPIN(ctx, log, c, f, identityBody)
+	if !ok {
 		log.Info("bitlocker.skip",
 			slog.String("actor", f.uuid),
 			slog.String("reason", "no PIN configured for this machine"))
@@ -1022,7 +1014,7 @@ func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client
 		return
 	}
 	d := &bitlocker.Driver{}
-	key, err := d.Enable(ctx, cfg.PIN)
+	key, err := d.Enable(ctx, pin)
 	if err != nil {
 		if errors.Is(err, bitlocker.ErrUnsupported) {
 			log.Warn("bitlocker.unsupported",
@@ -1036,23 +1028,180 @@ func maybeEnableBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client
 			slog.String("error", err.Error()))
 		return
 	}
-	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/escrow",
-		map[string]any{
-			"identity":     identityBody,
-			"recovery_key": key,
-			"note":         "deploy",
-		}, nil); err != nil {
-		log.Error("bitlocker.escrow.fail",
-			slog.String("actor", f.uuid),
-			slog.String("error", err.Error()))
+	if !escrowRecoveryKey(ctx, log, c, f, identityBody, key, "deploy") {
 		return
 	}
+	// Record the applied PIN version so the resident loop neither re-applies
+	// it nor misses a later operator change.
+	writeAppliedBLVersion(f, version)
 	// LOG ONLY THE FACT — the recovery key never appears in any log line.
 	log.Info("bitlocker.enabled",
 		slog.String("actor", f.uuid),
 		slog.String("target", "C:"),
 		slog.String("note", "recovery key escrowed; value not logged"),
 	)
+}
+
+// fetchBitLockerPIN retrieves the machine's assigned cleartext PIN (and its
+// version) from the audited config endpoint. Returns ok=false on a fetch
+// error or when no PIN is configured. Requires a valid deploy token on the
+// client (set at deploy time, and refreshed by the resident check-in).
+func fetchBitLockerPIN(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any) (pin string, version int64, ok bool) {
+	type cfgResp struct {
+		PINSet  bool   `json:"pin_set"`
+		PIN     string `json:"pin,omitempty"`
+		Version int64  `json:"version"`
+	}
+	var cfg cfgResp
+	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/config",
+		map[string]any{"identity": identityBody}, &cfg); err != nil {
+		log.Warn("bitlocker.config.fetch", slog.String("error", err.Error()))
+		return "", 0, false
+	}
+	if !cfg.PINSet || cfg.PIN == "" {
+		return "", cfg.Version, false
+	}
+	return cfg.PIN, cfg.Version, true
+}
+
+// escrowRecoveryKey posts a recovery key to the server's escrow endpoint.
+// Returns false (and logs) on failure. The key value is never logged.
+func escrowRecoveryKey(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any, key, note string) bool {
+	if err := c.PostJSON(ctx, "/api/v1/agent/bitlocker/escrow",
+		map[string]any{"identity": identityBody, "recovery_key": key, "note": note}, nil); err != nil {
+		log.Error("bitlocker.escrow.fail",
+			slog.String("actor", f.uuid),
+			slog.String("error", err.Error()))
+		return false
+	}
+	return true
+}
+
+// blAction is the reconcile action the resident loop should take.
+type blAction int
+
+const (
+	blNone blAction = iota
+	blEnable
+	blChangePIN
+	blDecrypt
+)
+
+// decideBitLockerAction picks the reconcile action from the server's desired
+// PIN state and the drive's current state. lastApplied is the PIN version the
+// agent last applied locally (0 = no baseline). Pure so it is unit-testable
+// without a Windows host.
+func decideBitLockerAction(pinSet bool, version int64, st bitlocker.State, lastApplied int64) blAction {
+	if !pinSet {
+		// PIN cleared: decrypt an encrypted volume, otherwise nothing.
+		if st.Protected {
+			return blDecrypt
+		}
+		return blNone
+	}
+	if !st.Protected {
+		return blEnable // not encrypted yet -> enable with TPM+PIN
+	}
+	if !st.HasTPMPIN {
+		return blChangePIN // encrypted but no PIN protector (e.g. TPM-only) -> add one
+	}
+	// Already encrypted with a TPM+PIN protector: only re-apply when the
+	// operator changed the PIN since we last applied (and we have a baseline,
+	// so a lost/absent state file doesn't trigger a needless PIN swap).
+	if lastApplied != 0 && version > lastApplied {
+		return blChangePIN
+	}
+	return blNone
+}
+
+// reconcileBitLocker brings the machine's BitLocker state in line with the
+// server's PIN setting AFTER deploy: enable on a newly-PINned machine, change
+// the PIN in place when the operator updates it, or decrypt when it's cleared.
+// pinSet/version come from the check-in response (no secret); the cleartext
+// PIN is fetched only when actually applying one.
+func reconcileBitLocker(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, identityBody map[string]any, pinSet bool, version int64) {
+	if f.dryRun {
+		return
+	}
+	d := &bitlocker.Driver{}
+	st, err := d.State(ctx)
+	if err != nil {
+		if errors.Is(err, bitlocker.ErrUnsupported) {
+			return // non-Windows dev/CI host
+		}
+		log.Warn("bitlocker.state.error", slog.String("actor", f.uuid), slog.String("error", err.Error()))
+		return
+	}
+	lastApplied := readAppliedBLVersion(f)
+	switch decideBitLockerAction(pinSet, version, st, lastApplied) {
+	case blNone:
+		// Establish a baseline when the volume already matches a set PIN but
+		// we have no record (just deployed, or the state file was lost), so a
+		// later change is detected without re-applying the PIN now.
+		if pinSet && st.Protected && st.HasTPMPIN && lastApplied != version {
+			writeAppliedBLVersion(f, version)
+		}
+	case blDecrypt:
+		if err := d.Disable(ctx); err != nil {
+			log.Error("bitlocker.decrypt.fail", slog.String("actor", f.uuid), slog.String("error", err.Error()))
+			return
+		}
+		writeAppliedBLVersion(f, 0)
+		log.Info("bitlocker.decrypted",
+			slog.String("actor", f.uuid), slog.String("target", "C:"),
+			slog.String("reason", "PIN cleared by operator"))
+	case blEnable:
+		pin, _, ok := fetchBitLockerPIN(ctx, log, c, f, identityBody)
+		if !ok {
+			return
+		}
+		key, err := d.Enable(ctx, pin)
+		if err != nil {
+			log.Error("bitlocker.enable.fail", slog.String("actor", f.uuid), slog.String("error", err.Error()))
+			return
+		}
+		if !escrowRecoveryKey(ctx, log, c, f, identityBody, key, "resident-enable") {
+			return
+		}
+		writeAppliedBLVersion(f, version)
+		log.Info("bitlocker.enabled",
+			slog.String("actor", f.uuid), slog.String("target", "C:"),
+			slog.String("note", "recovery key escrowed; value not logged"))
+	case blChangePIN:
+		pin, _, ok := fetchBitLockerPIN(ctx, log, c, f, identityBody)
+		if !ok {
+			return
+		}
+		if err := d.ChangePIN(ctx, pin); err != nil {
+			log.Error("bitlocker.changepin.fail", slog.String("actor", f.uuid), slog.String("error", err.Error()))
+			return
+		}
+		writeAppliedBLVersion(f, version)
+		log.Info("bitlocker.pin.changed",
+			slog.String("actor", f.uuid), slog.String("target", "C:"),
+			slog.String("note", "TPM+PIN protector updated; recovery protector (and any AD backup) untouched"))
+	}
+}
+
+// bitlockerStatePath is where the agent records the PIN version it last
+// applied, under the persistent work dir (survives resident-mode restarts;
+// wiped on re-image, which re-applies at deploy anyway).
+func bitlockerStatePath(f agentFlags) string {
+	return filepath.Join(f.workDir, "bitlocker-applied")
+}
+
+func readAppliedBLVersion(f agentFlags) int64 {
+	b, err := os.ReadFile(bitlockerStatePath(f))
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return n
+}
+
+func writeAppliedBLVersion(f agentFlags, v int64) {
+	_ = os.MkdirAll(f.workDir, 0o755)
+	_ = os.WriteFile(bitlockerStatePath(f), []byte(strconv.FormatInt(v, 10)), 0o600)
 }
 
 // applyOEMBranding fetches the operator's branding from the server
@@ -1148,6 +1297,14 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 	type checkinResp struct {
 		MachineID int64     `json:"machine_id"`
 		Jobs      []bulkJob `json:"jobs"`
+		// DeployToken is a fresh, short-lived token the server mints when a
+		// PIN is configured, so the resident agent can fetch the cleartext
+		// PIN to (re)apply it. Empty when no PIN is set.
+		DeployToken string `json:"deploy_token,omitempty"`
+		BitLocker   struct {
+			PINSet  bool  `json:"pin_set"`
+			Version int64 `json:"version"`
+		} `json:"bitlocker"`
 	}
 
 	pollLoop(ctx, log, f.checkInInterval, func(ctx context.Context) pollLoopResult {
@@ -1162,6 +1319,13 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
 					map[string]any{"status": status, "result_json": result}, nil)
 			}
+			// BitLocker reconcile (Phase 12 resident extension): apply a PIN
+			// set/changed/cleared in the portal after deploy. The fresh token
+			// authorises the cleartext-PIN fetch the apply path needs.
+			if resp.DeployToken != "" {
+				c.DeployToken = resp.DeployToken
+			}
+			reconcileBitLocker(ctx, log, c, f, identityBody, resp.BitLocker.PINSet, resp.BitLocker.Version)
 		}
 		// Best-effort log ship at the end of each tick so the
 		// portal sees a near-live view of resident-mode activity.
