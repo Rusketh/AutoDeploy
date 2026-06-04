@@ -28,6 +28,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
@@ -63,6 +64,12 @@ type Repos struct {
 	DomainJoin *model.DomainJoinRepo
 	// Updates manages Windows Update KB patches and deployment jobs.
 	Updates *model.WindowsUpdateRepo
+	// Notifications handles in-portal notification CRUD and preferences.
+	Notifications *model.NotificationRepo
+	// WebhookRepo manages webhook endpoints and delivery logs.
+	WebhookRepo *model.WebhookRepo
+	// Emitter fans out events to all notification channels.
+	Emitter *notify.Emitter
 	// SecretsBox is unused at the portal layer but kept here so the
 	// bundle matches the api one-for-one if we ever want to swap.
 	SecretsBox *secrets.Box
@@ -146,6 +153,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerDownloadRoutes(get, post, r)
 	mirrorRoutes(get, post, r)
 	registerWindowsUpdateRoutes(get, post, r)
+	registerNotificationRoutes(get, post, r)
 
 	return nil
 }
@@ -445,8 +453,21 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return m
 		},
-		"add":     func(a, b int) int { return a + b },
-		"sub":     func(a, b int) int { return a - b },
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
+		"min": func(a, b int) int {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		"derefInt": func(p *int) int {
+			if p == nil {
+				return 0
+			}
+			return *p
+		},
+		"lt": func(a, b int) bool { return a < b },
 		"toFloat": func(n int) float64 { return float64(n) },
 		"div":     func(a, b float64) float64 { if b == 0 { return 0 }; return a / b },
 		"mul":     func(a, b float64) float64 { return a * b },

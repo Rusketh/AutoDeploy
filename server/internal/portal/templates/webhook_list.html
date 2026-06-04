@@ -1,0 +1,29 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-globe"/></svg>Webhooks</h2>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/settings/notifications"><svg><use href="#i-arrow-left"/></svg>Notifications</a>
+    <a class="btn sm" href="/portal/settings/notifications/webhooks/new"><svg><use href="#i-plus"/></svg>Add webhook</a>
+  </div>
+</div>
+
+{{if .Data.Webhooks}}
+<table data-sortable>
+  <thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Severity</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Data.Webhooks}}
+    <tr>
+      <td><a href="/portal/settings/notifications/webhooks/{{.ID}}">{{.Name}}</a></td>
+      <td class="small muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{{.URL}}</td>
+      <td>{{len .Events}} event{{if ne (len .Events) 1}}s{{end}}</td>
+      <td>≥ {{.MinSeverity}}</td>
+      <td>{{if .Enabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</td>
+      <td><a class="btn ghost sm" href="/portal/settings/notifications/webhooks/{{.ID}}/deliveries">Deliveries</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No webhooks configured yet.</p>
+{{end}}
+{{end}}

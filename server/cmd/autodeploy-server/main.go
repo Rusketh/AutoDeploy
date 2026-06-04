@@ -24,6 +24,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/logging"
 	"github.com/rusketh/autodeploy/server/internal/metrics"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
@@ -160,6 +161,38 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			slog.String("source", "portal/env"))
 	}
 
+	// Build the notification emitter. SMTP and webhook channels are
+	// configured lazily from runtime settings so the emitter starts
+	// even when email isn't set up yet.
+	webhookSender := notify.NewWebhookSender(r.Webhooks, logger)
+	emitter := &notify.Emitter{
+		Notifications: r.Notifications,
+		Webhooks:      r.Webhooks,
+		Users:         r.Users,
+		Logger:        logger,
+		Email: &notify.EmailSender{
+			ConfigFn: func() notify.EmailConfig {
+				if !rt.NotifyEmailEnabled() {
+					return notify.EmailConfig{}
+				}
+				cfg := rt.NotifyEmailConfig(ctx)
+				return notify.EmailConfig{
+					Host:        cfg.Host,
+					Port:        cfg.Port,
+					User:        cfg.User,
+					Password:    cfg.Password,
+					TLSMode:     cfg.TLSMode,
+					FromAddress: cfg.FromAddress,
+					FromName:    cfg.FromName,
+				}
+			},
+		},
+		WebhookSender: webhookSender,
+	}
+	emitter.Start()
+	defer emitter.Stop()
+	r.Emitter = emitter
+
 	// Expose the build-time version through the api package so the
 	// /api/v1/version handler and the agent update-info handler
 	// return the correct value.
@@ -177,9 +210,12 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Logs: r.Logs, Branding: r.Branding,
 		Mirrors: r.Mirrors, Runtime: rt,
 		AD:         adSvc,
-		Blobs:      blobs,
-		DomainJoin: r.DomainJoin,
-		Updates:    r.Updates,
+		Blobs:         blobs,
+		DomainJoin:    r.DomainJoin,
+		Updates:       r.Updates,
+		Notifications: r.Notifications,
+		WebhookRepo:   r.Webhooks,
+		Emitter:       emitter,
 	}
 
 	api.Register(mux, apiRepos)
@@ -243,6 +279,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AD:            adSvc,
 		DomainJoin:    r.DomainJoin,
 		Updates:       r.Updates,
+		Notifications: r.Notifications,
+		WebhookRepo:   r.Webhooks,
+		Emitter:       emitter,
 		SecretsBox:    bx,
 		DataDir:       cfg.DataDir,
 		ServerVersion: Version,
@@ -259,10 +298,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// retention setting each tick so an operator who changes it in
 	// the portal sees the new value take effect within an interval.
 	sch := &retention.Scheduler{
-		Logs:          r.Logs,
-		RetentionDays: rt.LogRetentionDays,
-		Logger:        logger,
-		SessionPrune:  r.Users.PruneExpiredSessions,
+		Logs:                r.Logs,
+		RetentionDays:       rt.LogRetentionDays,
+		Logger:              logger,
+		SessionPrune:        r.Users.PruneExpiredSessions,
+		Notifications:       r.Notifications,
+		NotifyRetentionDays: rt.NotifyPortalRetentionDays,
+		WebhookRepo:         r.Webhooks,
 	}
 	go sch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
@@ -369,24 +411,27 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 type appRepos struct {
-	ISOs       *model.ISORepo
-	Unattend   *model.UnattendRepo
-	Drivers    *model.DriverPackageRepo
-	Software   *model.SoftwarePackageRepo
-	Loadouts   *model.SoftwareLoadoutRepo
-	Images     *model.ImageRepo
-	Inventory  *model.InventoryRepo
-	Resolver   *resolve.Resolver
-	Users      *auth.Repo
-	Settings   *auth.SettingsRepo
-	BitLocker  *model.BitLockerRepo
-	Bulk       *model.BulkRepo
-	Logs       *model.LogRepo
-	Branding   *branding.Repo
-	Mirrors    *model.PayloadMirrorRepo
-	Runtime    *runtime.Settings
-	DomainJoin *model.DomainJoinRepo
-	Updates    *model.WindowsUpdateRepo
+	ISOs          *model.ISORepo
+	Unattend      *model.UnattendRepo
+	Drivers       *model.DriverPackageRepo
+	Software      *model.SoftwarePackageRepo
+	Loadouts      *model.SoftwareLoadoutRepo
+	Images        *model.ImageRepo
+	Inventory     *model.InventoryRepo
+	Resolver      *resolve.Resolver
+	Users         *auth.Repo
+	Settings      *auth.SettingsRepo
+	BitLocker     *model.BitLockerRepo
+	Bulk          *model.BulkRepo
+	Logs          *model.LogRepo
+	Branding      *branding.Repo
+	Mirrors       *model.PayloadMirrorRepo
+	Runtime       *runtime.Settings
+	DomainJoin    *model.DomainJoinRepo
+	Updates       *model.WindowsUpdateRepo
+	Notifications *model.NotificationRepo
+	Webhooks      *model.WebhookRepo
+	Emitter       *notify.Emitter
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -406,6 +451,8 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	mirrors := model.NewPayloadMirrorRepo(db)
 	domainJoin := model.NewDomainJoinRepo(db, bx)
 	updates := model.NewWindowsUpdateRepo(db, inventory)
+	notifications := model.NewNotificationRepo(db)
+	webhooks := model.NewWebhookRepo(db, bx)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -415,8 +462,10 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Users: users, Settings: settings,
 		BitLocker: bitlocker, Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
-		DomainJoin: domainJoin,
-		Updates:    updates,
+		DomainJoin:    domainJoin,
+		Updates:       updates,
+		Notifications: notifications,
+		Webhooks:      webhooks,
 	}
 }
 

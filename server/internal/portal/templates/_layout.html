@@ -33,6 +33,10 @@
     <a href="/portal/settings"  class="{{if eq .Path "/portal/settings"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-gear"/></svg>Settings</a>
   </nav>
   <div class="toolset">
+    <a href="/portal/notifications" class="iconbtn" id="notify-bell" aria-label="Notifications" title="Notifications" style="position:relative;">
+      <svg aria-hidden="true"><use href="#i-bell"/></svg>
+      <span id="notify-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--danger,#dc3545);color:#fff;font-size:10px;min-width:16px;height:16px;border-radius:8px;text-align:center;line-height:16px;padding:0 4px;font-weight:700;"></span>
+    </a>
     <button type="button" class="iconbtn" data-theme-toggle aria-label="Cycle theme (auto / light / dark)" title="Toggle theme">
       <svg data-show="auto" aria-hidden="true"><use href="#i-auto"/></svg>
       <svg data-show="light" style="display:none" aria-hidden="true"><use href="#i-sun"/></svg>

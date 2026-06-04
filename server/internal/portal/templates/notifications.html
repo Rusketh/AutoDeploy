@@ -1,0 +1,84 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bell"/></svg>Notifications</h2>
+  <div class="right">
+    <form method="POST" action="/portal/notifications/mark-all-read" style="display:inline;">
+      <button type="submit" class="btn ghost sm"><svg><use href="#i-check"/></svg>Mark all read</button>
+    </form>
+    <a class="btn ghost sm" href="/portal/settings/notifications/preferences"><svg><use href="#i-gear"/></svg>Preferences</a>
+  </div>
+</div>
+
+<form class="filter-bar" method="GET" action="/portal/notifications" style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+  <select name="severity">
+    <option value="">All severities</option>
+    <option value="info"{{if eq .Data.Severity "info"}} selected{{end}}>Info</option>
+    <option value="success"{{if eq .Data.Severity "success"}} selected{{end}}>Success</option>
+    <option value="warning"{{if eq .Data.Severity "warning"}} selected{{end}}>Warning</option>
+    <option value="error"{{if eq .Data.Severity "error"}} selected{{end}}>Error</option>
+  </select>
+  <select name="event">
+    <option value="">All events</option>
+    {{range .Data.Categories}}
+      <optgroup label="{{.Label}}">
+      {{range .Events}}
+        <option value="{{.}}"{{if eq $.Data.Event .}} selected{{end}}>{{.}}</option>
+      {{end}}
+      </optgroup>
+    {{end}}
+  </select>
+  <label style="display:flex;align-items:center;gap:0.3rem;">
+    <input type="checkbox" name="unread" value="1"{{if .Data.Unread}} checked{{end}}> Unread only
+  </label>
+  <button type="submit" class="btn sm">Filter</button>
+</form>
+
+{{if .Data.Notifications}}
+<table data-sortable>
+  <thead>
+    <tr>
+      <th style="width:40px;"></th>
+      <th>Title</th>
+      <th>Event</th>
+      <th>Time</th>
+      <th style="width:60px;"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Data.Notifications}}
+    <tr{{if not .ReadAt}} style="font-weight:600;"{{end}}>
+      <td>
+        {{if eq .Severity "error"}}<span class="dot err" title="Error"></span>
+        {{else if eq .Severity "warning"}}<span class="dot warn" title="Warning"></span>
+        {{else if eq .Severity "success"}}<span class="dot ok" title="Success"></span>
+        {{else}}<span class="dot" title="Info"></span>{{end}}
+      </td>
+      <td>
+        {{if .Link}}<a href="{{.Link}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}
+        {{if .Body}}<br><span class="small muted">{{.Body}}</span>{{end}}
+      </td>
+      <td><code class="small">{{.Event}}</code></td>
+      <td class="small muted">{{.OccurredAt.Format "2006-01-02 15:04"}}</td>
+      <td>
+        {{if not .ReadAt}}<span class="badge">new</span>{{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{if gt .Data.Total .Data.Limit}}
+<div class="pagination" style="margin-top:1rem;display:flex;gap:0.5rem;">
+  {{if gt .Data.Offset 0}}
+    <a class="btn sm ghost" href="/portal/notifications?offset={{sub .Data.Offset .Data.Limit}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Previous</a>
+  {{end}}
+  {{$nextOffset := add .Data.Offset .Data.Limit}}
+  {{if lt $nextOffset .Data.Total}}
+    <a class="btn sm ghost" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next</a>
+  {{end}}
+  <span class="small muted" style="align-self:center;">Showing {{add .Data.Offset 1}}–{{min (add .Data.Offset .Data.Limit) .Data.Total}} of {{.Data.Total}}</span>
+</div>
+{{end}}
+{{else}}
+<p class="muted">No notifications.</p>
+{{end}}
+{{end}}

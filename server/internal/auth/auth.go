@@ -29,6 +29,7 @@ import (
 type User struct {
 	ID        int64
 	Username  string
+	Email     string
 	Disabled  bool
 	CreatedAt time.Time
 }
@@ -64,8 +65,8 @@ func (r *Repo) GetUser(ctx context.Context, id int64) (User, error) {
 	var u User
 	var disabled int
 	err := r.DB.QueryRowContext(ctx,
-		`SELECT id, username, disabled, created_at FROM user_account WHERE id=?`,
-		id).Scan(&u.ID, &u.Username, &disabled, &u.CreatedAt)
+		`SELECT id, username, email, disabled, created_at FROM user_account WHERE id=?`,
+		id).Scan(&u.ID, &u.Username, &u.Email, &disabled, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, errors.New("user not found")
 	}
@@ -79,7 +80,7 @@ func (r *Repo) GetUser(ctx context.Context, id int64) (User, error) {
 // ListUsers returns all accounts.
 func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := r.DB.QueryContext(ctx,
-		`SELECT id, username, disabled, created_at FROM user_account ORDER BY username`)
+		`SELECT id, username, email, disabled, created_at FROM user_account ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +89,7 @@ func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var disabled int
-		if err := rows.Scan(&u.ID, &u.Username, &disabled, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &disabled, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
@@ -109,6 +110,14 @@ func (r *Repo) SetPassword(ctx context.Context, id int64, password string) error
 	_, err = r.DB.ExecContext(ctx,
 		`UPDATE user_account SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		string(hash), id)
+	return err
+}
+
+// SetEmail updates the email address for an account.
+func (r *Repo) SetEmail(ctx context.Context, id int64, email string) error {
+	_, err := r.DB.ExecContext(ctx,
+		`UPDATE user_account SET email=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		email, id)
 	return err
 }
 
@@ -138,9 +147,9 @@ func (r *Repo) Authenticate(ctx context.Context, username, password string) (Use
 	var disabled int
 	var hash string
 	err := r.DB.QueryRowContext(ctx,
-		`SELECT id, username, disabled, password_hash, created_at
+		`SELECT id, username, email, disabled, password_hash, created_at
 		 FROM user_account WHERE username=?`, username).Scan(
-		&u.ID, &u.Username, &disabled, &hash, &u.CreatedAt)
+		&u.ID, &u.Username, &u.Email, &disabled, &hash, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Constant-time compare with a placeholder hash so the timing of
 		// "no such user" looks like "wrong password". This is a tripwire,

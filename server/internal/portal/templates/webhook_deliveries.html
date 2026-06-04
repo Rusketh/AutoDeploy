@@ -1,0 +1,47 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Deliveries — {{.Data.Webhook.Name}}</h2>
+  <div class="right">
+    <a class="btn ghost sm" href="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}"><svg><use href="#i-arrow-left"/></svg>Edit webhook</a>
+  </div>
+</div>
+
+<p class="muted">Recent delivery attempts to <code>{{.Data.Webhook.URL}}</code>.</p>
+
+{{if .Data.Deliveries}}
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Event</th>
+      <th>Status</th>
+      <th>Duration</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Data.Deliveries}}
+    <tr>
+      <td class="small">{{.AttemptedAt.Format "2006-01-02 15:04:05"}}</td>
+      <td><code class="small">{{.Event}}</code></td>
+      <td>
+        {{if .StatusCode}}
+          {{if and (ge (derefInt .StatusCode) 200) (lt (derefInt .StatusCode) 300)}}
+            <span class="dot ok"></span> {{derefInt .StatusCode}}
+          {{else}}
+            <span class="dot err"></span> {{derefInt .StatusCode}}
+          {{end}}
+        {{else}}
+          <span class="dot err"></span> —
+        {{end}}
+      </td>
+      <td class="small muted">{{.DurationMs}}ms</td>
+      <td class="small" style="color:var(--danger,#dc3545);max-width:300px;overflow:hidden;text-overflow:ellipsis;">{{.Error}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No deliveries recorded yet.</p>
+{{end}}
+{{end}}

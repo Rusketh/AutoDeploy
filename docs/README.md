@@ -26,9 +26,10 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Windows Updates](portal/windows-updates.md)** — KB patches, compliance tracking, and fleet-wide deployment.
 - **[Bulk operations](portal/bulk-operations.md)** — act on many machines at once.
 - **[Mirrors](portal/mirrors.md)** — site-local payload caches.
+- **[Notifications](portal/notifications.md)** — in-portal alerts, email, and webhooks for deployment events.
 - **[Logs](portal/logs.md)** — searching and tailing the audit log.
 - **[Downloads](portal/downloads.md)** — boot files and agent binaries.
-- **[Settings](portal/settings.md)** — accounts, access PIN, branding, Active Directory, network, operational, storage, updates, PXE.
+- **[Settings](portal/settings.md)** — accounts, access PIN, notifications, branding, Active Directory, network, operational, storage, updates, PXE.
 
 ### Reference
 - **[Configuration](reference/configuration.md)** — every environment variable and the data directory layout.
