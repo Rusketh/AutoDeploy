@@ -40,3 +40,34 @@ func (d *Driver) drive() string {
 func (d *Driver) Enable(ctx context.Context, pin string) (string, error) {
 	return driverEnable(ctx, d.drive(), pin)
 }
+
+// State reports the drive's current BitLocker state so the resident agent
+// can decide whether to enable, change the PIN, or decrypt. On non-Windows
+// hosts it returns ErrUnsupported.
+type State struct {
+	// Protected is true when protection is ON (the volume is encrypted and
+	// locked at boot), as opposed to merely encrypted-with-protection-suspended.
+	Protected bool
+	// HasTPMPIN is true when a TPM+PIN key protector is present.
+	HasTPMPIN bool
+}
+
+// State returns the drive's current BitLocker state.
+func (d *Driver) State(ctx context.Context) (State, error) {
+	return driverState(ctx, d.drive())
+}
+
+// ChangePIN replaces the drive's TPM+PIN protector with one using the new
+// PIN, leaving every other protector (notably the recovery-password
+// protector and any GPO-driven AD backup of it) untouched. If the volume
+// has no TPM+PIN protector yet, one is added. The new PIN is passed via
+// stdin, never on the command line.
+func (d *Driver) ChangePIN(ctx context.Context, pin string) error {
+	return driverChangePIN(ctx, d.drive(), pin)
+}
+
+// Disable turns BitLocker off and decrypts the drive. Used when the
+// operator clears the machine's PIN.
+func (d *Driver) Disable(ctx context.Context) error {
+	return driverDisable(ctx, d.drive())
+}
