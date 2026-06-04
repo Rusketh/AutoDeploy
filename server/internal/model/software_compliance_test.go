@@ -91,3 +91,65 @@ func TestComplianceCountsParentLoadoutPackages(t *testing.T) {
 		t.Errorf("opted-out-app (child opt-out): %+v, want Target=0", c)
 	}
 }
+
+// A package contributed by a grandparent loadout (parent-of-a-parent) must
+// still count -- the resolver walks the whole ancestry, so compliance has to
+// as well. This is the OneDrive case: package two loadout levels up.
+func TestComplianceCountsGrandparentLoadoutPackages(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	pkgRepo := NewSoftwarePackageRepo(db)
+	loRepo := NewSoftwareLoadoutRepo(db)
+	imgRepo := NewImageRepo(db)
+
+	onedrive, _ := pkgRepo.Create(ctx, SoftwarePackage{Name: "onedrive"})
+
+	grand, err := loRepo.Create(ctx, SoftwareLoadout{
+		Name:     "grandparent",
+		Packages: []SoftwareLoadoutPackage{{PackageID: onedrive.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandID := grand.ID
+	mid, err := loRepo.Create(ctx, SoftwareLoadout{Name: "middle", ParentID: &grandID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	midID := mid.ID
+	leaf, err := loRepo.Create(ctx, SoftwareLoadout{Name: "leaf", ParentID: &midID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	leafID := leaf.ID
+	img, err := imgRepo.Create(ctx, Image{Name: "lab", LoadoutID: &leafID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO machine_record (system_uuid) VALUES ('uuid-gp')`); err != nil {
+		t.Fatal(err)
+	}
+	var machID ID
+	if err := db.QueryRowContext(ctx,
+		`SELECT id FROM machine_record WHERE system_uuid='uuid-gp'`).Scan(&machID); err != nil {
+		t.Fatal(err)
+	}
+	inv := NewInventoryRepo(db)
+	if err := inv.UpsertBinding(ctx, MachineBinding{MachineID: machID, ImageID: &img.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.RecordDetectedState(ctx, DetectedState{
+		MachineID: machID, SoftwarePackageID: onedrive.ID, Detected: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := pkgRepo.AllComplianceSummaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := sum[onedrive.ID]; c.TargetCount != 1 || c.InstalledCount != 1 {
+		t.Errorf("onedrive (grandparent loadout): %+v, want Target=1 Installed=1", c)
+	}
+}
