@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,6 +36,11 @@ type Backend interface {
 // Evaluator runs a package's detection rules through a Backend.
 type Evaluator struct {
 	Backend Backend
+	// Log, when set, records why a file rule did NOT match -- the raw
+	// rule path and the resolved path it actually checked -- so an operator
+	// can tell an env-var/space/typo problem (wrong resolved path) from a
+	// genuinely-absent file (right path, not installed). Optional.
+	Log *slog.Logger
 }
 
 // EvaluatePackage reports whether ALL rules report Present == true. Zero
@@ -83,8 +89,15 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 	// is why a %ProgramFiles(x86)%\... rule could previously never match.
 	path := winenv.Expand(r.FilePath)
 	present, err := e.Backend.FileExists(path)
-	if err != nil || !present {
+	if err != nil {
 		return false, err
+	}
+	if !present {
+		// Logs the resolved path so a wrong expansion (env var not set,
+		// path truncated, typo) is distinguishable from a file that's
+		// simply not installed yet. Both read as "not detected".
+		e.logNotDetected("file_absent", r.FilePath, path)
+		return false, nil
 	}
 	if r.FileVersion != "" {
 		v, err := e.Backend.FileVersion(path)
@@ -92,6 +105,8 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 			return false, err
 		}
 		if v != r.FileVersion {
+			e.logNotDetected("file_version_mismatch", r.FilePath, path,
+				slog.String("want_version", r.FileVersion), slog.String("got_version", v))
 			return false, nil
 		}
 	}
@@ -101,10 +116,30 @@ func (e *Evaluator) evaluateFile(r swspec.DetectionRule) (bool, error) {
 			return false, err
 		}
 		if got != r.FileSHA256 {
+			e.logNotDetected("file_sha256_mismatch", r.FilePath, path)
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// logNotDetected records, when a logger is attached, why a file rule did not
+// match. The resolved path is the key field: it shows exactly what was
+// checked on disk after %VAR% expansion.
+func (e *Evaluator) logNotDetected(reason, rulePath, resolved string, extra ...slog.Attr) {
+	if e.Log == nil {
+		return
+	}
+	attrs := []any{
+		slog.String("actor", "agent"),
+		slog.String("reason", reason),
+		slog.String("rule_path", rulePath),
+		slog.String("resolved_path", resolved),
+	}
+	for _, a := range extra {
+		attrs = append(attrs, a)
+	}
+	e.Log.Info("detect.file.not_detected", attrs...)
 }
 
 func (e *Evaluator) evaluateRegistry(r swspec.DetectionRule) (bool, error) {
@@ -119,17 +154,36 @@ func (e *Evaluator) evaluateRegistry(r swspec.DetectionRule) (bool, error) {
 }
 
 func evaluateScript(ctx context.Context, r swspec.DetectionRule) (bool, error) {
-	var cmd *exec.Cmd
+	// Write the body to a script file and run THAT, rather than passing it
+	// inline. An inline `cmd /C <body>` runs only the first line of a
+	// multi-line script and, worse, Go escapes embedded quotes as \" which
+	// cmd.exe doesn't understand -- so a one-liner like
+	//   if exist "C:\Program Files (x86)\Vendor\app.exe" exit 0
+	// (a quoted path with spaces) is mangled and the rule never matches. A
+	// real script file sidesteps both; PowerShell runs it with -ExecutionPolicy
+	// Bypass so an unsigned .ps1 still executes.
+	var name, ext string
 	switch r.ScriptShell {
 	case "cmd":
-		cmd = exec.CommandContext(ctx, "cmd", "/C", r.ScriptBody)
+		name, ext = "cmd", ".cmd"
 	case "powershell":
-		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
-			"-ExecutionPolicy", "Bypass", "-Command", r.ScriptBody)
+		name, ext = "powershell", ".ps1"
 	default:
 		return false, fmt.Errorf("script shell %q not supported", r.ScriptShell)
 	}
-	err := cmd.Run()
+	path, err := writeScriptFile(ext, r.ScriptBody)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = os.Remove(path) }()
+	var cmd *exec.Cmd
+	if name == "cmd" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", path)
+	} else {
+		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+			"-ExecutionPolicy", "Bypass", "-File", path)
+	}
+	err = cmd.Run()
 	if err == nil {
 		return true, nil
 	}
@@ -151,6 +205,29 @@ func evaluateWinget(ctx context.Context, r swspec.DetectionRule) (bool, error) {
 		return false, err
 	}
 	return strings.Contains(string(out), r.WingetID), nil
+}
+
+// writeScriptFile writes a cmd/powershell detection-script body to a fresh
+// temp file with the given extension and returns its path. Newlines are
+// normalised to CRLF so a multi-line body runs reliably as a Windows batch /
+// PowerShell script. The caller removes the file once the script has run.
+func writeScriptFile(ext, body string) (string, error) {
+	f, err := os.CreateTemp("", "autodeploy-detect-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\n", "\r\n")
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 func sha256File(path string) (string, error) {

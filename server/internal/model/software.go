@@ -255,25 +255,36 @@ func (r *SoftwarePackageRepo) AllComplianceSummaries(ctx context.Context) (map[I
 		return nil, err
 	}
 
+	// Loadout-derived targets. Resolve each loadout up its PARENT chain
+	// (opt-outs honoured) so a package inherited from an ancestor loadout
+	// still counts the machines whose image uses a descendant loadout. The
+	// previous query joined software_loadout_package straight to the image's
+	// own loadout, so a package contributed only by a PARENT loadout reported
+	// zero targets. Mirrors resolve.resolveLoadout.
+	effective, err := r.effectiveLoadoutPackages(ctx)
+	if err != nil {
+		return nil, err
+	}
 	loadoutRows, err := r.db.QueryContext(ctx, `
-		SELECT slp.software_package_id, mb.machine_id
-		FROM software_loadout_package slp
-		JOIN image i ON i.loadout_id = slp.loadout_id
+		SELECT i.loadout_id, mb.machine_id
+		FROM image i
 		JOIN machine_binding mb ON mb.image_id = i.id
-		WHERE slp.opt_out = 0`)
+		WHERE i.loadout_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
 	defer loadoutRows.Close()
 	for loadoutRows.Next() {
-		var pkgID, machID ID
-		if err := loadoutRows.Scan(&pkgID, &machID); err != nil {
+		var loadoutID, machID ID
+		if err := loadoutRows.Scan(&loadoutID, &machID); err != nil {
 			return nil, err
 		}
-		if targets[pkgID] == nil {
-			targets[pkgID] = map[ID]bool{}
+		for pkgID := range effective[loadoutID] {
+			if targets[pkgID] == nil {
+				targets[pkgID] = map[ID]bool{}
+			}
+			targets[pkgID][machID] = true
 		}
-		targets[pkgID][machID] = true
 	}
 	if err := loadoutRows.Err(); err != nil {
 		return nil, err
@@ -319,6 +330,96 @@ func (r *SoftwarePackageRepo) AllComplianceSummaries(ctx context.Context) (map[I
 		out[pkgID] = c
 	}
 	return out, nil
+}
+
+// effectiveLoadoutPackages returns, for every loadout, the set of package IDs
+// that resolve onto an image using it: inherited down the parent chain
+// (nearest-wins) with a descendant's opt_out removing an ancestor's package.
+// Mirrors resolve.resolveLoadout so the compliance "targets" count matches
+// what the resolver actually installs on a machine.
+func (r *SoftwarePackageRepo) effectiveLoadoutPackages(ctx context.Context) (map[ID]map[ID]bool, error) {
+	parentRows, err := r.db.QueryContext(ctx, `SELECT id, parent_id FROM software_loadout`)
+	if err != nil {
+		return nil, err
+	}
+	defer parentRows.Close()
+	parent := map[ID]*ID{}
+	for parentRows.Next() {
+		var id ID
+		var p sql.NullInt64
+		if err := parentRows.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		parent[id] = idPtr(p)
+	}
+	if err := parentRows.Err(); err != nil {
+		return nil, err
+	}
+
+	type entry struct {
+		pkg    ID
+		optOut bool
+	}
+	entries := map[ID][]entry{}
+	entRows, err := r.db.QueryContext(ctx,
+		`SELECT loadout_id, software_package_id, opt_out FROM software_loadout_package`)
+	if err != nil {
+		return nil, err
+	}
+	defer entRows.Close()
+	for entRows.Next() {
+		var lid, pid ID
+		var opt int
+		if err := entRows.Scan(&lid, &pid, &opt); err != nil {
+			return nil, err
+		}
+		entries[lid] = append(entries[lid], entry{pkg: pid, optOut: opt != 0})
+	}
+	if err := entRows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make(map[ID]map[ID]bool, len(parent))
+	for id := range parent {
+		// Apply eldest ancestor first so a descendant's entry overrides it,
+		// and a descendant's opt_out removes an inherited package.
+		chain := loadoutAncestry(id, parent)
+		merged := map[ID]bool{}
+		for i := len(chain) - 1; i >= 0; i-- {
+			for _, e := range entries[chain[i]] {
+				if e.optOut {
+					delete(merged, e.pkg)
+				} else {
+					merged[e.pkg] = true
+				}
+			}
+		}
+		out[id] = merged
+	}
+	return out, nil
+}
+
+// loadoutAncestry returns the chain [id, parent, grandparent, …] up to the
+// root, stopping on a missing link or a cycle (defensive — Update forbids
+// cycles, but a corrupt row must not loop the batch summary forever).
+func loadoutAncestry(id ID, parent map[ID]*ID) []ID {
+	const maxDepth = 256
+	var chain []ID
+	seen := map[ID]bool{}
+	cur := id
+	for depth := 0; depth < maxDepth; depth++ {
+		if seen[cur] {
+			break
+		}
+		seen[cur] = true
+		chain = append(chain, cur)
+		p, ok := parent[cur]
+		if !ok || p == nil {
+			break
+		}
+		cur = *p
+	}
+	return chain
 }
 
 func validateSoftware(in *SoftwarePackage) error {
