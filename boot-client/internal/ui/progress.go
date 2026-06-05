@@ -8,15 +8,17 @@ import (
 )
 
 // ProgressScreen shows deploy progress: a stage label, a step detail line,
-// and a percentage bar. It is updated from the deploy goroutine via Set*
-// (concurrency-safe) and repainted by the App loop on a ticker, so it has
-// no interactive Handle behaviour (input is ignored during deploy).
+// the current artifact (file) being fetched, and a percentage bar. It is
+// updated from the deploy goroutine via Set* (concurrency-safe) and
+// repainted by the App loop on a ticker, so it has no interactive Handle
+// behaviour (input is ignored during deploy).
 type ProgressScreen struct {
 	Title string
 
 	mu      sync.Mutex
 	stage   string
 	detail  string
+	file    string
 	percent int // 0..100; <0 = indeterminate
 }
 
@@ -33,14 +35,27 @@ func (p *ProgressScreen) Set(stage, detail string, percent int) {
 	p.mu.Unlock()
 }
 
-func (p *ProgressScreen) snapshot() (string, string, int) {
+// SetFile updates just the current-artifact line shown beneath the detail
+// (e.g. the media file being copied), without disturbing the stage, detail
+// or percent. Safe to call frequently from the deploy goroutine.
+//
+// Pass a bare filename or a media-relative path -- NEVER a URL. The progress
+// screen is on display in the open during imaging, so it must not reveal the
+// server address.
+func (p *ProgressScreen) SetFile(file string) {
+	p.mu.Lock()
+	p.file = file
+	p.mu.Unlock()
+}
+
+func (p *ProgressScreen) snapshot() (string, string, string, int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.stage, p.detail, p.percent
+	return p.stage, p.detail, p.file, p.percent
 }
 
 func (p *ProgressScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
-	stage, detail, pct := p.snapshot()
+	stage, detail, file, pct := p.snapshot()
 	fillRect(img, b, th.Bg)
 	cx := b.Dx() / 2
 	drawCentered(img, th.Title, th.Text, cx, b.Min.Y+b.Dy()/2-80, p.Title)
@@ -69,6 +84,9 @@ func (p *ProgressScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 	}
 	if detail != "" {
 		drawCentered(img, th.Small, th.Muted, cx, by+barH+62, detail)
+	}
+	if file != "" {
+		drawCentered(img, th.Small, th.Muted, cx, by+barH+88, file)
 	}
 	drawCentered(img, th.Small, th.Muted, cx, b.Max.Y-40, "Do not power off this machine")
 }
