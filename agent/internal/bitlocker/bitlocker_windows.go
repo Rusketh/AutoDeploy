@@ -15,7 +15,8 @@ func driverEnable(ctx context.Context, drive, pin string) (string, error) {
 	// line. The PowerShell body reads stdin into $p, enables
 	// BitLocker with TPM+PIN, then prints the freshly-generated
 	// recovery password (and nothing else) so the caller can capture it.
-	scriptBody := fmt.Sprintf(`$p = $input | Out-String
+	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
 Enable-BitLocker -MountPoint '%s' -EncryptionMethod Aes256 -UsedSpaceOnly `+
 		`-TpmAndPinProtector -Pin $p -SkipHardwareTest | Out-Null
@@ -29,11 +30,15 @@ Write-Output $key`, escape(drive), escape(drive), escape(drive))
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-Command", scriptBody)
 	cmd.Stdin = strings.NewReader(pin)
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = &bytes.Buffer{} // discard stderr; do not log it (may contain key material)
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("Enable-BitLocker: %w", err)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return "", fmt.Errorf("Enable-BitLocker: %w", err)
+		}
+		return "", fmt.Errorf("Enable-BitLocker: %s", msg)
 	}
 	key := strings.TrimSpace(out.String())
 	if key == "" {
