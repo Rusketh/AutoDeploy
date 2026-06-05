@@ -265,6 +265,13 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 		}
 	}
 
+	// TPM: ensure the platform module is initialized for BitLocker. After a
+	// re-image the TPM ownership is stale (previous OS); without this,
+	// Enable-BitLocker fails with 0x80310002. Best-effort: wrapped so a
+	// missing or unresponsive TPM can never fail the specialize pass.
+	push("AutoDeploy: initialize TPM for BitLocker",
+		`cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Initialize-Tpm -ErrorAction SilentlyContinue | Out-Null\" & exit 0"`)
+
 	// Telemetry policy (1-3). 0 / negative leave the system default.
 	if s.TelemetryLevel >= 1 && s.TelemetryLevel <= 3 {
 		push(fmt.Sprintf("Policy: AllowTelemetry = %d", s.TelemetryLevel),

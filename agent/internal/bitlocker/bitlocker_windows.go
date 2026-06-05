@@ -16,6 +16,7 @@ func driverEnable(ctx context.Context, drive, pin string) (string, error) {
 	// BitLocker with TPM+PIN, then prints the freshly-generated
 	// recovery password (and nothing else) so the caller can capture it.
 	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Initialize-Tpm -ErrorAction SilentlyContinue | Out-Null
 $p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
 Enable-BitLocker -MountPoint '%s' -EncryptionMethod Aes256 -UsedSpaceOnly `+
@@ -78,9 +79,10 @@ Write-Output ("{0}|{1}" -f [int]$v.ProtectionStatus, [int]($pin -gt 0))`, escape
 // a site that backs recovery keys up to AD keeps doing so unaffected. The
 // recovery password also keeps the volume protected during the swap.
 func driverChangePIN(ctx context.Context, drive, pin string) error {
-	scriptBody := fmt.Sprintf(`$p = $input | Out-String
+	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
-$v = Get-BitLockerVolume -MountPoint '%s' -ErrorAction Stop
+$v = Get-BitLockerVolume -MountPoint '%s'
 foreach ($k in @($v.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'TpmPin' })) {
     Remove-BitLockerKeyProtector -MountPoint '%s' -KeyProtectorId $k.KeyProtectorId | Out-Null
 }
@@ -89,10 +91,15 @@ Add-BitLockerKeyProtector -MountPoint '%s' -TpmAndPinProtector -Pin $p | Out-Nul
 	cmd := exec.CommandContext(ctx, "powershell",
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", scriptBody)
 	cmd.Stdin = strings.NewReader(pin)
+	var changePINStderr bytes.Buffer
 	cmd.Stdout = &bytes.Buffer{}
-	cmd.Stderr = &bytes.Buffer{} // do not log; may reference protectors
+	cmd.Stderr = &changePINStderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("change BitLocker PIN: %w", err)
+		msg := strings.TrimSpace(changePINStderr.String())
+		if msg == "" {
+			return fmt.Errorf("change BitLocker PIN: %w", err)
+		}
+		return fmt.Errorf("change BitLocker PIN: %s", msg)
 	}
 	return nil
 }
