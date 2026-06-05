@@ -16,6 +16,7 @@ func driverEnable(ctx context.Context, drive, pin string) (string, error) {
 	// BitLocker with TPM+PIN, then prints the freshly-generated
 	// recovery password (and nothing else) so the caller can capture it.
 	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Clear-Tpm -ErrorAction SilentlyContinue | Out-Null
 Initialize-Tpm -ErrorAction SilentlyContinue | Out-Null
 $p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
