@@ -19,10 +19,11 @@ func driverEnable(ctx context.Context, drive, pin string) (string, error) {
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
 Enable-BitLocker -MountPoint '%s' -EncryptionMethod Aes256 -UsedSpaceOnly `+
 		`-TpmAndPinProtector -Pin $p -SkipHardwareTest | Out-Null
+Add-BitLockerKeyProtector -MountPoint '%s' -RecoveryPasswordProtector | Out-Null
 $key = (Get-BitLockerVolume -MountPoint '%s').KeyProtector |
        Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' } |
        Select-Object -ExpandProperty RecoveryPassword -First 1
-Write-Output $key`, escape(drive), escape(drive))
+Write-Output $key`, escape(drive), escape(drive), escape(drive))
 
 	cmd := exec.CommandContext(ctx, "powershell",
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
