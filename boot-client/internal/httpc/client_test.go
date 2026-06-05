@@ -89,7 +89,7 @@ func TestDownloadFileResumesViaRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := New(srv.URL, "x", false)
-	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), time.Minute, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(gotRange, "bytes=10-") {
@@ -114,7 +114,7 @@ func TestDownloadFileRestartsWhenServerIgnoresRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := New(srv.URL, "x", false)
-	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), time.Minute, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != full {
@@ -141,7 +141,7 @@ func TestDownloadFileRetriesThenSucceeds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "blob")
 	c := New(srv.URL, "x", false)
 	var retries int
-	err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)),
+	err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), time.Minute,
 		nil, func(attempt int, _ error) { retries = attempt })
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestDownloadFileFailsFastOn404(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "x", false)
 	start := time.Now()
-	err := c.DownloadFile(context.Background(), srv.URL+"/missing", filepath.Join(t.TempDir(), "x"), 10, nil, nil)
+	err := c.DownloadFile(context.Background(), srv.URL+"/missing", filepath.Join(t.TempDir(), "x"), 10, time.Minute, nil, nil)
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
@@ -185,7 +185,27 @@ func TestDownloadFileSkipsCompleteFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := New(srv.URL, "x", false)
-	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), time.Minute, nil, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDownloadFileGivesUpAfterStall asserts a sustained outage fails (safely)
+// once the stall budget elapses, rather than hanging forever.
+func TestDownloadFileGivesUpAfterStall(t *testing.T) {
+	defer swapBackoff(time.Millisecond, time.Millisecond)()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "x", false)
+	start := time.Now()
+	err := c.DownloadFile(context.Background(), srv.URL+"/x", filepath.Join(t.TempDir(), "x"),
+		10, 80*time.Millisecond, nil, nil)
+	if err == nil {
+		t.Fatal("expected give-up error after the stall budget")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("gave up too slowly: %s", d)
 	}
 }

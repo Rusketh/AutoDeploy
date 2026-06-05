@@ -36,6 +36,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -278,6 +279,49 @@ func reportDeployStatus(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 	}
 	if err := c.PostJSON(ctx, "/api/v1/clients/deploy-status", body, nil); err != nil {
 		log.Warn("deploy.status.report", slog.String("status", status), slog.String("error", err.Error()))
+	}
+}
+
+// Stall budgets for resilient downloads -- how long DownloadFile keeps
+// retrying with no forward progress before giving up. Post-wipe media gets
+// the longest budget: the disk is already wiped, so we ride out a long outage
+// rather than strand a half-written disk. Pre-wipe payloads get less, because
+// giving up there just falls back to a safe normal boot; the optional agent
+// gets the least.
+const (
+	mediaStallBudget   = 30 * time.Minute
+	payloadStallBudget = 5 * time.Minute
+	agentStallBudget   = 60 * time.Second
+)
+
+// reacquireNetwork re-runs link-up + DHCP on the wired interfaces. The Boot
+// Client doesn't own the network (the initramfs brought it up at boot), but a
+// long imaging run can outlast the DHCP lease or ride through a link bounce --
+// and then a fresh lease is what lets a resumed download continue. Best-effort,
+// mirrors the initramfs init's bring-up, and is a no-op off Linux (the glob
+// matches nothing, so udhcpc/ip are never invoked).
+func reacquireNetwork(ctx context.Context, log *slog.Logger) {
+	ifaces, _ := filepath.Glob("/sys/class/net/*")
+	for _, dev := range ifaces {
+		ifc := filepath.Base(dev)
+		if ifc == "lo" {
+			continue
+		}
+		_ = exec.CommandContext(ctx, "ip", "link", "set", ifc, "up").Run()
+	}
+	for _, dev := range ifaces {
+		ifc := filepath.Base(dev)
+		if ifc == "lo" {
+			continue
+		}
+		// One-shot DHCP (-n: give up if no lease); we retry again next round.
+		cmd := exec.CommandContext(ctx, "udhcpc", "-i", ifc, "-n", "-q",
+			"-t", "5", "-T", "3", "-s", "/usr/share/udhcpc/default.script")
+		if err := cmd.Run(); err != nil {
+			log.Warn("net.reacquire", slog.String("if", ifc), slog.String("error", err.Error()))
+			continue
+		}
+		log.Info("net.reacquire.ok", slog.String("if", ifc))
 	}
 }
 
@@ -532,7 +576,7 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 		// mid-copy network outage by retrying with backoff, instead of
 		// aborting onto a half-written, unbootable disk. When the network
 		// returns it picks up exactly where it left off.
-		err := c.DownloadFile(ctx, it.Base+mf.Path, out, mf.Size,
+		err := c.DownloadFile(ctx, it.Base+mf.Path, out, mf.Size, mediaStallBudget,
 			func(have int64) {
 				if total > 0 {
 					reportStage("Downloading image", "Copying install media to disk",
@@ -549,6 +593,11 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 					pct = int(base * 100 / total)
 				}
 				reportStage("Downloading image", "Network interrupted - retrying…", pct)
+				// On a prolonged outage the lease may be gone, not just the
+				// connection: try to bring the link back up and re-DHCP.
+				if attempt%3 == 0 {
+					reacquireNetwork(ctx, log)
+				}
 			})
 		if err != nil {
 			return fmt.Errorf("file %s: %w", mf.Path, err)
@@ -568,17 +617,24 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 }
 
 func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifestItem, dst string) error {
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	return c.Download(ctx, it.URL, out, func(n int64) {
-		log.Info("download.progress",
-			slog.String("role", it.Role),
-			slog.String("url", it.URL),
-			slog.Int64("bytes", n))
-	})
+	return c.DownloadFile(ctx, it.URL, dst, it.Size, payloadStallBudget,
+		func(n int64) {
+			log.Info("download.progress",
+				slog.String("role", it.Role),
+				slog.String("url", it.URL),
+				slog.Int64("bytes", n))
+		},
+		func(attempt int, derr error) {
+			log.Warn("download.retry",
+				slog.String("role", it.Role),
+				slog.Int("attempt", attempt),
+				slog.String("error", derr.Error()))
+			reportStage("Preparing", "Network interrupted - retrying…", -1)
+			reportFile(itemLabel(it))
+			if attempt%3 == 0 {
+				reacquireNetwork(ctx, log)
+			}
+		})
 }
 
 // agentUpdateInfo mirrors the server's /api/v1/agent/update-info response.
@@ -603,18 +659,19 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 		return ""
 	}
 	dst := filepath.Join(work, "payload-agent.exe")
-	out, err := os.Create(dst)
-	if err != nil {
-		log.Warn("agent.create", slog.String("error", err.Error()))
-		return ""
-	}
 	reportFile("management agent")
-	if err := c.Download(ctx, info.URL, out, nil); err != nil {
-		_ = out.Close()
+	// The agent is optional, so it gets the shortest budget: ride out a brief
+	// blip, but don't stall the deploy waiting on it -- give up and proceed
+	// agent-less if the network is down for long.
+	if err := c.DownloadFile(ctx, info.URL, dst, 0, agentStallBudget, nil,
+		func(attempt int, derr error) {
+			log.Warn("agent.retry", slog.Int("attempt", attempt), slog.String("error", derr.Error()))
+			reportStage("Preparing", "Network interrupted - retrying…", -1)
+			reportFile("management agent")
+		}); err != nil {
 		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
 		return ""
 	}
-	_ = out.Close()
 	// Guard against a non-binary body (e.g. an auth redirect's login-page
 	// HTML) being injected as the agent. A Windows PE starts with "MZ".
 	if !looksLikePE(dst) {

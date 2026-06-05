@@ -152,11 +152,6 @@ func (p *progressReader) Read(b []byte) (int, error) {
 var (
 	retryBaseBackoff = 1 * time.Second
 	retryMaxBackoff  = 30 * time.Second
-	// retryMaxStall bounds how long DownloadFile keeps trying with NO forward
-	// progress before giving up -- long enough to ride out a switch reboot or
-	// a briefly unplugged cable, short enough that a truly dead network still
-	// fails safe rather than hanging the rig forever.
-	retryMaxStall = 30 * time.Minute
 )
 
 // permanentError wraps an HTTP status retrying won't fix (a 4xx) so
@@ -169,7 +164,7 @@ func (e *permanentError) Unwrap() error { return e.err }
 // DownloadFile downloads url into the file at path, resuming from whatever is
 // already on disk (via an HTTP Range request) and surviving transient network
 // outages by retrying with capped exponential backoff. It returns nil once
-// the file is fully fetched; it gives up only when retryMaxStall elapses with
+// the file is fully fetched; it gives up only when maxStall elapses with
 // no forward progress, the server returns a 4xx, or ctx is cancelled.
 //
 // This is what lets a deploy ride out a mid-copy network drop: each retry
@@ -178,11 +173,13 @@ func (e *permanentError) Unwrap() error { return e.err }
 //
 // wantSize is the file's expected final size (e.g. from the media index);
 // when > 0 it lets DownloadFile recognise an already-complete file and catch
-// a short read. Pass 0 when the size is unknown. progress, if non-nil,
-// reports the cumulative bytes present for this file. onRetry, if non-nil, is
-// called before each backoff wait with the attempt number and the error --
-// the UI uses it to surface "network interrupted".
-func (c *Client) DownloadFile(ctx context.Context, url, path string, wantSize int64, progress func(int64), onRetry func(attempt int, err error)) error {
+// a short read. Pass 0 when the size is unknown. maxStall bounds how long it
+// keeps retrying with no forward progress before giving up (so a truly dead
+// network still fails safe). progress, if non-nil, reports the cumulative
+// bytes present for this file. onRetry, if non-nil, is called before each
+// backoff wait with the attempt number and the error -- the UI uses it to
+// surface "network interrupted".
+func (c *Client) DownloadFile(ctx context.Context, url, path string, wantSize int64, maxStall time.Duration, progress func(int64), onRetry func(attempt int, err error)) error {
 	attempt := 0
 	lastProgress := time.Now()
 	for {
@@ -211,8 +208,8 @@ func (c *Client) DownloadFile(ctx context.Context, url, path string, wantSize in
 		if n > 0 {
 			lastProgress = time.Now() // made headway -- reset the stall clock
 		}
-		if time.Since(lastProgress) > retryMaxStall {
-			return fmt.Errorf("download %s stalled for %s: %w", path, retryMaxStall, err)
+		if time.Since(lastProgress) > maxStall {
+			return fmt.Errorf("download %s stalled for %s: %w", path, maxStall, err)
 		}
 		attempt++
 		if onRetry != nil {
