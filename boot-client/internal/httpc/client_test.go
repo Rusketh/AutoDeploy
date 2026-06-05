@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPostJSON(t *testing.T) {
@@ -59,5 +62,130 @@ func TestDownload(t *testing.T) {
 	}
 	if buf.String() != "hello-payload" {
 		t.Errorf("body = %q", buf.String())
+	}
+}
+
+// swapBackoff shrinks the retry waits for fast tests; the returned func
+// restores them.
+func swapBackoff(base, max time.Duration) func() {
+	ob, om := retryBaseBackoff, retryMaxBackoff
+	retryBaseBackoff, retryMaxBackoff = base, max
+	return func() { retryBaseBackoff, retryMaxBackoff = ob, om }
+}
+
+// TestDownloadFileResumesViaRange seeds a correct partial file and asserts
+// DownloadFile resumes (sends a Range) and appends only the tail.
+func TestDownloadFileResumesViaRange(t *testing.T) {
+	const full = "0123456789abcdefghijABCDEFGHIJ" // 30 bytes
+	var gotRange string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRange = r.Header.Get("Range")
+		http.ServeContent(w, r, "blob", time.Time{}, strings.NewReader(full))
+	}))
+	defer srv.Close()
+
+	path := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(path, []byte(full[:10]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(srv.URL, "x", false)
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotRange, "bytes=10-") {
+		t.Errorf("expected a resume Range request, got %q", gotRange)
+	}
+	if got, _ := os.ReadFile(path); string(got) != full {
+		t.Errorf("resumed file = %q, want %q", got, full)
+	}
+}
+
+// TestDownloadFileRestartsWhenServerIgnoresRange asserts a stale partial is
+// discarded (truncated) when the server replies 200 instead of honouring Range.
+func TestDownloadFileRestartsWhenServerIgnoresRange(t *testing.T) {
+	const full = "FULL-CONTENT-RESTARTED"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(full)) // ignore Range: always 200 + full body
+	}))
+	defer srv.Close()
+
+	path := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(path, []byte("XXXXX"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(srv.URL, "x", false)
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != full {
+		t.Errorf("restarted file = %q, want %q", got, full)
+	}
+}
+
+// TestDownloadFileRetriesThenSucceeds simulates a transient outage: the first
+// two requests fail, the third serves the file. The copy must survive it.
+func TestDownloadFileRetriesThenSucceeds(t *testing.T) {
+	defer swapBackoff(time.Millisecond, 2*time.Millisecond)()
+	const full = "payload-after-retries"
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		http.ServeContent(w, r, "blob", time.Time{}, strings.NewReader(full))
+	}))
+	defer srv.Close()
+
+	path := filepath.Join(t.TempDir(), "blob")
+	c := New(srv.URL, "x", false)
+	var retries int
+	err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)),
+		nil, func(attempt int, _ error) { retries = attempt })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retries < 2 {
+		t.Errorf("expected >=2 retries, got %d", retries)
+	}
+	if got, _ := os.ReadFile(path); string(got) != full {
+		t.Errorf("file = %q, want %q", got, full)
+	}
+}
+
+// TestDownloadFileFailsFastOn404 asserts a 4xx is not retried for retryMaxStall.
+func TestDownloadFileFailsFastOn404(t *testing.T) {
+	defer swapBackoff(time.Millisecond, 2*time.Millisecond)()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "x", false)
+	start := time.Now()
+	err := c.DownloadFile(context.Background(), srv.URL+"/missing", filepath.Join(t.TempDir(), "x"), 10, nil, nil)
+	if err == nil {
+		t.Fatal("expected error on 404")
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("404 should fail fast, took %s", time.Since(start))
+	}
+}
+
+// TestDownloadFileSkipsCompleteFile asserts an already-complete file is a
+// no-op that never touches the network.
+func TestDownloadFileSkipsCompleteFile(t *testing.T) {
+	const full = "already-have-this"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be hit for a complete file (Range=%q)", r.Header.Get("Range"))
+	}))
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(srv.URL, "x", false)
+	if err := c.DownloadFile(context.Background(), srv.URL+"/blob", path, int64(len(full)), nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }

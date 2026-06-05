@@ -524,23 +524,34 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return err
 		}
-		w, err := os.Create(out)
-		if err != nil {
-			return err
-		}
 		// Show the media-relative path being copied (never a URL) so the
 		// operator sees the current file and exactly which one a stall is on.
 		reportFile(mf.Path)
 		base := done
-		derr := c.Download(ctx, it.Base+mf.Path, w, func(written int64) {
-			if total > 0 {
-				reportStage("Downloading image", "Copying install media to disk",
-					int((base+written)*100/total))
-			}
-		})
-		_ = w.Close()
-		if derr != nil {
-			return fmt.Errorf("file %s: %w", mf.Path, derr)
+		// Resilient copy: resume from disk via HTTP Range and ride out a
+		// mid-copy network outage by retrying with backoff, instead of
+		// aborting onto a half-written, unbootable disk. When the network
+		// returns it picks up exactly where it left off.
+		err := c.DownloadFile(ctx, it.Base+mf.Path, out, mf.Size,
+			func(have int64) {
+				if total > 0 {
+					reportStage("Downloading image", "Copying install media to disk",
+						int((base+have)*100/total))
+				}
+			},
+			func(attempt int, derr error) {
+				log.Warn("download.media.retry",
+					slog.String("file", mf.Path),
+					slog.Int("attempt", attempt),
+					slog.String("error", derr.Error()))
+				pct := -1
+				if total > 0 {
+					pct = int(base * 100 / total)
+				}
+				reportStage("Downloading image", "Network interrupted - retrying…", pct)
+			})
+		if err != nil {
+			return fmt.Errorf("file %s: %w", mf.Path, err)
 		}
 		done += mf.Size
 		if total > 0 {
