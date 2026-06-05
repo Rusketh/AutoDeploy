@@ -128,7 +128,7 @@ fi
 # available even when no standalone binary was found above.
 if [ -x "$ROOTFS/bin/busybox" ]; then
     for applet in sh mkdir mount umount cp sleep cat ls grep basename sync \
-                  unzip modprobe depmod insmod reboot \
+                  unzip modprobe depmod insmod reboot setsid cttyhack \
                   ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
     done
@@ -242,11 +242,19 @@ echo "=== AutoDeploy Boot Client (initramfs) ==="
 # Load the drivers the Boot Client needs to see the NIC, disks, and the
 # keyboard. modprobe silently ignores modules that are absent or already
 # built in, so this same list is safe across hypervisors and bare metal.
+#
+# The NIC set covers PCI(e) cards AND USB Ethernet adapters (laptop
+# dongles and docks). A Dell USB-C / USB 3.0 to Gigabit adapter, for
+# example, is a Realtek RTL8153 driven by r8152 -- NOT r8169, which is the
+# PCI part. Without a USB-Ethernet driver such a machine chainloads iPXE
+# fine (the firmware drives the NIC) but has no netdev once Linux takes
+# over, so the DHCP loop below finds nothing and the menu never loads.
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
     e1000 e1000e igb igc ixgbe i40e tg3 r8169 atlantic \
     bnx2 bnx2x bnxt_en mlx4_en mlx5_core \
+    usbnet mii r8152 ax88179_178a asix cdc_ether cdc_ncm cdc_subset r8153_ecm \
     ahci libahci ata_piix nvme nvme_core \
     sd_mod sr_mod usb_storage xhci_pci ehci_pci \
     vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
@@ -268,27 +276,48 @@ sleep 2
 # otherwise every server call fails and the menu never appears.
 echo "Bringing up network..."
 mkdir -p /etc/udhcpc
-for dev in /sys/class/net/*; do
-    [ -e "$dev" ] || continue
-    ifc=${dev##*/}              # basename via shell builtin (no external dep)
-    [ "$ifc" = "lo" ] && continue
-    ip link set "$ifc" up 2>/dev/null
+
+# USB NICs (dongles / docks) can take several seconds to enumerate after
+# their driver loads -- the netdev simply isn't present yet. Wait briefly
+# for a non-loopback interface to appear before trying to configure one.
+for wait in 1 2 3 4 5 6 7 8; do
+    found=0
+    for dev in /sys/class/net/*; do
+        [ -e "$dev" ] || continue
+        [ "${dev##*/}" = "lo" ] && continue
+        found=1
+    done
+    [ "$found" = "1" ] && break
+    sleep 1
 done
+
 # DHCP on the first non-loopback link that comes up. -n: give up if no
 # lease (don't background-retry forever); we then loop over interfaces.
 GOTNET=0
-for try in 1 2 3; do
+for try in 1 2 3 4 5; do
     for dev in /sys/class/net/*; do
         [ -e "$dev" ] || continue
         ifc=${dev##*/}
         [ "$ifc" = "lo" ] && continue
+        # Bring the link up inside the loop, not just once up front, so an
+        # interface that enumerated late (USB again) still gets set up.
+        ip link set "$ifc" up 2>/dev/null
+        # Wait for carrier before DHCP. A link that just came up -- a USB
+        # NIC re-initialising, or a switch port still converging spanning
+        # tree -- silently drops DISCOVERs until it forwards. This is the
+        # classic "firmware DHCP worked but ours times out" race. Links
+        # already up (Hyper-V/virtio) read carrier=1 at once and skip it.
+        for c in 1 2 3 4 5; do
+            [ "$(cat "/sys/class/net/$ifc/carrier" 2>/dev/null)" = "1" ] && break
+            sleep 1
+        done
         udhcpc -i "$ifc" -n -q -t 5 -T 3 \
             -s /usr/share/udhcpc/default.script >/dev/null 2>&1 && GOTNET=1
         # An interface with an IPv4 address is good enough to proceed.
         ip addr show "$ifc" 2>/dev/null | grep -q 'inet ' && GOTNET=1
     done
     [ "$GOTNET" = "1" ] && break
-    echo "  no lease yet (attempt $try/3); retrying..."
+    echo "  no lease yet (attempt $try/5); retrying..."
     sleep 2
 done
 if [ "$GOTNET" != "1" ]; then
@@ -324,6 +353,12 @@ printf '\033[?25h' > /dev/console 2>/dev/null || true
 echo 7 > /proc/sys/kernel/printk 2>/dev/null || true
 echo
 echo "autodeploy-boot exited; dropping to a shell."
+# Give the fallback shell a controlling terminal so it's actually usable:
+# without one busybox prints "can't access tty: job control turned off"
+# and you can't type. setsid+cttyhack claim the console as the ctty; if
+# this build's busybox lacks those applets the call just returns and we
+# fall back to a plain (non-job-control) shell, exactly as before.
+setsid cttyhack /bin/sh 2>/dev/null
 exec /bin/sh
 INIT
 chmod 0755 "$ROOTFS/init"
