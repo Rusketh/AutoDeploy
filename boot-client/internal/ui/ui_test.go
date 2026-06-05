@@ -137,11 +137,18 @@ func TestProgressDrawAndUpdate(t *testing.T) {
 	th := testTheme(t)
 	p := NewProgressScreen("Deploying")
 	p.Set("Downloading media", "install.swm (2/3)", 66)
-	st, det, pct := p.snapshot()
+	st, det, file, pct := p.snapshot()
 	if st != "Downloading media" || det != "install.swm (2/3)" || pct != 66 {
-		t.Fatalf("snapshot = %q %q %d", st, det, pct)
+		t.Fatalf("snapshot = %q %q %q %d", st, det, file, pct)
 	}
-	drawInto(t, p, th) // determinate
+	// SetFile updates only the current-file line, leaving stage/detail/percent.
+	p.SetFile("sources/install.swm")
+	if st, det, file, pct = p.snapshot(); file != "sources/install.swm" {
+		t.Fatalf("SetFile not reflected: file=%q", file)
+	} else if st != "Downloading media" || det != "install.swm (2/3)" || pct != 66 {
+		t.Fatalf("SetFile disturbed stage/detail/percent: %q %q %d", st, det, pct)
+	}
+	drawInto(t, p, th) // determinate, with a file line
 	p.Set("Working", "", -1)
 	drawInto(t, p, th) // indeterminate must also not panic
 	// Input is ignored during progress.

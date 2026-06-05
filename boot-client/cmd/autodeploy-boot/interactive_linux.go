@@ -102,3 +102,7 @@ type guiProgressSink struct{ scr *ui.ProgressScreen }
 func (s *guiProgressSink) Stage(stage, detail string, percent int) {
 	s.scr.Set(stage, detail, percent)
 }
+
+func (s *guiProgressSink) File(name string) {
+	s.scr.SetFile(name)
+}

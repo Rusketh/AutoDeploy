@@ -308,6 +308,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		os.Exit(0)
 	}
 
+	reportStage("Preparing", "Fetching drivers, answer file and agent", -1)
 	// Download the small payloads (unattend, drivers) into the work dir,
 	// but only CAPTURE the iso-media item -- the multi-GB media tree is
 	// streamed directly onto the FAT32 boot partition later, never into
@@ -321,6 +322,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		case "iso-media":
 			mediaItem = &m.Items[i]
 		case "unattend":
+			reportFile(itemLabel(it))
 			dst := filepath.Join(f.work, "payload-unattend-"+sanitise(it.URL))
 			if err := download(ctx, c, log, it, dst); err != nil {
 				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
@@ -328,6 +330,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 			}
 			unattendPath = dst
 		case "driver":
+			reportFile(itemLabel(it))
 			dst := filepath.Join(f.work, "payload-driver-"+sanitise(it.URL))
 			if err := download(ctx, c, log, it, dst); err != nil {
 				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
@@ -397,6 +400,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	var mediaIdx *mediaIndex
 	if !f.dryRun {
 		reportStage("Validating media", "Fetching media index", -1)
+		reportFile("media file index")
 		idx, err := fetchMediaIndex(ctx, c, *mediaItem)
 		if err != nil {
 			log.Error("deploy.media_index.fail", slog.String("error", err.Error()))
@@ -425,6 +429,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		}
 	}
 	reportStage("Finalising", "Writing answer file, drivers and agent", -1)
+	reportFile("")
 	if err := imaging.FinalizeMedia(ctx, plan, runner, mountPath); err != nil {
 		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
 		reportDeployStatus(ctx, c, log, id, imageID, "failed", "media staging failed: "+err.Error())
@@ -500,6 +505,15 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
+	// Sum the tree up front so progress is byte-weighted: one multi-GB
+	// install.wim then advances the bar smoothly instead of the bar jumping
+	// per file, and -- the point here -- a stalled file shows as a frozen bar
+	// on a named file rather than an ambiguous spinner.
+	var total int64
+	for _, mf := range idx.Files {
+		total += mf.Size
+	}
+	var done int64
 	for i, mf := range idx.Files {
 		rel := filepath.FromSlash(mf.Path)
 		out := filepath.Join(destDir, rel)
@@ -514,10 +528,24 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 		if err != nil {
 			return err
 		}
-		derr := c.Download(ctx, it.Base+mf.Path, w, nil)
+		// Show the media-relative path being copied (never a URL) so the
+		// operator sees the current file and exactly which one a stall is on.
+		reportFile(mf.Path)
+		base := done
+		derr := c.Download(ctx, it.Base+mf.Path, w, func(written int64) {
+			if total > 0 {
+				reportStage("Downloading image", "Copying install media to disk",
+					int((base+written)*100/total))
+			}
+		})
 		_ = w.Close()
 		if derr != nil {
 			return fmt.Errorf("file %s: %w", mf.Path, derr)
+		}
+		done += mf.Size
+		if total > 0 {
+			reportStage("Downloading image", "Copying install media to disk",
+				int(done*100/total))
 		}
 		if (i+1)%200 == 0 {
 			log.Info("download.media.progress",
@@ -569,6 +597,7 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 		log.Warn("agent.create", slog.String("error", err.Error()))
 		return ""
 	}
+	reportFile("management agent")
 	if err := c.Download(ctx, info.URL, out, nil); err != nil {
 		_ = out.Close()
 		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
@@ -814,6 +843,7 @@ func submitPIN(ctx context.Context, c *httpc.Client, id smbios.Identity, pin str
 // them. nil = no UI attached (the console deploy logs to slog as before).
 type progressSink interface {
 	Stage(stage, detail string, percent int)
+	File(name string)
 }
 
 var activeProgress progressSink
@@ -827,6 +857,36 @@ func setProgressSink(p progressSink) { activeProgress = p }
 func reportStage(stage, detail string, percent int) {
 	if activeProgress != nil {
 		activeProgress.Stage(stage, detail, percent)
+	}
+}
+
+// reportFile updates the "current artifact" line on the active UI sink with
+// the name of the file being fetched, so an operator can see which file a
+// deploy is on -- and which one a stall is pinned to. Pass a bare filename
+// or a media-relative path -- NEVER a URL: the progress screen is shown in
+// the open during imaging and must not reveal the server address.
+func reportFile(name string) {
+	if activeProgress != nil {
+		activeProgress.File(name)
+	}
+}
+
+// itemLabel returns a human, URL-free label for a manifest item, for the
+// progress screen's current-file line. It uses the server-supplied display
+// name and never the item URL.
+func itemLabel(it manifestItem) string {
+	if it.Name != "" {
+		return it.Name
+	}
+	switch it.Role {
+	case "driver":
+		return "driver package"
+	case "unattend":
+		return "answer file"
+	case "iso-media":
+		return "install media"
+	default:
+		return it.Role
 	}
 }
 
