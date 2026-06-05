@@ -110,6 +110,22 @@ if [ -z "$EFIBOOTMGR" ] || ! copy_with_libs "$EFIBOOTMGR" 2>/dev/null; then
     missing+=("efibootmgr")
 fi
 
+# ethtool lets init disable NIC hardware offloads on USB Ethernet adapters
+# (the Realtek r8152 / RTL8153 large-transfer stall workaround). Optional: a
+# missing ethtool just means USB-NIC offloads stay on, so warn rather than
+# fail the build. Resolved like efibootmgr (a single standalone binary).
+ETHTOOL="$(command -v ethtool 2>/dev/null || true)"
+if [ -z "$ETHTOOL" ]; then
+    for d in /usr/sbin /sbin /usr/bin /bin /usr/local/sbin; do
+        [ -x "$d/ethtool" ] && { ETHTOOL="$d/ethtool"; break; }
+    done
+fi
+if [ -n "$ETHTOOL" ]; then
+    copy_with_libs "$ETHTOOL" 2>/dev/null || echo "  WARN: could not bundle ethtool" >&2
+else
+    echo "  WARN: ethtool not on build host; USB-NIC offload workaround disabled" >&2
+fi
+
 # Safety net: if busybox somehow landed outside /bin (e.g. a host that
 # only ships it under /usr/bin), put it at /bin/busybox so the applet
 # symlinks below (and /bin/sh) resolve.
@@ -128,7 +144,7 @@ fi
 # available even when no standalone binary was found above.
 if [ -x "$ROOTFS/bin/busybox" ]; then
     for applet in sh mkdir mount umount cp sleep cat ls grep basename sync \
-                  unzip modprobe depmod insmod reboot setsid cttyhack \
+                  unzip modprobe depmod insmod reboot setsid cttyhack readlink \
                   ip ifconfig route udhcpc; do
         [ -e "$ROOTFS/bin/$applet" ] || ln -sf busybox "$ROOTFS/bin/$applet"
     done
@@ -289,6 +305,25 @@ for wait in 1 2 3 4 5 6 7 8; do
     done
     [ "$found" = "1" ] && break
     sleep 1
+done
+
+# USB Ethernet adapters (notably Realtek r8152 / RTL8153) can stall large
+# transfers with hardware offloads enabled on some kernels: small packets
+# pass but a multi-MB/GB download hangs partway. Turn offloads off on USB
+# NICs only (PCIe NICs keep theirs for throughput) so imaging downloads --
+# the agent, then the install media -- don't lock up. Best-effort; needs
+# ethtool, and is skipped silently when it or the device link is absent.
+for dev in /sys/class/net/*; do
+    [ -e "$dev" ] || continue
+    ifc=${dev##*/}
+    [ "$ifc" = "lo" ] && continue
+    case "$(readlink -f "$dev/device" 2>/dev/null)" in
+        *usb*)
+            if ethtool -K "$ifc" tso off gso off gro off tx off rx off sg off 2>/dev/null; then
+                echo "  USB NIC $ifc: disabled hardware offloads (r8152 stall workaround)"
+            fi
+            ;;
+    esac
 done
 
 # DHCP on the first non-loopback link that comes up. -n: give up if no

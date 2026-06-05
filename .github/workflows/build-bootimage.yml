@@ -59,6 +59,8 @@ jobs:
           # gdisk/dosfstools:    sgdisk + mkfs.fat (single FAT32 boot part).
           # efibootmgr:          register the staged partition with firmware.
           # unzip:               expand driver packages onto the media.
+          # ethtool:             disable USB-NIC hardware offloads at boot
+          #   (the r8152/RTL8153 large-transfer stall workaround).
           # cpio/gzip:           pack the initramfs.
           # shim-signed: Microsoft-signed Ubuntu shim, shipped as
           #   autodeploy-shim.efi for UEFI Secure Boot (iPXE `shim` command
@@ -67,7 +69,7 @@ jobs:
               linux-image-generic \
               shim-signed \
               kmod busybox-static cpio gzip \
-              gdisk dosfstools efibootmgr unzip
+              gdisk dosfstools efibootmgr unzip ethtool
 
       - name: Resolve kernel version
         id: kver
