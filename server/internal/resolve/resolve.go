@@ -7,8 +7,8 @@
 //   - Unattend     nearest-wins, used in full (NOT merged).
 //   - Drivers      every package whose SMBIOS filters match (Phase 4).
 //   - Software     additive union of directly linked packages and loadout
-//                  packages (Phase 7), de-duplicated by package ID, with
-//                  direct-link ordering taking precedence.
+//     packages (Phase 7), de-duplicated by package ID, with
+//     direct-link ordering taking precedence.
 //
 // Phase 1 ships ISO+unattend nearest-wins resolution and a deterministic
 // software-link union over direct image links. Loadouts and driver matching
@@ -28,10 +28,10 @@ import (
 
 // Resolved is the machine-ready manifest a Boot Client would receive.
 type Resolved struct {
-	ImageID    model.ID                  `json:"image_id"`
-	ISO        *model.ISO                `json:"iso,omitempty"`
-	Unattend   *model.Unattend           `json:"unattend,omitempty"`
-	Software   []model.ImageSoftwareLink `json:"software"`
+	ImageID  model.ID                  `json:"image_id"`
+	ISO      *model.ISO                `json:"iso,omitempty"`
+	Unattend *model.Unattend           `json:"unattend,omitempty"`
+	Software []model.ImageSoftwareLink `json:"software"`
 	// Drivers is populated only by ResolveForMachine; the no-identity
 	// Resolve returns it empty because driver matching needs reported
 	// hardware.
@@ -60,8 +60,8 @@ type Resolver struct {
 	images   *model.ImageRepo
 	isos     *model.ISORepo
 	unattend *model.UnattendRepo
-	drivers  *model.DriverPackageRepo     // nil = driver matching disabled
-	loadouts *model.SoftwareLoadoutRepo   // nil = loadout resolution disabled
+	drivers  *model.DriverPackageRepo   // nil = driver matching disabled
+	loadouts *model.SoftwareLoadoutRepo // nil = loadout resolution disabled
 	dc       driverCache
 }
 

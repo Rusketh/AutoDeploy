@@ -24,8 +24,9 @@ import (
 )
 
 // Directory is the abstraction the Service speaks to. Implementations:
-//   LDAPDirectory  - real AD via go-ldap.
-//   FakeDirectory  - in-memory, used by tests.
+//
+//	LDAPDirectory  - real AD via go-ldap.
+//	FakeDirectory  - in-memory, used by tests.
 type Directory interface {
 	// FindComputer returns the DN of the computer object whose CN matches
 	// name, anywhere in the configured search base. Returns ("", nil) when

@@ -15,16 +15,16 @@ import (
 
 // Webhook is a configured outbound webhook endpoint.
 type Webhook struct {
-	ID          ID        `json:"id"`
-	Name        string    `json:"name"`
-	URL         string    `json:"url"`
-	Secret      string    `json:"secret,omitempty"`
+	ID          ID                `json:"id"`
+	Name        string            `json:"name"`
+	URL         string            `json:"url"`
+	Secret      string            `json:"secret,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
-	Events      []string  `json:"events"`
-	MinSeverity string    `json:"min_severity"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Events      []string          `json:"events"`
+	MinSeverity string            `json:"min_severity"`
+	Enabled     bool              `json:"enabled"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // WebhookDelivery is one delivery attempt to a webhook.

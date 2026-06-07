@@ -428,7 +428,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return *t
 		},
-		"join":  strings.Join,
+		"join": strings.Join,
 		"hasItems": func(s any) bool {
 			switch v := s.(type) {
 			case nil:
@@ -467,10 +467,15 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return *p
 		},
-		"lt": func(a, b int) bool { return a < b },
+		"lt":      func(a, b int) bool { return a < b },
 		"toFloat": func(n int) float64 { return float64(n) },
-		"div":     func(a, b float64) float64 { if b == 0 { return 0 }; return a / b },
-		"mul":     func(a, b float64) float64 { return a * b },
+		"div": func(a, b float64) float64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"mul": func(a, b float64) float64 { return a * b },
 		"pct": func(a, b int) int {
 			if b == 0 {
 				return 0
@@ -657,8 +662,8 @@ func renderPortalError(w http.ResponseWriter, req *http.Request, r Repos, code i
 // upgraded to the configured status.
 type statusWriter struct {
 	http.ResponseWriter
-	status   int
-	written  bool
+	status  int
+	written bool
 }
 
 func (s *statusWriter) WriteHeader(int) {

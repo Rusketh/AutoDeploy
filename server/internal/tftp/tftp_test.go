@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"io"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -190,7 +190,7 @@ func TestServeMissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 	var ce *tftpClientError
-	if !errorsAs(err, &ce) {
+	if !errors.As(err, &ce) {
 		t.Fatalf("expected tftpClientError, got %T", err)
 	}
 	if ce.code != errFileNotFound {
@@ -216,7 +216,7 @@ func TestServeRefusesTraversal(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	var ce *tftpClientError
-	if !errorsAs(err, &ce) {
+	if !errors.As(err, &ce) {
 		t.Fatalf("expected tftpClientError, got %T", err)
 	}
 	if ce.code != errFileNotFound && ce.code != errAccessViolation {
@@ -240,7 +240,7 @@ func TestServeRefusesWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf := make([]byte, 1024)
-	_ = c.(net.Conn).SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, err := c.Read(buf)
 	if err != nil {
 		t.Fatal(err)
@@ -336,32 +336,7 @@ func TestSynthMissFallsThroughToNotFound(t *testing.T) {
 		t.Fatal("expected file-not-found")
 	}
 	var ce *tftpClientError
-	if !errorsAs(err, &ce) || ce.code != errFileNotFound {
+	if !errors.As(err, &ce) || ce.code != errFileNotFound {
 		t.Fatalf("expected file-not-found, got %v", err)
 	}
-}
-
-// errorsAs is a tiny helper so the test file doesn't have to import
-// errors just for one call.
-func errorsAs(err error, target any) bool {
-	type interfaceErrAs interface {
-		As(any) bool
-	}
-	_ = io.EOF
-	tt, ok := target.(**tftpClientError)
-	if !ok {
-		return false
-	}
-	for err != nil {
-		if ce, ok := err.(*tftpClientError); ok {
-			*tt = ce
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			break
-		}
-		err = u.Unwrap()
-	}
-	return false
 }

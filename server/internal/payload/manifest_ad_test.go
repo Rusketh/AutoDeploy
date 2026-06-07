@@ -53,7 +53,7 @@ func TestManifestPreparesADWhenUnattendDeclaresDomainJoin(t *testing.T) {
 	// Build the world: ISO, AD-enabled unattend, image.
 	iso, _ := isos.Create(ctx, model.ISO{Name: "Win11", OSType: "windows-11"})
 	uaRow, _ := una.Create(ctx, model.Unattend{
-		Name: "ad-ua",
+		Name:         "ad-ua",
 		SettingsJSON: `{"domain_join":{"domain":"corp.example","join_user":"joiner@corp.example","join_password":"secret-not-real","ou":"OU=Lab,DC=corp,DC=example"}}`,
 	})
 	isoID := iso.ID

@@ -18,9 +18,9 @@ type PayloadMirror struct {
 	ID          ID        `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	BaseURL     string    `json:"base_url"`     // e.g. https://mirror-eu.corp.example
-	Site        string    `json:"site"`         // "" matches any site
-	Priority    int       `json:"priority"`     // lower = preferred
+	BaseURL     string    `json:"base_url"` // e.g. https://mirror-eu.corp.example
+	Site        string    `json:"site"`     // "" matches any site
+	Priority    int       `json:"priority"` // lower = preferred
 	Healthy     bool      `json:"healthy"`
 	LastChecked time.Time `json:"last_checked"`
 	CreatedAt   time.Time `json:"created_at"`

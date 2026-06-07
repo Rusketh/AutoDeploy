@@ -126,11 +126,11 @@ func downloadsList(r Repos) http.HandlerFunc {
 func classifyDownload(name string, info os.FileInfo) downloadEntry {
 	low := strings.ToLower(name)
 	d := downloadEntry{
-		Name:     name,
-		Filename: name,
-		Size:     info.Size(),
-		Modified: info.ModTime(),
-		Kind:     dlOther,
+		Name:       name,
+		Filename:   name,
+		Size:       info.Size(),
+		Modified:   info.ModTime(),
+		Kind:       dlOther,
 		GroupLabel: "Other artifacts",
 		GroupIcon:  "i-file",
 	}

@@ -40,17 +40,17 @@ const (
 	EventSoftwareInstallOK     = "software.install_ok"
 	EventSoftwareInstallFailed = "software.install_failed"
 
-	EventMachineFirstSeen     = "machine.first_seen"
-	EventMachineOffline       = "machine.offline"
+	EventMachineFirstSeen      = "machine.first_seen"
+	EventMachineOffline        = "machine.offline"
 	EventMachineHardwareChange = "machine.hardware_change"
 
 	EventUpdateDeployed       = "update.deployed"
 	EventUpdateComplianceFail = "update.compliance_fail"
 
-	EventAuthLoginFailed     = "auth.login_failed"
-	EventBitLockerRecovery   = "bitlocker.recovery_used"
+	EventAuthLoginFailed   = "auth.login_failed"
+	EventBitLockerRecovery = "bitlocker.recovery_used"
 
-	EventSystemStorageLow   = "system.storage_low"
+	EventSystemStorageLow    = "system.storage_low"
 	EventSystemAgentOutdated = "system.agent_outdated"
 )
 

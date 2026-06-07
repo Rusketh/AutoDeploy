@@ -17,12 +17,12 @@ import (
 // new tab. The actual binary swap is operator-driven via the install
 // script.
 type updatesPageData struct {
-	ServerVersion        string
-	LatestServerVersion  string
-	LatestServerURL      string
-	LatestServerChecked  time.Time
-	LatestServerError    string
-	AgentAvailable       []agentAvailability
+	ServerVersion       string
+	LatestServerVersion string
+	LatestServerURL     string
+	LatestServerChecked time.Time
+	LatestServerError   string
+	AgentAvailable      []agentAvailability
 	// UpdateState is one of "up_to_date", "older", "ahead",
 	// "pre_release" or "unknown". The template branches on it
 	// instead of comparing strings, so dev/PR builds (which are

@@ -295,9 +295,9 @@ type validatePINReq struct {
 }
 
 type validatePINResp struct {
-	Granted    bool `json:"granted"`
-	LockedOut  bool `json:"locked_out,omitempty"`
-	AttemptsRemaining int `json:"attempts_remaining,omitempty"`
+	Granted           bool `json:"granted"`
+	LockedOut         bool `json:"locked_out,omitempty"`
+	AttemptsRemaining int  `json:"attempts_remaining,omitempty"`
 }
 
 func handleValidatePIN(r Repos) http.HandlerFunc {

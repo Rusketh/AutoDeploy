@@ -29,9 +29,9 @@ type DetectionRule struct {
 	FileSHA256  string `json:"file_sha256,omitempty"`  // optional; hex digest
 
 	// Registry detection.
-	RegistryHive  string `json:"registry_hive,omitempty"`  // "HKLM" | "HKCU" | etc.
-	RegistryKey   string `json:"registry_key,omitempty"`   // path without hive
-	RegistryValue string `json:"registry_value,omitempty"` // value name
+	RegistryHive   string `json:"registry_hive,omitempty"`   // "HKLM" | "HKCU" | etc.
+	RegistryKey    string `json:"registry_key,omitempty"`    // path without hive
+	RegistryValue  string `json:"registry_value,omitempty"`  // value name
 	RegistryEquals string `json:"registry_equals,omitempty"` // optional value compare
 
 	// MSI detection.
@@ -83,8 +83,8 @@ type InstallStep struct {
 	Description string `json:"description,omitempty"`
 
 	// Per-step result handling.
-	SuccessCodes      []int `json:"success_codes,omitempty"`        // default [0]
-	ContinueOnFailure bool  `json:"continue_on_failure,omitempty"`  // default false (abort)
+	SuccessCodes      []int `json:"success_codes,omitempty"`       // default [0]
+	ContinueOnFailure bool  `json:"continue_on_failure,omitempty"` // default false (abort)
 
 	// copy and unzip both source from one path and write to another;
 	// reusing SourcePath/DestinationPath keeps the schema flat. unzip

@@ -39,7 +39,7 @@ func TestReimageFlowResolvesLatestDefinitions(t *testing.T) {
 		ISOs: isos, Unattend: una, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: imgs,
 		Inventory: inv, Users: users,
-		Resolver:  resolve.New(imgs, isos, una).WithDrivers(drivers).WithLoadouts(loadouts),
+		Resolver: resolve.New(imgs, isos, una).WithDrivers(drivers).WithLoadouts(loadouts),
 	}
 	mux := http.NewServeMux()
 	Register(mux, repos)

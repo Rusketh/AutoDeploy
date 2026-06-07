@@ -207,7 +207,7 @@ func handleMachineUpdates(r Repos) http.HandlerFunc {
 func handleAgentUpdateStatus(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in struct {
-			AgentID  string   `json:"agent_id"`
+			AgentID   string   `json:"agent_id"`
 			KBNumbers []string `json:"kb_numbers"`
 		}
 		if err := decodeJSON(req, &in); err != nil {

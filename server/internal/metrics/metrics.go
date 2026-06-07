@@ -38,22 +38,22 @@ func (g *Gauge) Get() int64  { return g.v.Load() }
 type Registry struct {
 	StartTime time.Time
 
-	HTTPRequestsTotal     *Counter
-	HTTPRequestsByStatus  *labeledCounter
-	HTTPRequestDuration   *labeledCounter // sum of milliseconds — coarse but useful
+	HTTPRequestsTotal    *Counter
+	HTTPRequestsByStatus *labeledCounter
+	HTTPRequestDuration  *labeledCounter // sum of milliseconds — coarse but useful
 
-	PayloadBytesServed    *Counter
-	PayloadInFlight       *Gauge
-	PayloadQueuedWaits    *Counter // increments each time a request had to wait on the semaphore
+	PayloadBytesServed *Counter
+	PayloadInFlight    *Gauge
+	PayloadQueuedWaits *Counter // increments each time a request had to wait on the semaphore
 
 	DeploymentsInProgress *Gauge
 	DeploymentsCompleted  *labeledCounter // by outcome
 	BulkJobsInFlight      *Gauge
 
-	BootMenuRequests      *Counter
-	ManifestRequests      *Counter
-	AgentCheckins         *Counter
-	LogEventsIngested     *Counter
+	BootMenuRequests  *Counter
+	ManifestRequests  *Counter
+	AgentCheckins     *Counter
+	LogEventsIngested *Counter
 }
 
 // New returns a Registry with all counters zeroed.

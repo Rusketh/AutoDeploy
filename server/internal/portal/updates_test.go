@@ -4,9 +4,9 @@ import "testing"
 
 func TestComputeUpdateState(t *testing.T) {
 	cases := []struct {
-		name           string
+		name            string
 		running, latest string
-		want           string
+		want            string
 	}{
 		{"unknown when latest missing", "v0.1.9", "", "unknown"},
 		{"up to date exact match", "v0.1.9", "v0.1.9", "up_to_date"},

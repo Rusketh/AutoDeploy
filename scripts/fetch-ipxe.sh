@@ -150,7 +150,7 @@ place() {
     # place <src> <dst>
     local src="$1" dst="$2"
     if [ ! -f "$src" ]; then
-        echo "  WARN: missing in archive: ${src#$BASE/}" >&2
+        echo "  WARN: missing in archive: ${src#"$BASE"/}" >&2
         return 1
     fi
     install -m 0644 "$src" "$dst"
