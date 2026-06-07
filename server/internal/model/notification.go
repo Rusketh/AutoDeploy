@@ -13,21 +13,21 @@ import (
 
 // Notification is a single in-portal notification for a user.
 type Notification struct {
-	ID         ID        `json:"id"`
-	UserID     int64     `json:"user_id"`
-	OccurredAt time.Time `json:"occurred_at"`
-	Event      string    `json:"event"`
-	Severity   string    `json:"severity"`
-	Title      string    `json:"title"`
-	Body       string    `json:"body"`
-	Link       string    `json:"link"`
+	ID         ID         `json:"id"`
+	UserID     int64      `json:"user_id"`
+	OccurredAt time.Time  `json:"occurred_at"`
+	Event      string     `json:"event"`
+	Severity   string     `json:"severity"`
+	Title      string     `json:"title"`
+	Body       string     `json:"body"`
+	Link       string     `json:"link"`
 	ReadAt     *time.Time `json:"read_at,omitempty"`
 }
 
 // NotificationPreference controls what a user receives per event.
 type NotificationPreference struct {
-	ID     ID    `json:"id"`
-	UserID int64 `json:"user_id"`
+	ID     ID     `json:"id"`
+	UserID int64  `json:"user_id"`
 	Event  string `json:"event"`
 	Portal bool   `json:"portal"`
 	Email  bool   `json:"email"`

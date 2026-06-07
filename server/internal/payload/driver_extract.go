@@ -36,7 +36,7 @@ import (
 
 // INFEntry describes one discovered .inf file inside a driver package.
 type INFEntry struct {
-	Path     string `json:"path"`     // relative path inside the package
+	Path     string `json:"path"` // relative path inside the package
 	Class    string `json:"class"`
 	Provider string `json:"provider"`
 	Version  string `json:"version"`

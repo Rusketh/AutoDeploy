@@ -9,10 +9,10 @@
 //  3. The agent downloads the new binary to a sibling ".new" file,
 //     verifies the SHA-256 against the response, then spawns a
 //     small platform-specific updater script that:
-//       - waits for the agent process to exit (we exit moments after
-//         spawning the updater),
-//       - renames the .new file over the live executable,
-//       - relaunches the agent with the original command-line.
+//     - waits for the agent process to exit (we exit moments after
+//     spawning the updater),
+//     - renames the .new file over the live executable,
+//     - relaunches the agent with the original command-line.
 //
 // The SHA-256 verification is the only authenticator -- never
 // execute a downloaded binary without verifying it against the

@@ -163,18 +163,28 @@ func TestUnzipStepExtractsToDestination(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, "in.zip")
 	zf, err := os.Create(zipPath)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	zw := zip.NewWriter(zf)
 	for _, e := range []struct{ name, body string }{
 		{"hello.txt", "hi"},
 		{"sub/nested.txt", "ok"},
 	} {
 		w, err := zw.Create(e.name)
-		if err != nil { t.Fatal(err) }
-		if _, err := w.Write([]byte(e.body)); err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := zw.Close(); err != nil { t.Fatal(err) }
-	if err := zf.Close(); err != nil { t.Fatal(err) }
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zf.Close(); err != nil {
+		t.Fatal(err)
+	}
 	dest := filepath.Join(dir, "out")
 	runner := &OSRunner{}
 	if err := runner.Unzip(context.Background(), zipPath, dest); err != nil {

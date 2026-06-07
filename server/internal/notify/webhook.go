@@ -72,12 +72,16 @@ func (s *WebhookSender) deliverOne(ctx context.Context, wh model.Webhook, ev Eve
 	var totalDuration time.Duration
 
 	delays := []time.Duration{0, 5 * time.Second, 30 * time.Second}
+retry:
 	for attempt, delay := range delays {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				// Stop retrying when the context is cancelled. A bare
+				// break here would only exit the select, letting the
+				// loop fall through into another doPost on a dead ctx.
 				lastErr = ctx.Err()
-				break
+				break retry
 			case <-time.After(delay):
 			}
 		}

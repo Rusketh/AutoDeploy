@@ -150,9 +150,9 @@ for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm
             # the agent verifies before swapping its binary. Copy both
             # if they exist in the same release bundle.
             for sidecar in "$candidate.version" "$candidate.sha256"; do
-                if [ -f "$src.${sidecar#$candidate.}" ]; then
+                if [ -f "$src.${sidecar#"$candidate".}" ]; then
                     install -m 0644 -o autodeploy -g autodeploy \
-                        "$src.${sidecar#$candidate.}" \
+                        "$src.${sidecar#"$candidate".}" \
                         "$DATA_DIR/downloads/$sidecar"
                 fi
             done

@@ -209,7 +209,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		BitLocker: r.BitLocker, Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
 		Mirrors: r.Mirrors, Runtime: rt,
-		AD:         adSvc,
+		AD:            adSvc,
 		Blobs:         blobs,
 		DomainJoin:    r.DomainJoin,
 		Updates:       r.Updates,

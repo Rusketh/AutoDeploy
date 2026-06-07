@@ -11,14 +11,14 @@ import (
 
 // fakeBackend lets tests script the answers.
 type fakeBackend struct {
-	files     map[string]bool
-	versions  map[string]string
-	registry  map[string]string // hive|key|value -> value
-	products  map[string]bool
+	files    map[string]bool
+	versions map[string]string
+	registry map[string]string // hive|key|value -> value
+	products map[string]bool
 }
 
-func (f *fakeBackend) FileExists(p string) (bool, error)     { return f.files[p], nil }
-func (f *fakeBackend) FileVersion(p string) (string, error)  { return f.versions[p], nil }
+func (f *fakeBackend) FileExists(p string) (bool, error)    { return f.files[p], nil }
+func (f *fakeBackend) FileVersion(p string) (string, error) { return f.versions[p], nil }
 func (f *fakeBackend) MSIProductInstalled(c string) (bool, error) {
 	return f.products[c], nil
 }

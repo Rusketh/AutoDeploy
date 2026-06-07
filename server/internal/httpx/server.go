@@ -147,4 +147,3 @@ func isLoopback(addr string) bool {
 	ip := net.ParseIP(h)
 	return ip != nil && ip.IsLoopback()
 }
-

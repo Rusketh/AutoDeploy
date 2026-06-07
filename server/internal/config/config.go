@@ -28,11 +28,11 @@ type Config struct {
 	DevMode bool
 
 	// Active Directory integration (Phase 10). Empty ADLDAPURL disables AD.
-	ADLDAPURL        string
-	ADBindDN         string
-	ADBindPassword   string
-	ADSearchBase     string
-	ADSkipTLSVerify  bool
+	ADLDAPURL       string
+	ADBindDN        string
+	ADBindPassword  string
+	ADSearchBase    string
+	ADSkipTLSVerify bool
 
 	// Secrets-at-rest encryption key (Phase 12). Hex-encoded 32 bytes.
 	// Empty causes the server to load (or generate) a key file under

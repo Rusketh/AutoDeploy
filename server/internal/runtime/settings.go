@@ -42,13 +42,13 @@ const (
 	keyStorageIPXE        = "storage.ipxe"
 	keyStorageDownloads   = "storage.downloads"
 
-	keyNetHTTPAddr        = "net.http_addr"
-	keyNetHTTPSAddr       = "net.https_addr"
-	keyNetExternalURL     = "net.external_url"
-	keyNetTrustedProxies  = "net.trusted_proxies"
-	keyNetExternalAccess  = "net.external_access"
-	keyNetTLSCertPath     = "net.tls_cert_path"
-	keyNetTLSKeyPath      = "net.tls_key_path"
+	keyNetHTTPAddr       = "net.http_addr"
+	keyNetHTTPSAddr      = "net.https_addr"
+	keyNetExternalURL    = "net.external_url"
+	keyNetTrustedProxies = "net.trusted_proxies"
+	keyNetExternalAccess = "net.external_access"
+	keyNetTLSCertPath    = "net.tls_cert_path"
+	keyNetTLSKeyPath     = "net.tls_key_path"
 
 	// Notification settings.
 	keyNotifyPortalEnabled     = "notify.portal.enabled"
@@ -84,12 +84,10 @@ type Settings struct {
 	env config.Config
 
 	mu sync.RWMutex
-	// cache holds the last-read values; gen increments on every write
-	// so callers that want immediate consistency can re-fetch. Reads
-	// are otherwise served from this cache to avoid hitting SQLite on
-	// every manifest build.
+	// cache holds the last-read values. Reads are served from this cache
+	// to avoid hitting SQLite on every manifest build; writes update the
+	// row and the cache under the lock.
 	cache map[string]string
-	gen   uint64
 }
 
 // New constructs the Settings facade. On first call it seeds the table

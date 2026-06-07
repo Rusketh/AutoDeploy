@@ -19,13 +19,13 @@ const settingKey = "branding"
 
 // Brand is the operator-configured identity.
 type Brand struct {
-	ProductName      string `json:"product_name"`       // "AutoDeploy" by default
+	ProductName      string `json:"product_name"` // "AutoDeploy" by default
 	OrganisationName string `json:"organisation_name"`
 	SupportURL       string `json:"support_url"`
 	SupportPhone     string `json:"support_phone"`
-	LogoDataURL      string `json:"logo_data_url"`      // data: URI of a small SVG/PNG
-	PrimaryColor     string `json:"primary_color"`      // CSS color string
-	OEMManufacturer  string `json:"oem_manufacturer"`   // written to HKLM\...\OEMInformation\Manufacturer
+	LogoDataURL      string `json:"logo_data_url"`    // data: URI of a small SVG/PNG
+	PrimaryColor     string `json:"primary_color"`    // CSS color string
+	OEMManufacturer  string `json:"oem_manufacturer"` // written to HKLM\...\OEMInformation\Manufacturer
 }
 
 // Defaults returns the baseline brand (used when nothing is configured).

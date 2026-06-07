@@ -163,8 +163,8 @@ type Settings struct {
 // needed for products like Windows 10 ESU that require /ato with a
 // specific activation GUID.
 type AdditionalActivation struct {
-	Label        string `json:"label"`                    // e.g. "Windows 10 ESU Year 1"
-	ProductKey   string `json:"product_key"`              // XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+	Label        string `json:"label"`                   // e.g. "Windows 10 ESU Year 1"
+	ProductKey   string `json:"product_key"`             // XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
 	ActivationID string `json:"activation_id,omitempty"` // GUID for /ato; empty = skip
 }
 
