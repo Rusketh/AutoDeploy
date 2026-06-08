@@ -5,8 +5,22 @@
 #
 # Usage:
 #   autodeploy-update [--tag vX.Y.Z] [--data DIR]
+#                     [--token TOKEN | --token-file PATH]
 #
 # Default tag is "latest" (resolved via the GitHub releases API).
+#
+# GitHub rate limits: unauthenticated API access is capped at 60
+# requests/hour per IP, which repeated updates can exhaust ("API rate
+# limit exceeded"). Pass a GitHub Personal Access Token to lift the cap
+# to 5,000/hour (a read-only token is enough; it is also required for a
+# private repo). The token is taken from the first source that has one:
+#   --token TOKEN          (handy, but visible in `ps` -- prefer a file)
+#   --token-file PATH      (first non-comment line of PATH)
+#   $AUTODEPLOY_GITHUB_TOKEN / $GITHUB_TOKEN / $GH_TOKEN
+#   $DATA_DIR/github-token, then /etc/autodeploy/github-token
+# The portal's Update button runs this via sudo (which strips the
+# environment), so for portal-driven updates put the token in a 0600
+# file at $DATA_DIR/github-token (default /var/lib/autodeploy).
 # Stops the autodeploy.service, downloads + SHA-256-verifies the new
 # server binary plus the Windows agent, swaps the server binary,
 # refreshes the downloads directory AND the Boot Client image (kernel +
@@ -30,6 +44,8 @@ set -euo pipefail
 
 TAG=""
 DATA_DIR=/var/lib/autodeploy
+TOKEN=""
+TOKEN_FILE=""
 LOG_PREFIX="[autodeploy-update]"
 
 log() { printf '%s %s\n' "$LOG_PREFIX" "$*"; }
@@ -39,6 +55,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --tag)  TAG="$2"; shift 2 ;;
         --data) DATA_DIR="$2"; shift 2 ;;
+        --token) TOKEN="$2"; shift 2 ;;
+        --token-file) TOKEN_FILE="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^set -euo/p' "$0" | sed 's/^# \?//' | head -n -1
             exit 0 ;;
@@ -50,11 +68,87 @@ if [ "$EUID" -ne 0 ]; then
     die "Must run as root (the portal invokes via sudoers; in CLI use 'sudo')"
 fi
 
-# Resolve "latest" via the public Releases API. Requires no auth for a
-# public repo. The .tag_name field is what we want.
+# --- GitHub authentication (avoids API rate limits) ------------------
+# Resolve a token from --token / --token-file / env / a default file, in
+# that order, then send it on every GitHub request. Authenticated calls
+# get 5,000 req/hour instead of the 60/hour unauthenticated IP cap that
+# makes repeated updates fail with "API rate limit exceeded".
+read_token_file() {
+    # Echo the first non-empty, non-comment line of $1 (whitespace-trimmed).
+    local line
+    [ -f "$1" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+        line="${line%"${line##*[![:space:]]}"}"    # rtrim
+        case "$line" in ''|\#*) continue ;; esac
+        printf '%s' "$line"
+        return 0
+    done < "$1"
+    return 1
+}
+
+if [ -z "$TOKEN" ] && [ -n "$TOKEN_FILE" ]; then
+    TOKEN="$(read_token_file "$TOKEN_FILE")" \
+        || die "could not read a token from --token-file '$TOKEN_FILE'"
+fi
+[ -n "$TOKEN" ] || TOKEN="${AUTODEPLOY_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
+if [ -z "$TOKEN" ]; then
+    for f in "$DATA_DIR/github-token" /etc/autodeploy/github-token; do
+        if t="$(read_token_file "$f")"; then TOKEN="$t"; break; fi
+    done
+fi
+
+# Wrap curl so every GitHub request carries the token when we have one.
+# curl drops the Authorization header on cross-host redirects (release
+# assets on github.com redirect to a CDN), so this is safe for downloads
+# as well as API calls.
+gh_curl() {
+    if [ -n "$TOKEN" ]; then
+        curl -H "Authorization: Bearer $TOKEN" "$@"
+    else
+        curl "$@"
+    fi
+}
+
+if [ -n "$TOKEN" ]; then
+    # Validate up front and surface remaining quota. /rate_limit is exempt
+    # from the rate limit, so this probe is free -- and it turns a bad
+    # token into a clear error instead of a confusing 401 on first fetch.
+    rl="$(mktemp)"
+    code="$(curl -sSL --connect-timeout 10 --retry 2 \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: autodeploy-update" \
+        -o "$rl" -w '%{http_code}' \
+        https://api.github.com/rate_limit 2>/dev/null || true)"
+    case "$code" in
+        200)
+            rem="$(grep -o '"remaining":[0-9]*' "$rl" | head -n1 | cut -d: -f2)"
+            log "GitHub token accepted (~${rem:-?} core API requests left this hour)."
+            ;;
+        401|403)
+            rm -f "$rl"
+            die "GitHub rejected the token (HTTP $code). Use a valid read-only PAT (classic 'public_repo'/'repo', or fine-grained Contents:Read on the repo)."
+            ;;
+        *)
+            log "WARN: could not verify GitHub token (HTTP ${code:-none}); continuing."
+            ;;
+    esac
+    rm -f "$rl"
+    # Carry the token through the self-update re-exec below via the env,
+    # so it never lands on the re-exec command line where `ps` could see it.
+    export AUTODEPLOY_GITHUB_TOKEN="$TOKEN"
+else
+    log "No GitHub token supplied; using unauthenticated API (60 req/hour per-IP cap)."
+    log "  If you keep hitting limits, see --token / --token-file or \$DATA_DIR/github-token."
+fi
+
+# Resolve "latest" via the Releases API. No auth is required for a public
+# repo, but gh_curl sends the token when one is set so this call doesn't
+# eat into the 60/hour unauthenticated cap. The .tag_name field is what we want.
 if [ -z "$TAG" ]; then
     log "Resolving latest release..."
-    TAG=$(curl -sSfL --connect-timeout 10 --retry 2 \
+    TAG=$(gh_curl -sSfL --connect-timeout 10 --retry 2 \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: autodeploy-update" \
         https://api.github.com/repos/Rusketh/AutoDeploy/releases/latest \
@@ -87,7 +181,7 @@ trap 'rm -rf "$WORK"' EXIT
 RAW_BASE="https://raw.githubusercontent.com/Rusketh/AutoDeploy/$TAG/scripts"
 SELF_DST=/usr/local/sbin/autodeploy-update
 if [ -z "${AUTODEPLOY_UPDATE_REEXEC:-}" ]; then
-    if curl -sSfL --connect-timeout 10 --retry 2 \
+    if gh_curl -sSfL --connect-timeout 10 --retry 2 \
             -o "$WORK/updater.sh" "$RAW_BASE/autodeploy-update-linux.sh" 2>/dev/null \
        && [ -s "$WORK/updater.sh" ] \
        && ! cmp -s "$WORK/updater.sh" "$SELF_DST"; then
@@ -123,7 +217,7 @@ fetch() {
     # Downloads to $WORK/<asset>. Aborts the whole script on failure.
     local asset="$1"
     log "  fetching $asset"
-    curl -sSfL --connect-timeout 10 --retry 2 \
+    gh_curl -sSfL --connect-timeout 10 --retry 2 \
         -o "$WORK/$asset" \
         "$GH_BASE/$asset" \
         || die "fetch failed for $asset"
@@ -133,7 +227,7 @@ log "Downloading server binary..."
 fetch "$SERVER_ASSET"
 fetch "$SERVER_ASSET.sha256"
 # .version sidecar: optional pre-v0.1.3, fetch best-effort.
-curl -sSfL --connect-timeout 10 --retry 2 \
+gh_curl -sSfL --connect-timeout 10 --retry 2 \
     -o "$WORK/$SERVER_ASSET.version" "$GH_BASE/$SERVER_ASSET.version" 2>/dev/null \
     || rm -f "$WORK/$SERVER_ASSET.version"
 
@@ -149,7 +243,7 @@ log "Server binary verified."
 # the API is unreachable (air-gapped / rate-limited environments).
 log "Fetching agent binaries..."
 AGENTS=""
-AGENTS=$(curl -sSfL --connect-timeout 10 --retry 2 \
+AGENTS=$(gh_curl -sSfL --connect-timeout 10 --retry 2 \
     -H "Accept: application/vnd.github+json" \
     -H "User-Agent: autodeploy-update" \
     "https://api.github.com/repos/Rusketh/AutoDeploy/releases/tags/$TAG" 2>/dev/null \
@@ -160,20 +254,20 @@ if [ -n "$AGENTS" ]; then
     AGENT_FAIL=0
     for agent in $AGENTS; do
         log "  fetching $agent + sidecars"
-        if ! curl -sSfL --connect-timeout 10 --retry 2 \
+        if ! gh_curl -sSfL --connect-timeout 10 --retry 2 \
                 -o "$WORK/$agent" "$GH_BASE/$agent"; then
             log "  WARN: failed to fetch $agent; skipping"
             rm -f "$WORK/$agent"
             continue
         fi
-        if ! curl -sSfL --connect-timeout 10 --retry 2 \
+        if ! gh_curl -sSfL --connect-timeout 10 --retry 2 \
                 -o "$WORK/$agent.sha256" "$GH_BASE/$agent.sha256"; then
             log "  WARN: failed to fetch $agent.sha256; skipping $agent"
             rm -f "$WORK/$agent" "$WORK/$agent.sha256"
             continue
         fi
         # .version sidecar is optional
-        curl -sSfL --connect-timeout 10 --retry 2 \
+        gh_curl -sSfL --connect-timeout 10 --retry 2 \
             -o "$WORK/$agent.version" "$GH_BASE/$agent.version" 2>/dev/null \
             || rm -f "$WORK/$agent.version"
 
@@ -191,7 +285,7 @@ else
     log "  GitHub API unavailable; falling back to legacy single-agent fetch"
     fetch "autodeploy-agent-windows-amd64.exe"
     fetch "autodeploy-agent-windows-amd64.exe.sha256"
-    curl -sSfL --connect-timeout 10 --retry 2 \
+    gh_curl -sSfL --connect-timeout 10 --retry 2 \
         -o "$WORK/autodeploy-agent-windows-amd64.exe.version" \
         "$GH_BASE/autodeploy-agent-windows-amd64.exe.version" 2>/dev/null \
         || rm -f "$WORK/autodeploy-agent-windows-amd64.exe.version"
@@ -221,9 +315,9 @@ done
 log "Refreshing Boot Client image in $DATA_DIR/ipxe/..."
 install -d -m 0755 -o autodeploy -g autodeploy "$DATA_DIR/ipxe"
 for img in autodeploy-kernel autodeploy-initrd; do
-    if curl -sSfL --connect-timeout 10 --retry 2 \
+    if gh_curl -sSfL --connect-timeout 10 --retry 2 \
             -o "$WORK/$img" "$GH_BASE/$img" 2>/dev/null \
-       && curl -sSfL --connect-timeout 10 --retry 2 \
+       && gh_curl -sSfL --connect-timeout 10 --retry 2 \
             -o "$WORK/$img.sha256" "$GH_BASE/$img.sha256" 2>/dev/null \
        && ( cd "$WORK" && sha256sum -c "$img.sha256" --quiet >/dev/null 2>&1 ); then
         install -m 0644 -o autodeploy -g autodeploy "$WORK/$img" "$DATA_DIR/ipxe/$img"

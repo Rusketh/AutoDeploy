@@ -56,6 +56,43 @@ replaces the server binary, fetches agent and boot-client binaries for **all ava
 OS/architecture combinations** from the release (not just a single platform), and restarts the
 service. If the GitHub API is unreachable it falls back to fetching the legacy single-agent binary.
 
+### Avoiding GitHub API rate limits
+
+To resolve the latest tag and to enumerate the per-platform binaries in a release, the update flow
+calls the GitHub releases API. GitHub caps **unauthenticated** API access at **60 requests/hour per
+IP**, so frequent updates — or several servers sharing one outbound IP — can fail with
+*"API rate limit exceeded"*.
+
+Give the updater a **GitHub Personal Access Token** to raise the ceiling to **5,000 requests/hour**.
+A read-only token is enough: a classic PAT with the `public_repo` scope, or a fine-grained token
+with *Contents: Read* on the repo (use `repo` / private access only if you run from a private fork).
+The script verifies the token against GitHub's `rate_limit` endpoint before it starts, logs how many
+requests you have left, and fails fast with a clear message if the token is rejected.
+
+**For portal-driven updates** (the *Update server* button), put the token in a file the helper reads
+automatically. The portal launches the helper through `sudo`, which strips the environment, so a
+file — not an environment variable — is what makes this work:
+
+```bash
+# Default location the helper checks ($DATA_DIR/github-token, then /etc/autodeploy/github-token)
+printf '%s\n' 'ghp_your_token_here' | sudo tee /var/lib/autodeploy/github-token >/dev/null
+sudo chown autodeploy:autodeploy /var/lib/autodeploy/github-token
+sudo chmod 0600 /var/lib/autodeploy/github-token
+```
+
+Once the file is in place, the portal button and any manual run pick it up with no further flags.
+
+**For a manual run**, point the helper at a file or pass the token directly:
+
+```bash
+sudo autodeploy-update --token-file /var/lib/autodeploy/github-token
+# or pass it inline (less safe — the token is visible in `ps`):
+sudo autodeploy-update --token ghp_your_token_here
+```
+
+When you run the helper directly as root (not via `sudo`), it also honours the
+`AUTODEPLOY_GITHUB_TOKEN`, `GITHUB_TOKEN`, and `GH_TOKEN` environment variables.
+
 ## Updating the agent
 
 The server distributes agent binaries from its `downloads/` directory. Each binary is
