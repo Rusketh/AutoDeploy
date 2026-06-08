@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -71,6 +72,62 @@ func swapBackoff(base, max time.Duration) func() {
 	ob, om := retryBaseBackoff, retryMaxBackoff
 	retryBaseBackoff, retryMaxBackoff = base, max
 	return func() { retryBaseBackoff, retryMaxBackoff = ob, om }
+}
+
+// swapIdleTimeout shrinks the per-attempt idle watchdog for fast tests.
+func swapIdleTimeout(d time.Duration) func() {
+	old := retryIdleTimeout
+	retryIdleTimeout = d
+	return func() { retryIdleTimeout = old }
+}
+
+// TestDownloadFileRecoversFromStalledRead is the regression guard for the
+// "deploy freezes mid-download" bug: the first attempt streams a few bytes
+// then goes silent (TCP open, no data -- a wedged USB NIC), which used to
+// block io.Copy forever. The idle watchdog must abort that read so the copy
+// retries (resuming via Range) and completes -- without hanging.
+func TestDownloadFileRecoversFromStalledRead(t *testing.T) {
+	defer swapBackoff(time.Millisecond, 2*time.Millisecond)()
+	defer swapIdleTimeout(50 * time.Millisecond)()
+	const full = "STREAM-THAT-STALLS-THEN-RESUMES-OK"
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			// First attempt: a few bytes, flush, then go silent for far
+			// longer than the idle timeout. The client must abort, not wait.
+			_, _ = w.Write([]byte(full[:8]))
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+			time.Sleep(500 * time.Millisecond)
+			return
+		}
+		// Retry carries a Range header; honour it and serve the rest.
+		http.ServeContent(w, r, "blob", time.Time{}, strings.NewReader(full))
+	}))
+	defer srv.Close()
+
+	path := filepath.Join(t.TempDir(), "blob")
+	c := New(srv.URL, "x", false)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.DownloadFile(context.Background(), srv.URL+"/blob", path,
+			int64(len(full)), time.Minute, nil, nil)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DownloadFile hung on a stalled read (idle watchdog did not fire)")
+	}
+	if atomic.LoadInt32(&calls) < 2 {
+		t.Errorf("expected a retry after the stall, got %d call(s)", calls)
+	}
+	if got, _ := os.ReadFile(path); string(got) != full {
+		t.Errorf("recovered file = %q, want %q", got, full)
+	}
 }
 
 // TestDownloadFileResumesViaRange seeds a correct partial file and asserts

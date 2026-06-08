@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -152,6 +153,14 @@ func (p *progressReader) Read(b []byte) (int, error) {
 var (
 	retryBaseBackoff = 1 * time.Second
 	retryMaxBackoff  = 30 * time.Second
+	// retryIdleTimeout bounds how long a single download attempt may sit with
+	// ZERO bytes arriving before it aborts the read and lets DownloadFile
+	// retry (resuming via Range). This is what makes maxStall enforceable on a
+	// SILENT stall -- a USB-NIC black-hole where the TCP connection stays open
+	// but no data flows. Without it the body Read blocks forever, so the copy
+	// never returns, never retries, never reports "failed" and never ships its
+	// logs: the deploy just freezes. 30s is far longer than any healthy gap.
+	retryIdleTimeout = 30 * time.Second
 )
 
 // permanentError wraps an HTTP status retrying won't fix (a 4xx) so
@@ -190,7 +199,7 @@ func (c *Client) DownloadFile(ctx context.Context, url, path string, wantSize in
 			}
 			return nil // already complete (resumed deploy, or finished last loop)
 		}
-		n, err := c.appendFrom(ctx, url, path, have, progress)
+		n, err := c.appendFrom(ctx, url, path, have, retryIdleTimeout, progress)
 		if err == nil {
 			if wantSize <= 0 || fileSize(path) >= wantSize {
 				return nil
@@ -235,8 +244,19 @@ func (c *Client) DownloadFile(ctx context.Context, url, path string, wantSize in
 // path, returning the bytes written this call. A 206 is appended; a 200
 // (server ignored Range) restarts the file from zero; a 416 means we already
 // hold all of it. progress reports cumulative bytes (from + written).
-func (c *Client) appendFrom(ctx context.Context, url, path string, from int64, progress func(int64)) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+//
+// idle, when > 0, arms a watchdog that aborts the attempt if no bytes arrive
+// for that long, so a silently stalled connection returns an error promptly
+// instead of blocking io.Copy forever. The caller then retries (resuming via
+// Range), which is what lets the deploy survive a wedged USB NIC.
+func (c *Client) appendFrom(ctx context.Context, url, path string, from int64, idle time.Duration, progress func(int64)) (int64, error) {
+	// Derive a cancellable context for THIS attempt so the idle watchdog can
+	// abort a stalled read without disturbing the parent ctx (which governs
+	// the whole deploy). defer cancel() also tears the request down on return.
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -288,7 +308,34 @@ func (c *Client) appendFrom(ctx context.Context, url, path string, from int64, p
 	if appendMode {
 		startWritten = from
 	}
-	pr := &progressReader{r: resp.Body, cb: func(total int64) {
+
+	// Idle watchdog: idleReader stamps the time of every non-empty read; a
+	// ticker cancels reqCtx if no data has arrived within `idle`, unblocking
+	// the io.Copy below with a context error so the attempt fails fast.
+	body := io.Reader(resp.Body)
+	if idle > 0 {
+		lastRead := time.Now().UnixNano()
+		body = &idleReader{r: resp.Body, last: &lastRead}
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			t := time.NewTicker(idle)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+					if time.Since(time.Unix(0, atomic.LoadInt64(&lastRead))) >= idle {
+						cancel() // stalled -- abort the read; DownloadFile retries
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	pr := &progressReader{r: body, cb: func(total int64) {
 		if progress != nil {
 			progress(startWritten + total)
 		}
@@ -296,6 +343,22 @@ func (c *Client) appendFrom(ctx context.Context, url, path string, from int64, p
 	n, err := io.Copy(f, pr)
 	if progress != nil {
 		progress(startWritten + n)
+	}
+	return n, err
+}
+
+// idleReader stamps *last (Unix nanos, accessed atomically) on every read that
+// returns data, so an idle watchdog can tell a slow-but-progressing transfer
+// from a silently stalled one and abort only the latter.
+type idleReader struct {
+	r    io.Reader
+	last *int64
+}
+
+func (ir *idleReader) Read(b []byte) (int, error) {
+	n, err := ir.r.Read(b)
+	if n > 0 {
+		atomic.StoreInt64(ir.last, time.Now().UnixNano())
 	}
 	return n, err
 }
