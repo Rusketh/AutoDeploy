@@ -308,20 +308,35 @@ for wait in 1 2 3 4 5 6 7 8; do
 done
 
 # USB Ethernet adapters (notably Realtek r8152 / RTL8153) can stall large
-# transfers with hardware offloads enabled on some kernels: small packets
-# pass but a multi-MB/GB download hangs partway. Turn offloads off on USB
-# NICs only (PCIe NICs keep theirs for throughput) so imaging downloads --
-# the agent, then the install media -- don't lock up. Best-effort; needs
-# ethtool, and is skipped silently when it or the device link is absent.
+# transfers two ways on some kernels: with hardware offloads enabled (small
+# packets pass but a multi-MB/GB download hangs partway), and when the device
+# autosuspends during a lull in the copy and the link never wakes. Both leave
+# imaging looping on "Network interrupted - retrying". Turn offloads off on
+# USB NICs only (PCIe NICs keep theirs for throughput) and pin the USB device
+# (and its parents) awake. Best-effort; the offload step needs ethtool and is
+# skipped silently when it or the device link is absent. usbcore.autosuspend=-1
+# on the kernel cmdline is the primary autosuspend fix; this is the per-device
+# fallback for a host booting a cached boot.ipxe that predates that cmdline.
 for dev in /sys/class/net/*; do
     [ -e "$dev" ] || continue
     ifc=${dev##*/}
     [ "$ifc" = "lo" ] && continue
-    case "$(readlink -f "$dev/device" 2>/dev/null)" in
+    devpath="$(readlink -f "$dev/device" 2>/dev/null)"
+    case "$devpath" in
         *usb*)
             if ethtool -K "$ifc" tso off gso off gro off tx off rx off sg off 2>/dev/null; then
                 echo "  USB NIC $ifc: disabled hardware offloads (r8152 stall workaround)"
             fi
+            # Walk from the netdev's device up its USB parent chain, writing
+            # "on" to each power/control to disable runtime autosuspend. Uses
+            # ${p%/*} (POSIX) to climb, so no dirname applet is needed; stops
+            # once the path leaves USB or empties.
+            p="$devpath"
+            while [ -n "$p" ]; do
+                case "$p" in *usb*) : ;; *) break ;; esac
+                [ -e "$p/power/control" ] && echo on > "$p/power/control" 2>/dev/null
+                p="${p%/*}"
+            done
             ;;
     esac
 done
