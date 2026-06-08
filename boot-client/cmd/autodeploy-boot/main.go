@@ -576,6 +576,10 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 			log.Error("download.media",
 				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
 			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media download failed: "+err.Error())
+			// os.Exit below skips main()'s deferred shipLogs, so flush the
+			// retry history to the server here -- a download failure is the one
+			// event we most need to see, and otherwise it leaves no log trace.
+			shipLogs(log, shipper, f.server, f.insecureTLS)
 			os.Exit(1) // partition already wiped; do not reboot into a broken disk
 		}
 	}
@@ -699,7 +703,7 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 				if total > 0 {
 					pct = int(base * 100 / total)
 				}
-				reportStage("Downloading image", "Network interrupted - retrying…", pct)
+				reportStage("Downloading image", "Network issue ("+netErrCause(derr)+") - retrying…", pct)
 				// On a prolonged outage the lease may be gone, not just the
 				// connection: try to bring the link back up and re-DHCP.
 				if attempt%3 == 0 {
@@ -736,7 +740,7 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 				slog.String("role", it.Role),
 				slog.Int("attempt", attempt),
 				slog.String("error", derr.Error()))
-			reportStage("Preparing", "Network interrupted - retrying…", -1)
+			reportStage("Preparing", "Network issue ("+netErrCause(derr)+") - retrying…", -1)
 			reportFile(itemLabel(it))
 			if attempt%3 == 0 {
 				reacquireNetwork(ctx, log)
@@ -1043,6 +1047,39 @@ func reportStage(stage, detail string, percent int) {
 func reportFile(name string) {
 	if activeProgress != nil {
 		activeProgress.File(name)
+	}
+}
+
+// netErrCause maps a download error to a short, URL-free phrase for the
+// on-screen progress line (which must never reveal the server address). It
+// turns an opaque "Network interrupted" into something diagnosable -- most
+// importantly "stalled, no data" for the silent USB-NIC black-hole the
+// httpc idle watchdog now catches, distinguishing it from a clean reset.
+func netErrCause(err error) string {
+	if err == nil {
+		return "no data"
+	}
+	s := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(s, "context canceled"),
+		strings.Contains(s, "deadline exceeded"),
+		strings.Contains(s, "timeout"),
+		strings.Contains(s, "stalled"):
+		return "stalled, no data"
+	case strings.Contains(s, "connection reset"):
+		return "connection reset"
+	case strings.Contains(s, "broken pipe"):
+		return "connection dropped"
+	case strings.Contains(s, "refused"):
+		return "connection refused"
+	case strings.Contains(s, "no route"), strings.Contains(s, "unreachable"):
+		return "network unreachable"
+	case strings.Contains(s, "short read"):
+		return "ended early"
+	case strings.Contains(s, "no such host"), strings.Contains(s, "server misbehaving"):
+		return "name lookup failed"
+	default:
+		return "network error"
 	}
 }
 
