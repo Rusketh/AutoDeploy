@@ -77,7 +77,14 @@ echo Secure Boot detected - verifying the kernel via the signed shim
 shim ${base}/ipxe/static/autodeploy-shim.efi ||
 
 :bootkernel
-kernel ${base}/ipxe/static/autodeploy-kernel console=ttyS0,115200 console=tty1 autodeploy.server=${base} autodeploy.uuid=${uuid}
+# usbcore.autosuspend=-1 stops USB Ethernet adapters (notably the Realtek
+# RTL8153 in Dell USB-C / USB 3.0 dongles, including the "USB-C to Ethernet
+# (PXE Boot)" part) from autosuspending mid-download. Without it the device
+# powers down during a lull in the install-media copy and the link hangs --
+# the deploy then loops on "Network interrupted - retrying". Set on the
+# cmdline it takes effect before any USB NIC enumerates and survives a device
+# reset, unlike a one-shot ethtool tweak after boot.
+kernel ${base}/ipxe/static/autodeploy-kernel console=ttyS0,115200 console=tty1 usbcore.autosuspend=-1 autodeploy.server=${base} autodeploy.uuid=${uuid}
 initrd ${base}/ipxe/static/autodeploy-initrd
 boot || goto fail
 

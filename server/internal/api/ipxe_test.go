@@ -85,9 +85,18 @@ func TestBootIPXEStillServed(t *testing.T) {
 		"shim ${base}/ipxe/static/autodeploy-shim.efi",
 		":bootkernel",
 		"kernel ${base}/ipxe/static/autodeploy-kernel",
+		// USB NICs (Realtek RTL8153 / r8152 dongles) must not autosuspend
+		// mid-download, or the install-media copy stalls. The cmdline param
+		// is the global, before-enumeration fix.
+		"usbcore.autosuspend=-1",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("boot.ipxe missing %q\n%s", want, body)
 		}
+	}
+	// The kernel parameters must stay on the single `kernel` line iPXE boots
+	// -- a stray newline would drop autodeploy.server and the param alike.
+	if !strings.Contains(body, "usbcore.autosuspend=-1 autodeploy.server=${base}") {
+		t.Errorf("usbcore.autosuspend must sit on the kernel line before autodeploy.server:\n%s", body)
 	}
 }

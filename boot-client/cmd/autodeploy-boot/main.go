@@ -323,6 +323,105 @@ func reacquireNetwork(ctx context.Context, log *slog.Logger) {
 		}
 		log.Info("net.reacquire.ok", slog.String("if", ifc))
 	}
+	// A USB NIC that reset under load re-enumerates as a FRESH netdev with
+	// hardware offloads back on and autosuspend active -- the very state that
+	// stalls a large transfer. Re-apply the hardening after every re-DHCP so
+	// the resumed download doesn't hit the same wall that interrupted it.
+	hardenUSBNICs(ctx, log)
+}
+
+// hardenUSBNICs disables the two things that make Realtek RTL8153 / r8152
+// (and similar) USB Ethernet adapters stall a large transfer partway through
+// -- the exact failure that leaves a deploy looping on "Network interrupted -
+// retrying": NIC hardware offloads (TSO/GSO/GRO/checksum), and USB
+// autosuspend (the device powers down during a lull in the copy and the link
+// never comes back). Small control-plane calls pass; the multi-MB/GB payload
+// download hangs. The common Dell USB-C / USB 3.0 PXE adapter is exactly this
+// chipset.
+//
+// The initramfs hardens once at boot and the kernel cmdline carries
+// usbcore.autosuspend=-1, but neither survives a mid-deploy re-enumeration:
+// the new netdev is born with offloads on again. So runDeploy applies this
+// before the downloads and reacquireNetwork re-applies it after each retry.
+// Best-effort and Linux-only -- off Linux the sysfs walk matches nothing and
+// ethtool simply isn't on PATH.
+func hardenUSBNICs(ctx context.Context, log *slog.Logger) {
+	hardenUSBNICsAt(ctx, log, "/sys")
+}
+
+func hardenUSBNICsAt(ctx context.Context, log *slog.Logger, sysfsRoot string) {
+	for _, ifc := range listNetInterfaces(sysfsRoot) {
+		dev, isUSB := usbNetDevicePath(sysfsRoot, ifc)
+		if !isUSB {
+			continue // leave PCIe NICs alone -- they keep offloads for throughput
+		}
+		// Offloads off (best-effort; needs ethtool, bundled in the initrd).
+		_ = exec.CommandContext(ctx, "ethtool", "-K", ifc,
+			"tso", "off", "gso", "off", "gro", "off",
+			"tx", "off", "rx", "off", "sg", "off").Run()
+		// Autosuspend off on the device and the USB chain above it.
+		pinned := disableUSBAutosuspend(dev)
+		log.Info("net.usbnic.harden",
+			slog.String("if", ifc),
+			slog.Int("autosuspend_pinned", pinned))
+	}
+}
+
+// listNetInterfaces returns the non-loopback interface names under
+// <sysfsRoot>/class/net. Empty (not an error) when the directory is absent --
+// e.g. off Linux, or in a test with no fake tree.
+func listNetInterfaces(sysfsRoot string) []string {
+	entries, err := os.ReadDir(filepath.Join(sysfsRoot, "class", "net"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Name() == "lo" {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+// usbNetDevicePath resolves the backing device directory for interface ifc
+// (<sysfsRoot>/class/net/<ifc>/device) and reports whether it sits on the USB
+// bus -- i.e. whether the resolved sysfs path has a "usb" component, the same
+// test the initramfs uses. Returns ("", false) when the link is absent.
+func usbNetDevicePath(sysfsRoot, ifc string) (string, bool) {
+	p, err := filepath.EvalSymlinks(filepath.Join(sysfsRoot, "class", "net", ifc, "device"))
+	if err != nil {
+		return "", false
+	}
+	return p, strings.Contains(p, "usb")
+}
+
+// disableUSBAutosuspend pins a USB device awake by writing "on" to the
+// power/control of devPath and each of its USB ancestors (and -1 to
+// autosuspend_delay_ms where present), walking up the sysfs tree until the
+// path leaves USB. This stops the RTL8153/r8152 autosuspend-mid-transfer
+// hang. Returns how many power/control files it flipped (for logging/tests).
+func disableUSBAutosuspend(devPath string) int {
+	pinned := 0
+	for p := devPath; strings.Contains(p, "usb"); {
+		if writeSysfs(filepath.Join(p, "power", "control"), "on") {
+			pinned++
+		}
+		writeSysfs(filepath.Join(p, "power", "autosuspend_delay_ms"), "-1")
+		parent := filepath.Dir(p)
+		if parent == p {
+			break // reached the filesystem root -- stop
+		}
+		p = parent
+	}
+	return pinned
+}
+
+// writeSysfs writes val to a sysfs attribute, reporting success. Best-effort:
+// a missing or read-only attribute is not an error worth surfacing.
+func writeSysfs(path, val string) bool {
+	return os.WriteFile(path, []byte(val), 0o644) == nil
 }
 
 func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64, shipper *logging.Shipper) {
@@ -351,6 +450,14 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		log.Error("workdir.create", slog.String("error", err.Error()))
 		os.Exit(0)
 	}
+
+	// Harden any USB Ethernet adapter before the multi-MB/GB payload
+	// downloads begin: disable hardware offloads and USB autosuspend, the two
+	// things that stall a large transfer on Realtek RTL8153 / r8152 dongles
+	// (the common Dell USB-C / USB 3.0 PXE adapter). The initramfs does this
+	// at boot too; repeating it here covers a device that enumerated late, or
+	// a boot image whose build host lacked ethtool.
+	hardenUSBNICs(ctx, log)
 
 	reportStage("Preparing", "Fetching drivers, answer file and agent", -1)
 	// Download the small payloads (unattend, drivers) into the work dir,
