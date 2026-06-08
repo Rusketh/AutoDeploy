@@ -115,23 +115,33 @@ deploy.disk.none     block_devices=[]
 ```
 
 then the kernel itself can't see any internal disk — there's nothing for the
-client to pick. On modern **Intel** machines this is almost always the storage
-controller mode: with **RAID / Intel RST ("RAID On")** or **Intel VMD** enabled
-in firmware, the NVMe drive is hidden behind the VMD controller and the plain
-`nvme` driver finds nothing.
+client to pick. The cause is a storage driver the boot image isn't loading, or
+a firmware storage mode. Two common cases:
 
-Two fixes:
+**eMMC storage (small / education machines).** Devices like the **Dell Latitude
+3190** (Intel Gemini Lake) boot from soldered eMMC, which appears as
+`/dev/mmcblk0` — but only when the SDHCI host-controller driver
+(`sdhci-acpi`) is loaded. Current boot images load the MMC/SDHCI module set, so
+the eMMC enumerates and is detected automatically. If you're on an older boot
+image, rebuild it from `scripts/initramfs/build-initramfs.sh` (or update to the
+latest release).
+
+**NVMe behind RAID / Intel VMD (modern Intel machines).** With **RAID / Intel
+RST ("RAID On")** or **Intel VMD** enabled in firmware, the NVMe drive is hidden
+behind the VMD controller and the plain `nvme` driver finds nothing. Two fixes:
 
 - **Load the VMD driver (preferred, no per-machine change).** Current boot
   images load the `vmd` module before `nvme`, so VMD-hidden NVMe drives
-  enumerate normally. If you're on an older boot image, rebuild it from
-  `scripts/initramfs/build-initramfs.sh` (or update to the latest release) so it
-  includes `vmd`.
+  enumerate normally. Older images need rebuilding/updating as above.
 - **Switch the firmware to AHCI.** In the machine's BIOS/UEFI, set the
   SATA/storage mode from *RAID*/*RST* to **AHCI** (or disable *VMD*). The disk
   then appears to the standard driver. (On Windows-preinstalled machines, note
   that flipping to AHCI can stop an *existing* Windows install from booting —
   not a concern when you're about to re-image.)
+
+Either way, the boot image must ship the right kernel module. The image bundles
+the whole module tree, so a current `autodeploy-initrd` already has them — the
+fix for an old image is simply to rebuild or update it.
 
 If instead the block-device list is **non-empty** but the disk you expect was
 filtered out (e.g. it's marked removable, or sits on USB), force it with

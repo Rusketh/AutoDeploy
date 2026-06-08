@@ -161,6 +161,54 @@ if [ ! -e "$ROOTFS/bin/sh" ]; then
     exit 1
 fi
 
+# A working module loader is as critical as the imaging tools. The init
+# script loads every NIC / disk / eMMC driver with `modprobe`; if no usable
+# modprobe is bundled, that loop is a SILENT no-op (errors go to /dev/null)
+# and the image only ever sees drivers built into the kernel. The tell-tale
+# on the rig is a fallback shell where `modprobe` is "not found" and
+# /sys/block shows only loop devices -- no disk, so the deploy reports "no
+# usable target disk found". (Networking can still work if the NIC's driver
+# is built in, which masks the problem until imaging.)
+#
+# The explicit-path copy above grabs /sbin/modprobe on usr-merged hosts;
+# fall back to finding kmod anywhere if it didn't, then guarantee a loader
+# (real kmod, or a busybox with the modprobe applet) or FAIL THE BUILD.
+if [ ! -x "$ROOTFS/sbin/modprobe" ] && [ ! -x "$ROOTFS/usr/sbin/modprobe" ] && [ ! -x "$ROOTFS/usr/bin/modprobe" ]; then
+    MODPROBE="$(command -v modprobe 2>/dev/null || true)"
+    if [ -z "$MODPROBE" ]; then
+        for d in /sbin /usr/sbin /bin /usr/bin /usr/local/sbin; do
+            [ -x "$d/modprobe" ] && { MODPROBE="$d/modprobe"; break; }
+        done
+    fi
+    if [ -n "$MODPROBE" ]; then
+        copy_with_libs "$MODPROBE" 2>/dev/null || true
+        # kmod is one multi-call binary; depmod/insmod sit beside modprobe.
+        for friend in depmod insmod; do
+            fp="$(dirname "$MODPROBE")/$friend"
+            [ -x "$fp" ] && copy_with_libs "$fp" 2>/dev/null || true
+        done
+    fi
+fi
+# Final guarantee: a real kmod modprobe (a regular file, not the busybox
+# applet symlink), OR a busybox that actually carries the modprobe applet.
+modprobe_ok=""
+for d in sbin usr/sbin bin usr/bin; do
+    if [ -f "$ROOTFS/$d/modprobe" ] && [ ! -L "$ROOTFS/$d/modprobe" ]; then
+        modprobe_ok=1
+        break
+    fi
+done
+if [ -z "$modprobe_ok" ] && [ -x "$ROOTFS/bin/busybox" ]; then
+    "$ROOTFS/bin/busybox" modprobe 2>&1 | grep -qi 'applet not found' || modprobe_ok=1
+fi
+if [ -z "$modprobe_ok" ]; then
+    echo "FATAL: no working module loader (modprobe) was bundled." >&2
+    echo "       The init script could not load NIC / disk / eMMC drivers, so the" >&2
+    echo "       image would see no usable disk on real hardware (only loop devices)." >&2
+    echo "       Install kmod on the build host:  apt-get install -y kmod" >&2
+    exit 1
+fi
+
 # Critical imaging tools. Without these a deploy cannot partition (sgdisk),
 # format (mkfs.fat) or make the disk bootable (efibootmgr) -- it would run
 # all the way to the end and then die on the rig. Fail the BUILD instead,
@@ -272,6 +320,33 @@ echo "=== AutoDeploy Boot Client (initramfs) ==="
 # driver sees nothing, no /dev/nvme* appears, and the Boot Client reports
 # "no usable target disk found". vmd must precede nvme so the controller is
 # up before nvme probes.
+#
+# It also includes the MMC/SDHCI set: many small/education machines (e.g.
+# the Dell Latitude 3190, an Intel Gemini Lake device) boot from soldered
+# eMMC, which appears as /dev/mmcblk0 -- but ONLY if the SDHCI host
+# controller driver is loaded. sdhci-acpi drives the eMMC on these Intel
+# SoCs; without it /sys/block is empty and the deploy reports "no usable
+# target disk found", exactly like the VMD case.
+#
+# Resolve the module loader to an ABSOLUTE command once. A bare-name PATH
+# lookup of "modprobe" has bitten us (a fallback shell showing "modprobe not
+# found" while /sys/block held only loop devices -- modules never loaded, so
+# only kernel-built-in drivers worked: NIC up via a built-in driver, but no
+# disk). An absolute path sidesteps any PATH gap, and a loud warning makes a
+# driverless boot obvious instead of a silent no-op.
+MODPROBE=""
+for cand in /sbin/modprobe /usr/sbin/modprobe /bin/modprobe /usr/bin/modprobe; do
+    [ -x "$cand" ] && { MODPROBE="$cand"; break; }
+done
+if [ -z "$MODPROBE" ] && [ -x /bin/busybox ]; then
+    /bin/busybox modprobe 2>&1 | grep -qi 'applet not found' || MODPROBE="/bin/busybox modprobe"
+fi
+if [ -z "$MODPROBE" ]; then
+    echo "WARNING: no modprobe in this boot image -- only built-in drivers will load."
+    echo "         Imaging will likely fail with 'no usable target disk found'."
+    echo "         Rebuild the boot image (the build host was missing kmod)."
+fi
+load_mod() { [ -n "$MODPROBE" ] && $MODPROBE "$1" 2>/dev/null; }
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
@@ -279,6 +354,7 @@ for m in \
     bnx2 bnx2x bnxt_en mlx4_en mlx5_core \
     usbnet mii r8152 ax88179_178a asix cdc_ether cdc_ncm cdc_subset r8153_ecm \
     ahci libahci ata_piix vmd nvme nvme_core \
+    mmc_core mmc_block sdhci sdhci_pci sdhci_acpi cqhci \
     sd_mod sr_mod usb_storage xhci_pci ehci_pci \
     vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
     hyperv_keyboard hid_hyperv \
@@ -287,7 +363,7 @@ for m in \
     evdev vmmouse usbmouse \
     efifb simpledrm vesafb \
     vmwgfx hyperv_fb bochs_drm cirrus qxl virtio_gpu; do
-    modprobe "$m" 2>/dev/null
+    load_mod "$m"
 done
 
 # Synthetic NICs (Hyper-V, virtio) can take a moment to enumerate after
