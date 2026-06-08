@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"github.com/rusketh/autodeploy/boot-client/internal/httpc"
 	"github.com/rusketh/autodeploy/boot-client/internal/logging"
@@ -68,6 +69,7 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 			slog.String("reason", "operator unticked show-progress; deploying on the console for debugging"),
 			slog.Int64("image_id", imageID))
 		g.close()
+		enableConsoleDebugOutput(log)
 		setProgressSink(&consoleProgressSink{log: log})
 		defer setProgressSink(nil)
 		runDeploy(log, f, id, imageID, shipper)
@@ -111,6 +113,30 @@ func guiAccessPIN(ctx context.Context, log *slog.Logger, g *guiSession, c *httpc
 		msg = "Incorrect PIN, try again"
 	}
 	return false
+}
+
+// enableConsoleDebugOutput hands the screen fully back to the text console for
+// a progress-off (debug) deploy. The initramfs silences kernel messages
+// (printk=0) and hides the cursor so neither bleeds through the GUI; with the
+// GUI torn down we want the opposite, so kernel messages -- USB resets, NVMe
+// errors, link drops, the very events behind a stalled deploy -- print live
+// next to the boot client's own logs. It restores kernel console verbosity and
+// the cursor, clears the leftover GUI frame, and prints a short banner.
+// Best-effort and Linux-only: a write that fails (not running under the
+// AutoDeploy initramfs) is ignored.
+func enableConsoleDebugOutput(log *slog.Logger) {
+	// Restore kernel console verbosity. 7 prints err/warning/notice/info --
+	// enough for the NIC and disk diagnostics -- and matches the level the
+	// initramfs itself restores when it drops to its fallback shell.
+	printk := writeSysfs("/proc/sys/kernel/printk", "7")
+	// Clear the leftover GUI frame, home + show the cursor, and label the mode
+	// so the operator knows the progress UI was deliberately turned off.
+	if f, err := os.OpenFile("/dev/console", os.O_WRONLY, 0); err == nil {
+		_, _ = f.WriteString("\033[2J\033[H\033[?25h" +
+			"--- AutoDeploy: imaging on the console (progress UI off for debugging) ---\r\n")
+		_ = f.Close()
+	}
+	log.Info("console.debug.enabled", slog.Bool("kernel_messages_restored", printk))
 }
 
 // guiProgressSink adapts a ui.ProgressScreen to the progressSink interface

@@ -66,9 +66,11 @@ To see what's happening, **uncheck "Show imaging progress"** on the
 image-selection screen before you deploy (it's ticked by default; toggle it
 with the mouse or the **space** bar). With it unchecked, the boot client hands
 the screen back to the text console for the deploy instead of drawing the
-progress bar, so the kernel messages and the boot client's own diagnostics
-print live on the machine — including the bound NIC driver, USB link speed,
-error counters, and each download retry. That's exactly the detail you need to
+progress bar, and re-enables kernel console messages (the boot environment
+silences them so they don't bleed through the graphical UI). Both then print
+live on the machine — the kernel's own USB-reset / disk-error lines alongside
+the boot client's diagnostics: the bound NIC driver, USB link speed, error
+counters, and each download retry. That's exactly the detail you need to
 diagnose a stalled USB NIC when nothing reaches the portal.
 
 The boot-package version shown in the corner of every boot screen tells you
