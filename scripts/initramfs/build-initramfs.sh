@@ -327,6 +327,26 @@ echo "=== AutoDeploy Boot Client (initramfs) ==="
 # controller driver is loaded. sdhci-acpi drives the eMMC on these Intel
 # SoCs; without it /sys/block is empty and the deploy reports "no usable
 # target disk found", exactly like the VMD case.
+#
+# Resolve the module loader to an ABSOLUTE command once. A bare-name PATH
+# lookup of "modprobe" has bitten us (a fallback shell showing "modprobe not
+# found" while /sys/block held only loop devices -- modules never loaded, so
+# only kernel-built-in drivers worked: NIC up via a built-in driver, but no
+# disk). An absolute path sidesteps any PATH gap, and a loud warning makes a
+# driverless boot obvious instead of a silent no-op.
+MODPROBE=""
+for cand in /sbin/modprobe /usr/sbin/modprobe /bin/modprobe /usr/bin/modprobe; do
+    [ -x "$cand" ] && { MODPROBE="$cand"; break; }
+done
+if [ -z "$MODPROBE" ] && [ -x /bin/busybox ]; then
+    /bin/busybox modprobe 2>&1 | grep -qi 'applet not found' || MODPROBE="/bin/busybox modprobe"
+fi
+if [ -z "$MODPROBE" ]; then
+    echo "WARNING: no modprobe in this boot image -- only built-in drivers will load."
+    echo "         Imaging will likely fail with 'no usable target disk found'."
+    echo "         Rebuild the boot image (the build host was missing kmod)."
+fi
+load_mod() { [ -n "$MODPROBE" ] && $MODPROBE "$1" 2>/dev/null; }
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
@@ -343,7 +363,7 @@ for m in \
     evdev vmmouse usbmouse \
     efifb simpledrm vesafb \
     vmwgfx hyperv_fb bochs_drm cirrus qxl virtio_gpu; do
-    modprobe "$m" 2>/dev/null
+    load_mod "$m"
 done
 
 # Synthetic NICs (Hyper-V, virtio) can take a moment to enumerate after
