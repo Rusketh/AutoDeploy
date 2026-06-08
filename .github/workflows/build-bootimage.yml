@@ -8,10 +8,11 @@ name: Build Boot Client image
 # release.yml's `bootimage` job, NOT here. A `release: published` trigger
 # would never fire for our releases, because they're published by
 # GITHUB_TOKEN (via auto-tag.yml's `gh workflow run`), and GitHub
-# suppresses workflow runs triggered by GITHUB_TOKEN events. This file is
-# kept ONLY for `workflow_dispatch` -- a manual, on-demand build that
-# produces the kernel + initrd as a downloadable workflow artifact (handy
-# for testing a boot-image change without cutting a release).
+# suppresses workflow runs triggered by GITHUB_TOKEN events. So this file
+# does NOT attach to releases; it builds the kernel + initrd as a
+# downloadable workflow artifact -- on demand (workflow_dispatch) and
+# automatically on PRs / main pushes that touch the boot image -- handy for
+# testing a boot-image change on real hardware without cutting a release.
 #
 # Outputs (as a `bootimage` workflow artifact):
 #   - autodeploy-kernel        Linux kernel (Ubuntu generic: broad NIC +
@@ -31,9 +32,25 @@ name: Build Boot Client image
 
 on:
   workflow_dispatch: {}
+  # Build the image automatically when the boot client or the initramfs
+  # assembly changes, so a downloadable kernel+initrd artifact is always
+  # available to test a PR on real hardware (and on main) without
+  # hand-running the workflow. Release ATTACHMENT still happens only in
+  # release.yml; this just produces the test artifact.
+  pull_request:
+    paths:
+      - 'boot-client/**'
+      - 'scripts/initramfs/**'
+      - '.github/workflows/build-bootimage.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'boot-client/**'
+      - 'scripts/initramfs/**'
+      - '.github/workflows/build-bootimage.yml'
 
 permissions:
-  contents: write    # to attach the artifacts to the release
+  contents: read     # only uploads a workflow artifact; no release write here
 
 jobs:
   build:
