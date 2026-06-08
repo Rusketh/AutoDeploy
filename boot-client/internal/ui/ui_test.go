@@ -88,6 +88,54 @@ func TestMenuEscapeCancels(t *testing.T) {
 	}
 }
 
+func TestMenuShowProgressToggle(t *testing.T) {
+	th := testTheme(t)
+	m := NewMenuScreen("Deploy", "pick one", []MenuItem{{Title: "A"}, {Title: "B"}})
+	m.Version = "v1.2.3"
+	if !m.ShowProgress {
+		t.Fatalf("ShowProgress should default to true (ticked)")
+	}
+	drawInto(t, m, th) // computes cbRect
+	// Space toggles it off without choosing or cancelling.
+	if a := m.Handle(input.Event{Type: input.Rune, Rune: ' '}); a != ActionRedraw {
+		t.Errorf("space action = %v, want Redraw", a)
+	}
+	if m.ShowProgress {
+		t.Errorf("space should untick ShowProgress")
+	}
+	// A non-space rune is ignored.
+	if a := m.Handle(input.Event{Type: input.Rune, Rune: 'x'}); a != ActionNone {
+		t.Errorf("rune 'x' action = %v, want None", a)
+	}
+	// Clicking the checkbox re-ticks it -- and must NOT choose an image.
+	r := m.cbRect
+	a := m.Handle(input.Event{Type: input.PointerDown, X: (r.Min.X + r.Max.X) / 2, Y: (r.Min.Y + r.Max.Y) / 2})
+	if a != ActionRedraw {
+		t.Errorf("checkbox click action = %v, want Redraw", a)
+	}
+	if !m.ShowProgress {
+		t.Errorf("checkbox click should re-tick ShowProgress")
+	}
+	if m.Chosen != -1 {
+		t.Errorf("checkbox click must not choose an image; Chosen=%d", m.Chosen)
+	}
+}
+
+// TestScreensRenderVersion exercises the version footer on every imaging
+// screen: Draw must not panic with a version set.
+func TestScreensRenderVersion(t *testing.T) {
+	th := testTheme(t)
+	m := NewMenuScreen("Deploy", "", []MenuItem{{Title: "A"}})
+	m.Version = "v9.9.9"
+	drawInto(t, m, th)
+	p := NewProgressScreen("Deploying")
+	p.Version = "v9.9.9"
+	drawInto(t, p, th)
+	pin := NewPINScreen("Locked")
+	pin.Version = "v9.9.9"
+	drawInto(t, pin, th)
+}
+
 func TestPINEntryAndMasking(t *testing.T) {
 	th := testTheme(t)
 	p := NewPINScreen("Locked")

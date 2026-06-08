@@ -14,6 +14,9 @@ import (
 // behaviour (input is ignored during deploy).
 type ProgressScreen struct {
 	Title string
+	// Version is the boot-client build version, shown in the corner. Set
+	// once before the screen is run; not mutated during the deploy.
+	Version string
 
 	mu      sync.Mutex
 	stage   string
@@ -89,6 +92,7 @@ func (p *ProgressScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 		drawCentered(img, th.Small, th.Muted, cx, by+barH+88, file)
 	}
 	drawCentered(img, th.Small, th.Muted, cx, b.Max.Y-40, "Do not power off this machine")
+	drawVersion(img, th, b, p.Version)
 }
 
 // Handle ignores input -- the deploy is not interruptible from the UI.

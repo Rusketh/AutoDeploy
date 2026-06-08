@@ -43,7 +43,7 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 	for _, it := range resp.Items {
 		items = append(items, ui.MenuItem{Title: it.Name, Desc: it.Description})
 	}
-	choice := g.menu(title, "Select a configuration to deploy", items)
+	choice, showProgress := g.menu(title, "Select a configuration to deploy", items)
 	if choice < 0 {
 		log.Info("gui.cancel", slog.String("reason", "menu cancelled"))
 		return true
@@ -54,6 +54,24 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 		imageID = resp.Reimage.ImageID
 	} else {
 		imageID = resp.Items[choice-base].ImageID
+	}
+
+	// Operator unticked "Show imaging progress": hand the screen back to the
+	// text console for the deploy so the kernel and boot-client logs are
+	// visible on the machine. This is the way to debug a deploy that stalls
+	// before it can ship any logs to the portal -- e.g. a USB NIC that wedges
+	// the payload download. Tear the GUI down (fb.Close restores the text
+	// console), route stage updates to the log so progress still scrolls past,
+	// then deploy with everything going to the console.
+	if !showProgress {
+		log.Info("gui.progress.disabled",
+			slog.String("reason", "operator unticked show-progress; deploying on the console for debugging"),
+			slog.Int64("image_id", imageID))
+		g.close()
+		setProgressSink(&consoleProgressSink{log: log})
+		defer setProgressSink(nil)
+		runDeploy(log, f, id, imageID, shipper)
+		return true
 	}
 
 	// Deploy with a live progress screen. Install the GUI progress sink so
@@ -105,4 +123,37 @@ func (s *guiProgressSink) Stage(stage, detail string, percent int) {
 
 func (s *guiProgressSink) File(name string) {
 	s.scr.SetFile(name)
+}
+
+// consoleProgressSink logs deploy stage and current-file transitions to the
+// boot client's logger (which writes to the console) when the operator turned
+// the graphical progress screen OFF. It logs only on change -- never on the
+// per-chunk percentage updates that share a stage+detail -- so the console
+// shows readable progress and stall messages without a flood, interleaved with
+// the slog diagnostics (NIC driver, link speed, retries) that make a stuck
+// deploy debuggable.
+type consoleProgressSink struct {
+	log        *slog.Logger
+	lastStage  string
+	lastDetail string
+	lastFile   string
+}
+
+func (s *consoleProgressSink) Stage(stage, detail string, percent int) {
+	if stage == s.lastStage && detail == s.lastDetail {
+		return
+	}
+	s.lastStage, s.lastDetail = stage, detail
+	s.log.Info("deploy.progress",
+		slog.String("stage", stage),
+		slog.String("detail", detail),
+		slog.Int("percent", percent))
+}
+
+func (s *consoleProgressSink) File(name string) {
+	if name == "" || name == s.lastFile {
+		return
+	}
+	s.lastFile = name
+	s.log.Info("deploy.progress.file", slog.String("file", name))
 }

@@ -12,6 +12,7 @@ import (
 type PINScreen struct {
 	Title   string
 	Message string // error/status line (e.g. "Incorrect PIN, 2 tries left")
+	Version string // boot-client build version, shown in the corner
 	value   []rune
 	maxLen  int
 
@@ -83,6 +84,7 @@ func (p *PINScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 	drawCentered(img, th.Body, th.OnPrimary, (p.submitR.Min.X+p.submitR.Max.X)/2, p.submitR.Min.Y+37, "Unlock")
 
 	drawCentered(img, th.Small, th.Muted, cx, b.Max.Y-40, "Type your PIN · Enter unlock · Esc cancel")
+	drawVersion(img, th, b, p.Version)
 }
 
 func (p *PINScreen) Handle(ev input.Event) Action {

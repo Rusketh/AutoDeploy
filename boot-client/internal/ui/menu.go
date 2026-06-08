@@ -16,22 +16,37 @@ type MenuItem struct {
 }
 
 // MenuScreen is the deploy/re-image selection list. Keyboard: up/down to
-// move, enter to choose, esc to cancel. Mouse: hover highlights, click
-// chooses. Selected index is read after Run returns ActionDone; Cancelled
+// move, enter to choose, space to toggle the progress checkbox, esc to
+// cancel. Mouse: hover highlights, click chooses, click the checkbox to
+// toggle it. Selected index is read after Run returns ActionDone; Cancelled
 // is true on ActionCancel.
 type MenuScreen struct {
-	Title     string
-	Subtitle  string
-	Items     []MenuItem
-	sel       int
-	rowRects  []image.Rectangle // computed each Draw, used for hit-testing
+	Title    string
+	Subtitle string
+	Items    []MenuItem
+	sel      int
+	rowRects []image.Rectangle // computed each Draw, used for hit-testing
+	cbRect   image.Rectangle   // checkbox hit area (box + label), computed each Draw
+
+	// ShowProgress is the state of the "Show imaging progress" checkbox.
+	// Ticked (true) by default, which keeps the normal graphical progress
+	// screen during imaging. Unticking it hands the screen back to the text
+	// console for the deploy so kernel and boot-client logs are visible on
+	// the machine -- the way to debug a deploy that stalls before it can ship
+	// any logs to the portal (e.g. a USB NIC that wedges the download). Read
+	// after Run returns.
+	ShowProgress bool
+	// Version is the boot-client build version, shown in the corner so the
+	// operator can confirm which boot package the machine loaded.
+	Version string
+
 	Chosen    int
 	Cancelled bool
 }
 
-// NewMenuScreen builds a menu.
+// NewMenuScreen builds a menu. The progress checkbox starts ticked.
 func NewMenuScreen(title, subtitle string, items []MenuItem) *MenuScreen {
-	return &MenuScreen{Title: title, Subtitle: subtitle, Items: items, Chosen: -1}
+	return &MenuScreen{Title: title, Subtitle: subtitle, Items: items, Chosen: -1, ShowProgress: true}
 }
 
 // Selected returns the current highlighted index (for tests / callers).
@@ -72,12 +87,47 @@ func (m *MenuScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 		}
 		y += rowH + gap
 	}
+
+	// "Show imaging progress" checkbox, left-aligned under the rows. Ticked
+	// (default) keeps the graphical progress screen; unticking it hands the
+	// screen to the console during imaging so logs are visible for debugging.
+	m.drawCheckbox(img, th, x0, y+6)
+
 	drawCentered(img, th.Small, th.Muted, cx, b.Max.Y-40,
-		"↑/↓ select · Enter confirm · Esc cancel · or click")
+		"↑/↓ select · Enter deploy · Space toggle progress · Esc cancel")
+	drawVersion(img, th, b, m.Version)
+}
+
+// drawCheckbox renders the "Show imaging progress" toggle at (x,y) and records
+// its hit area (box + label) in cbRect. A filled box reads as ticked, an
+// outline-only box as unticked -- so it never depends on a check-mark glyph
+// being present in the bundled font.
+func (m *MenuScreen) drawCheckbox(img *image.RGBA, th *Theme, x, y int) {
+	const boxSz = 24
+	box := image.Rect(x, y, x+boxSz, y+boxSz)
+	fillRoundRect(img, box, 5, th.Panel)
+	strokeRect(img, box, th.Primary)
+	if m.ShowProgress {
+		inset := image.Rect(box.Min.X+5, box.Min.Y+5, box.Max.X-5, box.Max.Y-5)
+		fillRoundRect(img, inset, 3, th.Primary)
+	}
+	label := "Show imaging progress"
+	lx := box.Max.X + 12
+	drawText(img, th.Body, th.Text, lx, box.Min.Y+18, label)
+	drawText(img, th.Small, th.Muted, box.Min.X, box.Max.Y+22,
+		"Uncheck to watch the console while imaging (for debugging)")
+	lw := textWidth(th.Body, label)
+	m.cbRect = image.Rect(box.Min.X, box.Min.Y, lx+lw, box.Max.Y)
 }
 
 func (m *MenuScreen) Handle(ev input.Event) Action {
 	switch ev.Type {
+	case input.Rune:
+		// Space toggles the "Show imaging progress" checkbox.
+		if ev.Rune == ' ' {
+			m.ShowProgress = !m.ShowProgress
+			return ActionRedraw
+		}
 	case input.KeyPress:
 		switch ev.Key {
 		case input.KeyUp:
@@ -103,6 +153,11 @@ func (m *MenuScreen) Handle(ev input.Event) Action {
 			return ActionRedraw
 		}
 	case input.PointerDown:
+		// Clicking the checkbox toggles it -- it must not choose an image.
+		if pointIn(ev.X, ev.Y, m.cbRect) {
+			m.ShowProgress = !m.ShowProgress
+			return ActionRedraw
+		}
 		if i := m.hit(ev.X, ev.Y); i >= 0 {
 			m.sel = i
 			m.Chosen = i
