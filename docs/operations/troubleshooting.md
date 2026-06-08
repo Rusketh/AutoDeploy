@@ -52,6 +52,29 @@ is missing. See [Payloads → ISOs](../portal/payloads.md#isos).
 If an [access PIN](../portal/settings.md#access-pin) is set, the boot client must submit a valid
 PIN before it can deploy. Check the PIN under Settings → Access PIN.
 
+## A deploy stalls partway through, and no logs reach the portal
+
+A deploy that gets past the image-selection screen but then stops — a frozen
+progress bar, nothing on the [logs page](../portal/logs.md) — is usually a
+**network adapter that stops carrying the payload download**. USB Ethernet
+adapters (the Realtek RTL8153 / r8152 in most Dell USB-C and USB 3.0 PXE
+dongles) are the common culprit: they pull the kernel and initramfs fine over
+iPXE, then wedge once the multi-GB media transfer starts. Because the link is
+down, the client can't ship its logs, so the portal stays empty.
+
+To see what's happening, **uncheck "Show imaging progress"** on the
+image-selection screen before you deploy (it's ticked by default; toggle it
+with the mouse or the **space** bar). With it unchecked, the boot client hands
+the screen back to the text console for the deploy instead of drawing the
+progress bar, so the kernel messages and the boot client's own diagnostics
+print live on the machine — including the bound NIC driver, USB link speed,
+error counters, and each download retry. That's exactly the detail you need to
+diagnose a stalled USB NIC when nothing reaches the portal.
+
+The boot-package version shown in the corner of every boot screen tells you
+which release is running — confirm it's the one you expect before digging
+further. See also [PXE & boot setup](../install/pxe-and-boot.md).
+
 ## A machine doesn't appear in inventory
 
 Machines appear automatically the first time they network-boot or an agent checks in (they are

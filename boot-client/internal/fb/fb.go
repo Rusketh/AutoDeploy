@@ -134,11 +134,19 @@ func (fb *Framebuffer) Flush() {
 		fb.rOff, fb.gOff, fb.bOff, fb.rLen, fb.gLen, fb.bLen)
 }
 
-// Close unmaps and closes the device.
+// Close unmaps and closes the device. It also restores the text console we
+// took into graphics mode in Open, so after the GUI tears down (the operator
+// cancelled, or unticked "Show imaging progress" to debug on the console) the
+// kernel and boot-client logs are visible again instead of a blank,
+// graphics-mode console.
 func (fb *Framebuffer) Close() error {
 	if fb.mem != nil {
 		_ = unix.Munmap(fb.mem)
 		fb.mem = nil
+	}
+	if fb.vt != nil {
+		fb.vt.release()
+		fb.vt = nil
 	}
 	return fb.f.Close()
 }

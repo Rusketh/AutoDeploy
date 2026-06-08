@@ -62,32 +62,40 @@ func startGUI(log *slog.Logger, brand brandResp) *guiSession {
 	}
 }
 
+// close tears the GUI down: it stops input, releases the framebuffer and
+// restores the text console (see fb.Close). Idempotent -- callers may close
+// early to hand the screen back to the console for a deploy, and the deferred
+// close then becomes a no-op.
 func (g *guiSession) close() {
 	if g == nil {
 		return
 	}
 	if g.reader != nil {
 		g.reader.Close()
+		g.reader = nil
 	}
 	if g.fb != nil {
 		_ = g.fb.Close()
+		g.fb = nil
 	}
 }
 
-// menu shows the graphical menu and returns the chosen item index, or -1 if
-// cancelled.
-func (g *guiSession) menu(title, subtitle string, items []ui.MenuItem) int {
+// menu shows the graphical menu and returns the chosen item index (-1 if
+// cancelled) and whether the operator left the progress UI enabled.
+func (g *guiSession) menu(title, subtitle string, items []ui.MenuItem) (choice int, showProgress bool) {
 	scr := ui.NewMenuScreen(title, subtitle, items)
+	scr.Version = Version
 	if g.app.Run(scr, g.reader.Events()) == ui.ActionDone {
-		return scr.Chosen
+		return scr.Chosen, scr.ShowProgress
 	}
-	return -1
+	return -1, scr.ShowProgress
 }
 
 // pin shows the PIN screen and returns the entered PIN, or "" if cancelled.
 // message is an optional status/error line.
 func (g *guiSession) pin(title, message string) (string, bool) {
 	scr := ui.NewPINScreen(title)
+	scr.Version = Version
 	scr.Message = message
 	if g.app.Run(scr, g.reader.Events()) == ui.ActionDone {
 		return scr.Entered, true
@@ -99,6 +107,7 @@ func (g *guiSession) pin(title, message string) (string, bool) {
 // on a ticker in the background so deploy code can call Set(...) freely.
 func (g *guiSession) progress(ctx context.Context, title string) (*ui.ProgressScreen, func()) {
 	scr := ui.NewProgressScreen(title)
+	scr.Version = Version
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		t := time.NewTicker(200 * time.Millisecond)

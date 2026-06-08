@@ -90,6 +90,19 @@ func textWidth(face font.Face, s string) int {
 	return d.MeasureString(s).Round()
 }
 
+// drawVersion renders the boot-client build version in the bottom-right
+// corner. Every imaging screen shows it so the operator can confirm which
+// boot package the machine loaded -- the first fact to establish when a
+// deploy misbehaves. An empty version draws nothing.
+func drawVersion(dst *image.RGBA, th *Theme, b image.Rectangle, version string) {
+	if version == "" {
+		return
+	}
+	label := "boot " + version
+	w := textWidth(th.Small, label)
+	drawText(dst, th.Small, th.Muted, b.Max.X-w-20, b.Max.Y-40, label)
+}
+
 // parseHexColor parses "#rrggbb" / "rrggbb"; returns def on failure.
 func parseHexColor(s string, def color.RGBA) color.RGBA {
 	if len(s) > 0 && s[0] == '#' {
