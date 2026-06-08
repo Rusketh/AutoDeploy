@@ -458,6 +458,11 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// at boot too; repeating it here covers a device that enumerated late, or
 	// a boot image whose build host lacked ethtool.
 	hardenUSBNICs(ctx, log)
+	// Record what each USB NIC is actually running (bound driver, USB link
+	// speed, error counters, recent dmesg) before the downloads. The adapter
+	// pulled the kernel+initrd over iPXE, so a payload stall now is the Linux
+	// driver layer -- this baseline makes it diagnosable from the shipped logs.
+	logUSBNICDiagnostics(ctx, log)
 
 	reportStage("Preparing", "Fetching drivers, answer file and agent", -1)
 	// Download the small payloads (unattend, drivers) into the work dir,
@@ -703,6 +708,11 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 				if total > 0 {
 					pct = int(base * 100 / total)
 				}
+				// Capture the NIC's state once early into a stall (counters have
+				// moved by now) so the shipped logs show what the adapter did.
+				if attempt == 2 {
+					logUSBNICDiagnostics(ctx, log)
+				}
 				reportStage("Downloading image", "Network issue ("+netErrCause(derr)+") - retrying…", pct)
 				// On a prolonged outage the lease may be gone, not just the
 				// connection: try to bring the link back up and re-DHCP.
@@ -740,6 +750,9 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 				slog.String("role", it.Role),
 				slog.Int("attempt", attempt),
 				slog.String("error", derr.Error()))
+			if attempt == 2 {
+				logUSBNICDiagnostics(ctx, log)
+			}
 			reportStage("Preparing", "Network issue ("+netErrCause(derr)+") - retrying…", -1)
 			reportFile(itemLabel(it))
 			if attempt%3 == 0 {
@@ -777,7 +790,10 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 	if err := c.DownloadFile(ctx, info.URL, dst, 0, agentStallBudget, nil,
 		func(attempt int, derr error) {
 			log.Warn("agent.retry", slog.Int("attempt", attempt), slog.String("error", derr.Error()))
-			reportStage("Preparing", "Network interrupted - retrying…", -1)
+			if attempt == 2 {
+				logUSBNICDiagnostics(ctx, log)
+			}
+			reportStage("Preparing", "Network issue ("+netErrCause(derr)+") - retrying…", -1)
 			reportFile("management agent")
 		}); err != nil {
 		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
