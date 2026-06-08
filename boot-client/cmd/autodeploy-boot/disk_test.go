@@ -77,6 +77,22 @@ func TestDetectInternalDisksSingleSATA(t *testing.T) {
 	}
 }
 
+func TestDetectInternalDisksEMMC(t *testing.T) {
+	root := canonRoot(t)
+	// Onboard eMMC (non-removable) is a real target on some small machines;
+	// it must not be filtered. An NVMe is still preferred over it.
+	fakeDisk(t, root, "mmcblk0", "0", "61071360",
+		filepath.Join(root, "devices", "pci0000:00", "0000:00:1a.0", "mmc_host", "mmc0"))
+	if got := detectInternalDisks(root, "/dev"); !reflect.DeepEqual(got, []string{"/dev/mmcblk0"}) {
+		t.Fatalf("eMMC-only detect = %v, want [/dev/mmcblk0]", got)
+	}
+	fakeDisk(t, root, "nvme0n1", "0", "1000215216",
+		filepath.Join(root, "devices", "pci0000:00", "0000:00:1d.0", "nvme", "nvme0"))
+	if got := detectInternalDisks(root, "/dev"); !reflect.DeepEqual(got, []string{"/dev/nvme0n1", "/dev/mmcblk0"}) {
+		t.Fatalf("nvme+eMMC detect = %v, want [/dev/nvme0n1 /dev/mmcblk0]", got)
+	}
+}
+
 func TestDetectInternalDisksNoneAndAbsent(t *testing.T) {
 	root := canonRoot(t)
 	// Only ineligible/removable devices present -> no candidates.

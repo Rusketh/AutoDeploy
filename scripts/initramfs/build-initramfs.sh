@@ -265,13 +265,20 @@ echo "=== AutoDeploy Boot Client (initramfs) ==="
 # PCI part. Without a USB-Ethernet driver such a machine chainloads iPXE
 # fine (the firmware drives the NIC) but has no netdev once Linux takes
 # over, so the DHCP loop below finds nothing and the menu never loads.
+#
+# The disk set includes `vmd`: on modern Intel machines (and most Dell
+# machines shipped with "RAID On") the NVMe drive sits behind the Intel
+# Volume Management Device. Without the vmd driver loaded FIRST, the nvme
+# driver sees nothing, no /dev/nvme* appears, and the Boot Client reports
+# "no usable target disk found". vmd must precede nvme so the controller is
+# up before nvme probes.
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
     e1000 e1000e igb igc ixgbe i40e tg3 r8169 atlantic \
     bnx2 bnx2x bnxt_en mlx4_en mlx5_core \
     usbnet mii r8152 ax88179_178a asix cdc_ether cdc_ncm cdc_subset r8153_ecm \
-    ahci libahci ata_piix nvme nvme_core \
+    ahci libahci ata_piix vmd nvme nvme_core \
     sd_mod sr_mod usb_storage xhci_pci ehci_pci \
     vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
     hyperv_keyboard hid_hyperv \
