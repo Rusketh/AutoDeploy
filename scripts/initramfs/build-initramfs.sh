@@ -307,6 +307,56 @@ for wait in 1 2 3 4 5 6 7 8; do
     sleep 1
 done
 
+# USB NIC driver binding + diagnostics. The adapter already pulled the kernel
+# and initrd over iPXE/firmware to get us here, so the hardware, cable and
+# link handle large transfers fine -- a stall now is the LINUX side. Two
+# things to get right before we lean on it:
+#   1. Bind the proper VENDOR driver. A Realtek RTL8153 (idVendor 0bda) driven
+#      by a generic CDC driver (cdc_ether / cdc_ncm / r8153_ecm) rather than
+#      r8152 passes small packets but stalls sustained transfers -- exactly the
+#      "menu works, payload download hangs" symptom. If one landed on a CDC
+#      driver, move it to r8152.
+#   2. Print what each USB NIC is actually running -- driver, USB link speed
+#      (480 = USB 2.0, 5000 = USB 3.0), MTU, carrier -- so a stall is
+#      diagnosable from the console instead of guessed at.
+rebound=0
+for dev in /sys/class/net/*; do
+    [ -e "$dev" ] || continue
+    ifc=${dev##*/}
+    [ "$ifc" = "lo" ] && continue
+    devpath="$(readlink -f "$dev/device" 2>/dev/null)"
+    case "$devpath" in *usb*) : ;; *) continue ;; esac
+    drv="$(readlink -f "$dev/device/driver" 2>/dev/null)"; drv=${drv##*/}
+    intf=${devpath##*/}     # USB interface, e.g. 1-1:1.0
+    usbdev=${devpath%/*}    # USB device dir, e.g. .../1-1 (holds idVendor)
+    vid="$(cat "$usbdev/idVendor" 2>/dev/null)"
+    # USB link speed (Mbps) from the nearest 'speed' file up the chain.
+    spd=""; p="$devpath"
+    while [ -n "$p" ]; do
+        case "$p" in *usb*) : ;; *) break ;; esac
+        [ -f "$p/speed" ] && { spd="$(cat "$p/speed" 2>/dev/null)"; break; }
+        p="${p%/*}"
+    done
+    echo "  USB NIC $ifc: driver=${drv:-none} vendor=${vid:-?} usb_speed=${spd:-?}Mbps mtu=$(cat "$dev/mtu" 2>/dev/null) carrier=$(cat "$dev/carrier" 2>/dev/null)"
+    # Realtek (0bda) on a generic CDC driver -> rebind to the r8152 vendor
+    # driver. Gated on the Realtek vendor id so an ASIX/other genuinely-CDC
+    # adapter is never disturbed. Best-effort: if r8152 can't claim it the
+    # link is no worse off than it was.
+    if [ "$vid" = "0bda" ] && [ -d /sys/bus/usb/drivers/r8152 ]; then
+        case "$drv" in
+            cdc_ether|cdc_ncm|cdc_subset|r8153_ecm)
+                echo "    $ifc: Realtek on $drv -> rebinding to r8152 (vendor driver)"
+                echo -n "$intf" > "/sys/bus/usb/drivers/$drv/unbind" 2>/dev/null
+                echo -n "$intf" > /sys/bus/usb/drivers/r8152/bind 2>/dev/null
+                rebound=1
+                ;;
+        esac
+    fi
+done
+# A rebind tears the old netdev down and brings a new one up; give it a moment
+# to enumerate before the offload/autosuspend and DHCP loops below re-scan.
+[ "$rebound" = "1" ] && sleep 2
+
 # USB Ethernet adapters (notably Realtek r8152 / RTL8153) can stall large
 # transfers two ways on some kernels: with hardware offloads enabled (small
 # packets pass but a multi-MB/GB download hangs partway), and when the device
