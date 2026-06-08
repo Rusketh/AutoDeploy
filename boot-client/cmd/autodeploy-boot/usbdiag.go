@@ -96,6 +96,37 @@ func usbLinkSpeedMbps(sysfsRoot, ifc string) string {
 	return ""
 }
 
+// usbAuthorizedPath returns the sysfs directory of the USB *device* backing
+// net interface ifc -- the node that carries the writable "authorized"
+// attribute (and "idVendor"), as opposed to the USB *interface* node the
+// netdev's "device" link points at. Walking up from the interface to the
+// device is what lets replugUSBNICs toggle authorized to re-enumerate it.
+// Returns "" when ifc is not USB-backed or no such node is found.
+func usbAuthorizedPath(sysfsRoot, ifc string) string {
+	dev, isUSB := usbNetDevicePath(sysfsRoot, ifc)
+	if !isUSB {
+		return ""
+	}
+	for p := dev; strings.Contains(p, "usb"); {
+		// USB device nodes carry idVendor + authorized; interface nodes
+		// (e.g. 1-1:1.0) carry neither, so this lands on the device (1-1).
+		if fileExists(filepath.Join(p, "authorized")) && fileExists(filepath.Join(p, "idVendor")) {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		p = parent
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // readNetAttr reads a single-line sysfs attribute of a net interface.
 func readNetAttr(sysfsRoot, ifc, attr string) string {
 	b, err := os.ReadFile(filepath.Join(sysfsRoot, "class", "net", ifc, attr))

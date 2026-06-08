@@ -301,6 +301,13 @@ const (
 // mirrors the initramfs init's bring-up, and is a no-op off Linux (the glob
 // matches nothing, so udhcpc/ip are never invoked).
 func reacquireNetwork(ctx context.Context, log *slog.Logger) {
+	// Dell KB 000144650: re-plugging a USB-C Ethernet adapter and selecting
+	// "try again" is the documented fix for connectivity lost across the
+	// firmware -> OS handoff. Automate that unplug/replug before re-DHCP so a
+	// stalled USB NIC gets the clean re-init that restores it; the glob below
+	// is taken AFTER the replug because re-enumeration can rename the netdev.
+	replugUSBNICs(ctx, log)
+
 	ifaces, _ := filepath.Glob("/sys/class/net/*")
 	for _, dev := range ifaces {
 		ifc := filepath.Base(dev)
@@ -328,6 +335,48 @@ func reacquireNetwork(ctx context.Context, log *slog.Logger) {
 	// stalls a large transfer. Re-apply the hardening after every re-DHCP so
 	// the resumed download doesn't hit the same wall that interrupted it.
 	hardenUSBNICs(ctx, log)
+}
+
+// replugUSBNICs performs a logical unplug/replug of every USB Ethernet
+// adapter -- the recovery Dell KB 000144650 documents as restoring a USB-C
+// NIC whose connectivity is lost across the PXE/firmware -> OS handoff (the
+// RTL8153 in Dell's USB-C adapters). It deauthorizes then reauthorizes the
+// USB device, the sysfs equivalent of pulling the cable and plugging it back
+// in, which forces the kernel to re-enumerate the device and the driver to
+// re-probe and re-initialise the link cleanly. Best-effort and Linux-only:
+// off Linux (or with no USB NIC) listNetInterfaces yields nothing and this is
+// a no-op.
+func replugUSBNICs(ctx context.Context, log *slog.Logger) {
+	replugged := false
+	for _, ifc := range listNetInterfaces("/sys") {
+		if _, isUSB := usbNetDevicePath("/sys", ifc); !isUSB {
+			continue
+		}
+		auth := usbAuthorizedPath("/sys", ifc)
+		if auth == "" {
+			continue
+		}
+		// 0 = logically unplug (kernel unbinds the interfaces), 1 = replug
+		// (re-enumerate + re-probe). Skip the replug if the unplug write
+		// didn't take, so we don't leave the device deauthorized.
+		if !writeSysfs(filepath.Join(auth, "authorized"), "0") {
+			continue
+		}
+		writeSysfs(filepath.Join(auth, "authorized"), "1")
+		replugged = true
+		log.Info("net.usbnic.replug",
+			slog.String("if", ifc),
+			slog.String("usbdev", filepath.Base(auth)))
+	}
+	if !replugged {
+		return
+	}
+	// Give re-enumeration time to complete and the netdev to reappear before
+	// the caller brings links up and re-DHCPs.
+	select {
+	case <-time.After(3 * time.Second):
+	case <-ctx.Done():
+	}
 }
 
 // hardenUSBNICs disables the two things that make Realtek RTL8153 / r8152

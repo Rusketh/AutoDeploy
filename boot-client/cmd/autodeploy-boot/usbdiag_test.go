@@ -67,6 +67,38 @@ func TestNICDriverReportsCDCFallback(t *testing.T) {
 	}
 }
 
+// usbAuthorizedPath must land on the USB device node (which carries the
+// writable "authorized" used to replug it), not the interface node the netdev
+// points at -- that's what makes the Dell-documented unplug/replug work.
+func TestUSBAuthorizedPath(t *testing.T) {
+	root := canonRoot(t)
+	usbDev := filepath.Join(root, "devices", "pci0000:00", "0000:00:14.0", "usb1", "1-1")
+	usbIf := filepath.Join(usbDev, "1-1:1.0")
+	if err := os.MkdirAll(usbIf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The device node carries idVendor + authorized; the interface node doesn't.
+	for name, val := range map[string]string{"idVendor": "0bda\n", "authorized": "1\n"} {
+		if err := os.WriteFile(filepath.Join(usbDev, name), []byte(val), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeNet(t, root, "eth0", usbIf)
+
+	if got := usbAuthorizedPath(root, "eth0"); got != usbDev {
+		t.Errorf("usbAuthorizedPath = %q, want the device node %q", got, usbDev)
+	}
+	// A PCIe NIC (no USB chain) yields no authorized node.
+	pci := filepath.Join(root, "devices", "pci0000:00", "0000:00:1f.6")
+	if err := os.MkdirAll(pci, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeNet(t, root, "eth1", pci)
+	if got := usbAuthorizedPath(root, "eth1"); got != "" {
+		t.Errorf("usbAuthorizedPath(PCIe) = %q, want empty", got)
+	}
+}
+
 func TestStatCounterRelevant(t *testing.T) {
 	for _, s := range []string{"rx_fifo_errors: 12", "tx_dropped: 3", "rx_missed: 1", "port_reset: 2", "rx_over_errors: 0", "tx_aborted: 1"} {
 		if !statCounterRelevant(s) {
