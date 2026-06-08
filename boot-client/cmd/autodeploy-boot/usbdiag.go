@@ -96,6 +96,31 @@ func usbLinkSpeedMbps(sysfsRoot, ifc string) string {
 	return ""
 }
 
+// usbNICScreenSummary returns a short, URL-free description of the first USB
+// NIC -- "<iface> <driver>@<speed>Mbps" -- for the progress screen, so an
+// operator can read the bound driver and USB link speed straight off a stall
+// screen (the one surface that's always visible, even when logs don't ship).
+// Empty when there's no USB NIC.
+func usbNICScreenSummary() string { return usbNICScreenSummaryAt("/sys") }
+
+func usbNICScreenSummaryAt(sysfsRoot string) string {
+	for _, ifc := range listNetInterfaces(sysfsRoot) {
+		if _, isUSB := usbNetDevicePath(sysfsRoot, ifc); !isUSB {
+			continue
+		}
+		drv := nicDriver(sysfsRoot, ifc)
+		if drv == "" {
+			drv = "no-driver"
+		}
+		spd := usbLinkSpeedMbps(sysfsRoot, ifc)
+		if spd == "" {
+			spd = "?"
+		}
+		return ifc + " " + drv + "@" + spd + "Mbps"
+	}
+	return ""
+}
+
 // usbAuthorizedPath returns the sysfs directory of the USB *device* backing
 // net interface ifc -- the node that carries the writable "authorized"
 // attribute (and "idVendor"), as opposed to the USB *interface* node the

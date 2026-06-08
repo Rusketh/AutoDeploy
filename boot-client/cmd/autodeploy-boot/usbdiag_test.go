@@ -99,6 +99,33 @@ func TestUSBAuthorizedPath(t *testing.T) {
 	}
 }
 
+func TestUSBNICScreenSummary(t *testing.T) {
+	root := canonRoot(t)
+	usbIf := filepath.Join(root, "devices", "pci0000:00", "0000:00:14.0", "usb1", "1-1", "1-1:1.0")
+	if err := os.MkdirAll(usbIf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	drvDir := filepath.Join(root, "bus", "usb", "drivers", "r8152")
+	if err := os.MkdirAll(drvDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(drvDir, filepath.Join(usbIf, "driver")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "devices", "pci0000:00", "0000:00:14.0", "usb1", "1-1", "speed"), []byte("5000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeNet(t, root, "eth0", usbIf)
+
+	if got, want := usbNICScreenSummaryAt(root), "eth0 r8152@5000Mbps"; got != want {
+		t.Errorf("usbNICScreenSummaryAt = %q, want %q", got, want)
+	}
+	// No USB NIC -> empty (so stallDetail falls back to the plain message).
+	if got := usbNICScreenSummaryAt(filepath.Join(root, "empty")); got != "" {
+		t.Errorf("usbNICScreenSummaryAt(empty) = %q, want \"\"", got)
+	}
+}
+
 func TestStatCounterRelevant(t *testing.T) {
 	for _, s := range []string{"rx_fifo_errors: 12", "tx_dropped: 3", "rx_missed: 1", "port_reset: 2", "rx_over_errors: 0", "tx_aborted: 1"} {
 		if !statCounterRelevant(s) {
