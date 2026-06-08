@@ -506,7 +506,15 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		if !f.dryRun {
 			reportStage("Preparing", "No usable target disk found", -1)
 			reportDeployStatus(ctx, c, log, id, imageID, "failed",
-				"no usable target disk found to image (set autodeploy.disk= to choose one)")
+				"no usable target disk found — the kernel sees no internal disk. On Intel machines "+
+					"set the BIOS storage/SATA mode to AHCI (disable RAID/RST or VMD), or pass "+
+					"autodeploy.disk=<device>")
+			// Ship the buffered logs (which include resolveTargetDisk's listing
+			// of every block device the kernel enumerated) before exiting:
+			// os.Exit skips the deferred shippers, and that listing is exactly
+			// what distinguishes a disk hidden by RAID/VMD (empty list) from a
+			// detection gap (the disk is listed but was filtered out).
+			shipLogs(log, shipper, f.server, f.insecureTLS)
 			os.Exit(0) // fail-safe: nothing was touched, so boot normally
 		}
 		// A dry run wipes nothing; keep going so the flow is still exercised.
@@ -1301,7 +1309,9 @@ func resolveTargetDisk(explicit, sysfsRoot, devRoot string, log *slog.Logger) st
 	case 0:
 		log.Error("deploy.disk.none",
 			slog.Any("block_devices", allBlockNames(sysfsRoot)),
-			slog.String("note", "no internal fixed disk found under /sys/block; set autodeploy.disk= to force one"))
+			slog.String("note", "no internal fixed disk found under /sys/block. If block_devices is empty the "+
+				"disk is hidden from the kernel -- on Intel machines that's RAID/RST or VMD mode (set the BIOS "+
+				"storage mode to AHCI, or rely on the bundled vmd driver). Otherwise set autodeploy.disk= to force one"))
 		return ""
 	case 1:
 		log.Info("deploy.disk.auto", slog.String("disk", cands[0]))
