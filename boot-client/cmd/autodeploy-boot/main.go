@@ -475,6 +475,12 @@ func writeSysfs(path, val string) bool {
 
 func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64, shipper *logging.Shipper) {
 	ctx := context.Background()
+	// Ship logs periodically during the deploy, not only at exit/reboot, so a
+	// long or STALLED run is visible in the portal instead of shipping nothing
+	// until it finishes (which a stuck deploy never does). Small POSTs, which
+	// succeed even while bulk downloads stall on a flaky USB NIC.
+	stopShip := startPeriodicLogShip(log, shipper, f.server, f.insecureTLS)
+	defer stopShip()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 	// Open a deployment row right away so a machine that fails before its
 	// OS ever boots is still visible on the dashboard.
@@ -762,7 +768,7 @@ func downloadMediaFiles(ctx context.Context, c *httpc.Client, log *slog.Logger, 
 				if attempt == 2 {
 					logUSBNICDiagnostics(ctx, log)
 				}
-				reportStage("Downloading image", "Network issue ("+netErrCause(derr)+") - retrying…", pct)
+				reportStage("Downloading image", stallDetail(derr), pct)
 				// On a prolonged outage the lease may be gone, not just the
 				// connection: try to bring the link back up and re-DHCP.
 				if attempt%3 == 0 {
@@ -802,7 +808,7 @@ func download(ctx context.Context, c *httpc.Client, log *slog.Logger, it manifes
 			if attempt == 2 {
 				logUSBNICDiagnostics(ctx, log)
 			}
-			reportStage("Preparing", "Network issue ("+netErrCause(derr)+") - retrying…", -1)
+			reportStage("Preparing", stallDetail(derr), -1)
 			reportFile(itemLabel(it))
 			if attempt%3 == 0 {
 				reacquireNetwork(ctx, log)
@@ -842,8 +848,15 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 			if attempt == 2 {
 				logUSBNICDiagnostics(ctx, log)
 			}
-			reportStage("Preparing", "Network issue ("+netErrCause(derr)+") - retrying…", -1)
+			reportStage("Preparing", stallDetail(derr), -1)
 			reportFile("management agent")
+			// The agent is the first sizeable download; if a USB NIC wedges
+			// here, apply the same replug + re-DHCP recovery the media path
+			// uses so it can recover (or fail fast) instead of silently
+			// stalling the whole deploy on an optional payload.
+			if attempt%3 == 0 {
+				reacquireNetwork(ctx, log)
+			}
 		}); err != nil {
 		log.Warn("agent.download", slog.String("url", info.URL), slog.String("error", err.Error()))
 		return ""
@@ -1148,6 +1161,19 @@ func netErrCause(err error) string {
 	}
 }
 
+// stallDetail builds the on-screen retry line. It leads with the USB NIC's
+// driver + USB link speed when one is present, so an operator can see what's
+// actually carrying the transfer (e.g. "eth0 r8152@5000Mbps" vs a degraded
+// "eth0 cdc_ether@480Mbps"), followed by the URL-free error cause. This puts
+// the decisive facts on the screen even when the client is too stuck to ship
+// any logs.
+func stallDetail(err error) string {
+	if s := usbNICScreenSummary(); s != "" {
+		return s + " — " + netErrCause(err) + ", retrying…"
+	}
+	return "Network issue (" + netErrCause(err) + ") - retrying…"
+}
+
 // itemLabel returns a human, URL-free label for a manifest item, for the
 // progress screen's current-file line. It uses the server-supplied display
 // name and never the item URL.
@@ -1263,6 +1289,40 @@ func brandTitle(b brandResp) string {
 // network a generous timeout so a flaky link doesn't drop the batch
 // silently. Empty server URL skips the ship altogether (e.g. the
 // 'identify' subcommand).
+// startPeriodicLogShip ships buffered logs to the server every 15s until the
+// returned stop func is called, so a long or stalled deploy is visible in the
+// portal rather than shipping only at exit/reboot (which a stuck deploy never
+// reaches). Best-effort: a failed ship re-queues and the next tick retries.
+// Returns a no-op stopper when there's no server/shipper to ship to.
+func startPeriodicLogShip(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) func() {
+	if server == "" || shipper == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				if _, err := shipper.Ship(ctx, server, insecureTLS); err != nil {
+					log.Warn("logs.ship.periodic.fail", slog.String("error", err.Error()))
+				}
+				cancel()
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
+}
+
 func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) {
 	if server == "" || shipper == nil {
 		return
