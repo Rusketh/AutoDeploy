@@ -381,6 +381,9 @@ func stageCallbackScript(ctx context.Context, plan MediaPlan, r Runner, mount st
 
 func partName(disk string, n int) string {
 	// /dev/sda -> /dev/sda{n}; /dev/nvme0n1 -> /dev/nvme0n1p{n}
+	if disk == "" {
+		return ""
+	}
 	last := disk[len(disk)-1]
 	if last >= '0' && last <= '9' {
 		return fmt.Sprintf("%sp%d", disk, n)

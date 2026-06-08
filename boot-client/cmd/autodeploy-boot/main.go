@@ -20,7 +20,9 @@
 //	-server <url>     AutoDeploy server base URL (required for menu/deploy).
 //	-sysfs <path>     DMI sysfs root (override for testing).
 //	-insecure-tls     Skip TLS cert verification (dev only).
-//	-disk <device>    Target disk device for deploy (default /dev/sda).
+//	-disk <device>    Target disk device for deploy. Empty (the default)
+//	                  auto-detects the internal fixed disk; set it (or
+//	                  autodeploy.disk= on the kernel cmdline) to force one.
 //	-work <dir>       Scratch directory (default /run/autodeploy).
 //	-dry-run          Log destructive steps without executing them.
 package main
@@ -38,6 +40,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,16 +78,21 @@ func main() {
 	flag.StringVar(&f.server, "server", "", "AutoDeploy server base URL")
 	flag.StringVar(&f.sysfs, "sysfs", "/sys/class/dmi/id", "DMI sysfs root")
 	flag.BoolVar(&f.insecureTLS, "insecure-tls", false, "Skip TLS verification (dev only)")
-	flag.StringVar(&f.disk, "disk", "/dev/sda", "Target disk device")
+	flag.StringVar(&f.disk, "disk", "", "Target disk device (empty = auto-detect the internal fixed disk)")
 	flag.StringVar(&f.work, "work", "/run/autodeploy", "Scratch directory")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log destructive steps without executing them")
 	flag.StringVar(&f.site, "site", "", "Site name forwarded to the server so payload downloads route to a site-local mirror")
 	flag.Parse()
 
-	// Also accept the site via kernel command line — DHCP option 175 or
-	// the iPXE chainload script can set autodeploy.site=<name>.
+	// Also accept the site and target disk via kernel command line — DHCP
+	// option 175 or the iPXE chainload script can set autodeploy.site=<name>
+	// and autodeploy.disk=<device> (e.g. for a machine whose disk isn't the
+	// auto-detected one).
 	if f.site == "" {
-		f.site = siteFromKernelCmdline()
+		f.site = kernelCmdlineValue("autodeploy.site")
+	}
+	if f.disk == "" {
+		f.disk = kernelCmdlineValue("autodeploy.disk")
 	}
 
 	log, shipper := logging.NewWithShipper(os.Stdout, "boot", 2048)
@@ -485,6 +493,38 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// Open a deployment row right away so a machine that fails before its
 	// OS ever boots is still visible on the dashboard.
 	reportDeployStatus(ctx, c, log, id, imageID, "staging", "")
+
+	// Resolve the target disk up front, BEFORE any download, so a machine
+	// with no /dev/sda fails fast with a clear reason instead of downloading
+	// gigabytes of media and only then erroring at partition time with an
+	// opaque "zap /dev/sda exit status 2". The classic case: an NVMe-only
+	// laptop/SFF -- the typical USB-NIC machine -- whose disk is
+	// /dev/nvme0n1, not the historical /dev/sda default. Honour an explicit
+	// -disk / autodeploy.disk; otherwise auto-detect the internal fixed disk.
+	disk := resolveTargetDisk(f.disk, "/sys", "/dev", log)
+	if disk == "" {
+		if !f.dryRun {
+			reportStage("Preparing", "No usable target disk found", -1)
+			reportDeployStatus(ctx, c, log, id, imageID, "failed",
+				"no usable target disk found to image (set autodeploy.disk= to choose one)")
+			os.Exit(0) // fail-safe: nothing was touched, so boot normally
+		}
+		// A dry run wipes nothing; keep going so the flow is still exercised.
+		// Fall back to a placeholder device so the dry-run log reads sensibly.
+		if f.disk == "" {
+			f.disk = "/dev/sda"
+		}
+		log.Warn("deploy.disk.none",
+			slog.String("note", "dry run: no disk detected; using "+f.disk+" for the dry-run flow"))
+	} else {
+		if disk != f.disk {
+			log.Info("deploy.disk.resolved",
+				slog.String("requested", orAuto(f.disk)),
+				slog.String("using", disk))
+		}
+		f.disk = disk
+	}
+
 	reportStage("Preparing", "Fetching deployment manifest", -1)
 	var m manifest
 	// POST identity so the server can match driver packages.
@@ -1211,20 +1251,188 @@ func identityBody(id smbios.Identity) map[string]any {
 	}
 }
 
-// siteFromKernelCmdline parses /proc/cmdline looking for
-// autodeploy.site=<name>. Empty on read failure or absence.
-func siteFromKernelCmdline() string {
+// kernelCmdlineValue parses /proc/cmdline for key=<value> and returns the
+// value, or "" on read failure or absence. Used for autodeploy.site and
+// autodeploy.disk, which the iPXE chainload script or DHCP option 175 can set.
+func kernelCmdlineValue(key string) string {
 	b, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
 		return ""
 	}
+	pfx := key + "="
 	for _, tok := range bytesFields(b) {
-		const k = "autodeploy.site="
-		if len(tok) > len(k) && string(tok[:len(k)]) == k {
-			return string(tok[len(k):])
+		if len(tok) > len(pfx) && string(tok[:len(pfx)]) == pfx {
+			return string(tok[len(pfx):])
 		}
 	}
 	return ""
+}
+
+// resolveTargetDisk decides which disk to image. Precedence:
+//
+//  1. an explicit operator choice (the -disk flag or autodeploy.disk= on the
+//     kernel cmdline): honoured exactly. If that device node is absent we do
+//     NOT guess another disk -- a named-but-missing disk is an operator error,
+//     and silently wiping a different one would be dangerous -- so we return ""
+//     and the caller fails safe.
+//  2. otherwise auto-detection of the internal fixed disk(s). One candidate is
+//     used directly; several means we image the most-preferred (NVMe first) and
+//     warn, so a multi-disk box is transparent rather than silently picking.
+//
+// It logs the candidates (and, when none are eligible, every block device the
+// kernel enumerated) so a console-side operator can see exactly what was found.
+// Returns "" when nothing usable was found.
+func resolveTargetDisk(explicit, sysfsRoot, devRoot string, log *slog.Logger) string {
+	cands := detectInternalDisks(sysfsRoot, devRoot)
+	log.Info("deploy.disk.detect", slog.Any("candidates", cands))
+
+	if explicit != "" {
+		if deviceExists(explicit) {
+			return explicit
+		}
+		log.Error("deploy.disk.missing",
+			slog.String("requested", explicit),
+			slog.Any("candidates", cands),
+			slog.String("note", "the -disk / autodeploy.disk device does not exist; refusing to guess another disk"))
+		return ""
+	}
+
+	switch len(cands) {
+	case 0:
+		log.Error("deploy.disk.none",
+			slog.Any("block_devices", allBlockNames(sysfsRoot)),
+			slog.String("note", "no internal fixed disk found under /sys/block; set autodeploy.disk= to force one"))
+		return ""
+	case 1:
+		log.Info("deploy.disk.auto", slog.String("disk", cands[0]))
+	default:
+		log.Warn("deploy.disk.multiple",
+			slog.Any("candidates", cands),
+			slog.String("using", cands[0]),
+			slog.String("note", "multiple internal disks found; imaging the first. Set autodeploy.disk= to choose"))
+	}
+	return cands[0]
+}
+
+// detectInternalDisks returns the /dev paths (under devRoot) of internal,
+// fixed, whole disks found under <sysfsRoot>/block, most-preferred first:
+// NVMe, then SATA/SCSI/virtio/IDE, then anything else; ties broken by name. It
+// skips removable media and USB-attached disks (so it never auto-selects a USB
+// stick or the very USB device a boot dongle sits on), optical drives, and
+// virtual devices (loop, ram, dm, md, zram, nbd). Empty (not an error) when the
+// directory is absent -- e.g. off Linux, or in a test with no fake tree.
+func detectInternalDisks(sysfsRoot, devRoot string) []string {
+	entries, err := os.ReadDir(filepath.Join(sysfsRoot, "block"))
+	if err != nil {
+		return nil
+	}
+	type cand struct {
+		name string
+		rank int
+	}
+	var cands []cand
+	for _, e := range entries {
+		name := e.Name()
+		if !eligibleDiskName(name) {
+			continue
+		}
+		base := filepath.Join(sysfsRoot, "block", name)
+		// Removable media (USB sticks, SD cards) report removable=1.
+		if strings.TrimSpace(readSysfs(filepath.Join(base, "removable"))) == "1" {
+			continue
+		}
+		// Zero-sized nodes (an empty card reader slot) are not real targets.
+		if sz := strings.TrimSpace(readSysfs(filepath.Join(base, "size"))); sz == "" || sz == "0" {
+			continue
+		}
+		// USB-attached disks resolve through a "usb" component, exactly like
+		// the USB NIC detection -- never auto-wipe one.
+		if dev, err := filepath.EvalSymlinks(filepath.Join(base, "device")); err == nil && strings.Contains(dev, "usb") {
+			continue
+		}
+		cands = append(cands, cand{name: name, rank: diskRank(name)})
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].rank != cands[j].rank {
+			return cands[i].rank < cands[j].rank
+		}
+		return cands[i].name < cands[j].name
+	})
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, filepath.Join(devRoot, c.name))
+	}
+	return out
+}
+
+// eligibleDiskName reports whether a /sys/block entry name could be a real
+// internal disk, filtering out virtual block devices and optical/floppy drives
+// by name prefix.
+func eligibleDiskName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, pfx := range []string{"loop", "ram", "zram", "sr", "fd", "dm-", "md", "nbd", "dm"} {
+		if strings.HasPrefix(name, pfx) {
+			return false
+		}
+	}
+	return true
+}
+
+// diskRank orders disk-name families for auto-selection preference: NVMe
+// (typically the OS disk on modern machines) first, then the usual
+// SATA/SCSI/virtio/IDE block names, then anything else.
+func diskRank(name string) int {
+	switch {
+	case strings.HasPrefix(name, "nvme"):
+		return 0
+	case strings.HasPrefix(name, "sd"),
+		strings.HasPrefix(name, "vd"),
+		strings.HasPrefix(name, "xvd"),
+		strings.HasPrefix(name, "hd"):
+		return 1
+	default:
+		return 2
+	}
+}
+
+// allBlockNames lists every entry under <sysfsRoot>/block, for diagnostics when
+// no eligible disk was found. Empty when the directory is absent.
+func allBlockNames(sysfsRoot string) []string {
+	entries, err := os.ReadDir(filepath.Join(sysfsRoot, "block"))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+// readSysfs reads a sysfs attribute, returning "" on any error. The companion
+// to writeSysfs for the read-only attributes disk detection inspects.
+func readSysfs(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// deviceExists reports whether a device node (or any path) is present.
+func deviceExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// orAuto renders an empty disk request as "(auto)" for logs.
+func orAuto(disk string) string {
+	if disk == "" {
+		return "(auto)"
+	}
+	return disk
 }
 
 // bytesFields is a tiny strings.Fields for a []byte without an import.

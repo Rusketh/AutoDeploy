@@ -75,6 +75,33 @@ The boot-package version shown in the corner of every boot screen tells you
 which release is running — confirm it's the one you expect before digging
 further. See also [PXE & boot setup](../install/pxe-and-boot.md).
 
+## A deploy fails at partitioning (`zap … exit status 2`, wrong disk)
+
+A deploy that reaches the disk step and then fails with something like
+`deploy.partition.fail … zap /dev/sda exit status 2` means the partitioner
+(`sgdisk`) couldn't open the target disk — almost always because **that disk
+device doesn't exist** on this machine. The classic case is a machine whose
+only drive is **NVMe** (`/dev/nvme0n1`), not the older SATA `/dev/sda`. This
+correlates strongly with USB-NIC machines: the modern laptops and small-form
+PCs that lack built-in Ethernet are the same ones that ship NVMe storage.
+
+The boot client now **auto-detects the internal fixed disk** when no disk is
+forced, preferring NVMe then SATA/SCSI and skipping removable and USB-attached
+disks (so it never images a USB stick). The console log shows what it found:
+
+```
+deploy.disk.detect   candidates=[/dev/nvme0n1]
+deploy.disk.auto     disk=/dev/nvme0n1
+```
+
+If detection picks the wrong disk (multiple internal disks) or finds none, force
+the device explicitly with **`autodeploy.disk=<device>`** on the kernel command
+line (set it in your iPXE boot script alongside `autodeploy.server=`), or pass
+`-disk <device>` when running the client directly. A disk you name explicitly
+that turns out to be absent fails safe — the client won't guess and wipe a
+different one. To see the detection log live, untick **"Show imaging progress"**
+on the image-selection screen (see the stalled-deploy section above).
+
 ## A machine doesn't appear in inventory
 
 Machines appear automatically the first time they network-boot or an agent checks in (they are
