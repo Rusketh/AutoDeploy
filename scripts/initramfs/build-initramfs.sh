@@ -272,6 +272,13 @@ echo "=== AutoDeploy Boot Client (initramfs) ==="
 # driver sees nothing, no /dev/nvme* appears, and the Boot Client reports
 # "no usable target disk found". vmd must precede nvme so the controller is
 # up before nvme probes.
+#
+# It also includes the MMC/SDHCI set: many small/education machines (e.g.
+# the Dell Latitude 3190, an Intel Gemini Lake device) boot from soldered
+# eMMC, which appears as /dev/mmcblk0 -- but ONLY if the SDHCI host
+# controller driver is loaded. sdhci-acpi drives the eMMC on these Intel
+# SoCs; without it /sys/block is empty and the deploy reports "no usable
+# target disk found", exactly like the VMD case.
 for m in \
     hv_vmbus hv_netvsc hv_storvsc \
     virtio virtio_pci virtio_net virtio_blk virtio_scsi \
@@ -279,6 +286,7 @@ for m in \
     bnx2 bnx2x bnxt_en mlx4_en mlx5_core \
     usbnet mii r8152 ax88179_178a asix cdc_ether cdc_ncm cdc_subset r8153_ecm \
     ahci libahci ata_piix vmd nvme nvme_core \
+    mmc_core mmc_block sdhci sdhci_pci sdhci_acpi cqhci \
     sd_mod sr_mod usb_storage xhci_pci ehci_pci \
     vfat nls_cp437 nls_iso8859_1 ntfs3 fuse \
     hyperv_keyboard hid_hyperv \

@@ -79,13 +79,19 @@ func TestDetectInternalDisksSingleSATA(t *testing.T) {
 
 func TestDetectInternalDisksEMMC(t *testing.T) {
 	root := canonRoot(t)
-	// Onboard eMMC (non-removable) is a real target on some small machines;
-	// it must not be filtered. An NVMe is still preferred over it.
-	fakeDisk(t, root, "mmcblk0", "0", "61071360",
-		filepath.Join(root, "devices", "pci0000:00", "0000:00:1a.0", "mmc_host", "mmc0"))
+	// Onboard eMMC (non-removable) is the only disk on machines like the Dell
+	// Latitude 3190; it must be detected. The kernel also exposes the eMMC
+	// boot/RPMB hardware areas as their own block devices -- those must be
+	// skipped so only the main user-data device is returned.
+	mmcHost := filepath.Join(root, "devices", "pci0000:00", "0000:00:1a.0", "mmc_host", "mmc0")
+	fakeDisk(t, root, "mmcblk0", "0", "61071360", mmcHost)
+	fakeDisk(t, root, "mmcblk0boot0", "0", "8192", mmcHost)
+	fakeDisk(t, root, "mmcblk0boot1", "0", "8192", mmcHost)
+	fakeDisk(t, root, "mmcblk0rpmb", "0", "8192", mmcHost)
 	if got := detectInternalDisks(root, "/dev"); !reflect.DeepEqual(got, []string{"/dev/mmcblk0"}) {
-		t.Fatalf("eMMC-only detect = %v, want [/dev/mmcblk0]", got)
+		t.Fatalf("eMMC detect = %v, want [/dev/mmcblk0] (boot/rpmb areas excluded)", got)
 	}
+	// An NVMe is still preferred over eMMC when both are present.
 	fakeDisk(t, root, "nvme0n1", "0", "1000215216",
 		filepath.Join(root, "devices", "pci0000:00", "0000:00:1d.0", "nvme", "nvme0"))
 	if got := detectInternalDisks(root, "/dev"); !reflect.DeepEqual(got, []string{"/dev/nvme0n1", "/dev/mmcblk0"}) {

@@ -1387,6 +1387,13 @@ func eligibleDiskName(name string) bool {
 			return false
 		}
 	}
+	// eMMC exposes its boot and RPMB hardware areas as their own block
+	// devices (mmcblk0boot0, mmcblk0boot1, mmcblk0rpmb) -- tiny, never
+	// imaging targets. Only the main user-data device (mmcblk0) is. Skip the
+	// hardware areas so detection picks mmcblk0 without a false multi-disk warning.
+	if strings.HasPrefix(name, "mmcblk") && (strings.Contains(name, "boot") || strings.Contains(name, "rpmb")) {
+		return false
+	}
 	return true
 }
 
