@@ -131,6 +131,10 @@ func TestPartitionNamingNVMe(t *testing.T) {
 	if got := partName("/dev/sda", 1); got != "/dev/sda1" {
 		t.Errorf("partName(sda) = %q", got)
 	}
+	// Empty disk must not panic (defensive: callers resolve a real device).
+	if got := partName("", 1); got != "" {
+		t.Errorf("partName(\"\") = %q, want \"\"", got)
+	}
 }
 
 func TestPreparePartitionStopsOnFirstError(t *testing.T) {

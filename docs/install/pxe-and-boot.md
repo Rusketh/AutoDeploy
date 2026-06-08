@@ -111,6 +111,18 @@ The boot image is two release-only files placed alongside the iPXE binaries:
 If these are missing, iPXE will chainload successfully but have nothing to boot. You can build your
 own with `scripts/initramfs/build-initramfs.sh` if you are not using a release that ships them.
 
+### Kernel command-line options
+
+`boot.ipxe` passes a few `autodeploy.*` options on the kernel command line; the initramfs turns
+them into Boot Client flags. The server-generated `boot.ipxe` sets `autodeploy.server=` for you;
+the rest are optional.
+
+| Option | Purpose |
+|--------|---------|
+| `autodeploy.server=<url>` | AutoDeploy server base URL. Set automatically by the generated `boot.ipxe`. |
+| `autodeploy.site=<name>` | Route payload downloads through a site-local [mirror](../portal/mirrors.md). |
+| `autodeploy.disk=<device>` | Force the target disk (e.g. `/dev/nvme0n1`). By default the Boot Client auto-detects the internal fixed disk, preferring NVMe then SATA/SCSI and skipping removable/USB disks — set this only to override that choice, e.g. on a machine with several internal disks. |
+
 ## Configuring DHCP
 
 Network boot needs two things from DHCP:

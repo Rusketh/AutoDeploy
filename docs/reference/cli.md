@@ -46,7 +46,7 @@ autodeploy-boot [flags] [command]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-server <url>` | *(empty)* | AutoDeploy server base URL, e.g. `https://deploy.example.com`. Required for `menu`/`deploy`. |
-| `-disk <device>` | `/dev/sda` | Target disk device for deployment. |
+| `-disk <device>` | *(auto-detect)* | Target disk device for deployment. Empty auto-detects the internal fixed disk (NVMe preferred, then SATA/SCSI); skips removable and USB-attached disks. Set it — or `autodeploy.disk=` on the kernel cmdline — to force a specific device. A named-but-absent disk fails safe rather than imaging a guessed one. |
 | `-work <dir>` | `/run/autodeploy` | Scratch directory. |
 | `-site <name>` | *(empty)* | Site name for [payload mirror](../portal/mirrors.md) routing. |
 | `-sysfs <path>` | `/sys/class/dmi/id` | DMI sysfs root (override for testing). |
