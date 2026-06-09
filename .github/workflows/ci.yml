@@ -87,6 +87,26 @@ jobs:
           path: agent/bin/autodeploy-agent.exe
           if-no-files-found: error
 
+  credprovider:
+    name: Build credential provider (windows/amd64 DLL)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: credprovider
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64
+      - name: build
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autodeploy-credprovider-windows
+          path: credprovider/bin/autodeploy-credprovider-windows-amd64.dll
+          if-no-files-found: error
+
   secret-check:
     name: Secret-handling sanity check
     runs-on: ubuntu-latest
