@@ -29,6 +29,12 @@ type Manifest struct {
 	AgentID  string         `json:"agent_id,omitempty"`
 	Items    []ManifestItem `json:"items"`
 	Warnings []string       `json:"warnings,omitempty"`
+	// SetupLock tells the boot client this image locks the machine with a
+	// branded setup screen until the agent finishes the initial software
+	// rollout. When true, the client fetches the credential provider DLL and
+	// injects it into the OS via the $OEM$ tree. Omitted (false) for the
+	// common case of images that deploy without the lock.
+	SetupLock bool `json:"setup_lock,omitempty"`
 }
 
 // ManifestItem is one downloadable payload.
@@ -69,6 +75,10 @@ type ManifestHandler struct {
 	// prepareAD also fires for images that use agent-driven join (even
 	// when the unattend itself has no legacy DomainJoin block).
 	DomainJoin *model.DomainJoinRepo
+	// SetupLock gates the branded setup-lock screen. When set and the
+	// deployed image has it enabled, the manifest tells the boot client to
+	// fetch + inject the credential provider into the OS at imaging time.
+	SetupLock *model.SetupLockRepo
 	// Blobs lets the handler report each payload's true on-disk size as the
 	// download length, rather than trusting the recorded SizeBytes column.
 	// This keeps the Boot Client's expected length in lockstep with what the
@@ -159,6 +169,14 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 	m := Manifest{ImageID: id, BaseURL: base, Warnings: res.Diagnostics}
 	if site != "" {
 		m.Warnings = append(m.Warnings, "payload site: "+site)
+	}
+	// Setup-lock is a per-image toggle, read directly (no parent-chain
+	// inheritance), mirroring how domain join is read for the deployed image.
+	// When on, the boot client fetches + injects the credential provider.
+	if h.SetupLock != nil {
+		if on, lerr := h.SetupLock.Enabled(ctx, id); lerr == nil && on {
+			m.SetupLock = true
+		}
 	}
 	// Ensure the machine record exists and carries a server-minted agent_id,
 	// then hand it to the client for deploy-time registry provisioning.

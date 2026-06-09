@@ -1,0 +1,85 @@
+# AutoDeploy Setup-Lock Credential Provider
+
+A native Windows **Credential Provider** (COM in-proc DLL) that shows a branded,
+full-screen "setup" screen **instead of the Windows logon screen** while the
+AutoDeploy agent performs a machine's *initial* software rollout — blocking
+sign-in until the machine is ready for first use.
+
+This is the C++ half of the `setup_lock` per-image feature. The Go server, boot
+client and agent handle the rest (see the repo-level change set). The operator
+never builds or installs this DLL by hand: CI builds it and it ships through the
+agent's existing zero-touch distribution channel.
+
+## Behaviour
+
+The DLL keys all behaviour off an on-disk **lock marker** and state directory
+that the agent and `SetupComplete.cmd` agree on:
+
+```
+%ProgramData%\AutoDeploy\lock\
+  active         present => lock armed (cover the logon screen)
+  status.json    {phase, activity, done, total, percent}  (live progress)
+  branding.json  {product_name, organisation_name, primary_color, ...}
+  pin-request    written by this DLL  -> the entered technician PIN
+  pin-response   written by the agent -> "allow" / "deny"
+```
+
+- **Marker present (initial deployment):**
+  - `ICredentialProviderFilter` hides **every other** credential provider, so a
+    regular user cannot sign in.
+  - A branded tile shows the live activity + progress from `status.json`,
+    refreshed on a background thread.
+  - A branded full-screen window is painted on **every monitor**
+    (`fullscreen.cpp`).
+- **Marker absent (machine past its initial rollout):** the provider is fully
+  **inert** — 0 credentials, no filtering — so later app pushes never lock the
+  machine and a stock logon is shown.
+
+### Technician unlock
+
+There is **no visible unlock control**. A technician presses **Ctrl+Alt+U**
+(captured by a low-level keyboard hook) to reveal a PIN field. The entered PIN is
+handed to the agent via the `pin-request`/`pin-response` files; the agent
+validates it against AutoDeploy's existing rate-limited Access PIN and replies
+`allow`/`deny`. On `allow` the DLL clears the marker so normal sign-in returns.
+The DLL holds **no crypto** — validation is delegated to the agent. If no Access
+PIN is configured, the agent grants any submission.
+
+The agent clears the marker on its own once it closes the initial deployment, so
+in the normal path the screen disappears (and the machine reboots to first use)
+without anyone touching it.
+
+## Building
+
+Built with **MinGW-w64** so CI compiles it on Linux next to the Go components —
+no Windows runner required:
+
+```sh
+sudo apt-get install -y g++-mingw-w64-x86-64
+make build           # -> bin/autodeploy-credprovider-windows-amd64.dll
+```
+
+The DLL statically links libgcc/libstdc++ (`-static …`), so it has **no MinGW
+runtime dependency** on the target machine — it imports only system DLLs
+(`kernel32`, `user32`, `gdi32`, `advapi32`, `ole32`, `msvcrt`).
+
+It can also be built with MSVC/ATL if preferred; the code uses only plain Win32 +
+COM (no ATL) so either toolchain works.
+
+## Registration
+
+`DllRegisterServer`/`DllUnregisterServer` register the COM class and the
+credential-provider entry under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers`.
+The boot client's `SetupComplete.cmd` runs `regsvr32 /s` on the injected DLL at
+deploy time (only for images that opted into the lock).
+
+CLSID: `{A1E7F3C2-9B4D-4E6A-8C12-7F5E0A2B6D34}`.
+
+## Safety
+
+The provider **fails open**: any doubt (no marker, unreadable state) shows the
+normal logon rather than locking everyone out. The technician PIN is the escape
+hatch if the agent stalls. Registering a credential provider is security
+sensitive — the released DLL should be code-signed for production (its SHA-256 is
+already verified end-to-end through the distribution chain).

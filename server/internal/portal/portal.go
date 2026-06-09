@@ -62,6 +62,9 @@ type Repos struct {
 	// DomainJoin stores per-image agent-driven AD join config (the image
 	// edit form reads/writes it).
 	DomainJoin *model.DomainJoinRepo
+	// SetupLock stores the per-image "setup lockout" toggle (the image edit
+	// form reads/writes it).
+	SetupLock *model.SetupLockRepo
 	// Updates manages Windows Update KB patches and deployment jobs.
 	Updates *model.WindowsUpdateRepo
 	// Notifications handles in-portal notification CRUD and preferences.

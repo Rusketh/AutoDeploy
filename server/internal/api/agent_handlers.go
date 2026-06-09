@@ -91,6 +91,12 @@ type AgentSelfResponse struct {
 	// BitLocker carries the PIN-set flag and version so the agent can
 	// reconcile encryption state on every poll.
 	BitLocker *AgentSelfBitLocker `json:"bitlocker,omitempty"`
+	// SetupLock is true when the deployed image locks the machine with a
+	// branded setup screen until the agent finishes the initial software
+	// rollout. While this is true AND a deployment is open, the agent keeps
+	// the on-disk lock marker that the credential provider reads; it clears
+	// the marker once it closes the deployment, so later pushes never lock.
+	SetupLock bool `json:"setup_lock,omitempty"`
 }
 
 // AgentSelfBitLocker is the BitLocker reconciliation info returned by
@@ -178,6 +184,13 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		// image) just means "nothing to install" -- not an error.
 		if b, berr := r.Inventory.GetBinding(req.Context(), m.ID); berr == nil && b.ImageID != nil {
 			resp.ImageID = *b.ImageID
+			// Per-image setup-lock toggle: the agent uses this (together with
+			// an open deployment) to decide whether to maintain the lock marker.
+			if r.SetupLock != nil {
+				if on, _ := r.SetupLock.Enabled(req.Context(), *b.ImageID); on {
+					resp.SetupLock = true
+				}
+			}
 			items, warnings, serr := buildSoftwareItems(req, r, *b.ImageID)
 			if serr != nil {
 				resp.Warnings = append(resp.Warnings, serr.Error())

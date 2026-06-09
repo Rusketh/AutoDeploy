@@ -271,6 +271,9 @@ type selfResponse struct {
 	// that hasn't been closed yet; the agent reports the final outcome after
 	// installing packages.
 	DeploymentID int64 `json:"deployment_id"`
+	// SetupLock is true when this machine's image locks the logon screen with
+	// the branded setup screen until the initial software rollout finishes.
+	SetupLock bool `json:"setup_lock"`
 	// UpdateJobs are pending Windows Update deployment jobs.
 	UpdateJobs []updateJob `json:"update_jobs,omitempty"`
 	// DeployToken is a fresh, short-lived token the server mints when a
@@ -322,6 +325,14 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// deployment, tell the server Windows is installed and the agent is
 	// running, so the portal advances off the Setup phases immediately --
 	// even if a domain-join reboot follows before software installs.
+	// Setup-lock screen: while the initial deployment is open and the image
+	// opted in, keep the lock marker armed and the branding fresh so the
+	// credential provider shows a branded, live screen. SetupComplete.cmd armed
+	// the marker at deploy time; re-arming here is belt-and-suspenders.
+	if resp.SetupLock && resp.DeploymentID != 0 {
+		_ = armLockMarker()
+		refreshLockBranding(ctx, log, c)
+	}
 	if resp.DeploymentID != 0 {
 		reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
 	}
@@ -372,6 +383,12 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				slog.String("actor", f.uuid),
 				slog.Int64("deployment_id", resp.DeploymentID),
 				slog.String("outcome", outcome))
+			// Initial rollout finished: drop the setup-lock marker so the next
+			// logon shows the normal Windows screen for first use.
+			if resp.SetupLock {
+				writeLockStatus("done", "Setup complete", 1, 1)
+				clearLockMarker()
+			}
 		}
 	}
 	// BitLocker: accept the deploy token so secret-returning endpoints
@@ -420,6 +437,12 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 func reportDeployProgress(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, depID int64, phase string, done, total int, notes string) {
 	if depID == 0 {
 		return
+	}
+	// Mirror the live progress onto the local setup-lock screen when the lock
+	// is armed, so the credential provider's bar + activity stay in lockstep
+	// with the portal. No-op (a cheap Stat) when no lock is active.
+	if lockMarkerPresent() {
+		writeLockStatus(phase, notes, done, total)
 	}
 	var ignore struct{}
 	if err := c.PostJSON(ctx, "/api/v1/agent/deploy-progress", map[string]any{
@@ -723,6 +746,9 @@ func pollLoop(ctx context.Context, log *slog.Logger, interval time.Duration, wor
 // ctx is cancelled (the service Stop handler cancels it). This is the
 // resident heartbeat: the agent only needs the server URL + its agent_id.
 func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
+	// Service technician-unlock PIN checks for the setup-lock screen for the
+	// lifetime of the resident loop. Cheap and harmless when no lock is active.
+	go watchLockPINRequests(ctx, log, serverPINValidator(c, f))
 	// When running under the SCM, self-update must restart the SERVICE
 	// (not relaunch a detached console process), or the upgraded agent
 	// would run outside the service. Empty in console mode.

@@ -139,6 +139,7 @@ fi
 HERE_PARENT="$(cd "$(dirname "$0")/.." && pwd)"
 for candidate in autodeploy-agent-windows-amd64.exe autodeploy-agent-windows-arm64.exe \
                  autodeploy-agent-linux-amd64 \
+                 autodeploy-credprovider-windows-amd64.dll \
                  autodeploy-boot-linux-amd64 autodeploy-boot-linux-arm64; do
     for src in "$HERE_PARENT/$candidate" "$(pwd)/$candidate"; do
         if [ -f "$src" ] && [ ! -f "$DATA_DIR/downloads/$candidate" ]; then
@@ -196,8 +197,18 @@ if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "dev" ]; then
         | grep -o '"name": "autodeploy-boot-[^"]*"' | cut -d'"' -f4 \
         | grep -v '\.sha256$' | grep -v '\.version$' | sort -u) || true
 
-    if [ -n "$RELEASE_AGENTS" ] || [ -n "$RELEASE_BOOT" ]; then
-        ALL_FETCH="$RELEASE_AGENTS $RELEASE_BOOT"
+    # And the setup-lock credential provider DLL(s), so an image that opts
+    # into the lock has the provider ready with zero manual steps.
+    RELEASE_CRED=""
+    RELEASE_CRED=$(curl -sSfL --connect-timeout 10 --retry 2 \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: autodeploy-installer" \
+        "https://api.github.com/repos/Rusketh/AutoDeploy/releases/tags/$INSTALLED_VERSION" 2>/dev/null \
+        | grep -o '"name": "autodeploy-credprovider-[^"]*"' | cut -d'"' -f4 \
+        | grep -v '\.sha256$' | grep -v '\.version$' | sort -u) || true
+
+    if [ -n "$RELEASE_AGENTS" ] || [ -n "$RELEASE_BOOT" ] || [ -n "$RELEASE_CRED" ]; then
+        ALL_FETCH="$RELEASE_AGENTS $RELEASE_BOOT $RELEASE_CRED"
     else
         # Fallback: API unreachable, use the legacy hardcoded list.
         echo "  GitHub API unavailable; falling back to legacy asset list." >&2
