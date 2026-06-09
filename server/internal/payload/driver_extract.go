@@ -88,8 +88,12 @@ func ExtractDriverPackage(ctx context.Context, drivers *model.DriverPackageRepo,
 	if err != nil {
 		return DriverExtractResult{}, err
 	}
-	if _, err := os.Stat(srcAbs); os.IsNotExist(err) {
+	srcInfo, err := os.Stat(srcAbs)
+	if os.IsNotExist(err) {
 		return DriverExtractResult{}, fmt.Errorf("driver payload not uploaded; upload a zip first")
+	}
+	if err != nil {
+		return DriverExtractResult{}, err
 	}
 	destAbs, err := blobs.EnsureDir(filepath.ToSlash(filepath.Join("drivers", fmt.Sprint(int64(id)), "files")))
 	if err != nil {
@@ -110,7 +114,15 @@ func ExtractDriverPackage(ctx context.Context, drivers *model.DriverPackageRepo,
 		_ = json.NewEncoder(mf).Encode(res)
 		_ = mf.Close()
 	}
-	pkg.SizeBytes = res.Bytes
+	// SizeBytes must track the SERVED blob — the uploaded zip at payload.bin —
+	// NOT the uncompressed extract total. The Boot Client downloads the zip and
+	// the manifest hands it SizeBytes as the expected download length; recording
+	// the (typically 2-3x larger) extracted total made the client wait for bytes
+	// the server never serves, so its resumable fetch could never reach wantSize
+	// and stalled the deploy out. Re-stamp the blob's own size so a row left
+	// wrong by that older behaviour self-heals on re-extract. The extracted
+	// total still travels to the portal via res.Bytes and metadata.json.
+	pkg.SizeBytes = srcInfo.Size()
 	_ = drivers.Update(ctx, pkg)
 	return res, nil
 }
