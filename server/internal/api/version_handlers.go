@@ -63,6 +63,8 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/update-info", handleAgentUpdateInfo(r))
 	mux.HandleFunc("GET /api/v1/agent/download/{name}", handleAgentDownload(r))
+	mux.HandleFunc("GET /api/v1/agent/credprovider-info", handleCredProviderInfo(r))
+	mux.HandleFunc("POST /api/v1/agent/credprovider-info", handleCredProviderInfo(r))
 	mux.HandleFunc("POST /api/v1/server/update", requireAuth(r, handleServerUpdate(r)))
 	mux.HandleFunc("GET /api/v1/server/update-log", requireAuth(r, handleUpdateLog(r)))
 	mux.HandleFunc("POST /api/v1/server/install-agent", requireAuth(r, handleInstallAgent(r)))
@@ -73,13 +75,14 @@ func RegisterVersion(mux *http.ServeMux, r Repos) {
 // Client and the agent's self-update fetch it UNAUTHENTICATED -- the
 // portal's /portal/downloads/file path is session-gated, so pointing
 // clients there returned the login-page HTML (a ~10 KB "corrupt" .exe).
-// Only clean basenames with the agent prefix are served, so this can't be
-// used to read arbitrary files.
+// Only clean basenames with the agent or credential-provider prefix are
+// served, so this can't be used to read arbitrary files.
 func handleAgentDownload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		name := req.PathValue("name")
-		if name == "" || name != filepath.Base(name) ||
-			strings.Contains(name, "..") || !strings.HasPrefix(name, "autodeploy-agent-") {
+		if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") ||
+			!(strings.HasPrefix(name, "autodeploy-agent-") ||
+				strings.HasPrefix(name, "autodeploy-credprovider-")) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -165,12 +168,24 @@ func handleInstallAgent(r Repos) http.HandlerFunc {
 			})
 			return
 		}
+		// Also fetch the matching setup-lock credential provider DLL so an
+		// image that opts into the lock has it available with zero extra
+		// operator steps. Best-effort and Windows-only: older releases predate
+		// the DLL, and a machine with no DLL simply deploys without the lock.
+		credProvider := ""
+		if body.OS == "windows" {
+			cpName := credProviderReleaseFilename(body.OS, body.Arch)
+			if _, cerr := fetchAndVerifyRelease(req.Context(), base, cpName, dl); cerr == nil {
+				credProvider = cpName
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":   "installed",
-			"tag":      tag,
-			"filename": name,
-			"sha256":   hash,
-			"path":     filepath.Join(dl, name),
+			"status":       "installed",
+			"tag":          tag,
+			"filename":     name,
+			"sha256":       hash,
+			"path":         filepath.Join(dl, name),
+			"credprovider": credProvider,
 		})
 	}
 }
