@@ -2634,3 +2634,53 @@ it; failure mode is graceful (drops to iPXE shell with a Secure-Boot hint).
 hardening: ship a signed Unified Kernel Image (kernel+initrd+cmdline in one
 signed PE) to also verify the initramfs; track SBAT revocations of the bundled
 shim/kernel.
+
+---
+
+## 2026-06-09 — BitLocker: support complex (enhanced) pre-boot PINs
+
+**WHAT.** The agent could only set numeric BitLocker pre-boot PINs. A complex
+PIN such as `Bannana10!` failed at protector-add time with
+`Add-TpmAndPinProtectorInternal : Your PIN can only contain numbers from 0 to 9.
+(HRESULT 0x803100CC)`. The agent now enables Windows' "Allow enhanced PINs for
+startup" policy on the target machine just before it applies a non-numeric PIN.
+
+- New `agent/internal/bitlocker/enhanced_pin.go` (build-tag-free, so it builds
+  and unit-tests on the Linux CI host): `enhancedPIN` reports whether a PIN
+  contains anything outside `0-9` (after trimming, mirroring the driver's
+  `.Trim()`); `enhancedPINPolicyScript` returns a PowerShell snippet that writes
+  `UseEnhancedPin=1` to `HKLM:\SOFTWARE\Policies\Microsoft\FVE` — the same key
+  Group Policy uses, read directly by BitLocker at protector-add time, so it
+  takes effect in the same elevated session with no `gpupdate`.
+- `bitlocker_windows.go`: `driverEnable` and `driverChangePIN` now prepend that
+  snippet to their PowerShell. For a plain numeric PIN the snippet is empty, so
+  numeric-PIN behaviour is byte-for-byte unchanged and system policy is left
+  untouched (operator-confirmed scope: raise the policy only when needed).
+- Tests in `enhanced_pin_test.go` cover the numeric/complex boundary (incl. the
+  reported `Bannana10!`, internal spaces, non-ASCII) and assert the snippet
+  targets the right key/value and never embeds the PIN value.
+- Docs: `docs/operations/bitlocker.md` gains a "PIN format" section documenting
+  numeric vs enhanced PINs and the pre-boot keyboard caveat.
+
+**WHY (assumptions / decisions).**
+- The PIN stays a secret: it still travels via stdin and is never interpolated
+  into the script. The policy snippet is constant text; `check-secrets.sh`
+  passes (the `pin` argument sits on the call's closing line, not the
+  `fmt.Sprintf(` line).
+- DECISION (operator-approved): enable the policy *only* for complex PINs, not
+  unconditionally — numeric-only sites keep their system policy unchanged. Each
+  enable/change-PIN re-evaluates, so a later switch numeric→complex still raises
+  it.
+- The agent already runs elevated (it enables BitLocker), so the HKLM policy
+  write succeeds. If it ever fails under `$ErrorActionPreference='Stop'`, the
+  whole operation aborts and is reported — the same fail-safe as today, with a
+  clearer error than the raw 0x803100CC.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, and `go test ./...` green for
+the agent module on both native linux/amd64 and `GOOS=windows` cross-build;
+`scripts/check-secrets.sh` OK. Not yet exercised on real Windows hardware — the
+pre-boot keyboard caveat (enhanced PINs may type differently before Windows
+loads) is documented for operators.
+
+**NEXT.** Optional: surface a portal hint on the BitLocker PIN field noting that
+complex PINs are allowed and the pre-boot keyboard caveat.

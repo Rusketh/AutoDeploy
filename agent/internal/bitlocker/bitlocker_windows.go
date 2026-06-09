@@ -15,8 +15,11 @@ func driverEnable(ctx context.Context, drive, pin string) (string, error) {
 	// line. The PowerShell body reads stdin into $p, enables
 	// BitLocker with TPM+PIN, then prints the freshly-generated
 	// recovery password (and nothing else) so the caller can capture it.
+	// When the PIN is complex (letters/symbols/spaces) we first raise the
+	// "Allow enhanced PINs for startup" policy, without which BitLocker
+	// rejects any non-numeric PIN; for a plain numeric PIN this is empty.
 	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-Clear-Tpm -ErrorAction SilentlyContinue | Out-Null
+%sClear-Tpm -ErrorAction SilentlyContinue | Out-Null
 Initialize-Tpm -ErrorAction SilentlyContinue | Out-Null
 $p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
@@ -26,7 +29,7 @@ Add-BitLockerKeyProtector -MountPoint '%s' -RecoveryPasswordProtector | Out-Null
 $key = (Get-BitLockerVolume -MountPoint '%s').KeyProtector |
        Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' } |
        Select-Object -ExpandProperty RecoveryPassword -First 1
-Write-Output $key`, escape(drive), escape(drive), escape(drive))
+Write-Output $key`, enhancedPINPolicyScript(pin), escape(drive), escape(drive), escape(drive))
 
 	cmd := exec.CommandContext(ctx, "powershell",
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -80,15 +83,18 @@ Write-Output ("{0}|{1}" -f [int]$v.ProtectionStatus, [int]($pin -gt 0))`, escape
 // a site that backs recovery keys up to AD keeps doing so unaffected. The
 // recovery password also keeps the volume protected during the swap.
 func driverChangePIN(ctx context.Context, drive, pin string) error {
+	// As in driverEnable, raise the enhanced-PIN policy first when the new
+	// PIN is complex so Add-BitLockerKeyProtector accepts it; empty for a
+	// plain numeric PIN.
 	scriptBody := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$p = $input | Out-String
+%s$p = $input | Out-String
 $p = $p.Trim() | ConvertTo-SecureString -AsPlainText -Force
 $v = Get-BitLockerVolume -MountPoint '%s'
 foreach ($k in @($v.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'TpmPin' })) {
     Remove-BitLockerKeyProtector -MountPoint '%s' -KeyProtectorId $k.KeyProtectorId | Out-Null
 }
 Add-BitLockerKeyProtector -MountPoint '%s' -TpmAndPinProtector -Pin $p | Out-Null`,
-		escape(drive), escape(drive), escape(drive))
+		enhancedPINPolicyScript(pin), escape(drive), escape(drive), escape(drive))
 	cmd := exec.CommandContext(ctx, "powershell",
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", scriptBody)
 	cmd.Stdin = strings.NewReader(pin)
