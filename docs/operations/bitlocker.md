@@ -14,6 +14,24 @@ BitLocker is a Windows feature; this functionality applies to the Windows
    stored encrypted at rest (see [Security → Secrets at rest](security.md#secrets-at-rest)).
 4. Operators can later retrieve the recovery key from the portal when needed.
 
+## PIN format
+
+A BitLocker pre-boot PIN can be either:
+
+- **Numeric** (digits `0`–`9`) — works on every machine with no extra setup.
+- **Complex** (also called an *enhanced PIN*) — may include letters, symbols and
+  spaces, for example `Bannana10!`. When a machine's assigned PIN contains
+  anything other than digits, the agent automatically enables Windows' **"Allow
+  enhanced PINs for startup"** policy on that machine before applying it.
+  Without that policy, Windows rejects the PIN with *"Your PIN can only contain
+  numbers from 0 to 9."*
+
+> **Pre-boot keyboard caveat.** The PIN is typed in the pre-boot environment,
+> before Windows loads, where keyboard support is limited. On some firmware the
+> keys are mapped as if on a US QWERTY layout (the function keys `F1`–`F10`
+> stand in for digits `1`–`0`). Confirm a complex PIN can be entered at boot on
+> your hardware before rolling it out widely.
+
 ## Managing PINs and keys
 
 Open a machine from **[Machines](../portal/machines.md)** and use its BitLocker panel to:
