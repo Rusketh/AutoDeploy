@@ -29,25 +29,35 @@ that the agent and `SetupComplete.cmd` agree on:
     regular user cannot sign in.
   - A branded tile shows the live activity + progress from `status.json`,
     refreshed on a background thread.
-  - A branded full-screen window is painted on **every monitor**
-    (`fullscreen.cpp`).
+  - A branded full-screen window is painted on every **secondary** monitor
+    (`fullscreen.cpp`); the **primary** monitor shows the interactive branded
+    credential tile (so the unlock link stays clickable — a full-screen window
+    over it would block all input).
 - **Marker absent (machine past its initial rollout):** the provider is fully
   **inert** — 0 credentials, no filtering — so later app pushes never lock the
   machine and a stock logon is shown.
 
 ### Technician unlock
 
-There is **no visible unlock control**. A technician presses **Ctrl+Alt+U**
-(captured by a low-level keyboard hook) to reveal a PIN field. The entered PIN is
+A discreet **"Technician unlock"** command link on the tile reveals a PIN field
+when clicked (reliable LogonUI input routing — a hidden global hotkey on the
+secure logon desktop proved unreliable across Windows builds). The entered PIN is
 handed to the agent via the `pin-request`/`pin-response` files; the agent
 validates it against AutoDeploy's existing rate-limited Access PIN and replies
-`allow`/`deny`. On `allow` the DLL clears the marker so normal sign-in returns.
-The DLL holds **no crypto** — validation is delegated to the agent. If no Access
-PIN is configured, the agent grants any submission.
+`allow`/`deny`. The DLL holds **no crypto** — validation is delegated to the
+agent. If no Access PIN is configured, the agent grants any submission.
 
-The agent clears the marker on its own once it closes the initial deployment, so
-in the normal path the screen disappears (and the machine reboots to first use)
-without anyone touching it.
+### Dismissing the screen
+
+LogonUI evaluates the credential provider only at load, so a displayed lock
+screen can't be dismissed in place by clearing the marker. Both exit paths
+therefore **reboot** to a clean logon (driven by the agent, which has shutdown
+rights):
+
+- **Normal completion:** the agent clears the marker and reboots once it closes
+  the initial deployment — the machine comes back to the standard logon for
+  first use, untouched.
+- **Technician unlock:** a valid PIN makes the agent clear the marker and reboot.
 
 ## Building
 

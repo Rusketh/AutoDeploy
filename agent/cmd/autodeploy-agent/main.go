@@ -359,6 +359,9 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software, onProgress)
 	}
 	identityBody := map[string]any{"system_uuid": f.uuid}
+	// setupLockReboot is set when we close a setup-lock deployment; we reboot at
+	// the END of this cycle (after BitLocker etc.) to restore the logon screen.
+	setupLockReboot := false
 	// If the server told us about an open deployment (opened by the boot
 	// client), report the final outcome so the dashboard row transitions
 	// from "in_progress" to "ok" or "failed". This fires at most once per
@@ -383,11 +386,16 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 				slog.String("actor", f.uuid),
 				slog.Int64("deployment_id", resp.DeploymentID),
 				slog.String("outcome", outcome))
-			// Initial rollout finished: drop the setup-lock marker so the next
-			// logon shows the normal Windows screen for first use.
+			// Initial rollout finished: drop the setup-lock marker and remember
+			// to reboot at the end of this cycle. A reboot (not just clearing
+			// the marker) is REQUIRED to restore the logon: LogonUI evaluates
+			// the credential provider only at load, so once the lock screen is
+			// up, clearing the marker alone won't make it re-enumerate -- the
+			// screen would linger until the machine restarts.
 			if resp.SetupLock {
-				writeLockStatus("done", "Setup complete", 1, 1)
+				writeLockStatus("done", "Setup complete — restarting…", 1, 1)
 				clearLockMarker()
+				setupLockReboot = true
 			}
 		}
 	}
@@ -423,6 +431,12 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if kbScanCounter%10 == 1 {
 		reportKBScan(ctx, log, c, f)
 	}
+	// Setup-lock: the deployment is closed and all post-install work is done, so
+	// reboot to bring the machine back to a clean Windows logon for first use.
+	// The marker was already cleared above.
+	if setupLockReboot {
+		scheduleSetupLockReboot(ctx, log, f.dryRun, "AutoDeploy setup complete")
+	}
 	if resp.PollIntervalSeconds > 0 {
 		return time.Duration(resp.PollIntervalSeconds) * time.Second
 	}
@@ -455,6 +469,24 @@ func reportDeployProgress(ctx context.Context, log *slog.Logger, c *httpc.Client
 	}, &ignore); err != nil {
 		log.Warn("deploy.progress", slog.String("error", err.Error()))
 	}
+}
+
+// scheduleSetupLockReboot restarts the machine so LogonUI reloads and, finding
+// no lock marker, shows the normal Windows logon. Used both when the initial
+// rollout finishes and when a technician unlocks: in either case the displayed
+// lock screen can only be dismissed by re-evaluating the credential provider,
+// which happens at boot. Best-effort; a no-op under --dry-run.
+func scheduleSetupLockReboot(ctx context.Context, log *slog.Logger, dryRun bool, reason string) {
+	if dryRun {
+		log.Info("setuplock.reboot.skip", slog.String("reason", "--dry-run"))
+		return
+	}
+	runner := &steps.OSRunner{Log: log, DryRun: dryRun}
+	if _, err := runner.Run(ctx, "shutdown", []string{"/r", "/t", "10", "/c", reason}, ""); err != nil {
+		log.Warn("setuplock.reboot", slog.String("error", err.Error()))
+		return
+	}
+	log.Info("setuplock.reboot", slog.String("note", reason))
 }
 
 var kbScanCounter int
@@ -748,7 +780,13 @@ func pollLoop(ctx context.Context, log *slog.Logger, interval time.Duration, wor
 func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, shipper *logging.Shipper, interval time.Duration) {
 	// Service technician-unlock PIN checks for the setup-lock screen for the
 	// lifetime of the resident loop. Cheap and harmless when no lock is active.
-	go watchLockPINRequests(ctx, log, serverPINValidator(c, f))
+	// A valid PIN clears the marker and reboots to a clean logon (the displayed
+	// lock screen can't be dismissed in place -- LogonUI re-evaluates only at
+	// boot).
+	go watchLockPINRequests(ctx, log, serverPINValidator(c, f), func() {
+		clearLockMarker()
+		scheduleSetupLockReboot(ctx, log, f.dryRun, "AutoDeploy technician unlock")
+	})
 	// When running under the SCM, self-update must restart the SERVICE
 	// (not relaunch a detached console process), or the upgraded agent
 	// would run outside the service. Empty in console mode.

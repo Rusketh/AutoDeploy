@@ -32,15 +32,15 @@ static const wchar_t* kFriendly = L"AutoDeploy Setup Lock";
 
 static HINSTANCE g_hinst = nullptr;
 static LONG g_cDllRef = 0;
-static volatile LONG g_reveal = 0; // set by the keyboard hook, consumed by the update thread
 
 // Fields shown on the tile.
 enum FIELD {
     FID_TITLE = 0,    // large text: "Setting up your computer"
     FID_ACTIVITY,     // small text: the agent's current activity
     FID_PROGRESS,     // small text: textual progress bar
-    FID_PIN,          // password: technician PIN (hidden until Ctrl+Alt+U)
-    FID_SUBMIT,       // submit button for the PIN (hidden until Ctrl+Alt+U)
+    FID_UNLOCK_LINK,  // command link: discreet "Technician unlock"
+    FID_PIN,          // password: technician PIN (revealed by the link)
+    FID_SUBMIT,       // submit button for the PIN (revealed by the link)
     FID_COUNT
 };
 
@@ -48,6 +48,7 @@ static CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR g_fields[FID_COUNT] = {
     {FID_TITLE, CPFT_LARGE_TEXT, (PWSTR)L"Setting up your computer"},
     {FID_ACTIVITY, CPFT_SMALL_TEXT, (PWSTR)L"Activity"},
     {FID_PROGRESS, CPFT_SMALL_TEXT, (PWSTR)L"Progress"},
+    {FID_UNLOCK_LINK, CPFT_COMMAND_LINK, (PWSTR)L"Technician unlock"},
     {FID_PIN, CPFT_PASSWORD_TEXT, (PWSTR)L"Technician PIN"},
     {FID_SUBMIT, CPFT_SUBMIT_BUTTON, (PWSTR)L"Unlock"},
 };
@@ -107,15 +108,10 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
         m_pEvents = e;
         if (m_pEvents) m_pEvents->AddRef();
         startUpdates();
-        m_hook = SetWindowsHookExW(WH_KEYBOARD_LL, llKeyProc, g_hinst, 0);
         return S_OK;
     }
     IFACEMETHODIMP UnAdvise() override {
         stopUpdates();
-        if (m_hook) {
-            UnhookWindowsHookEx(m_hook);
-            m_hook = nullptr;
-        }
         if (m_pEvents) {
             m_pEvents->Release();
             m_pEvents = nullptr;
@@ -140,6 +136,9 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
             case FID_PROGRESS:
                 s = CPFS_DISPLAY_IN_BOTH;
                 break;
+            case FID_UNLOCK_LINK:
+                s = m_revealed ? CPFS_HIDDEN : CPFS_DISPLAY_IN_BOTH;
+                break;
             case FID_PIN:
                 s = m_revealed ? CPFS_DISPLAY_IN_SELECTED_TILE : CPFS_HIDDEN;
                 is = m_revealed ? CPFIS_FOCUSED : CPFIS_NONE;
@@ -163,6 +162,8 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
                 return dupW(lockstate::ReadStatus().activity.c_str(), ppwsz);
             case FID_PROGRESS:
                 return dupW(progressText(lockstate::ReadStatus()).c_str(), ppwsz);
+            case FID_UNLOCK_LINK:
+                return dupW(L"Technician unlock", ppwsz);
             case FID_PIN:
                 return dupW(L"", ppwsz);
             default:
@@ -187,7 +188,19 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
     }
     IFACEMETHODIMP SetCheckboxValue(DWORD, BOOL) override { return E_NOTIMPL; }
     IFACEMETHODIMP SetComboBoxSelectedValue(DWORD, DWORD) override { return E_NOTIMPL; }
-    IFACEMETHODIMP CommandLinkClicked(DWORD) override { return E_NOTIMPL; }
+    IFACEMETHODIMP CommandLinkClicked(DWORD f) override {
+        if (f != FID_UNLOCK_LINK) return E_INVALIDARG;
+        // Reveal the PIN field on the LogonUI thread (reliable, unlike a global
+        // hotkey on the secure desktop). The link hides itself.
+        m_revealed = true;
+        if (m_pEvents) {
+            m_pEvents->SetFieldState(this, FID_UNLOCK_LINK, CPFS_HIDDEN);
+            m_pEvents->SetFieldState(this, FID_PIN, CPFS_DISPLAY_IN_SELECTED_TILE);
+            m_pEvents->SetFieldInteractiveState(this, FID_PIN, CPFIS_FOCUSED);
+            m_pEvents->SetFieldState(this, FID_SUBMIT, CPFS_DISPLAY_IN_SELECTED_TILE);
+        }
+        return S_OK;
+    }
     IFACEMETHODIMP GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* pcpgsr,
                                     CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* pcpcs,
                                     PWSTR* ppwszOptionalStatusText,
@@ -226,17 +239,8 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
     }
 
   private:
-    static LRESULT CALLBACK llKeyProc(int code, WPARAM wp, LPARAM lp) {
-        if (code == HC_ACTION && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
-            KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)lp;
-            if (k && k->vkCode == 'U' &&
-                (GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
-                (GetAsyncKeyState(VK_MENU) & 0x8000)) {
-                InterlockedExchange(&g_reveal, 1);
-            }
-        }
-        return CallNextHookEx(nullptr, code, wp, lp);
-    }
+    // updateThread keeps the tile's activity + progress text live (LogonUI
+    // caches field values until SetFieldString pushes a change).
     static DWORD WINAPI updateThread(LPVOID param) {
         CAutoDeployCredential* self = (CAutoDeployCredential*)param;
         while (InterlockedCompareExchange(&self->m_stop, 0, 0) == 0) {
@@ -245,12 +249,6 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
                 self->m_pEvents->SetFieldString(self, FID_ACTIVITY, st.activity.c_str());
                 std::wstring pt = progressText(st);
                 self->m_pEvents->SetFieldString(self, FID_PROGRESS, pt.c_str());
-                if (InterlockedCompareExchange(&g_reveal, 0, 1) == 1 && !self->m_revealed) {
-                    self->m_revealed = true;
-                    self->m_pEvents->SetFieldState(self, FID_PIN, CPFS_DISPLAY_IN_SELECTED_TILE);
-                    self->m_pEvents->SetFieldInteractiveState(self, FID_PIN, CPFIS_FOCUSED);
-                    self->m_pEvents->SetFieldState(self, FID_SUBMIT, CPFS_DISPLAY_IN_SELECTED_TILE);
-                }
             }
             Sleep(300);
         }
@@ -275,7 +273,6 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
     bool m_revealed = false;
     HANDLE m_thread = nullptr;
     volatile LONG m_stop = 0;
-    HHOOK m_hook = nullptr;
 };
 
 // ---------------------------------------------------------------------------
