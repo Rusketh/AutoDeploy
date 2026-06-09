@@ -77,6 +77,28 @@ The boot-package version shown in the corner of every boot screen tells you
 which release is running — confirm it's the one you expect before digging
 further. See also [PXE & boot setup](../install/pxe-and-boot.md).
 
+## A driver download stalls with "short read" (`have X of Y bytes`)
+
+If the stalled file is a **driver** payload and the error is a short read —
+
+```
+download /run/autodeploy/payload-driver-… stalled for 5m0s: short read: have 610747486 of 1654623973 bytes
+```
+
+— where the server is reachable and actually served the smaller number (`X`),
+the recorded download size (`Y`) didn't match the bytes the server serves for
+that package. The Boot Client downloads the **uploaded driver zip**, but an
+older bug recorded a driver package's `SizeBytes` as the *uncompressed*
+extract total (typically 2–3× larger) when you clicked **Extract** on it. The
+client then waited for bytes that don't exist and stalled out after its retry
+budget.
+
+The server now reports each driver payload's true on-disk size in the manifest,
+so newly built manifests heal themselves with no action needed. If you are on a
+build from before the fix, correct an affected package by re-uploading its zip
+(or clicking **Extract** again) on its **Drivers** page — that re-records the
+served size.
+
 ## A deploy fails at partitioning (`zap … exit status 2`, wrong disk)
 
 A deploy that reaches the disk step and then fails with something like

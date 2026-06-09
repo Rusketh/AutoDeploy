@@ -119,6 +119,21 @@ func (b *BlobStore) Open(relative string) (*os.File, error) {
 	return os.Open(abs)
 }
 
+// Size returns the size in bytes of the blob at relative. It propagates
+// os.ErrNotExist (via os.Stat) when the blob is absent, so callers can
+// distinguish "no such blob" and fall back to a recorded value.
+func (b *BlobStore) Size(relative string) (int64, error) {
+	abs, err := b.Resolve(relative)
+	if err != nil {
+		return 0, err
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 // WriteStream writes to relative atomically: stream to a sibling .tmp file,
 // fsync, rename into place. Returns the number of bytes written.
 func (b *BlobStore) WriteStream(relative string, src io.Reader) (int64, error) {

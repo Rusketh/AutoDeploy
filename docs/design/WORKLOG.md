@@ -2684,3 +2684,56 @@ loads) is documented for operators.
 
 **NEXT.** Optional: surface a portal hint on the BitLocker PIN field noting that
 complex PINs are allowed and the pre-boot keyboard caveat.
+
+---
+
+## 2026-06-09 — Fix driver-payload deploy stall (SizeBytes vs served blob)
+
+**WHAT.** A PXE deploy could stall and fail on a driver download:
+
+```
+download …/payload-driver-…_payload_drivers_5 stalled for 5m0s:
+short read: have 610747486 of 1654623973 bytes
+```
+
+Root cause: `ExtractDriverPackage` (POST /api/v1/drivers/{id}/extract, and the
+portal's Extract button) overwrote the package's `SizeBytes` with the
+*uncompressed* extract total (`res.Bytes`) — but `/payload/drivers/{id}` serves
+the original uploaded **zip** (`payload.bin`) via `http.ServeContent`. The
+manifest hands the Boot Client `SizeBytes` as the expected download length, so
+after an Extract the client expected the (≈2.7×-larger) uncompressed total,
+downloaded the whole zip, saw it as "short", asked for `bytes=<zipsize>-`, got a
+416, treated that as complete, re-detected the short read, and span until the
+5-minute stall budget killed the deploy. Hits any package an operator clicked
+**Extract** on. (No mirror involved — the origin server itself.)
+
+Fixes:
+- `driver_extract.go`: record the **served blob's** size (stat `payload.bin`),
+  not the extract total. Self-heals a corrupted row on re-extract. The extract
+  total still reaches the portal via `res.Bytes` + `metadata.json`.
+- `manifest.go` + `cmd/.../main.go`: `ManifestHandler` now takes the
+  `*storage.BlobStore` and reports each driver item's **actual on-disk size**
+  (fallback to the recorded column when the blob can't be statted). This makes
+  the manifest authoritative and heals every already-corrupted row immediately,
+  with no re-extract, and keeps the Boot Client's truncation check honest
+  (wantSize == real served size).
+- `storage/blob.go`: small `BlobStore.Size(rel)` helper.
+
+**WHY (decisions).** Manifest-authoritative-over-column was chosen over a
+client-side change: the Boot Client's `wantSize`/short-read logic is correct and
+deliberately distrusts Content-Length (proxy truncation), so weakening it would
+mask genuine truncation. Fixing the size at the source keeps client integrity
+intact while self-healing existing data. Software/ISO payloads were left alone:
+their served blob == recorded size (no extract step rewrites it), so the bug
+class doesn't apply.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, full `go test ./...` green for
+the server module; `scripts/check-secrets.sh` OK. New tests:
+`TestExtractDriverDoesNotInflateSizeBytes` (extract keeps SizeBytes == zip) and
+`TestManifestDriverSizeTracksBlob` (manifest reports real blob size over a
+deliberately wrong column). Troubleshooting doc gained a "short read" section.
+
+**NEXT.** Optional follow-up: have the Boot Client treat an authoritative
+416-on-resume as terminal (fail fast or accept) instead of spinning the full
+stall budget, so any future size disagreement fails in seconds, not minutes.
+Left out here to avoid changing truncation semantics without sign-off.

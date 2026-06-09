@@ -12,6 +12,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
+	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
@@ -68,6 +69,13 @@ type ManifestHandler struct {
 	// prepareAD also fires for images that use agent-driven join (even
 	// when the unattend itself has no legacy DomainJoin block).
 	DomainJoin *model.DomainJoinRepo
+	// Blobs lets the handler report each payload's true on-disk size as the
+	// download length, rather than trusting the recorded SizeBytes column.
+	// This keeps the Boot Client's expected length in lockstep with what the
+	// server actually serves, so a stale/incorrect column can't make a
+	// resumable download wait for bytes that aren't there. Nil falls back to
+	// the recorded size.
+	Blobs *storage.BlobStore
 }
 
 // SiteHeader is the HTTP header the Boot Client / agent sets to tell
@@ -214,10 +222,22 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 			// Skip packages that have a row but no uploaded payload yet.
 			continue
 		}
+		// The Boot Client downloads the served blob (the uploaded zip) and uses
+		// this Size to drive its resumable fetch. Trust the blob on disk over the
+		// recorded column: an older driver-extract bug could leave SizeBytes
+		// holding the larger uncompressed total, which made the client wait for
+		// bytes the server never serves and stall the deploy. Fall back to the
+		// column when the blob can't be statted.
+		size := d.SizeBytes
+		if h.Blobs != nil {
+			if n, err := h.Blobs.Size(d.StoragePath); err == nil {
+				size = n
+			}
+		}
 		m.Items = append(m.Items, ManifestItem{
 			Role: "driver",
 			URL:  fmt.Sprintf("%s/payload/drivers/%d", payloadBase, int64(d.ID)),
-			Size: d.SizeBytes,
+			Size: size,
 			Name: d.Name,
 		})
 	}
