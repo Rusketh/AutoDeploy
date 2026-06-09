@@ -25,17 +25,20 @@
     <a href="/portal/drivers"   class="{{if eq .Path "/portal/drivers"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-cpu"/></svg>Drivers</a>
     <a href="/portal/software"  class="{{if eq .Path "/portal/software"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-box"/></svg>Software</a>
     <a href="/portal/loadouts"  class="{{if eq .Path "/portal/loadouts"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-stack"/></svg>Loadouts</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a href="/portal/machines"  class="{{if eq .Path "/portal/machines"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-server"/></svg>Machines</a>
     <a href="/portal/updates"   class="{{if eq .Path "/portal/updates"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-disc"/></svg>Updates</a>
     <a href="/portal/bulk"      class="{{if eq .Path "/portal/bulk"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-bolt"/></svg>Bulk</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a href="/portal/mirrors"   class="{{if eq .Path "/portal/mirrors"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-globe"/></svg>Mirrors</a>
     <a href="/portal/logs"      class="{{if eq .Path "/portal/logs"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-list"/></svg>Logs</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a href="/portal/settings"  class="{{if eq .Path "/portal/settings"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-gear"/></svg>Settings</a>
   </nav>
   <div class="toolset">
     <a href="/portal/notifications" class="iconbtn" id="notify-bell" aria-label="Notifications" title="Notifications" style="position:relative;">
       <svg aria-hidden="true"><use href="#i-bell"/></svg>
-      <span id="notify-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--danger,#dc3545);color:#fff;font-size:10px;min-width:16px;height:16px;border-radius:8px;text-align:center;line-height:16px;padding:0 4px;font-weight:700;"></span>
+      <span id="notify-badge" class="notify-count"></span>
     </a>
     <button type="button" class="iconbtn" data-theme-toggle aria-label="Cycle theme (auto / light / dark)" title="Toggle theme">
       <svg data-show="auto" aria-hidden="true"><use href="#i-auto"/></svg>
@@ -44,8 +47,8 @@
     </button>
     <button type="button" class="iconbtn" onclick="dispatchEvent(new KeyboardEvent('keydown',{key:'?'}))" aria-label="Show keyboard shortcuts" title="Keyboard shortcuts (?)"><svg aria-hidden="true"><use href="#i-help"/></svg></button>
     <div class="user">
-      <a href="/portal/settings/accounts" title="Manage accounts" style="color:inherit;text-decoration:none;font-weight:500;">{{.User.Username}}</a>
-      <form method="POST" action="/portal/logout" class="inline" style="margin:0;">
+      <a href="/portal/settings/accounts" title="Manage accounts" class="user-link">{{.User.Username}}</a>
+      <form method="POST" action="/portal/logout" class="inline-form">
         <button type="submit" class="iconbtn" aria-label="Sign out" title="Sign out"><svg aria-hidden="true"><use href="#i-logout"/></svg></button>
       </form>
     </div>
@@ -56,6 +59,7 @@
 <div class="flash flash-{{.FlashKind}}">
   <svg><use href="#i-{{if eq .FlashKind "ok"}}check{{else if eq .FlashKind "err"}}alert{{else}}info{{end}}"/></svg>
   <span>{{.FlashMsg}}</span>
+  <button type="button" class="flash-dismiss" onclick="this.parentNode.remove()" aria-label="Dismiss">&times;</button>
 </div>
 {{end}}
 {{if and .User.ID .BootstrapPresent}}
@@ -65,6 +69,7 @@
   The file <code>admin-bootstrap.txt</code> contains a cleartext password
   and is meant to be read once then deleted. Remove it now that you have
   an operator account.</span>
+  <button type="button" class="flash-dismiss" onclick="this.parentNode.remove()" aria-label="Dismiss">&times;</button>
 </div>
 {{end}}
 <main id="main" tabindex="-1">
