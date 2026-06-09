@@ -14,6 +14,7 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		UnattendPath:       "/tmp/unattend.xml",
 		DriverPaths:        []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
 		AgentPath:          "/tmp/payload-agent.exe",
+		CredProviderPath:   "/tmp/payload-credprovider.dll",
 		SetupCompletePath:  "/tmp/SetupComplete.cmd",
 		CallbackScriptPath: "/tmp/adcb.ps1",
 		WorkDir:            "/tmp/work",
@@ -54,6 +55,8 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		// Agent + SetupComplete.cmd injected via the $OEM$ tree ($$=%WINDIR%).
 		"mkdir -p /tmp/work/media/sources/$OEM$/$$/AutoDeploy",
 		"cp /tmp/payload-agent.exe /tmp/work/media/sources/$OEM$/$$/AutoDeploy/autodeploy-agent.exe",
+		// Setup-lock credential provider DLL injected next to the agent.
+		"cp /tmp/payload-credprovider.dll /tmp/work/media/sources/$OEM$/$$/AutoDeploy/autodeploy-credprovider.dll",
 		"mkdir -p /tmp/work/media/sources/$OEM$/$$/Setup/Scripts",
 		"cp /tmp/SetupComplete.cmd /tmp/work/media/sources/$OEM$/$$/Setup/Scripts/SetupComplete.cmd",
 		// Install-status milestone reporter staged into the same Scripts dir.

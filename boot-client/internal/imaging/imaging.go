@@ -116,6 +116,10 @@ type MediaPlan struct {
 	// it post-Setup. Both empty = deploy without an agent.
 	AgentPath         string
 	SetupCompletePath string
+	// CredProviderPath is the setup-lock credential provider DLL to inject
+	// alongside the agent via the $OEM$ tree (empty = no lock screen). The
+	// generated SetupComplete.cmd registers it and arms the lock marker.
+	CredProviderPath string
 	// CallbackScriptPath is adcb.ps1, the install-status milestone reporter
 	// staged into C:\Windows\Setup\Scripts via the $OEM$ tree and invoked by
 	// the generated unattend during the specialize and first-logon passes.
@@ -346,6 +350,13 @@ func stageAgent(ctx context.Context, plan MediaPlan, r Runner, mount string) err
 	}
 	if err := r.Exec(ctx, "cp", plan.AgentPath, filepath.Join(agentDir, "autodeploy-agent.exe")); err != nil {
 		return err
+	}
+	// Inject the setup-lock credential provider DLL next to the agent when the
+	// image opted into the lock. SetupComplete.cmd registers it post-Setup.
+	if plan.CredProviderPath != "" {
+		if err := r.Exec(ctx, "cp", plan.CredProviderPath, filepath.Join(agentDir, "autodeploy-credprovider.dll")); err != nil {
+			return err
+		}
 	}
 	if plan.SetupCompletePath != "" {
 		scriptsDir := filepath.Join(oemWin, "Setup", "Scripts")

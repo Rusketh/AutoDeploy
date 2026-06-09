@@ -186,6 +186,11 @@ type manifest struct {
 	AgentID  string         `json:"agent_id,omitempty"`
 	Items    []manifestItem `json:"items"`
 	Warnings []string       `json:"warnings,omitempty"`
+	// SetupLock is true when this image locks the machine with a branded
+	// setup screen until the agent finishes the initial software rollout.
+	// When set, the client fetches the credential provider DLL and injects
+	// it into the OS via the $OEM$ tree.
+	SetupLock bool `json:"setup_lock,omitempty"`
 }
 
 func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging.Shipper) {
@@ -612,14 +617,24 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// Fetch the agent and render its SetupComplete.cmd. Best-effort: if no
 	// agent is served, the deploy still proceeds (just without an agent).
 	agentPath := fetchAgent(ctx, c, log, f.work)
+	// Setup-lock screen: when the image opts in AND we have an agent to drive
+	// the progress and tear the lock down, fetch the credential provider DLL to
+	// inject. Without an agent nothing would update the screen or clear the
+	// lock, so skip it. Best-effort: an absent/invalid DLL just deploys without
+	// the lock (a machine with no lock screen is still successfully imaged).
+	credProviderPath := ""
+	if m.SetupLock && agentPath != "" {
+		credProviderPath = fetchCredProvider(ctx, c, log, f.work)
+	}
 	setupCompletePath := ""
 	if agentPath != "" {
 		if m.AgentID == "" {
 			log.Warn("agent.no_id", slog.String("reason", "manifest carried no agent_id; agent will have no identity"))
 		}
-		if scp, err := writeSetupComplete(f.work, f.server, m.AgentID); err != nil {
+		if scp, err := writeSetupComplete(f.work, f.server, m.AgentID, credProviderPath != ""); err != nil {
 			log.Warn("agent.setupcomplete", slog.String("error", err.Error()))
-			agentPath = "" // no installer script -> don't strand a copied-but-uninstalled binary
+			agentPath = ""        // no installer script -> don't strand a copied-but-uninstalled binary
+			credProviderPath = "" // and don't inject a DLL that nothing would register
 		} else {
 			setupCompletePath = scp
 		}
@@ -643,6 +658,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		UnattendPath:       unattendPath,
 		DriverPaths:        driverPaths,
 		AgentPath:          agentPath,
+		CredProviderPath:   credProviderPath,
 		SetupCompletePath:  setupCompletePath,
 		CallbackScriptPath: callbackScriptPath,
 		WorkDir:            f.work,
@@ -943,6 +959,70 @@ func fetchAgent(ctx context.Context, c *httpc.Client, log *slog.Logger, work str
 	return dst
 }
 
+// credProviderInfo mirrors the server's /api/v1/agent/credprovider-info
+// response (the setup-lock credential provider DLL location + hash).
+type credProviderInfo struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256,omitempty"`
+}
+
+// fetchCredProvider downloads the setup-lock credential provider DLL the
+// server serves into work and returns its path. Best-effort: an empty return
+// means no usable DLL, and the deploy proceeds WITHOUT the lock rather than
+// failing -- a machine with no lock screen is still a successfully imaged
+// machine. Only called when the image opted into the lock.
+func fetchCredProvider(ctx context.Context, c *httpc.Client, log *slog.Logger, work string) string {
+	var info credProviderInfo
+	if err := c.GetJSON(ctx, "/api/v1/agent/credprovider-info", &info); err != nil {
+		log.Warn("credprovider.info", slog.String("error", err.Error()))
+		return ""
+	}
+	if info.URL == "" {
+		log.Warn("credprovider.unavailable",
+			slog.String("reason", "server serves no credential provider; deploying without the setup lock"))
+		return ""
+	}
+	dst := filepath.Join(work, "payload-credprovider.dll")
+	reportFile("setup lock screen")
+	if err := c.DownloadFile(ctx, info.URL, dst, 0, agentStallBudget, nil,
+		func(attempt int, derr error) {
+			log.Warn("credprovider.retry", slog.Int("attempt", attempt), slog.String("error", derr.Error()))
+			reportStage("Preparing", stallDetail(derr), -1)
+			reportFile("setup lock screen")
+		}); err != nil {
+		log.Warn("credprovider.download", slog.String("url", info.URL), slog.String("error", err.Error()))
+		return ""
+	}
+	// A credential provider is a Windows DLL -- a PE file starting with "MZ".
+	// Guard against a server error page (login HTML) being injected as a DLL.
+	if !looksLikePE(dst) {
+		log.Warn("credprovider.invalid", slog.String("url", info.URL),
+			slog.String("reason", "downloaded credential provider is not a PE binary; refusing to inject it"))
+		return ""
+	}
+	if info.SHA256 != "" {
+		actual, err := fileSHA256(dst)
+		if err != nil {
+			log.Warn("credprovider.hash.read", slog.String("error", err.Error()))
+			return ""
+		}
+		if !strings.EqualFold(actual, info.SHA256) {
+			log.Warn("credprovider.hash.mismatch",
+				slog.String("url", info.URL),
+				slog.String("expected", info.SHA256),
+				slog.String("actual", actual),
+				slog.String("reason", "SHA-256 mismatch; refusing to inject the credential provider"))
+			return ""
+		}
+		log.Info("credprovider.hash.ok", slog.String("sha256", actual))
+	} else {
+		log.Warn("credprovider.hash.skipped", slog.String("url", info.URL),
+			slog.String("reason", "server did not provide a SHA-256 hash; skipping verification"))
+	}
+	log.Info("credprovider.fetched", slog.String("url", info.URL))
+	return dst
+}
+
 // looksLikePE reports whether the file at path begins with the DOS/PE
 // "MZ" magic. Cheap sanity check so a server error page never ships as the
 // agent.
@@ -990,7 +1070,26 @@ const setupCompleteTemplate = "@echo off\r\n" +
 	"reg add \"HKLM\\SOFTWARE\\AutoDeploy\" /v ServerURL /t REG_SZ /d \"{{SERVER}}\" /f\r\n" +
 	"reg add \"HKLM\\SOFTWARE\\AutoDeploy\" /v AgentID /t REG_SZ /d \"{{AGENTID}}\" /f\r\n" +
 	"\"%DEST%\\autodeploy-agent.exe\" install-service\r\n" +
+	"{{LOCK}}" +
 	"exit /b 0\r\n"
+
+// setupCompleteLockBlock is spliced into SetupComplete.cmd when the image opts
+// into the setup-lock screen. It registers the branded-logon credential
+// provider (the DLL the boot client injected into C:\Windows\AutoDeploy) and
+// ARMS the lock marker so the screen wins the very first logon, before the
+// agent's first poll. The resident agent refreshes the on-screen status and
+// CLEARS the marker once it closes the initial deployment, so later software
+// pushes never lock the machine. %DEST% is the Program Files dir set above.
+const setupCompleteLockBlock = "" +
+	"rem AutoDeploy setup-lock: register the branded-logon credential provider.\r\n" +
+	"set \"CPSRC=%WINDIR%\\AutoDeploy\\autodeploy-credprovider.dll\"\r\n" +
+	"set \"CPDEST=%DEST%\\autodeploy-credprovider.dll\"\r\n" +
+	"if not exist \"%CPSRC%\" goto adlockdone\r\n" +
+	"copy /y \"%CPSRC%\" \"%CPDEST%\" >nul\r\n" +
+	"regsvr32 /s \"%CPDEST%\"\r\n" +
+	"if not exist \"%ProgramData%\\AutoDeploy\\lock\" mkdir \"%ProgramData%\\AutoDeploy\\lock\"\r\n" +
+	"type nul > \"%ProgramData%\\AutoDeploy\\lock\\active\"\r\n" +
+	":adlockdone\r\n"
 
 // callbackScriptTemplate is adcb.ps1, the install-status milestone reporter
 // staged into C:\Windows\Setup\Scripts via the $OEM$ tree. The generated
@@ -1047,7 +1146,7 @@ func sanitizeCmdValue(name, value string) error {
 
 // writeSetupComplete renders SetupComplete.cmd with the server URL and the
 // machine's agent_id baked in, and writes it to work, returning its path.
-func writeSetupComplete(work, serverURL, agentID string) (string, error) {
+func writeSetupComplete(work, serverURL, agentID string, lock bool) (string, error) {
 	if err := sanitizeCmdValue("server URL", serverURL); err != nil {
 		return "", err
 	}
@@ -1056,6 +1155,11 @@ func writeSetupComplete(work, serverURL, agentID string) (string, error) {
 	}
 	content := strings.ReplaceAll(setupCompleteTemplate, "{{SERVER}}", serverURL)
 	content = strings.ReplaceAll(content, "{{AGENTID}}", agentID)
+	lockBlock := ""
+	if lock {
+		lockBlock = setupCompleteLockBlock
+	}
+	content = strings.ReplaceAll(content, "{{LOCK}}", lockBlock)
 	dst := filepath.Join(work, "SetupComplete.cmd")
 	if err := os.WriteFile(dst, []byte(content), 0o644); err != nil {
 		return "", err
