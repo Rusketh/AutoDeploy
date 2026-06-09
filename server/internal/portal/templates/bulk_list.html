@@ -43,7 +43,7 @@
         {{else if eq $st "paused"}}<span class="badge muted">paused</span>
         {{else}}<span class="badge warn">active</span>{{end}}
       </td>
-      <td data-sort-value="{{.Progress.Percent}}" style="min-width:150px;">
+      <td data-sort-value="{{.Progress.Percent}}" class="col-progress">
         {{if .Progress.Total}}
         <div class="bulk-prog">
           <progress class="bulk-bar" value="{{.Progress.Done}}" max="{{.Progress.Total}}"></progress>
@@ -52,8 +52,8 @@
         {{else}}<span class="muted small">—</span>{{end}}
       </td>
       <td class="small muted">
-        {{if eq .ScheduleKind "once"}}<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-clock"/></svg> once
-        {{else if eq .ScheduleKind "recurring"}}<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-repeat"/></svg> recurring
+        {{if eq .ScheduleKind "once"}}<svg class="icon-inline"><use href="#i-clock"/></svg> once
+        {{else if eq .ScheduleKind "recurring"}}<svg class="icon-inline"><use href="#i-repeat"/></svg> recurring
         {{else}}now{{end}}
       </td>
       <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{formatTime (deref .NextRunAt)}}{{else}}—{{end}}</td>

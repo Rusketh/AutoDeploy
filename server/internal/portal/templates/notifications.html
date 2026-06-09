@@ -2,14 +2,14 @@
 <div class="toolbar">
   <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bell"/></svg>Notifications</h2>
   <div class="right">
-    <form method="POST" action="/portal/notifications/mark-all-read" style="display:inline;">
+    <form method="POST" action="/portal/notifications/mark-all-read" class="inline-form">
       <button type="submit" class="btn ghost sm"><svg><use href="#i-check"/></svg>Mark all read</button>
     </form>
     <a class="btn ghost sm" href="/portal/settings/notifications/preferences"><svg><use href="#i-gear"/></svg>Preferences</a>
   </div>
 </div>
 
-<form class="filter-bar" method="GET" action="/portal/notifications" style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+<form class="filter-bar" method="GET" action="/portal/notifications">
   <select name="severity">
     <option value="">All severities</option>
     <option value="info"{{if eq .Data.Severity "info"}} selected{{end}}>Info</option>
@@ -27,28 +27,29 @@
       </optgroup>
     {{end}}
   </select>
-  <label style="display:flex;align-items:center;gap:0.3rem;">
+  <label class="flex">
     <input type="checkbox" name="unread" value="1"{{if .Data.Unread}} checked{{end}}> Unread only
   </label>
   <button type="submit" class="btn sm">Filter</button>
 </form>
 
 {{if .Data.Notifications}}
+<div class="tablewrap">
 <table data-sortable>
   <thead>
     <tr>
-      <th style="width:40px;"></th>
+      <th data-nosort></th>
       <th>Title</th>
       <th>Event</th>
       <th>Time</th>
-      <th style="width:60px;"></th>
+      <th data-nosort></th>
     </tr>
   </thead>
   <tbody>
   {{range .Data.Notifications}}
-    <tr{{if not .ReadAt}} style="font-weight:600;"{{end}}>
+    <tr{{if not .ReadAt}} class="unread"{{end}}>
       <td>
-        {{if eq .Severity "error"}}<span class="dot err" title="Error"></span>
+        {{if eq .Severity "error"}}<span class="dot bad" title="Error"></span>
         {{else if eq .Severity "warning"}}<span class="dot warn" title="Warning"></span>
         {{else if eq .Severity "success"}}<span class="dot ok" title="Success"></span>
         {{else}}<span class="dot" title="Info"></span>{{end}}
@@ -66,17 +67,18 @@
   {{end}}
   </tbody>
 </table>
-{{if gt .Data.Total .Data.Limit}}
-<div class="pagination" style="margin-top:1rem;display:flex;gap:0.5rem;">
-  {{if gt .Data.Offset 0}}
-    <a class="btn sm ghost" href="/portal/notifications?offset={{sub .Data.Offset .Data.Limit}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Previous</a>
-  {{end}}
-  {{$nextOffset := add .Data.Offset .Data.Limit}}
-  {{if lt $nextOffset .Data.Total}}
-    <a class="btn sm ghost" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next</a>
-  {{end}}
-  <span class="small muted" style="align-self:center;">Showing {{add .Data.Offset 1}}–{{min (add .Data.Offset .Data.Limit) .Data.Total}} of {{.Data.Total}}</span>
 </div>
+{{if gt .Data.Total .Data.Limit}}
+<nav class="pager" aria-label="Pagination">
+  <div class="pager-info small muted">
+    Showing <strong>{{add .Data.Offset 1}}</strong>–<strong>{{min (add .Data.Offset .Data.Limit) .Data.Total}}</strong> of <strong>{{.Data.Total}}</strong>
+  </div>
+  <div class="pager-links">
+    {{if gt .Data.Offset 0}}<a class="btn secondary sm" href="/portal/notifications?offset={{sub .Data.Offset .Data.Limit}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
+    {{$nextOffset := add .Data.Offset .Data.Limit}}
+    {{if lt $nextOffset .Data.Total}}<a class="btn secondary sm" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></button>{{end}}
+  </div>
+</nav>
 {{end}}
 {{else}}
 <p class="muted">No notifications.</p>

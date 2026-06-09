@@ -980,6 +980,8 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 .filter-bar select, .filter-bar input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--bg); color: var(--fg); }
 .actions-start { justify-content: flex-start; }
 .actions-center { justify-content: center; }
+tr.unread td { font-weight: 600; }
+.col-progress { min-width: 150px; }
 
 /* ---------- Notification badge ---------- */
 .notify-count {
