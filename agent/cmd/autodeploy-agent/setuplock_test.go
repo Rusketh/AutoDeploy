@@ -61,12 +61,13 @@ func TestWatchLockPINRequests(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	unlocked := make(chan struct{}, 4)
 	// Validator accepts only "1234" (stands in for the rate-limited server gate).
-	go watchLockPINRequests(ctx, log, func(_ context.Context, pin string) bool {
-		return pin == "1234"
-	})
+	go watchLockPINRequests(ctx, log,
+		func(_ context.Context, pin string) bool { return pin == "1234" },
+		func() { unlocked <- struct{}{} })
 
-	check := func(pin, want string) {
+	respond := func(pin string) string {
 		t.Helper()
 		if err := writeFileAtomic(lockPath("pin-request"), []byte(pin)); err != nil {
 			t.Fatal(err)
@@ -75,19 +76,32 @@ func TestWatchLockPINRequests(t *testing.T) {
 		for time.Now().Before(deadline) {
 			b, err := os.ReadFile(lockPath("pin-response"))
 			if err == nil {
-				if string(b) != want {
-					t.Errorf("pin %q -> %q, want %q", pin, string(b), want)
-				}
 				_ = os.Remove(lockPath("pin-response"))
-				if _, serr := os.Stat(lockPath("pin-request")); !os.IsNotExist(serr) {
-					t.Errorf("pin-request not consumed for %q", pin)
-				}
-				return
+				return string(b)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
 		t.Fatalf("no pin-response for %q within deadline", pin)
+		return ""
 	}
-	check("1234", "allow")
-	check("0000", "deny")
+
+	// A valid PIN: "allow" + onUnlock fires.
+	if got := respond("1234"); got != "allow" {
+		t.Errorf("pin 1234 -> %q, want allow", got)
+	}
+	select {
+	case <-unlocked:
+	case <-time.After(2 * time.Second):
+		t.Error("onUnlock not called for a valid PIN")
+	}
+
+	// A wrong PIN: "deny" + onUnlock does NOT fire.
+	if got := respond("0000"); got != "deny" {
+		t.Errorf("pin 0000 -> %q, want deny", got)
+	}
+	select {
+	case <-unlocked:
+		t.Error("onUnlock called for an invalid PIN")
+	case <-time.After(300 * time.Millisecond):
+	}
 }

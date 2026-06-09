@@ -181,7 +181,7 @@ func serverPINValidator(c *httpc.Client, f agentFlags) pinValidator {
 // Validation is delegated here (Go) so the provider holds no crypto; the
 // server's per-machine rate limiting backstops brute force. Runs until ctx is
 // cancelled; cheap (a single Stat per tick).
-func watchLockPINRequests(ctx context.Context, log *slog.Logger, validate pinValidator) {
+func watchLockPINRequests(ctx context.Context, log *slog.Logger, validate pinValidator, onUnlock func()) {
 	const interval = 300 * time.Millisecond
 	reqPath := lockPath("pin-request")
 	respPath := lockPath("pin-response")
@@ -199,8 +199,9 @@ func watchLockPINRequests(ctx context.Context, log *slog.Logger, validate pinVal
 		}
 		_ = os.Remove(reqPath) // consume once
 		pin := strings.TrimRight(string(data), "\r\n")
+		allowed := validate(ctx, pin)
 		result := "deny"
-		if validate(ctx, pin) {
+		if allowed {
 			result = "allow"
 		}
 		if err := writeFileAtomic(respPath, []byte(result)); err != nil {
@@ -208,5 +209,8 @@ func watchLockPINRequests(ctx context.Context, log *slog.Logger, validate pinVal
 			continue
 		}
 		log.Info("lock.pin.checked", slog.String("result", result))
+		if allowed && onUnlock != nil {
+			onUnlock() // clear the marker + reboot to a clean logon
+		}
 	}
 }

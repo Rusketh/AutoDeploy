@@ -159,6 +159,11 @@ static BOOL CALLBACK monitorEnum(HMONITOR hMon, HDC, LPRECT, LPARAM) {
     MONITORINFO mi;
     mi.cbSize = sizeof(mi);
     if (!GetMonitorInfoW(hMon, &mi)) return TRUE;
+    // Leave the PRIMARY monitor to LogonUI: the branded credential tile (with
+    // its progress and the technician-unlock link) lives there and must stay
+    // clickable. A full-screen window over it would block all interaction.
+    // Secondary monitors get the full branded screen.
+    if (mi.dwFlags & MONITORINFOF_PRIMARY) return TRUE;
     RECT r = mi.rcMonitor;
     HWND h = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"",
                              WS_POPUP, r.left, r.top, r.right - r.left, r.bottom - r.top,
@@ -179,17 +184,10 @@ static DWORD WINAPI threadProc(LPVOID) {
         RegisterClassExW(&wc);
         g_classRegistered = true;
     }
+    // Branded windows on every NON-primary monitor. On a single-monitor system
+    // there are none -- the branded credential tile on the primary is the whole
+    // UI, which is correct (a window there would block the unlock link).
     EnumDisplayMonitors(nullptr, nullptr, monitorEnum, 0);
-    if (g_windows.empty()) {
-        // Fallback: a single window spanning the whole virtual desktop.
-        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        HWND h = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"",
-                                 WS_POPUP, vx, vy, vw, vh, nullptr, nullptr, g_hinst, nullptr);
-        if (h) g_windows.push_back(h);
-    }
     for (HWND h : g_windows) {
         ShowWindow(h, SW_SHOW);
         SetTimer(h, 1, 500, nullptr);
