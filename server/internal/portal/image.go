@@ -84,11 +84,16 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 		if !isNew && r.DomainJoin != nil {
 			dj, _ = r.DomainJoin.Get(req.Context(), im.ID)
 		}
+		var sl model.ImageSetupLock
+		if !isNew && r.SetupLock != nil {
+			sl, _ = r.SetupLock.Get(req.Context(), im.ID)
+		}
 		render(w, req, r, "image_form.html", title, map[string]any{
 			"Im": im, "IsNew": isNew,
 			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
 			"Images": images, "Packages": packages,
 			"DomainJoin": dj,
+			"SetupLock":  sl,
 		})
 	}
 }
@@ -168,6 +173,11 @@ func imageCreate(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 			return
 		}
+		if err := saveSetupLockFromForm(r, req, out.ID); err != nil {
+			flash(w, "err", "Image created, but setup-lock config failed: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
+			return
+		}
 		flash(w, "ok", "Image created.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 	}
@@ -187,6 +197,8 @@ func imageUpdate(r Repos) http.HandlerFunc {
 			flash(w, "err", err.Error())
 		} else if err := saveDomainJoinFromForm(r, req, id); err != nil {
 			flash(w, "err", "domain-join config: "+err.Error())
+		} else if err := saveSetupLockFromForm(r, req, id); err != nil {
+			flash(w, "err", "setup-lock config: "+err.Error())
 		} else {
 			flash(w, "ok", "Saved.")
 		}
@@ -209,6 +221,18 @@ func saveDomainJoinFromForm(r Repos, req *http.Request, imageID model.ID) error 
 		JoinUser: strings.TrimSpace(req.FormValue("dj_user")),
 	}
 	return r.DomainJoin.Set(req.Context(), cfg, req.FormValue("dj_password"))
+}
+
+// saveSetupLockFromForm persists the per-image setup-lockout toggle from the
+// image edit form. No-op when the repo isn't wired.
+func saveSetupLockFromForm(r Repos, req *http.Request, imageID model.ID) error {
+	if r.SetupLock == nil {
+		return nil
+	}
+	return r.SetupLock.Set(req.Context(), model.ImageSetupLock{
+		ImageID: imageID,
+		Enabled: req.FormValue("setuplock_enabled") == "1",
+	})
 }
 
 func imageDelete(r Repos) http.HandlerFunc {

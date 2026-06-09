@@ -88,3 +88,70 @@ func TestAgentSelfByAgentID(t *testing.T) {
 		t.Errorf("missing id status = %d, want 400", r.StatusCode)
 	}
 }
+
+// TestAgentSelfSetupLock asserts /self advertises the per-image setup-lock
+// toggle so the agent knows whether to maintain the lock marker.
+func TestAgentSelfSetupLock(t *testing.T) {
+	db, err := storage.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	inv := model.NewInventoryRepo(db)
+	images := model.NewImageRepo(db)
+	setupLock := model.NewSetupLockRepo(db)
+	repos := Repos{
+		Images:    images,
+		Inventory: inv,
+		Bulk:      model.NewBulkRepo(db, inv),
+		Resolver:  resolve.New(images, model.NewISORepo(db), model.NewUnattendRepo(db)),
+		SetupLock: setupLock,
+	}
+	mux := http.NewServeMux()
+	Register(mux, repos)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ctx := context.Background()
+
+	m, err := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "lock-uuid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := images.Create(ctx, model.Image{Name: "locked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.UpsertBinding(ctx, model.MachineBinding{MachineID: m.ID, ImageID: &img.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() AgentSelfResponse {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/v1/agent/self?id=" + m.AgentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out AgentSelfResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	if got := get(); got.SetupLock {
+		t.Errorf("SetupLock = true, want false when unset")
+	}
+	if err := setupLock.Set(ctx, model.ImageSetupLock{ImageID: img.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); !got.SetupLock {
+		t.Errorf("SetupLock = false, want true when enabled")
+	}
+	if err := setupLock.Set(ctx, model.ImageSetupLock{ImageID: img.ID, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); got.SetupLock {
+		t.Errorf("SetupLock = true, want false after disable")
+	}
+}

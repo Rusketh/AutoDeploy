@@ -59,6 +59,10 @@ type Repos struct {
 	// nil disables the agent domain-join endpoint (the agent then never
 	// joins, and the legacy unattend join is used if configured).
 	DomainJoin *model.DomainJoinRepo
+	// SetupLock holds the per-image "setup lockout" toggle. Optional; nil
+	// means /self never advertises the lock (machines deploy without the
+	// branded setup screen).
+	SetupLock *model.SetupLockRepo
 	// Updates manages Windows Update KB patches and deployment jobs.
 	Updates *model.WindowsUpdateRepo
 	// Notifications handles in-portal notification CRUD and preferences.

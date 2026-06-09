@@ -212,6 +212,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AD:            adSvc,
 		Blobs:         blobs,
 		DomainJoin:    r.DomainJoin,
+		SetupLock:     r.SetupLock,
 		Updates:       r.Updates,
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
@@ -252,6 +253,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Software:   r.Software,
 		Mirrors:    r.Mirrors,
 		DomainJoin: r.DomainJoin,
+		SetupLock:  r.SetupLock,
 		Blobs:      blobs,
 	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
@@ -279,6 +281,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Blobs:         blobs,
 		AD:            adSvc,
 		DomainJoin:    r.DomainJoin,
+		SetupLock:     r.SetupLock,
 		Updates:       r.Updates,
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
@@ -429,6 +432,7 @@ type appRepos struct {
 	Mirrors       *model.PayloadMirrorRepo
 	Runtime       *runtime.Settings
 	DomainJoin    *model.DomainJoinRepo
+	SetupLock     *model.SetupLockRepo
 	Updates       *model.WindowsUpdateRepo
 	Notifications *model.NotificationRepo
 	Webhooks      *model.WebhookRepo
@@ -451,6 +455,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	brandRepo := branding.New(db)
 	mirrors := model.NewPayloadMirrorRepo(db)
 	domainJoin := model.NewDomainJoinRepo(db, bx)
+	setupLock := model.NewSetupLockRepo(db)
 	updates := model.NewWindowsUpdateRepo(db, inventory)
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
@@ -464,6 +469,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		BitLocker: bitlocker, Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
 		DomainJoin:    domainJoin,
+		SetupLock:     setupLock,
 		Updates:       updates,
 		Notifications: notifications,
 		Webhooks:      webhooks,

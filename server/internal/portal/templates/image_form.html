@@ -80,6 +80,19 @@
       <span class="hint">Stored encrypted; handed only to the deploying agent, never written to the unattend XML. Leave blank to keep the current password. Use a least-privilege join account.</span></label>
   </fieldset>
 
+  {{$sl := .Data.SetupLock}}
+  <fieldset><legend>Setup lockout screen</legend>
+    <label class="check"><input type="checkbox" name="setuplock_enabled" value="1" {{if $sl.Enabled}}checked{{end}}>
+      <span class="lbl">Lock machines with a branded setup screen until the initial software install finishes</span></label>
+    <p class="hint">
+      While the agent installs this image's software after first boot, a branded full-screen setup screen replaces the
+      Windows logon screen on every display, showing a progress bar and the current activity (e.g. &ldquo;Installing
+      Microsoft Office&rdquo;). Normal sign-in is blocked until the machine is ready for first use. A technician can
+      dismiss it using the global Access PIN (press Ctrl+Alt+U). This applies to the <strong>initial</strong>
+      deployment only &mdash; later app pushes never lock an already-provisioned machine.
+    </p>
+  </fieldset>
+
   <div class="actions">
     <a class="btn secondary" href="/portal/images">Cancel</a>
     {{if not $new}}<a class="btn ghost" href="/portal/images/{{int64 $im.ID}}/resolved"><svg><use href="#i-eye"/></svg>Resolved</a>{{end}}
