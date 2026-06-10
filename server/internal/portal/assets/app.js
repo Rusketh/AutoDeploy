@@ -758,6 +758,47 @@
     setInterval(poll, 30000);
   })();
 
+  // ---- Drop-zone auto-upload -----------------------------------------
+  document.querySelectorAll('[data-dropzone]').forEach(function (form) {
+    var fileInput = form.querySelector('input[type=file]');
+    if (!fileInput) return;
+
+    ['dragenter', 'dragover'].forEach(function (evt) {
+      form.addEventListener(evt, function (e) {
+        e.preventDefault();
+        form.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+      form.addEventListener(evt, function (e) {
+        e.preventDefault();
+        form.classList.remove('dragover');
+      });
+    });
+    form.addEventListener('drop', function (e) {
+      if (e.dataTransfer.files.length) {
+        var accept = fileInput.getAttribute('accept');
+        if (accept) {
+          var exts = accept.split(',').map(function (s) { return s.trim().toLowerCase(); });
+          var name = e.dataTransfer.files[0].name.toLowerCase();
+          var ok = exts.some(function (ext) { return name.endsWith(ext); });
+          if (!ok) {
+            var ui = ensureProgressUI(form);
+            ui.wrap.hidden = false;
+            ui.error.hidden = false;
+            ui.error.textContent = 'Wrong file type. Accepted: ' + accept;
+            return;
+          }
+        }
+        fileInput.files = e.dataTransfer.files;
+        startUpload(form);
+      }
+    });
+    fileInput.addEventListener('change', function () {
+      if (fileInput.files.length) startUpload(form);
+    });
+  });
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

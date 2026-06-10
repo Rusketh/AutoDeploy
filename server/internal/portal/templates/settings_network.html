@@ -6,7 +6,7 @@
 
 <form class="std" method="POST" action="/portal/settings/network">
   <fieldset><legend>Listen addresses</legend>
-    <p class="hint" style="margin-top:0;">Changes to listen addresses take effect on next server restart.</p>
+    <p class="hint mt-0">Changes to listen addresses take effect on next server restart.</p>
     <label><span class="lbl">HTTP address</span>
       <input type="text" name="http_addr" value="{{.Data.Cfg.HTTPAddr}}" placeholder="0.0.0.0:8080">
       <span class="hint">
@@ -75,7 +75,7 @@
       </span>
     </label>
     {{if .Data.CertInfo}}
-    <div style="margin-top: var(--sp-2);">
+    <div class="mt-2">
       <span class="badge accent">{{.Data.CertInfo}}</span>
     </div>
     {{end}}
@@ -87,9 +87,9 @@
   </div>
 </form>
 
-<fieldset style="margin-top: var(--sp-4);">
+<fieldset class="mt-4">
   <legend>Upload TLS certificate</legend>
-  <p class="hint" style="margin-top:0;">Upload PEM-encoded certificate and key files. They will be stored in the server's data directory and the paths above will be updated automatically.</p>
+  <p class="hint mt-0">Upload PEM-encoded certificate and key files. They will be stored in the server's data directory and the paths above will be updated automatically.</p>
   <form class="std" method="POST" action="/portal/settings/network/upload-cert" enctype="multipart/form-data">
     <label><span class="lbl">Certificate file (.pem / .crt)</span>
       <input type="file" name="cert_file" accept=".pem,.crt,.cer">

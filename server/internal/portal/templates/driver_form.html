@@ -57,12 +57,11 @@
 
 {{if not $new}}
 <div class="section-head"><h3>Upload payload</h3><div class="line"></div></div>
-<form class="std" method="POST" action="/portal/drivers/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-  <label><span class="lbl">Driver package (.zip recommended)</span>
-    <input type="file" name="file" required>
-    <span class="hint">Zip archives are unpacked server-side when you click <strong>Extract &amp; scan</strong> below; .inf files are scanned and their <code>[Version]</code> metadata is shown. Single-file uploads are accepted but treated as opaque.</span>
-  </label>
-  <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
+<form class="dropzone" method="POST" action="/portal/drivers/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
+  <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+  <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
+  <div class="dropzone-hint">.zip recommended — archives are unpacked server-side when you Extract &amp; scan</div>
+  <input type="file" name="file" required>
 </form>
 <div class="flex wrap mt-3" style="gap: var(--sp-3);">
   <span class="small muted">Current:

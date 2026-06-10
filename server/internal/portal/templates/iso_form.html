@@ -35,12 +35,11 @@
 {{if not $new}}
 <div class="section-head"><h3>Payload</h3><div class="line"></div></div>
 
-<form class="std" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-  <label><span class="lbl">Upload ISO file</span>
-    <input type="file" name="file" accept=".iso" required>
-    <span class="hint">Streamed to disk — large ISOs are fine. Click Upload to commit.</span>
-  </label>
-  <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
+<form class="dropzone" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
+  <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+  <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
+  <div class="dropzone-hint">Accepts .iso files — streamed to disk, large ISOs are fine</div>
+  <input type="file" name="file" accept=".iso" required>
 </form>
 
 <p class="small muted mt-3">

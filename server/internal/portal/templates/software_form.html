@@ -45,18 +45,21 @@
       </tbody>
     </table>
   </div>
-  <form class="std mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-    <label><span class="lbl">Add another file</span><input type="file" name="file" required></label>
-    <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
+  <form class="dropzone mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
+    <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+    <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
+    <div class="dropzone-hint">Upload files this package needs</div>
+    <input type="file" name="file" required>
   </form>
   {{else}}
   <div class="empty">
     <svg class="empty-icon"><use href="#i-box"/></svg>
     <h3>No files uploaded yet</h3>
     <p class="small muted">Upload the file (or files) this package needs. Multi-file packages are fine -- upload <code>setup.exe</code>, <code>config.json</code>, drivers, anything. Reference each one by its filename in your install steps below.</p>
-    <form class="std upload-empty-form" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-      <label><input type="file" name="file" required></label>
-      <div class="actions actions-center"><button type="submit"><svg><use href="#i-plus"/></svg>Upload file</button></div>
+    <form class="dropzone upload-empty-form" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
+      <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+      <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
+      <input type="file" name="file" required>
     </form>
   </div>
   {{end}}
@@ -89,9 +92,11 @@
     </table>
   </div>
   {{end}}
-  <form class="std mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/bundle" enctype="multipart/form-data" data-upload-progress>
-    <label><span class="lbl">{{if $bundles}}Add another bundle{{else}}Upload a .zip bundle{{end}}</span><input type="file" name="file" accept=".zip,application/zip" required></label>
-    <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload bundle</button></div>
+  <form class="dropzone mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/bundle" enctype="multipart/form-data" data-upload-progress data-dropzone>
+    <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+    <div class="dropzone-text"><strong>Choose a .zip</strong> or drag it here</div>
+    <div class="dropzone-hint">{{if $bundles}}Add another bundle{{else}}Upload a .zip bundle — auto-extracted into the package directory{{end}}</div>
+    <input type="file" name="file" accept=".zip,application/zip" required>
   </form>
 </fieldset>
 {{end}}
