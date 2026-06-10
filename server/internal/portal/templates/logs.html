@@ -8,7 +8,7 @@
 </div>
 
 <details id="tail-panel" open>
-  <summary style="cursor:pointer; padding: var(--sp-2) 0; color: var(--fg-muted); font-size: var(--fs-sm);">
+  <summary class="small muted">
     Live tail — newest events stream in every few seconds
   </summary>
   <div id="logs-tail" class="logs-tail" data-url="/api/v1/logs?limit=50" data-interval-ms="4000" aria-live="polite">
@@ -33,7 +33,7 @@
 <div class="section-head">
   <h3>{{len .Data.Events}} event{{if ne (len .Data.Events) 1}}s{{end}}</h3>
   <div class="line"></div>
-  <div class="filter" style="flex: 0 1 240px;">
+  <div class="filter">
     <svg><use href="#i-search"/></svg>
     <input type="search" placeholder="Filter rows — press /" data-filter="#log-rows">
   </div>
@@ -65,8 +65,8 @@
   </tbody>
 </table>
 </div>
-<p class="muted small" style="margin-top: var(--sp-3);">
-  <svg style="width:14px;height:14px;vertical-align:-2px;"><use href="#i-shield"/></svg>
+<p class="muted small mt-3">
+  <svg class="icon-inline"><use href="#i-shield"/></svg>
   Secrets are never logged. <code>secret.access</code> events record retrievals — actor + target — but not the value.
 </p>
 

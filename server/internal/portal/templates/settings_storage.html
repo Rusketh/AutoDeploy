@@ -1,14 +1,14 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-box"/></svg>Storage paths</h2>
+  <h2><svg class="icon-h2"><use href="#i-box"/></svg>Storage paths</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<p class="muted" style="max-width:780px;">
+<p class="muted intro">
   Relocate the per-category payload trees to a different filesystem (e.g. a ZFS dataset for ISOs, an NFS mount for drivers) without rewriting the database. The relative paths the server stores stay the same; the storage layer routes each category to the configured root. Empty = use the default <code>$AUTODEPLOY_DATA_DIR/&lt;category&gt;</code>.
 </p>
 
-<div class="flash flash-warn" style="border-radius: var(--r); margin-bottom: var(--sp-3);">
+<div class="flash flash-warn flash-inline">
   <svg><use href="#i-info"/></svg>
   <span>
     <strong>Files are not moved automatically.</strong>
@@ -20,13 +20,13 @@
   {{range .Data.Entries}}
   <fieldset>
     <legend>{{.Category}}</legend>
-    <p class="hint" style="margin-top:0;">{{.Description}}</p>
+    <p class="hint mt-0">{{.Description}}</p>
     <label>
       <span class="lbl">Override path (absolute)</span>
       <input type="text" name="storage_{{.Category}}" value="{{.Override}}" placeholder="{{.Default}} (default)">
       <span class="hint">Leave blank to use the default. Must be an absolute path that the server process can read and write.</span>
     </label>
-    <div class="flex wrap small" style="gap: var(--sp-4); margin-top: var(--sp-2);">
+    <div class="flex wrap small mt-2 gap-4">
       <span><span class="muted">Effective:</span> <code>{{.Effective}}</code><button type="button" class="copy" data-copy="{{.Effective}}" aria-label="Copy effective path"><svg><use href="#i-copy"/></svg></button></span>
       <span>
         {{if eq .State "ok"}}<span class="badge ok"><svg><use href="#i-check"/></svg>writable</span>

@@ -35,15 +35,14 @@
 {{if not $new}}
 <div class="section-head"><h3>Payload</h3><div class="line"></div></div>
 
-<form class="std" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
-  <label><span class="lbl">Upload ISO file</span>
-    <input type="file" name="file" accept=".iso" required>
-    <span class="hint">Streamed to disk — large ISOs are fine. Click Upload to commit.</span>
-  </label>
-  <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
+<form class="dropzone" method="POST" action="/portal/isos/{{int64 $iso.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
+  <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+  <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
+  <div class="dropzone-hint">Accepts .iso files — streamed to disk, large ISOs are fine</div>
+  <input type="file" name="file" accept=".iso" required>
 </form>
 
-<p class="small muted" style="margin-top: var(--sp-3);">
+<p class="small muted mt-3">
   Current storage path:
   {{if $iso.StoragePath}}
     <code>{{$iso.StoragePath}}</code><button class="copy" data-copy="{{$iso.StoragePath}}" aria-label="Copy path"><svg><use href="#i-copy"/></svg></button>
@@ -51,24 +50,24 @@
   {{else}}<em>nothing uploaded yet</em>{{end}}
 </p>
 
-<form method="POST" action="/portal/isos/{{int64 $iso.ID}}/extract" class="inline" style="margin-top: var(--sp-3);">
+<form method="POST" action="/portal/isos/{{int64 $iso.ID}}/extract" class="inline-form mt-3">
   <button type="submit" class="secondary" {{if not $iso.StoragePath}}disabled{{end}}>
     <svg><use href="#i-bolt"/></svg>{{if $iso.Extracted}}Re-prepare media{{else}}Extract &amp; prepare{{end}}
   </button>
-  <span class="small muted" style="margin-left: var(--sp-2);">Walks the ISO into <code>data/iso/{{int64 $iso.ID}}/files/</code> and prepares FAT32 boot media — splitting an oversized <code>install.wim</code> into <code>.swm</code> parts.</span>
+  <span class="small muted ml-2">Walks the ISO into <code>data/iso/{{int64 $iso.ID}}/files/</code> and prepares FAT32 boot media — splitting an oversized <code>install.wim</code> into <code>.swm</code> parts.</span>
 </form>
 
 <div class="section-head"><h3>Boot media</h3><div class="line"></div></div>
 
 <!-- Live progress while extract+split runs in the background. JS polls
      prep-status, fills the bar, and reloads the page when finished. -->
-<div class="card prep-progress" data-iso-id="{{int64 $iso.ID}}" hidden style="margin-top: var(--sp-2);">
+<div class="card prep-progress" data-iso-id="{{int64 $iso.ID}}" hidden>
   <p><strong class="prep-phase">Preparing…</strong> <span class="prep-pct muted"></span></p>
   <progress class="prep-bar" max="100" value="0"></progress>
   <p class="small muted">Extracting the ISO and splitting the install image can take a few minutes for a multi-GB Windows ISO.</p>
 </div>
 
-<div class="card" style="margin-top: var(--sp-2);">
+<div class="card">
   {{if not $iso.Extracted}}
     <p class="small muted">Not prepared yet. Upload an ISO (it auto-extracts), or use the button above.</p>
   {{else}}
@@ -79,7 +78,7 @@
       {{else if $iso.DeployReady}}<span class="badge ok">ready to deploy</span>
       {{else}}<span class="badge warn">incomplete</span>{{end}}
     </p>
-    <ul class="small" style="margin-top: var(--sp-2); line-height: 1.7;">
+    <ul class="small" style="line-height: 1.7;">
       <li>Ingested media: the <strong>full ISO contents</strong> are extracted and staged as the bootable media —
         {{if $iso.MediaFileCount}}<strong>{{$iso.MediaFileCount}}</strong> files, {{humanBytes $iso.MediaTotalBytes}}{{else}}<span class="muted">size pending re-prepare</span>{{end}}
         (bootmgr, <code>boot/</code>, <code>efi/</code>, <code>sources/</code>, …). The deploy boots this whole tree, not a single file.

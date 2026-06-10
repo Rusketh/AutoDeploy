@@ -1,6 +1,6 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-box"/></svg>Downloads</h2>
+  <h2><svg class="icon-h2"><use href="#i-box"/></svg>Downloads</h2>
   <div class="right">
     <a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a>
   </div>
@@ -9,7 +9,7 @@
 <p class="muted">Binaries the operator drops into <code>{{.Data.Dir}}</code> are served here for authenticated portal users to download. Use this to grab the Windows agent for ad-hoc installs, the Boot Client for a new initramfs build, or any installer script you ship alongside the server.</p>
 
 {{if .Data.DirErr}}
-<div class="flash flash-err" style="border-radius: var(--r); margin-bottom: var(--sp-3);">
+<div class="flash flash-err flash-inline">
   <svg><use href="#i-alert"/></svg>
   <span>Couldn't read the downloads directory: <code>{{.Data.DirErr}}</code>.</span>
 </div>
@@ -18,7 +18,7 @@
 {{if .Data.Any}}
 {{range .Data.Groups}}
 <div class="section-head">
-  <h3><svg style="width:18px;height:18px;vertical-align:-3px;margin-right:0.3rem;"><use href="#{{.Icon}}"/></svg>{{.Label}}</h3>
+  <h3><svg class="icon-inline"><use href="#{{.Icon}}"/></svg>{{.Label}}</h3>
   <div class="line"></div>
 </div>
 <div class="tablewrap">
@@ -51,13 +51,13 @@
   <svg class="empty-icon"><use href="#i-box"/></svg>
   <h3>No downloads available yet</h3>
   <p>Drop the agent / Boot Client / installer binaries you want to distribute into <code>{{.Data.Dir}}</code> and they'll appear here. Recommended filenames so the portal can group and label them:</p>
-  <ul style="text-align: left; display: inline-block; margin-top: var(--sp-2);">
+  <ul class="mt-2" style="text-align: left; display: inline-block;">
     <li><code>autodeploy-agent-windows-amd64.exe</code> — Windows deploy agent (in-OS).</li>
     <li><code>autodeploy-agent-windows-arm64.exe</code> — same, ARM64.</li>
     <li><code>autodeploy-boot-linux-amd64</code> — Boot Client (Linux, pre-OS).</li>
     <li><code>autodeploy-server-linux-amd64</code> — server binary for fresh installs.</li>
   </ul>
-  <p class="small muted" style="margin-top: var(--sp-3);">The install scripts in <code>scripts/install-linux.sh</code> and <code>scripts/windows/install-windows.ps1</code> drop whatever they find in the release bundle into this directory automatically.</p>
+  <p class="small muted mt-3">The install scripts in <code>scripts/install-linux.sh</code> and <code>scripts/windows/install-windows.ps1</code> drop whatever they find in the release bundle into this directory automatically.</p>
 </div>
 {{end}}
 

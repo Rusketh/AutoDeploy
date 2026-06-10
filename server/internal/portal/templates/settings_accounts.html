@@ -1,6 +1,6 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-server"/></svg>Local accounts</h2>
+  <h2><svg class="icon-h2"><use href="#i-server"/></svg>Local accounts</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
@@ -19,8 +19,8 @@
         {{else}}
         <form method="POST" action="/portal/settings/accounts/{{.ID}}/disable" class="inline" data-confirm="Disable {{.Username}}?"><button class="secondary sm">Disable</button></form>
         {{end}}
-        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline" style="display:inline-flex;gap:4px;">
-          <input type="password" name="password" placeholder="new password" required style="width:160px;padding:4px 8px;">
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline pw-inline">
+          <input type="password" name="password" placeholder="new password" required>
           <button class="sm" title="Set new password"><svg><use href="#i-lock"/></svg>Set</button>
         </form>
         {{if ne .ID $.Data.Me.ID}}
@@ -54,5 +54,5 @@
   </div>
   <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Create</button></div>
 </form>
-<p class="muted small" style="margin-top: var(--sp-3);">There is no graded permission model: every active account has full portal/API access. Accountability rests on the audit trail.</p>
+<p class="muted small mt-3">There is no graded permission model: every active account has full portal/API access. Accountability rests on the audit trail.</p>
 {{end}}

@@ -25,13 +25,13 @@
 </div>
 
 {{$p := $op.Progress}}
-<div class="card" data-bulk-progress data-op-id="{{int64 $op.ID}}" style="margin-bottom:var(--sp-4);">
+<div class="card mb-4" data-bulk-progress data-op-id="{{int64 $op.ID}}">
   <div class="deploy-progress-head">
     <strong>Progress</strong>
     <span class="small muted" data-prog-counts>{{$p.OK}} ok · {{$p.Failed}} failed · {{$p.Running}} running · {{$p.Queued}} queued{{if $p.Cancelled}} · {{$p.Cancelled}} cancelled{{end}}</span>
   </div>
   <progress class="deploy-bar" data-prog-bar value="{{$p.Done}}" max="{{if $p.Total}}{{$p.Total}}{{else}}1{{end}}"></progress>
-  <div style="margin-top:var(--sp-2);">
+  <div class="mt-2">
     {{if eq $st "completed"}}<span class="badge ok">completed</span>
     {{else if eq $st "cancelled"}}<span class="badge muted">cancelled</span>
     {{else if eq $st "scheduled"}}<span class="badge accent">scheduled</span>

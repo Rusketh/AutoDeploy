@@ -28,7 +28,7 @@
         <select name="pkg_id[]">
           {{range $.Data.Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) (int64 $p.PackageID)}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
-        <input type="number" name="pkg_order[]" value="{{$p.OrderValue}}" style="max-width:6rem" title="Install order">
+        <input type="number" name="pkg_order[]" value="{{$p.OrderValue}}" class="order-input" title="Install order">
         <label class="inline"><input type="checkbox" name="pkg_optout[]" value="1" {{if $p.OptOut}}checked{{end}}> opt-out</label>
         <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
       </div>
@@ -51,7 +51,7 @@ function addPkg(){
   availPkgs.forEach(function(p){
     var o=document.createElement('option'); o.value=p.id; o.textContent=p.name; sel.appendChild(o);
   });
-  var ord=document.createElement('input'); ord.type='number'; ord.name='pkg_order[]'; ord.value=100; ord.style.maxWidth='6rem';
+  var ord=document.createElement('input'); ord.type='number'; ord.name='pkg_order[]'; ord.value=100; ord.className='order-input';
   var opt=document.createElement('label'); opt.className='inline';
   opt.innerHTML='<input type="checkbox" name="pkg_optout[]" value="1"> opt-out';
   var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.onclick=function(){d.remove();};

@@ -21,14 +21,14 @@
     <label><span class="lbl">OU (DN)</span><input type="text" id="filter_ou" name="filter_ou" value="{{$ap.FilterOU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
     <label><span class="lbl">AD group</span><input type="text" id="filter_group" name="filter_group" value="{{$ap.FilterGroup}}" placeholder="Lab-Computers"></label>
   </div>
-  <div class="actions" style="justify-content:flex-start;">
+  <div class="actions actions-start">
     <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
     <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
   </div>
 
-  <div id="results-wrap" style="display:none;">
+  <div id="results-wrap" hidden>
     <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
-    <div class="tablewrap" style="max-height: 240px; overflow-y: auto;">
+    <div class="tablewrap max-h-scroll">
       <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
         <tbody id="results-body"></tbody>
       </table>
@@ -37,7 +37,7 @@
 
   <div class="section-head"><h3>2. Selection (<span id="sel-count">0</span> machine<span id="sel-plural">s</span>)</h3><div class="line"></div></div>
   <div id="sel-empty" class="muted">No machines selected yet. Search above and add some.</div>
-  <div class="tablewrap" id="sel-wrap" style="display:none; max-height: 240px; overflow-y: auto;">
+  <div class="tablewrap max-h-scroll" id="sel-wrap" hidden>
     <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
       <tbody id="sel-body"></tbody>
     </table>
@@ -97,18 +97,18 @@
         <label><span class="lbl">Cron (min hour dom month dow) — overrides the preset above</span>
           <input type="text" name="recur_cron" value="{{$ap.RecurCron}}" placeholder="0 2 * * 1"></label>
       </details>
-      <fieldset style="margin-top:var(--sp-3);">
+      <fieldset class="mt-3">
         <legend>Targets each run</legend>
-        <label class="check" style="display:flex;gap:.4rem;align-items:center;">
+        <label class="check">
           <input type="radio" name="target_mode" value="selection" {{if ne $ap.TargetMode "filter"}}checked{{end}}>
           <span>Fixed selection — replay exactly the machines chosen above every run.</span>
         </label>
-        <label class="check" style="display:flex;gap:.4rem;align-items:center;">
+        <label class="check">
           <input type="radio" name="target_mode" value="filter" {{if eq $ap.TargetMode "filter"}}checked{{end}}>
           <span>Re-evaluate filter — re-run the name/OU/group search each time so new machines are picked up.</span>
         </label>
       </fieldset>
-      <p class="small warn" id="reimage-recur-warn" hidden><svg style="width:14px;height:14px;vertical-align:-2px"><use href="#i-alert"/></svg> A recurring re-image will <strong>repeatedly wipe and rebuild</strong> every targeted machine. Use only for kiosk/lab "reset to clean image" scenarios.</p>
+      <p class="small warn" id="reimage-recur-warn" hidden><svg class="icon-inline"><use href="#i-alert"/></svg> A recurring re-image will <strong>repeatedly wipe and rebuild</strong> every targeted machine. Use only for kiosk/lab "reset to clean image" scenarios.</p>
     </div>
   </div>
 
@@ -134,7 +134,7 @@ function runSearch(){
     .then(function(r){ return r.json(); })
     .then(function(rows){
       lastResults = Array.isArray(rows) ? rows : [];
-      document.getElementById('results-wrap').style.display = '';
+      document.getElementById('results-wrap').hidden = false;
       document.getElementById('results-count').textContent = lastResults.length;
       var b = document.getElementById('results-body');
       b.innerHTML = '';
@@ -156,8 +156,8 @@ function renderSelection(){
   var ids = Object.keys(selection);
   document.getElementById('sel-count').textContent = ids.length;
   document.getElementById('sel-plural').style.display = ids.length===1 ? 'none' : '';
-  document.getElementById('sel-empty').style.display = ids.length ? 'none' : '';
-  document.getElementById('sel-wrap').style.display = ids.length ? '' : 'none';
+  document.getElementById('sel-empty').hidden = ids.length > 0;
+  document.getElementById('sel-wrap').hidden = ids.length === 0;
   var body = document.getElementById('sel-body'); body.innerHTML='';
   var inputs = document.getElementById('sel-inputs'); inputs.innerHTML='';
   ids.forEach(function(id){

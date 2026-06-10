@@ -15,9 +15,9 @@
     <label><span class="lbl">Secret (optional, for HMAC-SHA256 signature)</span>
       <input type="password" name="secret" placeholder="{{if .Data.Edit}}(stored, leave blank to keep){{else}}shared secret{{end}}">
     </label>
-    <label style="display:flex;align-items:center;gap:0.5rem;">
+    <label class="check">
       <input type="checkbox" name="enabled" value="1"{{if .Data.Webhook.Enabled}} checked{{end}}>
-      <span class="lbl">Enabled</span>
+      <span>Enabled</span>
     </label>
   </fieldset>
 
@@ -34,16 +34,16 @@
 
   <fieldset><legend>Events</legend>
     <p class="hint">Select which events trigger this webhook. Check "All events" to receive everything.</p>
-    <label style="display:flex;align-items:center;gap:0.3rem;margin-bottom:0.5rem;">
+    <label class="check mb-2">
       <input type="checkbox" name="events" value="*"{{range .Data.Webhook.Events}}{{if eq . "*"}} checked{{end}}{{end}}>
       <strong>All events</strong>
     </label>
     {{range .Data.Categories}}
-      <div style="margin-bottom:0.75rem;">
+      <div class="mb-3">
         <strong class="small muted">{{.Label}}</strong>
         {{$whEvents := $.Data.Webhook.Events}}
         {{range .Events}}
-          <label style="display:flex;align-items:center;gap:0.3rem;margin-left:1rem;">
+          <label class="check ml-2">
             <input type="checkbox" name="events" value="{{.}}">
             <code>{{.}}</code>
           </label>
@@ -63,15 +63,15 @@
 </form>
 
 {{if .Data.Edit}}
-<hr style="margin:2rem 0;">
-<div style="display:flex;gap:1rem;">
+<div class="section-head mt-4"><h3>Actions</h3><div class="line"></div></div>
+<div class="actions actions-start">
   <form method="POST" action="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/test">
     <button type="submit" class="btn sm"><svg><use href="#i-bolt"/></svg>Send test</button>
   </form>
   <a class="btn sm ghost" href="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/deliveries">View deliveries</a>
   <form method="POST" action="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/delete"
         onsubmit="return confirm('Delete this webhook?');">
-    <button type="submit" class="btn sm" style="background:var(--danger,#dc3545);border-color:var(--danger,#dc3545);">Delete</button>
+    <button type="submit" class="danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
   </form>
 </div>
 {{end}}

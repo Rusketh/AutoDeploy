@@ -29,7 +29,7 @@
   <dt>Name</dt><dd>{{$r.Unattend.Name}}</dd>
   <dt>Description</dt><dd>{{$r.Unattend.Description}}</dd>
 </dl>
-<p style="margin-top: var(--sp-3);"><a class="btn secondary sm" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview"><svg><use href="#i-eye"/></svg>View generated XML</a></p>
+<p class="mt-3"><a class="btn secondary sm" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview"><svg><use href="#i-eye"/></svg>View generated XML</a></p>
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-file"/></svg>
@@ -40,7 +40,7 @@
 
 <div class="section-head"><h3>Software (loadout-resolved ∪ direct links)</h3><div class="line"></div></div>
 {{if $r.Software}}
-<ol class="card" style="padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-6);">
+<ol class="card spaced" style="padding-left:var(--sp-6)">
   {{range $r.Software}}<li>package <code>#{{int64 .PackageID}}</code> <span class="muted small">(order {{.OrderValue}})</span></li>{{end}}
 </ol>
 {{else}}
@@ -53,8 +53,8 @@
 
 {{if $r.Diagnostics}}
 <div class="section-head"><h3>Warnings</h3><div class="line"></div></div>
-<div class="card" style="background: var(--warn-soft); border-color: var(--warn);">
-  <ul style="margin: 0; padding-left: 1.2rem;">{{range $r.Diagnostics}}<li>{{.}}</li>{{end}}</ul>
+<div class="flash flash-warn flash-inline">
+  <ul style="margin:0;padding-left:1.2rem">{{range $r.Diagnostics}}<li>{{.}}</li>{{end}}</ul>
 </div>
 {{end}}
 {{end}}

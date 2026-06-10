@@ -15,7 +15,7 @@
 </div>
 {{if .Data.Rows}}
 <form method="post" action="/portal/machines/delete" id="bulk-del" onsubmit="return confirm('Delete the selected machines from inventory? This removes their binding, history and detection state.');">
-<div class="actions" style="margin-bottom: var(--sp-2);">
+<div class="actions mb-2" id="bulk-del-bar" hidden>
   <button type="submit" class="danger sm"><svg><use href="#i-trash"/></svg>Delete selected (<span id="del-count">0</span>)</button>
 </div>
 <div class="tablewrap">
@@ -56,7 +56,7 @@
 </form>
 <script>
 function toggleAllMachines(src){document.querySelectorAll('.m-check').forEach(function(c){c.checked=src.checked;});updateDelCount();}
-function updateDelCount(){document.getElementById('del-count').textContent=document.querySelectorAll('.m-check:checked').length;}
+function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').length;document.getElementById('del-count').textContent=n;document.getElementById('bulk-del-bar').hidden=n===0;}
 </script>
 {{template "pagination" $page}}
 {{else}}
@@ -77,7 +77,7 @@ function updateDelCount(){document.getElementById('del-count').textContent=docum
   <div class="pager-links">
     {{if .PrevURL}}<a class="btn secondary sm" href="{{.PrevURL}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
     <span class="small muted">page {{.Current}} of {{.Total}}</span>
-    {{if .NextURL}}<a class="btn secondary sm" href="{{.NextURL}}">Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></button>{{end}}
+    {{if .NextURL}}<a class="btn secondary sm" href="{{.NextURL}}">Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></button>{{end}}
   </div>
 </nav>
 {{end}}

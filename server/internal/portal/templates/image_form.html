@@ -52,7 +52,7 @@
           {{$cur := .PackageID}}
           {{range $.Data.Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) (int64 $cur)}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
-        <input type="number" name="sw_order[]" value="{{.OrderValue}}" style="max-width:6rem">
+        <input type="number" name="sw_order[]" value="{{.OrderValue}}" class="order-input">
         <button type="button" class="rem" onclick="this.parentNode.remove()" aria-label="Remove row">Remove</button>
       </div>
       {{end}}
@@ -106,7 +106,7 @@ function addSw(){
   var d=document.createElement('div'); d.className='rep';
   var sel=document.createElement('select'); sel.name='sw_id[]';
   availSw.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);});
-  var ord=document.createElement('input'); ord.type='number'; ord.name='sw_order[]'; ord.value=100; ord.style.maxWidth='6rem';
+  var ord=document.createElement('input'); ord.type='number'; ord.name='sw_order[]'; ord.value=100; ord.className='order-input';
   var rm=document.createElement('button'); rm.type='button'; rm.className='rem'; rm.textContent='Remove'; rm.setAttribute('aria-label','Remove row'); rm.onclick=function(){d.remove();};
   d.appendChild(sel); d.appendChild(ord); d.appendChild(rm);
   document.getElementById('pkgs').appendChild(d);

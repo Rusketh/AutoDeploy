@@ -92,7 +92,7 @@
         {{range .Data.OSBreakdown}}
         <tr>
           <td><strong>{{.OS}}</strong></td>
-          <td class="num" style="width:60px;">{{.Count}}</td>
+          <td class="num activity-num">{{.Count}}</td>
         </tr>
         {{end}}
       </tbody>
@@ -228,67 +228,4 @@
   </section>
 </div>
 
-<style>
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: var(--sp-4);
-  margin-top: var(--sp-4);
-  align-items: start;
-}
-.dashboard-grid .full { grid-column: 1 / -1; }
-.dashboard-grid .card { display: flex; flex-direction: column; }
-.dashboard-grid .card > :last-child { margin-bottom: 0; }
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--sp-3);
-}
-.card-head h3 { margin: 0; font-size: var(--fs-lg); }
-
-.deploy-rollup {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--sp-3);
-}
-.rollup {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3);
-  border-radius: var(--r);
-  background: var(--bg);
-  border: 1px solid var(--border);
-}
-.rollup .num { display: block; font-size: var(--fs-xl); font-weight: 700; line-height: 1; }
-.rollup .lbl { display: block; font-size: var(--fs-sm); color: var(--fg-muted); margin-top: 2px; }
-
-.machine-list { list-style: none; padding: 0; margin: 0; }
-.machine-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.machine-list li:last-child { border-bottom: none; }
-.machine-list a { color: var(--fg); flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.machine-list a:hover { text-decoration: none; color: var(--accent); }
-.machine-list .machine-name { font-weight: 500; }
-.machine-list .machine-meta { color: var(--fg-muted); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.activity { background: transparent; }
-.activity tr:hover td { background: var(--surface-2); }
-.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
-
-.quickstart {
-  margin: 0;
-  padding-left: 1.2rem;
-  color: var(--fg-muted);
-}
-.quickstart li { margin: 0.4rem 0; }
-.quickstart a { color: var(--accent); }
-</style>
 {{end}}

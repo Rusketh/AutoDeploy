@@ -1,10 +1,10 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bolt"/></svg>PXE setup</h2>
+  <h2><svg class="icon-h2"><use href="#i-bolt"/></svg>PXE setup</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<p class="muted" style="max-width:820px;">
+<p class="muted intro">
   Everything you need to set up network booting in one place. The
   iPXE binaries below are what targets fetch via TFTP; the snippets
   below tell your DHCP server which one to hand out. Once a target
@@ -12,7 +12,7 @@
 </p>
 
 {{if not .Data.TFTPListening}}
-<div class="card warn-banner" style="background: var(--bad-soft); border-color: var(--bad); padding: var(--sp-3); margin-bottom: var(--sp-4);">
+<div class="flash flash-err flash-inline">
   <strong>TFTP listener is not configured.</strong>
   <code>AUTODEPLOY_TFTP_ADDR</code> is empty in your environment.
   Set it to <code>:69</code> in <code>/etc/default/autodeploy</code>
@@ -61,7 +61,7 @@
 </table>
 </div>
 
-<p class="hint" style="margin-top:var(--sp-3);">
+<p class="hint mt-3">
   <strong>These are the official, signed iPXE binaries.</strong> This
   server serves an <code>autoexec.ipxe</code> bootstrap (over TFTP and
   HTTP) that the stock signed iPXE fetches and runs on boot — so you do
@@ -78,7 +78,7 @@
   <code>ipxe.efi</code> directly. arm64 Secure Boot uses the
   <code>arm64-sb/</code> subdirectory.
 </p>
-<p class="hint" style="background: var(--warn-soft, transparent);">
+<p class="hint" style="background: var(--warn-soft);">
   <strong>End-to-end Secure Boot</strong> is verified bootloader →
   kernel: <code>boot.ipxe</code> detects Secure Boot per machine and
   registers the Microsoft-signed Ubuntu shim
@@ -97,7 +97,7 @@
   <h3>No iPXE binaries found</h3>
   <p>Expected files in <code>{{.Data.IPXEDir}}</code>. Run the
   fetch helper to grab them:</p>
-  <pre style="text-align:left; max-width: 720px; margin: var(--sp-3) auto;">{{if .Data.FetchHelperPath}}sudo {{.Data.FetchHelperPath}}{{else}}sudo /etc/autodeploy/scripts/fetch-ipxe.sh{{end}}</pre>
+  <pre class="snippet mt-3" style="text-align:left; max-width: 720px; margin-left: auto; margin-right: auto;">{{if .Data.FetchHelperPath}}sudo {{.Data.FetchHelperPath}}{{else}}sudo /etc/autodeploy/scripts/fetch-ipxe.sh{{end}}</pre>
   <p class="small muted">The official signed iPXE binaries (including
   the Microsoft-signed Secure Boot shim) are pulled from the iPXE
   project's release archive.</p>
@@ -112,7 +112,7 @@
 </p>
 
 <div class="card spaced">
-  <h4 style="margin: 0 0 var(--sp-2) 0;">UniFi (UDM, UDM-Pro, UDR, UCG, USG)</h4>
+  <h4>UniFi (UDM, UDM-Pro, UDR, UCG, USG)</h4>
   <p class="small muted" style="margin: 0 0 var(--sp-2) 0;">
     Settings → Networks → <em>[your LAN]</em> → Advanced → DHCP
     Service → <strong>Network Boot</strong>. UniFi can only set
@@ -128,15 +128,15 @@
       <tr><td>UEFI arm64</td><td><code>ipxe-arm64.efi</code></td></tr>
     </tbody>
   </table>
-  <p class="small muted" style="margin-top: var(--sp-2);">
+  <p class="small muted mt-2">
     Set <strong>Next Server</strong> to <code>{{.Data.ServerIP}}</code><button class="copy" data-copy="{{.Data.ServerIP}}" aria-label="Copy server IP"><svg><use href="#i-copy"/></svg></button>.
   </p>
 </div>
 
 <div class="card spaced">
-  <h4 style="margin: 0 0 var(--sp-2) 0;">dnsmasq (proxy DHCP, recommended for mixed BIOS/UEFI on UniFi)</h4>
+  <h4>dnsmasq (proxy DHCP, recommended for mixed BIOS/UEFI on UniFi)</h4>
   <p class="small muted">Add as <code>/etc/dnsmasq.d/autodeploy.conf</code>:</p>
-  <pre style="background:var(--surface-2); padding:var(--sp-2); border-radius:var(--r-sm);"
+  <pre class="snippet"
        id="snippet-dnsmasq">dhcp-range=&lt;your-subnet&gt;,proxy
 dhcp-no-override
 dhcp-match=set:bios,option:client-arch,0
@@ -152,9 +152,9 @@ dhcp-boot=tag:uefiarm,ipxe-arm64.efi,,{{.Data.ServerIP}}
 </div>
 
 <div class="card spaced">
-  <h4 style="margin: 0 0 var(--sp-2) 0;">ISC dhcpd</h4>
+  <h4>ISC dhcpd</h4>
   <p class="small muted">In your subnet block in <code>/etc/dhcp/dhcpd.conf</code>:</p>
-  <pre style="background:var(--surface-2); padding:var(--sp-2); border-radius:var(--r-sm);"
+  <pre class="snippet"
        id="snippet-isc">option arch code 93 = unsigned integer 16;
 option user-class code 77 = string;
 
@@ -176,7 +176,7 @@ subnet &lt;your-subnet&gt; netmask &lt;your-netmask&gt; {
 </div>
 
 <div class="card spaced">
-  <h4 style="margin: 0 0 var(--sp-2) 0;">Microsoft DHCP Server</h4>
+  <h4>Microsoft DHCP Server</h4>
   <ol class="small muted">
     <li>DHCP console → right-click the scope → <strong>Configure Options</strong> → <strong>Advanced</strong>.</li>
     <li>Option <strong>066</strong> (Boot Server Host Name): <code>{{.Data.ServerIP}}</code></li>
@@ -186,7 +186,7 @@ subnet &lt;your-subnet&gt; netmask &lt;your-netmask&gt; {
 </div>
 
 <div class="card spaced">
-  <h4 style="margin: 0 0 var(--sp-2) 0;">OPNsense / pfSense</h4>
+  <h4>OPNsense / pfSense</h4>
   <p class="small muted">
     Services → DHCPv4 → <em>[interface]</em> → <strong>Network Booting</strong>.
   </p>
