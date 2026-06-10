@@ -93,6 +93,16 @@ func TestMachineDetailReimageBanner(t *testing.T) {
 			t.Errorf("want a cancel-re-image form; got:\n%s", out)
 		}
 	})
+	t.Run("failed job: warns the agent couldn't start it", func(t *testing.T) {
+		d := baseMachineData()
+		d["ReimagePending"] = map[string]any{
+			"Pending": true, "Target": "its bound image", "Claimed": false, "Failed": true, "Since": time.Now(),
+		}
+		out := renderMachineDetail(t, d)
+		if !strings.Contains(out, "couldn't be started") {
+			t.Errorf("want a failed-agent warning; got:\n%s", out)
+		}
+	})
 }
 
 // TestMachineDetailPINReveal covers the BitLocker pre-boot PIN reveal control:

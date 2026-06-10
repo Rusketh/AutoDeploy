@@ -385,11 +385,16 @@ func machineDetail(r Repos) http.HandlerFunc {
 					}
 				}
 			}
-			info := map[string]any{"Pending": true, "Target": target, "Claimed": false}
+			info := map[string]any{"Pending": true, "Target": target, "Claimed": false, "Failed": false}
 			if r.Bulk != nil {
 				if job, jerr := r.Bulk.LatestReimageJob(req.Context(), id); jerr == nil && job != nil {
 					info["Since"] = job.QueuedAt
 					info["Claimed"] = job.Status == "running"
+					// A failed job while the flag is still set means the agent
+					// claimed the re-image but couldn't act on it (most often an
+					// outdated agent that doesn't know the action) — a useful
+					// signal that the box won't reboot on its own.
+					info["Failed"] = job.Status == "failed"
 				}
 			}
 			reimagePending = info
