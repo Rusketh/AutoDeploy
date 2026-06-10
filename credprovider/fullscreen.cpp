@@ -6,6 +6,7 @@
 namespace fullscreen {
 
 static const wchar_t* kClass = L"AutoDeploySetupLockWindow";
+static const wchar_t* kUnlockText = L"Technician unlock";
 static const UINT WM_APP_STOP = WM_APP + 7;
 
 static HINSTANCE g_hinst = nullptr;
@@ -13,6 +14,11 @@ static HANDLE g_thread = nullptr;
 static DWORD g_threadId = 0;
 static std::vector<HWND> g_windows;
 static bool g_classRegistered = false;
+static volatile LONG g_unlockRequested = 0;
+
+bool ConsumeUnlockRequest() {
+    return InterlockedCompareExchange(&g_unlockRequested, 0, 1) == 1;
+}
 
 // blend mixes two colours by t/255.
 static COLORREF blend(COLORREF a, COLORREF b, int t) {
@@ -36,6 +42,27 @@ static void drawCentered(HDC dc, const std::wstring& s, int cx, int y, HFONT f, 
     GetTextExtentPoint32W(dc, s.c_str(), (int)s.size(), &sz);
     TextOutW(dc, cx - sz.cx / 2, y, s.c_str(), (int)s.size());
     SelectObject(dc, old);
+}
+
+// linkRect returns where the discreet "Technician unlock" link sits (bottom-right
+// corner). paint() and the mouse handlers share this so the hit-test always
+// matches what was drawn.
+static RECT linkRect(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    int unit = (w < h ? w : h);
+    int margin = unit / 30 + 8;
+    SIZE sz{};
+    HDC dc = GetDC(hwnd);
+    HFONT f = makeFont(unit / 60 + 5, FW_NORMAL);
+    HGDIOBJ old = SelectObject(dc, f);
+    GetTextExtentPoint32W(dc, kUnlockText, (int)wcslen(kUnlockText), &sz);
+    SelectObject(dc, old);
+    DeleteObject(f);
+    ReleaseDC(hwnd, dc);
+    RECT r{w - margin - sz.cx, h - margin - sz.cy, w - margin, h - margin};
+    return r;
 }
 
 static void paint(HWND hwnd) {
@@ -126,6 +153,15 @@ static void paint(HWND hwnd) {
     drawCentered(dc, L"Please keep this computer plugged in and powered on.", cx,
                  h - h / 8, fSmall, muted);
 
+    // Discreet technician-unlock link, bottom-right. Clicking it hides the
+    // branded windows and reveals the PIN field on the credential tile.
+    RECT lr = linkRect(hwnd);
+    HGDIOBJ oldFont = SelectObject(dc, fSmall);
+    SetTextColor(dc, muted);
+    SetBkMode(dc, TRANSPARENT);
+    TextOutW(dc, lr.left, lr.top, kUnlockText, (int)wcslen(kUnlockText));
+    SelectObject(dc, oldFont);
+
     BitBlt(sdc, 0, 0, w, h, dc, 0, 0, SRCCOPY);
 
     DeleteObject(fTitle);
@@ -148,6 +184,32 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_ERASEBKGND:
             return 1; // fully painted in WM_PAINT; suppress flicker
+        case WM_SETCURSOR: {
+            POINT pt;
+            if (GetCursorPos(&pt)) {
+                ScreenToClient(hwnd, &pt);
+                RECT lr = linkRect(hwnd);
+                if (PtInRect(&lr, pt)) {
+                    SetCursor(LoadCursorW(nullptr, (LPCWSTR)IDC_HAND));
+                    return TRUE;
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+        case WM_LBUTTONUP: {
+            POINT pt{(short)LOWORD(lp), (short)HIWORD(lp)};
+            RECT lr = linkRect(hwnd);
+            if (PtInRect(&lr, pt)) {
+                // Window-local mouse input is reliable on the secure desktop
+                // (unlike the global hotkey this design originally used). Hide
+                // every branded window so the credential tile underneath is
+                // fully interactive, then let the credential's update thread
+                // pick up the request and reveal the PIN field.
+                InterlockedExchange(&g_unlockRequested, 1);
+                for (HWND h : g_windows) ShowWindow(h, SW_HIDE);
+            }
+            return 0;
+        }
         case WM_CLOSE:
             return 0; // refuse to be closed by stray input
         default:
@@ -159,11 +221,6 @@ static BOOL CALLBACK monitorEnum(HMONITOR hMon, HDC, LPRECT, LPARAM) {
     MONITORINFO mi;
     mi.cbSize = sizeof(mi);
     if (!GetMonitorInfoW(hMon, &mi)) return TRUE;
-    // Leave the PRIMARY monitor to LogonUI: the branded credential tile (with
-    // its progress and the technician-unlock link) lives there and must stay
-    // clickable. A full-screen window over it would block all interaction.
-    // Secondary monitors get the full branded screen.
-    if (mi.dwFlags & MONITORINFOF_PRIMARY) return TRUE;
     RECT r = mi.rcMonitor;
     HWND h = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"",
                              WS_POPUP, r.left, r.top, r.right - r.left, r.bottom - r.top,
@@ -184,10 +241,21 @@ static DWORD WINAPI threadProc(LPVOID) {
         RegisterClassExW(&wc);
         g_classRegistered = true;
     }
-    // Branded windows on every NON-primary monitor. On a single-monitor system
-    // there are none -- the branded credential tile on the primary is the whole
-    // UI, which is correct (a window there would block the unlock link).
+    // Branded windows on EVERY monitor, primary included: the full-screen
+    // screen is the product's face during rollout. The credential tile it
+    // covers stays reachable because the discreet unlock link on the branded
+    // window hides all of these on click.
     EnumDisplayMonitors(nullptr, nullptr, monitorEnum, 0);
+    if (g_windows.empty()) {
+        // Fallback: a single window spanning the whole virtual desktop.
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        HWND h = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"",
+                                 WS_POPUP, vx, vy, vw, vh, nullptr, nullptr, g_hinst, nullptr);
+        if (h) g_windows.push_back(h);
+    }
     for (HWND h : g_windows) {
         ShowWindow(h, SW_SHOW);
         SetTimer(h, 1, 500, nullptr);

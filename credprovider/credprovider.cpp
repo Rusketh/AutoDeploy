@@ -8,7 +8,9 @@
 //   * shows a branded tile with the live activity + progress the agent writes
 //     to status.json, refreshed on a background thread; and
 //   * paints a branded full-screen screen on every monitor (fullscreen.cpp).
-// A technician reveals a hidden PIN field with Ctrl+Alt+U; the entered PIN is
+// A discreet "Technician unlock" link on the branded screen hides it and
+// reveals a PIN field on the tile; the tile carries the same command link as a
+// fallback for when the branded windows cannot be created. The entered PIN is
 // validated by the agent (file protocol in lockstate.cpp) and, on success, the
 // marker is cleared so normal sign-in returns.
 //
@@ -190,15 +192,7 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
     IFACEMETHODIMP SetComboBoxSelectedValue(DWORD, DWORD) override { return E_NOTIMPL; }
     IFACEMETHODIMP CommandLinkClicked(DWORD f) override {
         if (f != FID_UNLOCK_LINK) return E_INVALIDARG;
-        // Reveal the PIN field on the LogonUI thread (reliable, unlike a global
-        // hotkey on the secure desktop). The link hides itself.
-        m_revealed = true;
-        if (m_pEvents) {
-            m_pEvents->SetFieldState(this, FID_UNLOCK_LINK, CPFS_HIDDEN);
-            m_pEvents->SetFieldState(this, FID_PIN, CPFS_DISPLAY_IN_SELECTED_TILE);
-            m_pEvents->SetFieldInteractiveState(this, FID_PIN, CPFIS_FOCUSED);
-            m_pEvents->SetFieldState(this, FID_SUBMIT, CPFS_DISPLAY_IN_SELECTED_TILE);
-        }
+        reveal();
         return S_OK;
     }
     IFACEMETHODIMP GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* pcpgsr,
@@ -210,7 +204,7 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
         if (ppwszOptionalStatusText) *ppwszOptionalStatusText = nullptr;
         if (pcpsiOptionalStatusIcon) *pcpsiOptionalStatusIcon = CPSI_NONE;
 
-        if (!m_revealed) return S_OK; // tile is progress-only until the chord
+        if (!m_revealed) return S_OK; // tile is progress-only until unlock is requested
 
         int verdict = lockstate::RequestUnlock(m_pin, 4000);
         m_pin.clear();
@@ -239,8 +233,23 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
     }
 
   private:
+    // reveal swaps the unlock link for the focused PIN field + submit button.
+    // Called from CommandLinkClicked (tile link) and from the update thread
+    // when the link on a branded full-screen window was clicked.
+    void reveal() {
+        if (m_revealed) return;
+        m_revealed = true;
+        if (m_pEvents) {
+            m_pEvents->SetFieldState(this, FID_UNLOCK_LINK, CPFS_HIDDEN);
+            m_pEvents->SetFieldState(this, FID_PIN, CPFS_DISPLAY_IN_SELECTED_TILE);
+            m_pEvents->SetFieldInteractiveState(this, FID_PIN, CPFIS_FOCUSED);
+            m_pEvents->SetFieldState(this, FID_SUBMIT, CPFS_DISPLAY_IN_SELECTED_TILE);
+        }
+    }
+
     // updateThread keeps the tile's activity + progress text live (LogonUI
-    // caches field values until SetFieldString pushes a change).
+    // caches field values until SetFieldString pushes a change) and watches for
+    // an unlock request from the branded full-screen windows.
     static DWORD WINAPI updateThread(LPVOID param) {
         CAutoDeployCredential* self = (CAutoDeployCredential*)param;
         while (InterlockedCompareExchange(&self->m_stop, 0, 0) == 0) {
@@ -249,6 +258,7 @@ class CAutoDeployCredential : public ICredentialProviderCredential {
                 self->m_pEvents->SetFieldString(self, FID_ACTIVITY, st.activity.c_str());
                 std::wstring pt = progressText(st);
                 self->m_pEvents->SetFieldString(self, FID_PROGRESS, pt.c_str());
+                if (fullscreen::ConsumeUnlockRequest()) self->reveal();
             }
             Sleep(300);
         }

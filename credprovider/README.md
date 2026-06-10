@@ -29,23 +29,27 @@ that the agent and `SetupComplete.cmd` agree on:
     regular user cannot sign in.
   - A branded tile shows the live activity + progress from `status.json`,
     refreshed on a background thread.
-  - A branded full-screen window is painted on every **secondary** monitor
-    (`fullscreen.cpp`); the **primary** monitor shows the interactive branded
-    credential tile (so the unlock link stays clickable — a full-screen window
-    over it would block all input).
+  - A branded full-screen window is painted on **every** monitor
+    (`fullscreen.cpp`), each carrying a discreet **"Technician unlock"** link
+    in its bottom-right corner. Clicking the link hides the branded windows,
+    exposing the interactive credential tile beneath with its PIN field
+    revealed.
 - **Marker absent (machine past its initial rollout):** the provider is fully
   **inert** — 0 credentials, no filtering — so later app pushes never lock the
   machine and a stock logon is shown.
 
 ### Technician unlock
 
-A discreet **"Technician unlock"** command link on the tile reveals a PIN field
-when clicked (reliable LogonUI input routing — a hidden global hotkey on the
-secure logon desktop proved unreliable across Windows builds). The entered PIN is
-handed to the agent via the `pin-request`/`pin-response` files; the agent
-validates it against AutoDeploy's existing rate-limited Access PIN and replies
-`allow`/`deny`. The DLL holds **no crypto** — validation is delegated to the
-agent. If no Access PIN is configured, the agent grants any submission.
+A discreet **"Technician unlock"** link in the corner of the branded full-screen
+windows hides them and reveals a PIN field on the credential tile. Window-local
+mouse input is reliable on the secure logon desktop — a hidden global hotkey
+(the first iteration of this design) proved unreliable across Windows builds.
+If the branded windows could not be created, the tile itself shows the same
+command link as a fallback, so the unlock path never depends on them. The
+entered PIN is handed to the agent via the `pin-request`/`pin-response` files;
+the agent validates it against AutoDeploy's existing rate-limited Access PIN and
+replies `allow`/`deny`. The DLL holds **no crypto** — validation is delegated to
+the agent. If no Access PIN is configured, the agent grants any submission.
 
 ### Dismissing the screen
 
