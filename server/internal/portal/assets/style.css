@@ -1147,3 +1147,23 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 /* Recovery key note margin */
 .recovery-note { margin-top: var(--sp-2); }
 .dropzone .upload-progress { text-align: left; }
+
+/* Branding */
+.color-row { align-items: center; }
+.color-row input[type="text"] { flex: 1 1 220px; }
+.color-row input[type="color"] { flex: 0 0 60px; height: 38px; padding: 2px; cursor: pointer; }
+.logo-preview { max-height: 40px; vertical-align: middle; background: var(--surface-2); padding: 4px; border-radius: var(--r); }
+.logo-file-input { display: inline-block; width: auto; margin-left: 0.4rem; }
+
+/* Accounts inline password form */
+.pw-inline { display: inline-flex; gap: 4px; }
+.pw-inline input { width: 160px; padding: 4px 8px; }
+
+/* Error page */
+.error-wrap { margin: 4rem auto; max-width: 540px; }
+
+/* Code block styling */
+.code-block { font-size: 0.85rem; padding: var(--sp-3); background: var(--surface-2); border-radius: var(--r); }
+
+/* Table column widths */
+.col-icon { width: 32px; }

@@ -26,7 +26,7 @@
       <input type="text" name="storage_{{.Category}}" value="{{.Override}}" placeholder="{{.Default}} (default)">
       <span class="hint">Leave blank to use the default. Must be an absolute path that the server process can read and write.</span>
     </label>
-    <div class="flex wrap small mt-2" style="gap: var(--sp-4);">
+    <div class="flex wrap small mt-2 gap-4">
       <span><span class="muted">Effective:</span> <code>{{.Effective}}</code><button type="button" class="copy" data-copy="{{.Effective}}" aria-label="Copy effective path"><svg><use href="#i-copy"/></svg></button></span>
       <span>
         {{if eq .State "ok"}}<span class="badge ok"><svg><use href="#i-check"/></svg>writable</span>

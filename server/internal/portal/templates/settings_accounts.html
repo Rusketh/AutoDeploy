@@ -19,8 +19,8 @@
         {{else}}
         <form method="POST" action="/portal/settings/accounts/{{.ID}}/disable" class="inline" data-confirm="Disable {{.Username}}?"><button class="secondary sm">Disable</button></form>
         {{end}}
-        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline" style="display:inline-flex;gap:4px;">
-          <input type="password" name="password" placeholder="new password" required style="width:160px;padding:4px 8px;">
+        <form method="POST" action="/portal/settings/accounts/{{.ID}}/password" class="inline pw-inline">
+          <input type="password" name="password" placeholder="new password" required>
           <button class="sm" title="Set new password"><svg><use href="#i-lock"/></svg>Set</button>
         </form>
         {{if ne .ID $.Data.Me.ID}}

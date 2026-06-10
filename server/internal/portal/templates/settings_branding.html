@@ -25,19 +25,19 @@
   <fieldset>
     <legend>Appearance</legend>
     <label><span class="lbl">Primary colour</span>
-      <div class="row" style="align-items:center;">
-        <input type="text" name="primary_color" value="{{$b.PrimaryColor}}" placeholder="#0b65c2" style="flex:1 1 220px;">
-        <input type="color" value="{{$b.PrimaryColor}}" onchange="document.querySelector('input[name=primary_color]').value=this.value" style="flex:0 0 60px;height:38px;padding:2px;cursor:pointer;">
+      <div class="row color-row">
+        <input type="text" name="primary_color" value="{{$b.PrimaryColor}}" placeholder="#0b65c2">
+        <input type="color" value="{{$b.PrimaryColor}}" onchange="document.querySelector('input[name=primary_color]').value=this.value">
       </div>
       <span class="hint">Used for buttons, accent badges, the active nav highlight.</span>
     </label>
     <label><span class="lbl">Logo</span>
       <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…">
       <span class="hint">Paste a data URL, or upload an image to embed it:
-        <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" style="display:inline-block;width:auto;margin-left:0.4rem;">
+        <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" class="logo-file-input">
       </span>
     </label>
-    {{if $b.LogoDataURL}}<div style="margin-top:var(--sp-2);">Current logo: <img src="{{$b.LogoDataURL}}" alt="logo preview" style="max-height:40px;vertical-align:middle;background:var(--surface-2);padding:4px;border-radius:var(--r);"></div>{{end}}
+    {{if $b.LogoDataURL}}<div class="mt-2">Current logo: <img src="{{$b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}
   </fieldset>
 
   <div class="actions">

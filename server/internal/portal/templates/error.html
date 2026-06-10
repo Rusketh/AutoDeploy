@@ -1,5 +1,5 @@
 {{define "body"}}
-<div class="empty" style="margin: 4rem auto; max-width: 540px;">
+<div class="empty error-wrap">
   <svg class="empty-icon"><use href="#i-{{if eq .Data.Code 404}}info{{else}}alert{{end}}"/></svg>
   <h3>{{.Data.Heading}}</h3>
   <p>{{.Data.Message}}</p>
@@ -8,7 +8,7 @@
     <a class="btn" href="/portal/"><svg><use href="#i-image"/></svg>Dashboard</a>
   </div>
   {{if .Data.Detail}}
-  <details class="mt-4" style="text-align: left;">
+  <details class="mt-4" style="text-align:left">
     <summary class="small muted">Technical detail</summary>
     <pre class="mt-2">{{.Data.Detail}}</pre>
   </details>

@@ -43,7 +43,7 @@
         <strong class="small muted">{{.Label}}</strong>
         {{$whEvents := $.Data.Webhook.Events}}
         {{range .Events}}
-          <label class="check" style="margin-left:1rem;">
+          <label class="check ml-2">
             <input type="checkbox" name="events" value="{{.}}">
             <code>{{.}}</code>
           </label>
