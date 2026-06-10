@@ -799,6 +799,55 @@
     });
   });
 
+  // ---- Unattend TOC scroll spy ----------------------------------------
+  (function () {
+    var toc = document.querySelector('.unattend-toc');
+    if (!toc) return;
+    var links = Array.prototype.slice.call(toc.querySelectorAll('a[href^="#sec-"]'));
+    if (!links.length) return;
+    var sections = links.map(function (a) {
+      return document.getElementById(a.getAttribute('href').slice(1));
+    }).filter(Boolean);
+    var active = null;
+    function onScroll() {
+      var y = window.scrollY + 80;
+      var cur = null;
+      for (var i = sections.length - 1; i >= 0; i--) {
+        if (sections[i].offsetTop <= y) { cur = links[i]; break; }
+      }
+      if (cur === active) return;
+      if (active) active.classList.remove('active');
+      if (cur) cur.classList.add('active');
+      active = cur;
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+
+  // ---- Filter clear button -------------------------------------------
+  document.querySelectorAll('.filter').forEach(function (input) {
+    if (input.tagName !== 'INPUT') return;
+    var wrap = document.createElement('span');
+    wrap.style.cssText = 'position:relative;display:inline-block';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'filter-clear';
+    btn.setAttribute('aria-label', 'Clear filter');
+    btn.textContent = '×';
+    btn.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:1.1rem;color:var(--fg-muted);cursor:pointer;padding:0 4px;display:none';
+    wrap.appendChild(btn);
+    function toggle() { btn.style.display = input.value ? '' : 'none'; }
+    input.addEventListener('input', toggle);
+    toggle();
+    btn.addEventListener('click', function () {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      toggle();
+    });
+  });
+
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
