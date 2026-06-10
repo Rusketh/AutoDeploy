@@ -66,8 +66,33 @@ func baseMachineData() map[string]any {
 		"DeployCount": 0, "MachineStalled": false,
 		"LatestDeploy": nil, "LastReimage": nil,
 		"DeployActive": false, "DeployLabel": "", "DeployPercent": 0, "DeployIndeterminate": false,
-		"AP": formPrefill(nil),
+		"ReimagePending": map[string]any{"Pending": false},
+		"AP":             formPrefill(nil),
 	}
+}
+
+// TestMachineDetailReimageBanner: the pending-re-image banner renders only when
+// a re-image is flagged, names the target image, and offers a cancel action.
+func TestMachineDetailReimageBanner(t *testing.T) {
+	t.Run("not pending: no banner", func(t *testing.T) {
+		out := renderMachineDetail(t, baseMachineData())
+		if strings.Contains(out, "Re-image pending") || strings.Contains(out, "reimage/cancel") {
+			t.Errorf("banner must not render when not pending; got:\n%s", out)
+		}
+	})
+	t.Run("pending: banner names target + cancel button", func(t *testing.T) {
+		d := baseMachineData()
+		d["ReimagePending"] = map[string]any{
+			"Pending": true, "Target": "Lab Win11", "Claimed": false, "Since": time.Now(),
+		}
+		out := renderMachineDetail(t, d)
+		if !strings.Contains(out, "Re-image pending") || !strings.Contains(out, "Lab Win11") {
+			t.Errorf("want a pending banner naming the target; got:\n%s", out)
+		}
+		if !strings.Contains(out, "/portal/machines/1/reimage/cancel") || !strings.Contains(out, "Cancel re-image") {
+			t.Errorf("want a cancel-re-image form; got:\n%s", out)
+		}
+	})
 }
 
 // TestMachineDetailPINReveal covers the BitLocker pre-boot PIN reveal control:

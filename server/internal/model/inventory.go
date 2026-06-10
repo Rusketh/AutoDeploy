@@ -422,6 +422,56 @@ func (r *InventoryRepo) ReimagePending(ctx context.Context, uuid string) (pendin
 	return p != 0, ID(img), nil
 }
 
+// ReimagePendingByID reports the re-image flag and target image (0 => use the
+// machine's binding) for a machine looked up by id. The portal machine page
+// uses it to show a "re-image pending" indicator so an operator can see a
+// queued re-image is waiting for the agent to reboot the box.
+func (r *InventoryRepo) ReimagePendingByID(ctx context.Context, machineID ID) (pending bool, imageID ID, err error) {
+	var p int
+	var img int64
+	e := r.db.QueryRowContext(ctx,
+		`SELECT reimage_pending, reimage_image_id FROM machine_record WHERE id=?`,
+		machineID).Scan(&p, &img)
+	if errors.Is(e, sql.ErrNoRows) {
+		return false, 0, nil
+	}
+	if e != nil {
+		return false, 0, e
+	}
+	return p != 0, ID(img), nil
+}
+
+// ListReimagePending returns the set of machine ids (from the given slice) that
+// are currently flagged for re-image. Batched so the machine list can badge
+// pending re-images without an N+1 sweep. An empty input yields an empty set.
+func (r *InventoryRepo) ListReimagePending(ctx context.Context, machineIDs []ID) (map[ID]bool, error) {
+	out := map[ID]bool{}
+	if len(machineIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(machineIDs))
+	args := make([]any, len(machineIDs))
+	for i, id := range machineIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM machine_record
+		 WHERE reimage_pending=1 AND id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id ID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // GetByAgentID looks up a machine by AutoDeploy's server-minted agent_id
 // (the object id the agent identifies itself with). Empty agentID never
 // matches -- it's the transient default for un-backfilled rows.

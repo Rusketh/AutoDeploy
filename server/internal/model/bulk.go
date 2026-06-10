@@ -558,6 +558,50 @@ func (r *BulkRepo) DeleteJobsForMachine(ctx context.Context, machineID ID) error
 	return err
 }
 
+// LatestReimageJob returns the most recent re-image job queued for a machine
+// (any status), or nil when there is none. The portal uses its queued_at and
+// status to tell an operator how long a pending re-image has been waiting and
+// whether the agent has already claimed it ("running") or not yet ("queued").
+func (r *BulkRepo) LatestReimageJob(ctx context.Context, machineID ID) (*BulkJob, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT j.id, j.operation_id, j.machine_id, o.action, o.payload,
+		       j.status, j.queued_at
+		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+		WHERE j.machine_id=? AND o.action=?
+		ORDER BY j.id DESC
+		LIMIT 1`, machineID, BulkActionReimage)
+	var j BulkJob
+	err := row.Scan(&j.ID, &j.OperationID, &j.MachineID, &j.Action, &j.Payload, &j.Status, &j.QueuedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &j, nil
+}
+
+// CancelReimageJobsForMachine neutralises any not-yet-finished re-image job for
+// a machine so it won't reboot the box after an operator cancels the pending
+// re-image. Queued/running re-image jobs are marked failed with a cancel note
+// (a still-queued job will never be claimed; a just-claimed one at least
+// records the operator's intent). Returns the number of rows affected.
+func (r *BulkRepo) CancelReimageJobsForMachine(ctx context.Context, machineID ID) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE bulk_job
+		   SET status='failed',
+		       result_json='{"cancelled":"re-image cancelled by operator"}',
+		       completed_at=CURRENT_TIMESTAMP
+		 WHERE machine_id=? AND status IN ('queued','running')
+		   AND operation_id IN (SELECT id FROM bulk_operation WHERE action=?)`,
+		machineID, BulkActionReimage)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ListOperations returns operations newest first.
 func (r *BulkRepo) ListOperations(ctx context.Context) ([]BulkOperation, error) {
 	rows, err := r.db.QueryContext(ctx,

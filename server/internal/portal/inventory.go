@@ -20,6 +20,7 @@ func init() {
 		get("/portal/machines/{id}/deploy-status", machineDeployStatus(r))
 		post("/portal/machines/{id}/binding", machineBindingSubmit(r))
 		post("/portal/machines/{id}/action", machineAction(r))
+		post("/portal/machines/{id}/reimage/cancel", machineReimageCancel(r))
 		post("/portal/machines/{id}/delete", machineDelete(r))
 		post("/portal/machines/delete", machineBulkDelete(r))
 		post("/portal/machines/{id}/bitlocker/pin", machineBLPin(r))
@@ -150,6 +151,35 @@ func machineAction(r Repos) http.HandlerFunc {
 	}
 }
 
+// machineReimageCancel clears a pending re-image on a single machine: it drops
+// the reimage_pending flag (so the boot client won't auto-deploy on the next
+// network boot) and neutralises the queued re-image job (so the agent won't
+// reboot the box). Used when a remote re-image is stuck — e.g. the agent is
+// offline/outdated and hasn't picked it up — or was queued by mistake.
+func machineReimageCancel(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := pathID(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := r.Inventory.ClearReimagePending(req.Context(), id); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+			return
+		}
+		if r.Bulk != nil {
+			if _, err := r.Bulk.CancelReimageJobsForMachine(req.Context(), id); err != nil {
+				flash(w, "err", "Flag cleared, but cancelling the queued re-image job failed: "+err.Error())
+				http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+				return
+			}
+		}
+		flash(w, "ok", "Pending re-image cancelled. The machine will not re-image on its next boot.")
+		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
+	}
+}
+
 // actionPayloadFromForm builds a bulk-op payload from the shared action
 // form fields (used by both the bulk page and per-machine actions).
 func actionPayloadFromForm(req *http.Request) (string, error) {
@@ -210,11 +240,12 @@ func machineList(r Repos) http.HandlerFunc {
 		// agent-reported current computer name (reality), falling back to the
 		// binding's desired name for machines that haven't reported yet.
 		type row struct {
-			Machine   model.MachineRecord
-			Name      string
-			ImageName string
-			BLSet     bool
-			OS        string
+			Machine        model.MachineRecord
+			Name           string
+			ImageName      string
+			BLSet          bool
+			OS             string
+			ReimagePending bool
 		}
 		// Pagination. Client-side filtering still works within the
 		// page; pagination is a guard against a multi-thousand-row
@@ -230,6 +261,7 @@ func machineList(r Repos) http.HandlerFunc {
 		}
 		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
 		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
+		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), machineIDs)
 
 		// Collect unique image IDs from bindings so we can batch-load names.
 		imageIDSet := map[model.ID]struct{}{}
@@ -260,7 +292,7 @@ func machineList(r Repos) http.HandlerFunc {
 			if full, err := r.Inventory.Get(req.Context(), m.ID); err == nil && full.Hardware != nil {
 				osCaption = full.Hardware.OSCaption
 			}
-			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet, OS: osCaption})
+			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet, OS: osCaption, ReimagePending: reimaging[m.ID]})
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page,
@@ -337,8 +369,34 @@ func machineDetail(r Repos) http.HandlerFunc {
 				kbInstalled++
 			}
 		}
+		// Pending re-image: surface a flagged-but-not-yet-started re-image so an
+		// operator can see it's queued and waiting for the agent to reboot the
+		// box (and cancel it if it's stuck). "Since"/"Claimed" come from the
+		// re-image bulk job; the target image name resolves the flag's image id
+		// (0 => the machine's current binding).
+		reimagePending := map[string]any{"Pending": false}
+		if pending, imgID, perr := r.Inventory.ReimagePendingByID(req.Context(), id); perr == nil && pending {
+			target := "its bound image"
+			if imgID != 0 {
+				for _, im := range images {
+					if im.ID == imgID {
+						target = im.Name
+						break
+					}
+				}
+			}
+			info := map[string]any{"Pending": true, "Target": target, "Claimed": false}
+			if r.Bulk != nil {
+				if job, jerr := r.Bulk.LatestReimageJob(req.Context(), id); jerr == nil && job != nil {
+					info["Since"] = job.QueuedAt
+					info["Claimed"] = job.Status == "running"
+				}
+			}
+			reimagePending = info
+		}
 		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
-			"M": m, "Binding": binding, "History": historyRows,
+			"ReimagePending": reimagePending,
+			"M":              m, "Binding": binding, "History": historyRows,
 			"Reimages": reimages,
 			"Detected": detected, "Packages": pkgs,
 			"BL": bl, "Recovery": recovery,

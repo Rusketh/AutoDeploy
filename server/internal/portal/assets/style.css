@@ -536,6 +536,26 @@ button svg, .btn svg { width: 16px; height: 16px; }
 .err { color: var(--bad); }
 .warn { color: var(--warn); }
 
+/* Pending re-image banner on the machine page: a prominent, dismissible
+   notice that a remote re-image is queued and waiting for the agent. */
+.reimage-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+}
+.reimage-banner .rb-icon { width: 22px; height: 22px; flex-shrink: 0; }
+.reimage-banner .rb-body { flex: 1; }
+.reimage-banner .rb-body strong { color: var(--text); }
+.reimage-banner .rb-action { flex-shrink: 0; }
+
 /* ---------- Dashboard stats grid ---------- */
 .grid.stats {
   display: grid;
