@@ -4,28 +4,28 @@
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<p class="muted" style="max-width:780px;">
+<p class="muted intro">
   Compare what's running here against what's published, and see which agent binaries the resident-mode check-in loop will hand to your fleet. Server upgrades are operator-driven (download the new binary and re-run the install script); agents update themselves automatically when a newer version is available in the downloads directory.
 </p>
 
 <div class="section-head"><h3>Server</h3><div class="line"></div></div>
 <div class="card spaced">
-  <div class="flex wrap" style="gap: var(--sp-5); align-items: baseline;">
+  <div class="flex wrap gap-4" style="align-items: baseline;">
     <div>
       <div class="muted small">Running</div>
-      <div style="font-size: 1.4rem; font-weight: 600;"><code>{{.Data.ServerVersion}}</code></div>
+      <div class="stat-text"><code>{{.Data.ServerVersion}}</code></div>
     </div>
     <div>
       <div class="muted small">Latest published</div>
       {{if .Data.LatestServerVersion}}
-        <div style="font-size: 1.4rem; font-weight: 600;"><code>{{.Data.LatestServerVersion}}</code></div>
+        <div class="stat-text"><code>{{.Data.LatestServerVersion}}</code></div>
       {{else if .Data.LatestServerError}}
         <div class="small warn">unknown — {{.Data.LatestServerError}}</div>
       {{else}}
         <div class="small muted">no published release yet</div>
       {{end}}
     </div>
-    <div class="right" style="display:flex;gap:var(--sp-2);align-items:center;">
+    <div class="right flex gap-3" style="align-items:center;">
       {{if eq .Data.UpdateState "up_to_date"}}
         <span class="badge ok"><svg><use href="#i-check"/></svg>up to date</span>
         {{if .Data.UpdaterAvailable}}
@@ -61,9 +61,9 @@
       {{end}}
     </div>
   </div>
-  <div id="server-update-status" hidden style="margin-top:var(--sp-3);"></div>
+  <div id="server-update-status" hidden class="mt-3"></div>
   {{if eq .Data.UpdateState "pre_release"}}
-  <p class="hint" style="margin-top:var(--sp-3);">
+  <p class="hint mt-3">
     The running version <code>{{.Data.ServerVersion}}</code> doesn't parse as a
     semver release tag, so this is almost certainly a build-from-source
     of a feature branch. The latest tagged release is
@@ -72,7 +72,7 @@
     clicking.
   </p>
   {{else if .Data.UpdaterAvailable}}
-  <p class="hint" style="margin-top:var(--sp-3);">
+  <p class="hint mt-3">
     The <strong>Update</strong> button runs <code>{{.Data.UpdaterPath}}</code> via the
     narrowly-scoped sudoers rule the install script created. The helper first
     re-fetches itself for the target release (so it always runs the latest
@@ -84,7 +84,7 @@
     <a href="/api/v1/server/update-log">update log</a>.
   </p>
   {{else}}
-  <p class="hint warn" style="margin-top:var(--sp-3);">
+  <p class="hint warn mt-3">
     The in-place updater is not installed at <code>{{.Data.UpdaterPath}}</code>.
     Re-run <code>scripts/install-linux.sh</code> from the release bundle to install it,
     or apply updates by hand:
@@ -229,12 +229,12 @@ document.addEventListener('DOMContentLoaded', function () {
 <div class="section-head"><h3>Agents</h3><div class="line"></div></div>
 
 <div class="card spaced">
-  <div class="flex wrap" style="gap: var(--sp-3); align-items: center;">
-    <div style="flex:1;">
+  <div class="flex wrap gap-3" style="align-items: center;">
+    <div style="flex:1">
       <strong>Install or refresh agent binary</strong>
       <p class="small muted" style="margin:0;">Downloads the agent for the selected platform from the GitHub release of {{if .Data.LatestServerVersion}}<code>{{.Data.LatestServerVersion}}</code>{{else}}the latest published tag{{end}} into <code>{{.Data.UpdaterPath}}</code>'s downloads directory, then SHA-256-verifies it. Use this when you built the server from source (the install script's auto-fetch only fires during a packaged install).</p>
     </div>
-    <div style="display:flex;gap:var(--sp-2);align-items:center;">
+    <div class="flex gap-3" style="align-items:center">
       <select id="install-agent-os" aria-label="agent OS">
         <option value="windows" {{if eq .Data.AgentForOS "windows"}}selected{{end}}>windows</option>
         <option value="linux"   {{if eq .Data.AgentForOS "linux"}}selected{{end}}>linux</option>
@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', function () {
       </button>
     </div>
   </div>
-  <div id="install-agent-status" class="small muted" hidden style="margin-top:var(--sp-3);"></div>
+  <div id="install-agent-status" class="small muted mt-3" hidden></div>
 </div>
 
 {{if .Data.AgentAvailable}}

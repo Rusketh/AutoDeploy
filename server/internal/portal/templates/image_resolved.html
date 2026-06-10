@@ -29,7 +29,7 @@
   <dt>Name</dt><dd>{{$r.Unattend.Name}}</dd>
   <dt>Description</dt><dd>{{$r.Unattend.Description}}</dd>
 </dl>
-<p style="margin-top: var(--sp-3);"><a class="btn secondary sm" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview"><svg><use href="#i-eye"/></svg>View generated XML</a></p>
+<p class="mt-3"><a class="btn secondary sm" href="/portal/unattends/{{int64 $r.Unattend.ID}}/preview"><svg><use href="#i-eye"/></svg>View generated XML</a></p>
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-file"/></svg>

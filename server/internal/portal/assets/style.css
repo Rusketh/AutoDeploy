@@ -980,6 +980,8 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 .icon-h2 { width: 22px; height: 22px; vertical-align: -4px; margin-right: 0.4rem; }
 .flip-h { transform: rotate(180deg); }
 .truncate { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.spaced h4 { margin: 0 0 var(--sp-2) 0; }
+pre.snippet { background: var(--surface-2); padding: var(--sp-2); border-radius: var(--r-sm); }
 .toolbar-code { font-size: 0.75em; }
 .filter-bar { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-4); flex-wrap: wrap; align-items: center; }
 .filter-bar select, .filter-bar input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--bg); color: var(--fg); }

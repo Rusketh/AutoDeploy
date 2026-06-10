@@ -98,7 +98,7 @@
         <input type="text" name="kms_server" value="{{$s.KMSServer}}" placeholder="kms.corp.example">
       </label>
       <label><span class="lbl">KMS port</span>
-        <input type="number" name="kms_port" value="{{if $s.KMSPort}}{{$s.KMSPort}}{{end}}" placeholder="1688" min="1" max="65535" style="max-width:8rem">
+        <input type="number" name="kms_port" value="{{if $s.KMSPort}}{{$s.KMSPort}}{{end}}" placeholder="1688" min="1" max="65535" class="order-input">
       </label>
     </div>
     <label><span class="lbl">AVMA key (Server VMs only)</span>
@@ -151,7 +151,7 @@
           <input type="text" name="auto_logon_user" value="{{if $al}}{{$al.Username}}{{end}}" placeholder="Administrator">
         </label>
         <label><span class="lbl">Logon count</span>
-          <input type="number" name="auto_logon_count" value="{{if $al}}{{$al.Count}}{{else}}1{{end}}" min="1" max="9999" style="max-width:8rem">
+          <input type="number" name="auto_logon_count" value="{{if $al}}{{$al.Count}}{{else}}1{{end}}" min="1" max="9999" class="order-input">
         </label>
       </div>
       <label><span class="lbl">Password</span>
@@ -236,10 +236,10 @@
     </div>
     <div class="row">
       <label><span class="lbl">Defer feature updates (days, 0 = off)</span>
-        <input type="number" name="defer_feature_updates_days" value="{{$s.DeferFeatureUpdatesDays}}" min="0" max="365" style="max-width:8rem">
+        <input type="number" name="defer_feature_updates_days" value="{{$s.DeferFeatureUpdatesDays}}" min="0" max="365" class="order-input">
       </label>
       <label><span class="lbl">Defer quality updates (days, 0 = off)</span>
-        <input type="number" name="defer_quality_updates_days" value="{{$s.DeferQualityUpdatesDays}}" min="0" max="35" style="max-width:8rem">
+        <input type="number" name="defer_quality_updates_days" value="{{$s.DeferQualityUpdatesDays}}" min="0" max="35" class="order-input">
       </label>
     </div>
   </fieldset>
@@ -271,7 +271,7 @@
     <div id="sps">
       {{range $i, $c := $s.SpecializeCommands}}
       <div class="rep">
-        <input type="number" name="sp_order[]" value="{{$c.Order}}" style="max-width:6rem" title="Order">
+        <input type="number" name="sp_order[]" value="{{$c.Order}}" class="order-input" title="Order">
         <input type="text" name="sp_desc[]" value="{{$c.Description}}" placeholder="Description">
         <input type="text" name="sp_line[]" value="{{$c.CommandLine}}" placeholder={{printf "%q" `reg add HKLM\Software\Lab /v X /d 1 /f`}}>
         <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
@@ -286,7 +286,7 @@
     <div id="scs">
       {{range $i, $c := $s.SetupCompleteCommands}}
       <div class="rep">
-        <input type="number" name="sc_order[]" value="{{$c.Order}}" style="max-width:6rem" title="Order">
+        <input type="number" name="sc_order[]" value="{{$c.Order}}" class="order-input" title="Order">
         <input type="text" name="sc_desc[]" value="{{$c.Description}}" placeholder="Description (added as a rem)">
         <input type="text" name="sc_line[]" value="{{$c.CommandLine}}" placeholder={{printf "%q" `manage-bde -on C: -used`}}>
         <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
@@ -301,7 +301,7 @@
     <div id="flcs">
       {{range $i, $c := $s.FirstLogonCommands}}
       <div class="rep">
-        <input type="number" name="flc_order[]" value="{{$c.Order}}" style="max-width:6rem" title="Order">
+        <input type="number" name="flc_order[]" value="{{$c.Order}}" class="order-input" title="Order">
         <input type="text" name="flc_desc[]" value="{{$c.Description}}" placeholder="Description">
         <input type="text" name="flc_line[]" value="{{$c.CommandLine}}" placeholder="cmd /c …">
         <button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>
@@ -384,7 +384,7 @@ function addFLC(){ addRep('flcs','flc'); }
 // by the FirstLogon, Specialize and SetupComplete sections.
 function addRep(containerId, prefix){
   var d = document.createElement('div'); d.className='rep';
-  d.innerHTML = '<input type="number" name="'+prefix+'_order[]" value="10" style="max-width:6rem" title="Order">' +
+  d.innerHTML = '<input type="number" name="'+prefix+'_order[]" value="10" class="order-input" title="Order">' +
     '<input type="text" name="'+prefix+'_desc[]" placeholder="Description">' +
     '<input type="text" name="'+prefix+'_line[]" placeholder="command line">' +
     '<button type="button" class="rem" onclick="this.parentNode.remove()">Remove</button>';

@@ -40,13 +40,13 @@
         <option value="low" {{if eq $u.Severity "low"}}selected{{end}}>Low</option>
       </select>
     </label>
-    <div style="margin-bottom: var(--sp-3);">
+    <div class="mb-3">
       <span class="lbl" style="display:block; margin-bottom: var(--sp-1);">Supersedes</span>
       <input type="hidden" name="supersedes_json" id="supersedes_json" value="{{$u.SupersedesJSON}}">
-      <div id="supersedes_tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom: var(--sp-2); min-height:28px;"></div>
-      <div style="display:flex; gap:8px; align-items:center;">
+      <div id="supersedes_tags" class="flex wrap gap-3 mb-2" style="min-height:28px;"></div>
+      <div class="flex gap-3" style="align-items:center;">
         <input type="text" id="supersedes_input" placeholder="KB5033372" style="flex:1; max-width:220px;">
-        <button type="button" class="btn secondary" onclick="addSupersedes()" style="white-space:nowrap;"><svg><use href="#i-plus"/></svg>Add</button>
+        <button type="button" class="btn secondary" onclick="addSupersedes()"><svg><use href="#i-plus"/></svg>Add</button>
       </div>
       <span class="hint">KB numbers that this update replaces. Add one at a time.</span>
     </div>
@@ -93,25 +93,25 @@ document.getElementById('supersedes_input').addEventListener('keydown', function
 renderTags();
 </script>
 {{if not $new}}
-<fieldset style="margin-top: var(--sp-4);">
+<fieldset class="mt-4">
   <legend>Payload (.msu file)</legend>
   {{if $u.StoragePath}}
   <p>Current file: <strong>{{$u.PayloadFilename}}</strong> ({{humanBytes $u.SizeBytes}})</p>
   {{else}}
-  <div class="empty" style="padding: var(--sp-4) var(--sp-3);">
+  <div class="empty">
     <svg class="empty-icon"><use href="#i-disc"/></svg>
-    <h3 style="margin: var(--sp-2) 0;">No payload uploaded yet</h3>
+    <h3>No payload uploaded yet</h3>
     <p class="small muted">Upload the .msu file for this update. The agent downloads and installs it using wusa.exe.</p>
   </div>
   {{end}}
-  <form class="std" style="margin-top: var(--sp-3);">
+  <form class="std mt-3">
     <label><span class="lbl">Upload .msu</span>
       <input type="file" id="payload" accept=".msu,.cab">
     </label>
     <div class="actions">
       <button type="button" class="btn secondary" onclick="uploadPayload()" id="uploadBtn"><svg><use href="#i-plus"/></svg>Upload</button>
     </div>
-    <progress id="uploadProgress" value="0" max="100" style="display:none;width:100%;margin-top:var(--sp-2);"></progress>
+    <progress id="uploadProgress" value="0" max="100" hidden></progress>
     <p id="uploadStatus" class="hint"></p>
   </form>
 </fieldset>
@@ -126,7 +126,7 @@ function uploadPayload() {
   var progress = document.getElementById('uploadProgress');
   var status = document.getElementById('uploadStatus');
   var btn = document.getElementById('uploadBtn');
-  progress.style.display = 'block';
+  progress.hidden = false;
   btn.disabled = true;
   xhr.upload.onprogress = function(e) {
     if (e.lengthComputable) progress.value = (e.loaded / e.total) * 100;

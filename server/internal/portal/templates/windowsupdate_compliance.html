@@ -30,13 +30,13 @@
   </div>
 </div>
 
-<div style="margin-top: var(--sp-4);">
+<div class="mt-4">
   <p><strong>{{.Data.Update.Title}}</strong></p>
   {{if .Data.Update.Description}}<p class="muted">{{.Data.Update.Description}}</p>{{end}}
 </div>
 
 {{if .Data.Machines}}
-<div class="toolbar" style="margin-top: var(--sp-4);">
+<div class="toolbar mt-4">
   <h3>Per-machine status</h3>
   <div class="filter">
     <svg><use href="#i-search"/></svg>
@@ -62,7 +62,7 @@
 </table>
 </div>
 {{else}}
-<div class="empty" style="margin-top: var(--sp-4);">
+<div class="empty mt-4">
   <svg class="empty-icon"><use href="#i-server"/></svg>
   <h3>No machines match the OS filter for this update</h3>
   <p>Machines appear here once they've reported their OS via the agent.</p>
