@@ -1109,4 +1109,33 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .dropzone-text strong { color: var(--accent); }
 .dropzone-hint { font-size: var(--fs-xs); color: var(--fg-subtle); margin-top: var(--sp-1); }
 .dropzone.uploading { pointer-events: none; border-style: solid; border-color: var(--accent); }
+
+/* ---------- Form page utilities ---------- */
+.code-name { font-size: 0.95rem; }
+.upload-empty-form { margin: var(--sp-3) auto 0; max-width: 460px; }
+.reveal-value { user-select: all; margin-left: var(--sp-2); font-size: 1.05em; }
+.toolbar-code { font-size: 0.7em; }
+.order-input { max-width: 6rem; }
+.stat-text { font-size: var(--fs-lg); }
+.intro { max-width: 720px; }
+
+/* Settings cards — a nicer layout than stat for settings index */
+.settings-card { font-size: 1.1rem; }
+
+/* Driver form filter blocks */
+.filter-block { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3); margin: var(--sp-2) 0; background: var(--bg); }
+.filter-block .rep-list { margin-bottom: var(--sp-2); }
+.filter-block > button { margin-right: var(--sp-1); }
+
+/* Machine picker helper bar (driver form) */
+.machine-picker-bar { background: var(--accent-soft); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); margin: 0 0 var(--sp-3); align-items: center; gap: var(--sp-2); }
+.machine-picker-bar label { flex: 1; margin: 0; }
+.machine-picker-bar .lbl { margin-bottom: 2px; }
+
+/* Login page */
+.login-logo { height: 32px; display: block; margin: 0 auto var(--sp-3); }
+.flash-inline { border-radius: var(--r); margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-3); }
+
+/* Recovery key note margin */
+.recovery-note { margin-top: var(--sp-2); }
 .dropzone .upload-progress { text-align: left; }

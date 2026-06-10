@@ -2,16 +2,16 @@
 {{$m := .Data.M}}
 {{$b := .Data.Binding}}
 <div class="toolbar">
-  <h2>Machine <code style="font-size:0.7em;">{{slice $m.SystemUUID 0 8}}…</code></h2>
+  <h2>Machine <code class="toolbar-code">{{slice $m.SystemUUID 0 8}}…</code></h2>
   <div class="right">
     <a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a>
-    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" style="display:inline" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
+    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
       <button type="submit" class="btn danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
     </form>
   </div>
 </div>
 
-<div class="grid stats" style="margin-bottom:var(--sp-4);">
+<div class="grid stats mb-4">
   <div class="stat">
     <span class="num">{{.Data.SWDetected}} / {{.Data.SWTotal}}</span>
     <span class="lbl"><svg><use href="#i-box"/></svg>Software detected</span>
@@ -22,7 +22,7 @@
   </div>
   {{with $m.Hardware}}{{if .OSCaption}}
   <div class="stat">
-    <span class="num" style="font-size:var(--fs-lg);">{{.OSCaption}}</span>
+    <span class="num stat-text">{{.OSCaption}}</span>
     <span class="lbl"><svg><use href="#i-server"/></svg>OS · {{.OSVersion}}</span>
   </div>
   {{end}}{{end}}
@@ -94,11 +94,11 @@
 {{/* Reveal control: the cleartext PIN is NEVER rendered into the page. The
      button fetches it on demand from the audited endpoint, shows it inline,
      and app.js hides it again automatically so it doesn't linger on screen. */}}
-<div class="reveal-pin" style="margin-bottom: var(--sp-3);">
+<div class="reveal-pin mb-3">
   <button type="button" class="btn ghost sm" data-reveal-pin="{{int64 $m.ID}}">
     <svg><use href="#i-eye"/></svg><span class="reveal-pin-label">Reveal PIN</span>
   </button>
-  <code class="reveal-pin-value" hidden style="user-select:all; margin-left: var(--sp-2); font-size: 1.05em;"></code>
+  <code class="reveal-pin-value reveal-value" hidden></code>
 </div>
 {{end}}
 <form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
@@ -130,7 +130,7 @@
   </tbody>
 </table>
 </div>
-<p class="small muted" style="margin-top: var(--sp-2);">The server keeps its own encrypted copy of every BitLocker recovery key it's been sent (append-only history above). Retrieving one emits a <code>secret.access</code> audit event recording who, when, and which row — never the value. Any AD backup configured via GPO is separate and unaffected.</p>
+<p class="small muted recovery-note">The server keeps its own encrypted copy of every BitLocker recovery key it's been sent (append-only history above). Retrieving one emits a <code>secret.access</code> audit event recording who, when, and which row — never the value. Any AD backup configured via GPO is separate and unaffected.</p>
 {{else}}
 <p class="small muted">No recovery keys escrowed for this machine yet. The agent sends the BitLocker recovery key to the server when it enables encryption — on deploy, or when you set a PIN above on an already-running machine — and it appears here. Any AD backup configured via GPO is separate and unaffected.</p>
 {{end}}
@@ -140,7 +140,7 @@
 {{/* Live progress bar — shown while a deployment is in flight (imaging or
      installing software). The JS poller in app.js drives it from
      /portal/machines/{id}/deploy-status and reloads the page on completion. */}}
-<div class="card deploy-progress" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}} style="margin-bottom:var(--sp-4);">
+<div class="card deploy-progress mb-4" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}>
   <div class="deploy-progress-head">
     <strong class="deploy-phase">{{.Data.DeployLabel}}</strong>
     <span class="deploy-pct muted small">{{if not .Data.DeployIndeterminate}}{{.Data.DeployPercent}}%{{end}}</span>

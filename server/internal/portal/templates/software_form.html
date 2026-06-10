@@ -14,21 +14,21 @@
      filenames in install-step paths. The agent downloads every
      file into a per-package work directory and resolves bare names
      against it. */}}
-<fieldset style="margin-bottom: var(--sp-4);">
+<fieldset class="mb-4">
   <legend>Payload files</legend>
 
   {{if $hasfiles}}
-  <p class="hint" style="margin-top:0;">
+  <p class="hint mt-0">
     The agent downloads <strong>every file below</strong> into a per-package work directory on the target. In your install steps, reference each file by its bare filename (e.g. <code>setup.exe</code>) -- the agent resolves it to the on-disk path automatically.
   </p>
-  <div class="tablewrap" style="margin-top: var(--sp-3);">
+  <div class="tablewrap mt-3">
     <table>
       <thead><tr><th>Filename</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
       <tbody>
         {{range $files}}
         <tr>
           <td>
-            <code style="font-size: 0.95rem;">{{.Name}}</code>
+            <code class="code-name">{{.Name}}</code>
             <button class="copy" data-copy="{{.Name}}" aria-label="Copy filename"><svg><use href="#i-copy"/></svg></button>
           </td>
           <td class="num small muted">{{humanBytes .Size}}</td>
@@ -36,7 +36,7 @@
           <td class="right">
             <form method="POST" action="/portal/software/{{int64 $p.ID}}/files/{{.Name}}/delete"
                   onsubmit="return confirm('Remove {{.Name}} from this package? Detection rules and install steps stay; only this file is deleted.');"
-                  style="display:inline;">
+                  class="inline-form">
               <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
             </form>
           </td>
@@ -45,41 +45,41 @@
       </tbody>
     </table>
   </div>
-  <form class="std" style="margin-top: var(--sp-3);" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
+  <form class="std mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
     <label><span class="lbl">Add another file</span><input type="file" name="file" required></label>
     <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
   </form>
   {{else}}
-  <div class="empty" style="padding: var(--sp-4) var(--sp-3);">
+  <div class="empty">
     <svg class="empty-icon"><use href="#i-box"/></svg>
-    <h3 style="margin: var(--sp-2) 0;">No files uploaded yet</h3>
+    <h3>No files uploaded yet</h3>
     <p class="small muted">Upload the file (or files) this package needs. Multi-file packages are fine -- upload <code>setup.exe</code>, <code>config.json</code>, drivers, anything. Reference each one by its filename in your install steps below.</p>
-    <form class="std" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress style="margin: var(--sp-3) auto 0; max-width: 460px;">
+    <form class="std upload-empty-form" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress>
       <label><input type="file" name="file" required></label>
-      <div class="actions" style="justify-content:center;"><button type="submit"><svg><use href="#i-plus"/></svg>Upload file</button></div>
+      <div class="actions actions-center"><button type="submit"><svg><use href="#i-plus"/></svg>Upload file</button></div>
     </form>
   </div>
   {{end}}
 </fieldset>
 
-<fieldset style="margin-bottom: var(--sp-4);">
+<fieldset class="mb-4">
   <legend>Package bundle (zip, auto-extracted)</legend>
-  <p class="hint" style="margin-top:0;">
+  <p class="hint mt-0">
     Upload <strong>one zip of everything the package needs</strong> — the agent extracts it into the package work directory <em>before</em> running steps, so you can reference any file inside it by its bare filename (e.g. <code>pc-client-admin-deploy.msi</code>). Ideal when an installer lives on a network share the deployed machine's <strong>SYSTEM</strong> account can't reach, or has too many support files to upload one by one. Single files above and <code>unzip</code> install steps still work as before.
   </p>
   {{if $bundles}}
-  <div class="tablewrap" style="margin-top: var(--sp-3);">
+  <div class="tablewrap mt-3">
     <table>
       <thead><tr><th>Bundle</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
       <tbody>
         {{range $bundles}}
         <tr>
-          <td><code style="font-size:0.95rem;">{{.Name}}</code></td>
+          <td><code class="code-name">{{.Name}}</code></td>
           <td class="num small muted">{{humanBytes .Size}}</td>
           <td class="small muted">{{relTime .ModTime}}</td>
           <td class="right">
             <form method="POST" action="/portal/software/{{int64 $p.ID}}/bundle/{{.Name}}/delete"
-                  onsubmit="return confirm('Remove bundle {{.Name}} from this package?');" style="display:inline;">
+                  onsubmit="return confirm('Remove bundle {{.Name}} from this package?');" class="inline-form">
               <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
             </form>
           </td>
@@ -89,7 +89,7 @@
     </table>
   </div>
   {{end}}
-  <form class="std" style="margin-top: var(--sp-3);" method="POST" action="/portal/software/{{int64 $p.ID}}/bundle" enctype="multipart/form-data" data-upload-progress>
+  <form class="std mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/bundle" enctype="multipart/form-data" data-upload-progress>
     <label><span class="lbl">{{if $bundles}}Add another bundle{{else}}Upload a .zip bundle{{end}}</span><input type="file" name="file" accept=".zip,application/zip" required></label>
     <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload bundle</button></div>
   </form>
@@ -124,22 +124,22 @@
   </fieldset>
 
   <fieldset><legend>Install steps</legend>
-    <div class="hint" style="margin-bottom: var(--sp-3);">
-      <p style="margin:0 0 var(--sp-2) 0;">
+    <div class="hint mb-3">
+      <p class="mb-2" style="margin-top:0;">
         Steps run <strong>in the order shown</strong>. A failed step aborts the package unless its <em>On failure</em> is set to <em>continue</em>.
       </p>
       {{if $hasfiles}}
-      <p style="margin:0 0 var(--sp-2) 0;">
+      <p class="mb-2" style="margin-top:0;">
         In any path field, write the <strong>bare filename</strong> of a file you uploaded above (e.g. <code>setup.exe</code>) and the agent resolves it to the on-disk path automatically. You can also use:
       </p>
-      <ul class="small" style="margin: 0 0 var(--sp-2) 0; padding-left: 1.4rem;">
+      <ul class="small mb-2" style="padding-left: 1.4rem; margin-top: 0;">
         <li><strong>Absolute paths</strong> like <code>C:\Program Files\Acme\foo.exe</code> -- used verbatim.</li>
         <li><strong>Windows env vars</strong> like <code>%ProgramFiles%\Acme\foo.exe</code> -- expanded by the agent.</li>
         <li><code>%pkgdir%</code> -- the package work directory the files were downloaded into. Works in <strong>any</strong> field of <strong>any</strong> step (args too), e.g. <code>/configure %pkgdir%\config.xml</code>. Steps already run with this as their working directory, so a plain relative arg like <code>config.xml</code> works as well.</li>
         <li><code>{payload}</code> (legacy single-file token) -- still works when the package has exactly one file; ambiguous otherwise.</li>
       </ul>
       {{else}}
-      <p style="margin:0;" class="small">
+      <p class="small" style="margin:0;">
         Upload files above first, then reference each by its bare filename (e.g. <code>setup.exe</code>) in your step paths. Absolute paths and <code>%ProgramFiles%</code>-style env vars work too.
       </p>
       {{end}}
@@ -193,7 +193,7 @@ function addRule(){
       '<option value="msi">msi product code</option><option value="script">script</option>' +
       '<option value="winget">winget package</option>' +
     '</select></label>' +
-    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
+    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this rule"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="rule-file"><label><span class="lbl">File path</span><input type="text" name="rule_' + idx + '_file_path" placeholder="%ProgramFiles%\\Acme\\acme.exe"></label>' +
     '<div class="row"><label><span class="lbl">File version</span><input type="text" name="rule_' + idx + '_file_version"></label>' +
     '<label><span class="lbl">SHA-256</span><input type="text" name="rule_' + idx + '_file_sha256"></label></div></div>' +
@@ -227,7 +227,7 @@ function addStep(){
     '<option value="powershell">Run a PowerShell script</option>' +
     '<option value="winget">Install via winget</option></select></label>' +
     '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install <app>"></label>' +
-    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
+    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
     '<label><span class="lbl">If this step fails…</span><select name="step_' + idx + '_continue"><option value="">Abort the whole package</option><option value="1">Continue with the next step</option></select></label></div>' +
     '<div class="step-srcdst"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="config.json"></label>' +
@@ -249,12 +249,6 @@ function addStep(){
   document.getElementById('steps').appendChild(wrap.firstChild);
 }
 </script>
-<style>
-/* .block is rendered inside <fieldset>s on a dark-mode page; use the
- * theme-aware surface token so labels stay legible in both themes. */
-.block { border:1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); margin: var(--sp-3) 0; background: var(--surface-2); }
-.block label { margin: 0.3rem 0; }
-</style>
 {{end}}
 
 {{define "ruleblock"}}
@@ -271,7 +265,7 @@ function addStep(){
         <option value="winget"   {{if eq $r.Type "winget"}}selected{{end}}>winget package</option>
       </select>
     </label>
-    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this rule" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
+    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this rule"><svg><use href="#i-trash"/></svg></button>
   </div>
   <div class="rule-file" {{if ne $r.Type "file"}}style="display:none"{{end}}>
     <label><span class="lbl">File path</span><input type="text" name="rule_{{$i}}_file_path" value="{{$r.FilePath}}" placeholder="%ProgramFiles%\Acme\acme.exe">
@@ -334,7 +328,7 @@ function addStep(){
       </select>
     </label>
     <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install <app>"></label>
-    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button>
+    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this step"><svg><use href="#i-trash"/></svg></button>
   </div>
   <div class="row">
     <label><span class="lbl">Success exit codes <span class="muted small">(comma-sep)</span></span><input type="text" name="step_{{$i}}_success_codes" value="{{range $j, $c := $s.SuccessCodes}}{{if $j}},{{end}}{{$c}}{{end}}" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>

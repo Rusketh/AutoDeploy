@@ -15,14 +15,14 @@
   <fieldset><legend>SMBIOS filters</legend>
     <p class="hint">A package applies when <strong>any</strong> filter matches. A filter matches when <strong>all</strong> its constraints match. Listing the <strong>same field more than once</strong> in a filter (e.g. Model) matches when <strong>any</strong> of those values is reported — use this to cover several models that share one driver package. Empty filter never matches (safety).</p>
     {{if .Data.Machines}}
-    <div class="row" style="background: var(--accent-soft); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); margin: 0 0 var(--sp-3); align-items:center; gap: var(--sp-2);">
-      <label style="flex:1; margin: 0;"><span class="lbl" style="margin-bottom:2px;">Use a known machine as a filter</span>
+    <div class="row machine-picker-bar">
+      <label><span class="lbl">Use a known machine as a filter</span>
         <select id="machine-as-filter">
           <option value="">Pick a machine…</option>
           {{range .Data.Machines}}<option value="{{.ID}}" data-manufacturer="{{.Manufacturer}}" data-product="{{.Product}}">{{.Label}}</option>{{end}}
         </select>
       </label>
-      <button type="button" class="secondary sm" onclick="useMachineAsFilter()" style="flex: 0 0 auto;"><svg><use href="#i-plus"/></svg>Add as filter</button>
+      <button type="button" class="secondary sm" onclick="useMachineAsFilter()"><svg><use href="#i-plus"/></svg>Add as filter</button>
     </div>
     {{end}}
     <div id="filters">
@@ -64,7 +64,7 @@
   </label>
   <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Upload</button></div>
 </form>
-<div class="flex wrap" style="margin-top: var(--sp-3); gap: var(--sp-3);">
+<div class="flex wrap mt-3" style="gap: var(--sp-3);">
   <span class="small muted">Current:
     {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge">{{$p.SizeBytes}} bytes</span>{{else}}<em>nothing uploaded</em>{{end}}
   </span>
@@ -223,9 +223,4 @@ function useMachineAsFilter() {
   sel.selectedIndex = 0;
 }
 </script>
-<style>
-.filter-block { border:1px solid var(--border); border-radius: var(--r); padding: var(--sp-3); margin: var(--sp-2) 0; background: var(--bg); }
-.rep-list { margin-bottom: var(--sp-2); }
-.filter-block > button { margin-right: var(--sp-1); }
-</style>
 {{end}}

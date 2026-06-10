@@ -1,11 +1,11 @@
 {{define "body"}}
 <div class="login">
   <h2>
-    {{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo" style="height: 32px; display: block; margin: 0 auto var(--sp-3);">{{end}}
+    {{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo login-logo">{{end}}
     Sign in to {{.Brand.ProductName}}
   </h2>
   {{with .Data.Error}}
-  <div class="flash flash-err" style="border-radius: var(--r); margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-3);">
+  <div class="flash flash-err flash-inline">
     <svg><use href="#i-alert"/></svg><span>{{.}}</span>
   </div>
   {{end}}

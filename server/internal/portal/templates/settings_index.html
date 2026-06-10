@@ -1,6 +1,6 @@
 {{define "body"}}
 <h2>Settings</h2>
-<p class="muted" style="max-width: 720px;">All operator-changeable configuration lives here.
+<p class="muted intro">All operator-changeable configuration lives here.
 Bootstrap defaults (data directory, dev mode, the at-rest secrets key)
 come from environment variables; network and listen settings can be
 overridden in the portal and take effect on next restart.</p>
@@ -8,57 +8,57 @@ overridden in the portal and take effect on next restart.</p>
 <div class="grid stats">
   <a class="stat" href="/portal/settings/access-pin">
     <span class="lbl"><svg><use href="#i-shield"/></svg>Access PIN</span>
-    <span class="num" style="font-size: 1.1rem;">Boot gate</span>
+    <span class="num settings-card">Boot gate</span>
     <span class="small muted">Server-side validated, bcrypt-hashed, rate-limited per machine.</span>
   </a>
   <a class="stat" href="/portal/settings/notifications">
     <span class="lbl"><svg><use href="#i-bell"/></svg>Notifications</span>
-    <span class="num" style="font-size: 1.1rem;">3 channels</span>
+    <span class="num settings-card">3 channels</span>
     <span class="small muted">In-portal, email &amp; webhooks — event routing, SMTP config, webhook endpoints.</span>
   </a>
   <a class="stat" href="/portal/settings/branding">
     <span class="lbl"><svg><use href="#i-image"/></svg>Branding</span>
-    <span class="num" style="font-size: 1.1rem;">{{.Data.Brand.ProductName}}</span>
+    <span class="num settings-card">{{.Data.Brand.ProductName}}</span>
     <span class="small muted">Portal name, logo, primary colour, deployed-machine OEM info.</span>
   </a>
   <a class="stat" href="/portal/settings/accounts">
     <span class="lbl"><svg><use href="#i-server"/></svg>Local accounts</span>
-    <span class="num" style="font-size: 1.1rem;">{{.Data.UserCount}} user{{if ne .Data.UserCount 1}}s{{end}}</span>
+    <span class="num settings-card">{{.Data.UserCount}} user{{if ne .Data.UserCount 1}}s{{end}}</span>
     <span class="small muted">Portal operators with bcrypt-hashed credentials.</span>
   </a>
   <a class="stat" href="/portal/settings/active-directory">
     <span class="lbl"><svg><use href="#i-globe"/></svg>Active Directory</span>
-    <span class="num" style="font-size: 1.1rem;">{{if .Data.ADEnabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</span>
+    <span class="num settings-card">{{if .Data.ADEnabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</span>
     <span class="small muted">LDAP service-account, computer-object lifecycle, encrypted at rest.</span>
   </a>
   <a class="stat" href="/portal/settings/network">
     <span class="lbl"><svg><use href="#i-globe"/></svg>Network</span>
-    <span class="num" style="font-size: 1.1rem;">{{if .Data.NetCfg.ExternalURL}}{{.Data.NetCfg.ExternalURL}}{{else}}Local only{{end}}</span>
+    <span class="num settings-card">{{if .Data.NetCfg.ExternalURL}}{{.Data.NetCfg.ExternalURL}}{{else}}Local only{{end}}</span>
     <span class="small muted">Listen address, port, TLS certificates, reverse proxy, external URL for remote agents.</span>
   </a>
   <a class="stat" href="/portal/settings/operational">
     <span class="lbl"><svg><use href="#i-gear"/></svg>Operational</span>
-    <span class="num" style="font-size: 1.1rem;">Retention · throttle</span>
+    <span class="num settings-card">Retention · throttle</span>
     <span class="small muted">Log retention days, payload concurrency cap.</span>
   </a>
   <a class="stat" href="/portal/settings/storage">
     <span class="lbl"><svg><use href="#i-box"/></svg>Storage paths</span>
-    <span class="num" style="font-size: 1.1rem;">Per-category</span>
+    <span class="num settings-card">Per-category</span>
     <span class="small muted">Relocate ISOs, drivers, software, iPXE or downloads to a different filesystem.</span>
   </a>
   <a class="stat" href="/portal/downloads">
     <span class="lbl"><svg><use href="#i-box"/></svg>Downloads</span>
-    <span class="num" style="font-size: 1.1rem;">Agent &amp; tools</span>
+    <span class="num settings-card">Agent &amp; tools</span>
     <span class="small muted">Windows agent, Boot Client and installer binaries for ad-hoc use.</span>
   </a>
   <a class="stat" href="/portal/settings/updates">
     <span class="lbl"><svg><use href="#i-bolt"/></svg>Updates</span>
-    <span class="num" style="font-size: 1.1rem;">Server &amp; agent</span>
+    <span class="num settings-card">Server &amp; agent</span>
     <span class="small muted">Compare against the latest GitHub release; see which agent versions are staged.</span>
   </a>
   <a class="stat" href="/portal/settings/pxe">
     <span class="lbl"><svg><use href="#i-bolt"/></svg>PXE setup</span>
-    <span class="num" style="font-size: 1.1rem;">iPXE &amp; DHCP</span>
+    <span class="num settings-card">iPXE &amp; DHCP</span>
     <span class="small muted">iPXE binaries currently served, plus copy-paste DHCP snippets for UniFi, dnsmasq, ISC, MS DHCP, OPNsense.</span>
   </a>
 </div>
