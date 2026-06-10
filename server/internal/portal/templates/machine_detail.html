@@ -11,6 +11,26 @@
   </div>
 </div>
 
+{{with .Data.ReimagePending}}{{if .Pending}}
+<div class="reimage-banner">
+  <svg class="rb-icon"><use href="#i-alert"/></svg>
+  <div class="rb-body">
+    <strong>Re-image pending</strong> — this machine is flagged to rebuild to {{.Target}}{{with .Since}} since {{formatTime .}}{{end}}.
+    {{if .Failed}}
+      The agent claimed the re-image but reported it couldn't be started — most often an out-of-date agent. Update or restart the agent, boot the machine to the network/PXE entry to re-image it manually, or cancel below.
+    {{else if .Claimed}}
+      The agent has picked up the re-image and should reboot shortly.
+    {{else}}
+      It will reboot and re-image on its next agent check-in (last seen {{relTime $m.LastSeen}}). If the agent is offline or out of date this won't happen — boot the machine to the network/PXE entry to re-image it, or cancel below.
+    {{end}}
+  </div>
+  <form method="post" action="/portal/machines/{{int64 $m.ID}}/reimage/cancel" class="inline-form rb-action"
+        onsubmit="return confirm('Cancel the pending re-image for this machine?');">
+    <button type="submit" class="btn ghost sm"><svg><use href="#i-x"/></svg>Cancel re-image</button>
+  </form>
+</div>
+{{end}}{{end}}
+
 <div class="grid stats mb-4">
   <div class="stat">
     <span class="num">{{.Data.SWDetected}} / {{.Data.SWTotal}}</span>

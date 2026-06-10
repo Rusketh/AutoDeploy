@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/config"
@@ -41,6 +42,7 @@ const (
 	keyStorageSoftware    = "storage.software"
 	keyStorageIPXE        = "storage.ipxe"
 	keyStorageDownloads   = "storage.downloads"
+	keyDisplayTimezone    = "display.timezone"
 
 	keyNetHTTPAddr       = "net.http_addr"
 	keyNetHTTPSAddr      = "net.https_addr"
@@ -383,6 +385,42 @@ func (s *Settings) SetAgentPollIntervalSeconds(ctx context.Context, n int) error
 		return errors.New("check-in interval must be >= 5 seconds")
 	}
 	return s.setRaw(ctx, keyAgentPollSeconds, strconv.Itoa(n))
+}
+
+// DisplayTimezone returns the operator-configured IANA time-zone name the
+// portal renders absolute timestamps in (e.g. "America/New_York"). Empty
+// means UTC — the historical behaviour and a safe, unambiguous default.
+func (s *Settings) DisplayTimezone() string {
+	return s.get(keyDisplayTimezone)
+}
+
+// DisplayLocation resolves DisplayTimezone into a *time.Location for
+// rendering. It never returns nil: an empty or unloadable value falls back
+// to UTC, so a bad setting degrades to the previous behaviour rather than
+// breaking every page. The server embeds the tz database (time/tzdata), so
+// zone lookups succeed even on a minimal container without system tzdata.
+func (s *Settings) DisplayLocation() *time.Location {
+	name := s.get(keyDisplayTimezone)
+	if name == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// SetDisplayTimezone stores the portal display time zone. The value must be a
+// valid IANA name (validated by loading it); empty clears the setting and
+// reverts the portal to UTC.
+func (s *Settings) SetDisplayTimezone(ctx context.Context, name string) error {
+	if name != "" {
+		if _, err := time.LoadLocation(name); err != nil {
+			return fmt.Errorf("unknown time zone %q (use an IANA name like Europe/London)", name)
+		}
+	}
+	return s.setRaw(ctx, keyDisplayTimezone, name)
 }
 
 // ApplyStorageOverrides pushes every configured storage path into

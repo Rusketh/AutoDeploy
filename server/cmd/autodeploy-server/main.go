@@ -13,6 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	// Embed the IANA tz database so the portal's configurable display
+	// time zone (runtime.DisplayLocation) resolves names like
+	// "America/New_York" even on a minimal container image that ships no
+	// system zoneinfo. Costs ~450 KB in the binary.
+	_ "time/tzdata"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/api"

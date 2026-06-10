@@ -13,6 +13,29 @@ import (
 // settings_runtime.go owns the portal pages for AD and operational
 // settings that the operator can edit at runtime.
 
+// commonTimezones is a short pick-list of IANA zones offered as datalist
+// suggestions on the operational settings page. It is a convenience only —
+// the field accepts any IANA name the server's tz database knows.
+var commonTimezones = []string{
+	"UTC",
+	"America/Los_Angeles",
+	"America/Denver",
+	"America/Chicago",
+	"America/New_York",
+	"America/Sao_Paulo",
+	"Europe/London",
+	"Europe/Paris",
+	"Europe/Berlin",
+	"Europe/Moscow",
+	"Asia/Dubai",
+	"Asia/Kolkata",
+	"Asia/Singapore",
+	"Asia/Shanghai",
+	"Asia/Tokyo",
+	"Australia/Sydney",
+	"Pacific/Auckland",
+}
+
 func adForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		cfg := addomain.LDAPConfig{}
@@ -128,15 +151,19 @@ func adTest(r Repos) http.HandlerFunc {
 func opsForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var retentionDays, throttle, checkInSeconds int
+		var timezone string
 		if r.Runtime != nil {
 			retentionDays = r.Runtime.LogRetentionDays()
 			throttle = r.Runtime.PayloadMaxInFlight()
 			checkInSeconds = r.Runtime.AgentPollIntervalSeconds()
+			timezone = r.Runtime.DisplayTimezone()
 		}
 		render(w, req, r, "settings_ops.html", "Operational settings", map[string]any{
 			"RetentionDays":  retentionDays,
 			"Throttle":       throttle,
 			"CheckInSeconds": checkInSeconds,
+			"Timezone":       timezone,
+			"CommonZones":    commonTimezones,
 		})
 	}
 }
@@ -190,7 +217,15 @@ func opsSubmit(r Repos) http.HandlerFunc {
 				return
 			}
 		}
-		flash(w, "ok", "Saved. Retention takes effect on the next hourly tick; payload throttle on the next server restart; the agent check-in interval on each agent's next poll.")
+		// Display time zone. Always processed (even when blank) so an operator
+		// can clear it back to UTC. An unknown zone is rejected with the
+		// setter's message rather than silently ignored.
+		if err := r.Runtime.SetDisplayTimezone(req.Context(), strings.TrimSpace(req.FormValue("display_timezone"))); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/settings/operational", http.StatusFound)
+			return
+		}
+		flash(w, "ok", "Saved. Retention takes effect on the next hourly tick; payload throttle on the next server restart; the agent check-in interval on each agent's next poll. The display time zone applies immediately.")
 		http.Redirect(w, req, "/portal/settings/operational", http.StatusFound)
 	}
 }

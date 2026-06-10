@@ -40,7 +40,7 @@
         <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
         <button type="button" class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
       </td>
-      <td>{{if .Name}}<span class="badge accent">{{.Name}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .Name}}<span class="badge accent">{{.Name}}</span>{{else}}<span class="muted">—</span>{{end}}{{if .ReimagePending}} <span class="badge warn" title="A re-image is queued for this machine, waiting for the agent to reboot it."><svg><use href="#i-alert"/></svg>re-image</span>{{end}}</td>
       <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
       <td class="small">{{.Machine.SystemSerial}}</td>
       <td class="small">{{if .OS}}{{.OS}}{{else}}<span class="muted">—</span>{{end}}</td>
