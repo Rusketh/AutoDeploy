@@ -1148,27 +1148,32 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .recovery-note { margin-top: var(--sp-2); }
 .dropzone .upload-progress { text-align: left; }
 
-/* Unattend form TOC */
-.unattend-shell { display: flex; gap: var(--sp-5); align-items: flex-start; }
-.unattend-shell > form { flex: 1; min-width: 0; }
+/* Unattend form */
+.unattend-shell { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; align-items: start; }
+.unattend-shell form.std { max-width: none; }
 .unattend-toc {
-  position: sticky; top: var(--sp-4);
-  width: 200px; flex-shrink: 0;
-  display: flex; flex-direction: column; gap: 2px;
-  font-size: var(--fs-sm);
+  position: sticky; top: 1rem;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: var(--sp-3); display: flex; flex-direction: column; gap: 2px;
 }
-.unattend-toc strong { margin-bottom: var(--sp-1); }
+.unattend-toc strong { font-size: var(--fs-sm); color: var(--fg-muted); margin-bottom: var(--sp-1); }
 .unattend-toc a {
+  color: var(--fg); text-decoration: none; font-size: var(--fs-sm);
   padding: 4px 8px; border-radius: var(--r);
-  color: var(--fg-muted); text-decoration: none;
-  transition: background var(--tx), color var(--tx);
   border-left: 2px solid transparent;
+  transition: background var(--tx), color var(--tx);
 }
-.unattend-toc a:hover { background: var(--surface-2); color: var(--fg); }
+.unattend-toc a:hover { background: var(--accent-soft); color: var(--accent); }
 .unattend-toc a.active { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
-@media (max-width: 900px) {
-  .unattend-shell { flex-direction: column; }
-  .unattend-toc { position: static; width: auto; flex-direction: row; flex-wrap: wrap; }
+.checkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; }
+.rep-wide { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1.2fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+.rep-aa { display: grid; grid-template-columns: 1fr 1.5fr 1.5fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+fieldset.disabled { opacity: 0.6; }
+fieldset.disabled::after { content: " (does not apply to selected target OS)"; color: var(--fg-muted); font-size: var(--fs-sm); }
+@media (max-width: 800px) {
+  .unattend-shell { grid-template-columns: 1fr; }
+  .unattend-toc { position: static; flex-direction: row; flex-wrap: wrap; }
+  .checkgrid { grid-template-columns: 1fr; }
 }
 
 /* Branding */
