@@ -408,6 +408,14 @@ func dashboardPage(r Repos) http.HandlerFunc {
 
 // Template helper funcs available to every page.
 func funcsFor(req *http.Request, r Repos) template.FuncMap {
+	// Resolve the operator-configured display time zone once per render.
+	// Absolute timestamps (formatTime) are shown in this zone so "Last
+	// seen" / check-in times read in the operator's locale rather than UTC.
+	// Falls back to UTC when settings are unavailable or unset.
+	loc := time.UTC
+	if r.Runtime != nil {
+		loc = r.Runtime.DisplayLocation()
+	}
 	return template.FuncMap{
 		"derefID": func(p *model.ID) string {
 			if p == nil {
@@ -441,11 +449,14 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return true
 		},
+		// formatTime renders an absolute timestamp in the operator's
+		// configured display time zone (RFC3339 keeps the offset, so the
+		// value stays unambiguous). Defaults to UTC when unset.
 		"formatTime": func(t time.Time) string {
 			if t.IsZero() {
 				return ""
 			}
-			return t.UTC().Format(time.RFC3339)
+			return t.In(loc).Format(time.RFC3339)
 		},
 		"list": func(args ...any) []any { return args },
 		"dict": func(args ...any) map[string]any {

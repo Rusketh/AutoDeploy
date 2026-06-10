@@ -11,6 +11,18 @@
       <span class="hint">0 disables pruning — log_event grows forever. The retention scheduler ticks hourly and prunes rows older than the cutoff.</span>
     </label>
   </fieldset>
+  <fieldset><legend>Display time zone</legend>
+    <label><span class="lbl">Portal time zone</span>
+      <input type="text" name="display_timezone" value="{{.Data.Timezone}}" list="tz-list" placeholder="UTC" autocomplete="off" spellcheck="false">
+      <datalist id="tz-list">
+        {{range .Data.CommonZones}}<option value="{{.}}">{{end}}
+      </datalist>
+      <span class="hint">
+        IANA name (e.g. <code>Europe/London</code>, <code>America/New_York</code>) used to render dates and times — including each machine's last check-in — across the portal.
+        Leave blank for <strong>UTC</strong>. Daylight saving is handled automatically. <strong>Applies immediately</strong> on save.
+      </span>
+    </label>
+  </fieldset>
   <fieldset><legend>Agent check-in interval</legend>
     <label><span class="lbl">Resident agent poll interval (seconds)</span>
       <input type="number" name="agent_poll_seconds" value="{{.Data.CheckInSeconds}}" min="5" max="86400">
