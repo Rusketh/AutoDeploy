@@ -1,6 +1,7 @@
 # Build artifacts
 */bin/
 bin/
+server/autodeploy-server
 
 # Local data dirs
 data/
