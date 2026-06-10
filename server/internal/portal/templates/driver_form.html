@@ -63,7 +63,7 @@
   <div class="dropzone-hint">.zip recommended — archives are unpacked server-side when you Extract &amp; scan</div>
   <input type="file" name="file" required>
 </form>
-<div class="flex wrap mt-3" style="gap: var(--sp-3);">
+<div class="flex wrap mt-3 gap-3">
   <span class="small muted">Current:
     {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge">{{$p.SizeBytes}} bytes</span>{{else}}<em>nothing uploaded</em>{{end}}
   </span>

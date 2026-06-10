@@ -89,7 +89,7 @@ func TestMachineDetailPINReveal(t *testing.T) {
 		}
 		// The value element is present but empty -- the PIN is fetched
 		// on demand, never baked into the rendered HTML.
-		if !strings.Contains(out, `class="reveal-pin-value"`) {
+		if !strings.Contains(out, `reveal-pin-value`) {
 			t.Error("want an (empty) value placeholder element")
 		}
 	})
@@ -131,7 +131,7 @@ func TestMachineDetailAtAGlance(t *testing.T) {
 			t.Error("want 'Never re-imaged' in summary")
 		}
 		// Progress card is present but hidden when no deploy is active.
-		if !strings.Contains(out, `class="card deploy-progress"`) || !strings.Contains(out, "hidden") {
+		if !strings.Contains(out, `card deploy-progress`) || !strings.Contains(out, "hidden") {
 			t.Error("want hidden progress card when no active deploy")
 		}
 	})

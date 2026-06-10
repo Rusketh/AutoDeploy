@@ -1,15 +1,15 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bell"/></svg>Notification settings</h2>
+  <h2><svg class="icon-h2"><use href="#i-bell"/></svg>Notification settings</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
 <form class="std" method="POST" action="/portal/settings/notifications">
 
   <fieldset><legend>In-portal notifications</legend>
-    <label style="display:flex;align-items:center;gap:0.5rem;">
+    <label class="check">
       <input type="checkbox" name="portal_enabled" value="1"{{if .Data.PortalEnabled}} checked{{end}}>
-      <span class="lbl">Enable in-portal notifications</span>
+      <span>Enable in-portal notifications</span>
     </label>
     <label><span class="lbl">Retain notifications for (days)</span>
       <input type="number" name="portal_retention" value="{{.Data.PortalRetention}}" min="0" max="3650">
@@ -18,9 +18,9 @@
   </fieldset>
 
   <fieldset><legend>Email (SMTP)</legend>
-    <label style="display:flex;align-items:center;gap:0.5rem;">
+    <label class="check">
       <input type="checkbox" name="email_enabled" value="1"{{if .Data.EmailEnabled}} checked{{end}}>
-      <span class="lbl">Enable email notifications</span>
+      <span>Enable email notifications</span>
     </label>
     <label><span class="lbl">SMTP host</span>
       <input type="text" name="smtp_host" value="{{.Data.EmailCfg.Host}}" placeholder="smtp.example.com">
@@ -62,22 +62,17 @@
   </div>
 </form>
 
-<hr style="margin:2rem 0;">
-
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-  <h3>Send test email</h3>
-</div>
-<form method="POST" action="/portal/settings/notifications/email-test" style="display:flex;gap:0.5rem;align-items:end;">
+<div class="section-head"><h3>Send test email</h3><div class="line"></div></div>
+<form method="POST" action="/portal/settings/notifications/email-test" class="filter-bar">
   <label><span class="lbl">Recipient</span>
-    <input type="email" name="test_email" placeholder="your@email.com" style="min-width:280px;">
+    <input type="email" name="test_email" placeholder="your@email.com">
   </label>
   <button type="submit" class="btn sm"><svg><use href="#i-bolt"/></svg>Send test</button>
 </form>
 
-<hr style="margin:2rem 0;">
-
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+<div class="section-head">
   <h3>Webhooks</h3>
+  <div class="line"></div>
   <a class="btn sm" href="/portal/settings/notifications/webhooks/new"><svg><use href="#i-plus"/></svg>Add webhook</a>
 </div>
 {{if .Data.Webhooks}}
@@ -87,7 +82,7 @@
   {{range .Data.Webhooks}}
     <tr>
       <td><a href="/portal/settings/notifications/webhooks/{{.ID}}">{{.Name}}</a></td>
-      <td class="small muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{{.URL}}</td>
+      <td class="small muted truncate">{{.URL}}</td>
       <td>{{len .Events}} event{{if ne (len .Events) 1}}s{{end}}</td>
       <td>{{if .Enabled}}<span class="dot ok"></span> enabled{{else}}<span class="dot"></span> disabled{{end}}</td>
     </tr>
@@ -98,10 +93,9 @@
 <p class="muted">No webhooks configured. <a href="/portal/settings/notifications/webhooks/new">Add one</a> to receive event notifications via HTTP POST.</p>
 {{end}}
 
-<hr style="margin:2rem 0;">
-
-<div style="display:flex;align-items:center;justify-content:space-between;">
+<div class="section-head">
   <h3>Per-user preferences</h3>
+  <div class="line"></div>
   <a class="btn sm ghost" href="/portal/settings/notifications/preferences"><svg><use href="#i-gear"/></svg>My preferences</a>
 </div>
 <p class="muted">Each user can choose which events generate in-portal and email notifications.</p>

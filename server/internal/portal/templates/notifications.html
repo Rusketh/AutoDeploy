@@ -1,6 +1,6 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2><svg style="width:22px;height:22px;vertical-align:-4px;margin-right:0.4rem;"><use href="#i-bell"/></svg>Notifications</h2>
+  <h2><svg class="icon-inline"><use href="#i-bell"/></svg>Notifications</h2>
   <div class="right">
     <form method="POST" action="/portal/notifications/mark-all-read" class="inline-form">
       <button type="submit" class="btn ghost sm"><svg><use href="#i-check"/></svg>Mark all read</button>
@@ -76,7 +76,7 @@
   <div class="pager-links">
     {{if gt .Data.Offset 0}}<a class="btn secondary sm" href="/portal/notifications?offset={{sub .Data.Offset .Data.Limit}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
     {{$nextOffset := add .Data.Offset .Data.Limit}}
-    {{if lt $nextOffset .Data.Total}}<a class="btn secondary sm" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg style="transform:rotate(180deg);"><use href="#i-arrow-left"/></svg></button>{{end}}
+    {{if lt $nextOffset .Data.Total}}<a class="btn secondary sm" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></button>{{end}}
   </div>
 </nav>
 {{end}}

@@ -140,7 +140,7 @@
 {{/* Live progress bar — shown while a deployment is in flight (imaging or
      installing software). The JS poller in app.js drives it from
      /portal/machines/{id}/deploy-status and reloads the page on completion. */}}
-<div class="card deploy-progress mb-4" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}>
+<div class="card deploy-progress mb-4" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}}>
   <div class="deploy-progress-head">
     <strong class="deploy-phase">{{.Data.DeployLabel}}</strong>
     <span class="deploy-pct muted small">{{if not .Data.DeployIndeterminate}}{{.Data.DeployPercent}}%{{end}}</span>
