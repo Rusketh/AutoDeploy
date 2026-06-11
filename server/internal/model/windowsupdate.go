@@ -457,12 +457,27 @@ func (r *WindowsUpdateRepo) GetDeployment(ctx context.Context, id ID) (UpdateDep
 }
 
 // ClaimUpdateJobs claims up to max queued update jobs for a machine.
+//
+// Before claiming it requeues this machine's jobs that have sat in
+// 'running' for over two hours: a claim only proves the server handed
+// the job out, not that the agent acted on it. An agent that crashed,
+// rebooted mid-install, or is too old to understand update jobs would
+// otherwise strand them in 'running' forever with no retry.
 func (r *WindowsUpdateRepo) ClaimUpdateJobs(ctx context.Context, machineID ID, max int) ([]UpdateDeploymentJob, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE update_deployment_job
+		SET status='queued', claimed_at=NULL
+		WHERE machine_id = ? AND status = 'running'
+		  AND claimed_at IS NOT NULL
+		  AND claimed_at < datetime('now', '-2 hours')`, machineID); err != nil {
+		return nil, err
+	}
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, deployment_id, update_id

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -286,6 +287,26 @@ func handleAgentUpdateJobResult(r Repos) http.HandlerFunc {
 				}
 				_ = r.Updates.UpsertMachineStatuses(req.Context(), job.MachineID,
 					[]model.MachineUpdateStatus{st})
+				// Audit the outcome so the Logs page tells the install
+				// story end-to-end (claimed -> result).
+				if r.Logs != nil {
+					level := "INFO"
+					if in.Status != "ok" {
+						level = "WARN"
+					}
+					fields, _ := json.Marshal(map[string]any{
+						"job_id": jobID, "machine_id": job.MachineID,
+						"kb": u.KBNumber, "status": in.Status,
+						"result": in.ResultJSON,
+					})
+					_ = r.Logs.Append(req.Context(), model.LogEvent{
+						Component: "updates",
+						Level:     level,
+						Action:    "update.job.result",
+						Target:    "machine:" + strconv.FormatInt(int64(job.MachineID), 10),
+						Fields:    string(fields),
+					})
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

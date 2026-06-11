@@ -140,6 +140,64 @@ func TestGetByKB(t *testing.T) {
 	}
 }
 
+// A job that sat in 'running' too long (agent crashed, rebooted, or is
+// too old to act on update jobs) must be requeued and claimable again;
+// a freshly claimed job must not be double-claimed.
+func TestClaimUpdateJobsRequeuesStaleRunning(t *testing.T) {
+	ctx := context.Background()
+	repo, _, addMachine := newUpdateTestEnv(t)
+	m := addMachine("uuid-1", "")
+	u, err := repo.Create(ctx, WindowsUpdate{KBNumber: "KB1", Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.CreateDeployment(ctx, UpdateDeployment{
+		UpdateIDs: []ID{u.ID},
+		Target:    BulkTarget{MachineIDs: []ID{m}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := repo.ClaimUpdateJobs(ctx, m, 4)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim: %v %+v", err, first)
+	}
+
+	// A fresh 'running' claim is NOT handed out again.
+	again, err := repo.ClaimUpdateJobs(ctx, m, 4)
+	if err != nil || len(again) != 0 {
+		t.Fatalf("second claim should be empty: %v %+v", err, again)
+	}
+
+	// Backdate the claim past the two-hour window: the job requeues and
+	// is claimed again on the next poll.
+	if _, err := repo.db.ExecContext(ctx, `
+		UPDATE update_deployment_job
+		SET claimed_at = datetime('now', '-3 hours')
+		WHERE id = ?`, first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, err := repo.ClaimUpdateJobs(ctx, m, 4)
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].ID != first[0].ID {
+		t.Fatalf("stale job should be reclaimed: %v %+v", err, reclaimed)
+	}
+
+	// A completed job is never resurrected, no matter how old its claim.
+	if err := repo.CompleteUpdateJob(ctx, first[0].ID, "ok", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `
+		UPDATE update_deployment_job
+		SET claimed_at = datetime('now', '-3 hours')
+		WHERE id = ?`, first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	final, err := repo.ClaimUpdateJobs(ctx, m, 4)
+	if err != nil || len(final) != 0 {
+		t.Fatalf("completed job must stay completed: %v %+v", err, final)
+	}
+}
+
 // matchMachines must honor the OS filter: the portal's dash-style values
 // ("windows-10") must match WMI captions ("Microsoft Windows 10 Pro"), and a
 // machine with no reported hardware never matches an explicit filter.
