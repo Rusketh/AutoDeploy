@@ -228,6 +228,25 @@ information).
 | `POST /api/v1/webhooks/{id}/test` | Send a test `system.test` event to the webhook. |
 | `GET /api/v1/webhooks/{id}/deliveries` | List recent delivery attempts (supports `?limit`). |
 
+## Windows Updates
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/v1/updates` | List tracked KB updates. |
+| `POST /api/v1/updates` | Create an update: `{ "kb_number", "title", "description", "os_filter", "severity", "supersedes_json", "reboot_after" }`. |
+| `GET /api/v1/updates/{id}` | Get an update. |
+| `PUT /api/v1/updates/{id}` | Update metadata. |
+| `DELETE /api/v1/updates/{id}` | Delete an update (cascades to its deployment jobs). |
+| `PUT /api/v1/updates/{id}/upload` | Upload the payload (`.msu`/`.cab`) as the raw request body; `X-Filename` carries the original filename. |
+| `GET /api/v1/updates/{id}/compliance` | Installed/pending/failed/unknown counts across targeted machines. |
+| `GET /api/v1/mscatalog/search?q=` | Search the Microsoft Update Catalog (first 25 results: title, KB, products, classification, date, size, update GUID). |
+| `POST /api/v1/updates/import` | Import a catalog result: `{ "update_guid", "title", "products", "classification" }`. Creates the update (KB parsed from the title) and starts a background payload download from Microsoft. `409` with `existing_id` if the KB already has a payload. |
+| `GET /api/v1/updates/{id}/import-status` | Progress of a running import: `{ "phase", "filename", "done_bytes", "total_bytes", "percent", "error", "finished" }`. |
+| `POST /api/v1/update-deployments` | Deploy updates: `{ "update_ids", "target": { "name_regex", "ou", "group", "machine_ids" }, "os_filter" }`. Queues one job per machine per update. |
+| `GET /api/v1/update-deployments` | List deployments. |
+| `GET /api/v1/update-deployments/{id}` | A deployment plus its per-machine jobs. |
+| `GET /api/v1/machines/{id}/updates` | Per-machine KB install status. |
+
 ## Logs
 
 | Method & path | Purpose |

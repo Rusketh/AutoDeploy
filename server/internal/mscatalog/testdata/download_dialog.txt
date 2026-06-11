@@ -1,0 +1,20 @@
+<html><head><title>Download</title>
+<script language="javascript">
+var downloadInformation = new Array();
+downloadInformation[0] = new Object();
+downloadInformation[0].updateID = '234c1b3d-6b53-4d11-a4a8-2e8b1afa1e5a';
+downloadInformation[0].enTitle = '2024-01 Cumulative Update for Windows 10 Version 22H2 for x64-based Systems (KB5034122)';
+downloadInformation[0].sizeLanguage = '';
+downloadInformation[0].files = new Array();
+downloadInformation[0].files[0] = new Object();
+downloadInformation[0].files[0].url = 'https://catalog.s.download.windowsupdate.com/d/msdownload/update/software/secu/2024/01/windows10.0-kb5034122-x64_3796df3f9e0a9d40bbfb6b13fed4f88b8e1f23bc.msu';
+downloadInformation[0].files[0].digest = 'N5bfP55Aqdq7+2sT7tT4i74Q88g=';
+downloadInformation[0].files[0].architectures = 'amd64';
+downloadInformation[0].files[0].defaultFileNameLength = 47;
+var minmizedDownloadInformation = new Array();
+minmizedDownloadInformation[0] = new Object();
+minmizedDownloadInformation[0].updateID = '234c1b3d-6b53-4d11-a4a8-2e8b1afa1e5a';
+minmizedDownloadInformation[0].files = new Array();
+minmizedDownloadInformation[0].files[0] = 'https://catalog.s.download.windowsupdate.com/d/msdownload/update/software/secu/2024/01/windows10.0-kb5034122-x64_3796df3f9e0a9d40bbfb6b13fed4f88b8e1f23bc.msu';
+</script>
+</head><body></body></html>

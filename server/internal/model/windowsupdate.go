@@ -200,6 +200,20 @@ func (r *WindowsUpdateRepo) SetPayload(ctx context.Context, id ID, storagePath, 
 	return err
 }
 
+// GetByKB returns the update with the given KB number (exact match).
+func (r *WindowsUpdateRepo) GetByKB(ctx context.Context, kb string) (WindowsUpdate, error) {
+	var id ID
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id FROM windows_update WHERE kb_number = ?`, kb).Scan(&id)
+	if err == sql.ErrNoRows {
+		return WindowsUpdate{}, ErrNotFound
+	}
+	if err != nil {
+		return WindowsUpdate{}, err
+	}
+	return r.Get(ctx, id)
+}
+
 // UpsertMachineStatuses bulk-upserts KB install status from an agent report.
 func (r *WindowsUpdateRepo) UpsertMachineStatuses(ctx context.Context, machineID ID, statuses []MachineUpdateStatus) error {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -322,6 +336,22 @@ func (r *WindowsUpdateRepo) CreateDeployment(ctx context.Context, d UpdateDeploy
 	}
 	defer tx.Rollback()
 
+	// Resolve each update's KB up front: it validates the IDs and lets the
+	// job loop mark targeted machines pending per KB.
+	kbByUpdate := make(map[ID]string, len(d.UpdateIDs))
+	for _, uid := range d.UpdateIDs {
+		var kb string
+		err := tx.QueryRowContext(ctx,
+			`SELECT kb_number FROM windows_update WHERE id = ?`, uid).Scan(&kb)
+		if err == sql.ErrNoRows {
+			return UpdateDeployment{}, nil, fmt.Errorf("%w: update %d not found", ErrValidation, uid)
+		}
+		if err != nil {
+			return UpdateDeployment{}, nil, err
+		}
+		kbByUpdate[uid] = kb
+	}
+
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO update_deployment (update_ids_json, target_json, os_filter, created_by)
 		VALUES (?, ?, ?, ?)`, string(updateIDsJSON), string(targetJSON), d.OSFilter, d.CreatedBy)
@@ -344,6 +374,18 @@ func (r *WindowsUpdateRepo) CreateDeployment(ctx context.Context, d UpdateDeploy
 			jobs = append(jobs, UpdateDeploymentJob{
 				ID: ID(jobID), DeploymentID: d.ID, MachineID: m.ID, UpdateID: ID(uid), Status: "queued",
 			})
+			// Mark the machine pending for this KB so compliance reflects
+			// the queued work immediately. Never downgrade an existing
+			// 'installed' row (e.g. a redundant re-deploy).
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO machine_update_status (machine_id, kb_number, status, reported_at)
+				VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
+				ON CONFLICT(machine_id, kb_number) DO UPDATE SET
+					status='pending', reported_at=CURRENT_TIMESTAMP
+				WHERE machine_update_status.status != 'installed'`,
+				m.ID, kbByUpdate[uid]); err != nil {
+				return UpdateDeployment{}, nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -467,6 +509,21 @@ func (r *WindowsUpdateRepo) ClaimUpdateJobs(ctx context.Context, machineID ID, m
 	return claimed, nil
 }
 
+// GetUpdateJob returns a single deployment job by ID.
+func (r *WindowsUpdateRepo) GetUpdateJob(ctx context.Context, id ID) (UpdateDeploymentJob, error) {
+	var j UpdateDeploymentJob
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, deployment_id, machine_id, update_id, status, result_json,
+			queued_at, claimed_at, completed_at
+		FROM update_deployment_job WHERE id = ?`, id).Scan(
+		&j.ID, &j.DeploymentID, &j.MachineID, &j.UpdateID,
+		&j.Status, &j.ResultJSON, &j.QueuedAt, &j.ClaimedAt, &j.CompletedAt)
+	if err == sql.ErrNoRows {
+		return UpdateDeploymentJob{}, ErrNotFound
+	}
+	return j, err
+}
+
 // CompleteUpdateJob marks a job as completed with a final status.
 func (r *WindowsUpdateRepo) CompleteUpdateJob(ctx context.Context, jobID ID, status, resultJSON string) error {
 	if status != "ok" && status != "failed" {
@@ -580,15 +637,30 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 	for _, id := range t.MachineIDs {
 		idSet[id] = true
 	}
+	// Portal filters are dash-style ("windows-10", "server-2022") but WMI
+	// captions read "Microsoft Windows 10 Pro" — normalize to spaces so the
+	// substring match works for both styles.
 	osFilter = strings.ToLower(strings.TrimSpace(osFilter))
+	osFilter = strings.ReplaceAll(osFilter, "-", " ")
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
 		if len(idSet) > 0 && !idSet[m.ID] {
 			continue
 		}
-		if osFilter != "" && m.Hardware != nil {
-			caption := strings.ToLower(m.Hardware.OSCaption)
-			if !strings.Contains(caption, osFilter) {
+		if osFilter != "" {
+			// List doesn't load hardware_json; fetch the full record for
+			// the caption. A machine with no reported hardware has an
+			// unknown OS and never matches an explicit filter.
+			full := m
+			if full.Hardware == nil {
+				var gerr error
+				full, gerr = r.Inventory.Get(ctx, m.ID)
+				if gerr != nil {
+					continue
+				}
+			}
+			if full.Hardware == nil ||
+				!strings.Contains(strings.ToLower(full.Hardware.OSCaption), osFilter) {
 				continue
 			}
 		}
