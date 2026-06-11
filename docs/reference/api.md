@@ -142,6 +142,7 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 | `GET /api/v1/machines/{id}/history` | Deployment history. |
 | `GET /api/v1/machines/{id}/binding` | Current image binding. |
 | `PUT /api/v1/machines/{id}/binding` | Set the binding: `{ "image_id", "machine_name", "target_ou", "group_memberships" }`. |
+| `POST /api/v1/machines/bulk-binding` | Apply one binding edit to many machines: `{ "machine_ids": [..], "set": { "image_id", "machine_name", "target_ou", "add_groups", "remove_groups" } }`. Omitted fields are untouched; zero values clear (image 0, empty name/OU). Returns `{ "matched", "updated" }`. |
 | `GET /api/v1/machines/{id}/detected` | Per-package detected state. |
 
 ### BitLocker

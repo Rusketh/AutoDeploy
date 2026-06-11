@@ -65,6 +65,20 @@ Save it, and the bound image deploys automatically the next time the machine net
 ahead of time is the hands-off path: bind a machine (or a whole set, via a
 [bulk re-image](bulk-operations.md)), then boot it and walk away.
 
+### Bulk edit
+
+**Bulk edit** (button on the machine list) applies one binding change to many machines at once:
+search by name regex, OU, or AD group, add the machines to a selection, then tick the fields to
+change — bound **image** (set or clear), **machine name template**, **target OU**, and **group
+memberships** (comma-separated adds and removals that merge with each machine's existing list).
+Unticked fields are left exactly as they are on each machine.
+
+Because the same name would collide across machines, the name field takes a *template* —
+`LAB-%serial(6)%`, `%random(8)%`, etc. — expanded per machine at deploy/rename time. Like the
+single-machine panel, bulk edits change **intended** state: a new OU or name takes effect at the
+machine's next deploy, domain join, or rename rather than moving anything immediately. Every bulk
+edit is recorded in the [audit log](logs.md).
+
 ### Run an action on this machine
 
 The **Run an action** panel queues a single action for this machine (the agent picks it up at its

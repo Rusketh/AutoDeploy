@@ -16,6 +16,8 @@ func init() {
 	registerInventoryRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 		get("/portal/machines", machineList(r))
 		get("/portal/machines.csv", machineCSV(r))
+		get("/portal/machines/bulk-edit", machineBulkEditForm(r))
+		post("/portal/machines/bulk-edit", machineBulkEditSubmit(r))
 		get("/portal/machines/{id}", machineDetail(r))
 		get("/portal/machines/{id}/deploy-status", machineDeployStatus(r))
 		post("/portal/machines/{id}/binding", machineBindingSubmit(r))

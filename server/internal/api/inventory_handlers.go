@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +21,7 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/machines/{id}/history", handleMachineHistory(r))
 	mux.HandleFunc("GET /api/v1/machines/{id}/binding", handleGetBinding(r))
 	mux.HandleFunc("PUT /api/v1/machines/{id}/binding", handlePutBinding(r))
+	mux.HandleFunc("POST /api/v1/machines/bulk-binding", requireAuth(r, handleBulkBinding(r)))
 	mux.HandleFunc("GET /api/v1/machines/{id}/detected", handleDetectedState(r))
 	mux.HandleFunc("DELETE /api/v1/machines/{id}", handleDeleteMachine(r))
 
@@ -332,6 +336,57 @@ type agentReportResponse struct {
 // than a typical Windows install. Beyond this the agent re-opens a
 // report and gets a fresh token.
 const deployTokenTTL = 24 * time.Hour
+
+// handleBulkBinding applies one binding edit (image / name template / OU /
+// group membership changes) to many machines at once. Bindings are
+// INTENDED state — the changes take effect at the next deploy, join, or
+// rename, exactly like editing a single machine's binding.
+func handleBulkBinding(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in struct {
+			MachineIDs []model.ID        `json:"machine_ids"`
+			Set        model.BindingEdit `json:"set"`
+		}
+		if err := decodeJSON(req, &in); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+			return
+		}
+		// A set image must exist — catch it once here instead of as a
+		// per-machine FK failure.
+		if in.Set.ImageID != nil && *in.Set.ImageID != 0 && r.Images != nil {
+			if _, err := r.Images.Get(req.Context(), *in.Set.ImageID); err != nil {
+				if errors.Is(err, model.ErrNotFound) {
+					writeJSON(w, http.StatusBadRequest, apiError{Error: "image not found"})
+					return
+				}
+				writeError(w, err)
+				return
+			}
+		}
+		updated, err := r.Inventory.BulkEditBindings(req.Context(), in.MachineIDs, in.Set)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if r.Logs != nil {
+			user, _ := UserFromRequest(req, r)
+			fields, _ := json.Marshal(map[string]any{
+				"machines": len(in.MachineIDs), "updated": updated, "set": in.Set,
+			})
+			_ = r.Logs.Append(req.Context(), model.LogEvent{
+				Component: "inventory",
+				Actor:     user.Username,
+				Action:    "binding.bulk_edit",
+				Target:    "machines:" + strconv.Itoa(len(in.MachineIDs)),
+				Fields:    string(fields),
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"matched": len(in.MachineIDs),
+			"updated": updated,
+		})
+	}
+}
 
 // handleAgentEnroll upserts a machine by SMBIOS identity and hands back
 // its agent_id — the same trust model as the boot-client manifest flow,
