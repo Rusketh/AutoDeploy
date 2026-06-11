@@ -3,9 +3,23 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
+
+// AgentUpdateJob is one claimed update-deployment job enriched with the
+// update metadata the agent needs to download, install, and finalize it:
+// the payload's real filename (drives the wusa-vs-dism choice by
+// extension), the KB number, and the operator's reboot_after flag. The
+// extra fields are additive — old agents ignore them.
+type AgentUpdateJob struct {
+	model.UpdateDeploymentJob
+	KBNumber        string `json:"kb_number,omitempty"`
+	PayloadFilename string `json:"payload_filename,omitempty"`
+	RebootAfter     bool   `json:"reboot_after,omitempty"`
+	SizeBytes       int64  `json:"size_bytes,omitempty"`
+}
 
 // RegisterWindowsUpdates mounts the /api/v1/updates/* routes.
 func RegisterWindowsUpdates(mux *http.ServeMux, r Repos) {
@@ -255,6 +269,24 @@ func handleAgentUpdateJobResult(r Repos) http.HandlerFunc {
 		if err := r.Updates.CompleteUpdateJob(req.Context(), model.ID(jobID), in.Status, in.ResultJSON); err != nil {
 			writeError(w, err)
 			return
+		}
+		// Reflect the result in per-machine compliance immediately rather
+		// than waiting for the agent's next periodic KB scan. Best-effort:
+		// the job completion above already succeeded.
+		if job, jerr := r.Updates.GetUpdateJob(req.Context(), model.ID(jobID)); jerr == nil {
+			if u, uerr := r.Updates.Get(req.Context(), job.UpdateID); uerr == nil {
+				st := model.MachineUpdateStatus{
+					MachineID: job.MachineID,
+					KBNumber:  u.KBNumber,
+					Status:    "failed",
+				}
+				if in.Status == "ok" {
+					now := time.Now()
+					st.Status, st.InstalledAt = "installed", &now
+				}
+				_ = r.Updates.UpsertMachineStatuses(req.Context(), job.MachineID,
+					[]model.MachineUpdateStatus{st})
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}

@@ -78,8 +78,9 @@ type AgentSelfResponse struct {
 	// the agent hasn't closed yet. The agent uses this to report the final
 	// outcome once software installation completes.
 	DeploymentID model.ID `json:"deployment_id,omitempty"`
-	// UpdateJobs are pending Windows Update deployment jobs for this machine.
-	UpdateJobs []model.UpdateDeploymentJob `json:"update_jobs,omitempty"`
+	// UpdateJobs are pending Windows Update deployment jobs for this machine,
+	// enriched with the update's KB/filename/reboot metadata.
+	UpdateJobs []AgentUpdateJob `json:"update_jobs,omitempty"`
 	// ExternalURL is the operator-configured public address for the server.
 	// Remote agents can use this to reconnect through a reverse proxy or
 	// firewall. Empty when not configured (all agents on the LAN).
@@ -213,11 +214,28 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		if jobs != nil {
 			resp.Jobs = jobs
 		}
-		// Claim pending Windows Update deployment jobs.
+		// Claim pending Windows Update deployment jobs, enriched with the
+		// update's KB number, payload filename, and reboot flag so the agent
+		// can pick the right installer and honor reboot_after. At most 4
+		// jobs per poll, so the per-job lookup is cheap.
 		if r.Updates != nil {
 			updateJobs, uerr := r.Updates.ClaimUpdateJobs(req.Context(), m.ID, 4)
 			if uerr == nil && len(updateJobs) > 0 {
-				resp.UpdateJobs = updateJobs
+				cache := map[model.ID]model.WindowsUpdate{}
+				for _, j := range updateJobs {
+					u, ok := cache[j.UpdateID]
+					if !ok {
+						u, _ = r.Updates.Get(req.Context(), j.UpdateID)
+						cache[j.UpdateID] = u
+					}
+					resp.UpdateJobs = append(resp.UpdateJobs, AgentUpdateJob{
+						UpdateDeploymentJob: j,
+						KBNumber:            u.KBNumber,
+						PayloadFilename:     u.PayloadFilename,
+						RebootAfter:         u.RebootAfter,
+						SizeBytes:           u.SizeBytes,
+					})
+				}
 			}
 		}
 		// BitLocker reconcile info: whether a PIN is configured and its

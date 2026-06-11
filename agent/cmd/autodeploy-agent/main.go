@@ -32,7 +32,6 @@ import (
 	"github.com/rusketh/autodeploy/agent/internal/selfupdate"
 	"github.com/rusketh/autodeploy/agent/internal/steps"
 	"github.com/rusketh/autodeploy/agent/internal/swspec"
-	"github.com/rusketh/autodeploy/agent/internal/updates"
 	"github.com/rusketh/autodeploy/agent/internal/winenv"
 )
 
@@ -286,14 +285,6 @@ type selfResponse struct {
 	} `json:"bitlocker,omitempty"`
 }
 
-type updateJob struct {
-	ID           int64  `json:"id"`
-	DeploymentID int64  `json:"deployment_id"`
-	MachineID    int64  `json:"machine_id"`
-	UpdateID     int64  `json:"update_id"`
-	Status       string `json:"status"`
-}
-
 // runSelfOnce polls the server for this machine's desired state (by its
 // server-minted agent_id) and acts on it: installs the bound image's
 // software set and runs any queued bulk jobs. Best-effort -- a poll that
@@ -423,12 +414,14 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		}
 	}
 	// Process Windows Update deployment jobs.
+	var updateRes updateBatchResult
 	if len(resp.UpdateJobs) > 0 {
-		processUpdateJobs(ctx, log, c, f, resp.UpdateJobs)
+		updateRes = processUpdateJobs(ctx, log, c, f, resp.UpdateJobs)
 	}
-	// Periodic KB scan: every 10th poll, report installed hotfixes.
+	// KB scan: every 10th poll, plus immediately after a successful install
+	// so compliance reflects the new state without waiting for the cycle.
 	kbScanCounter++
-	if kbScanCounter%10 == 1 {
+	if kbScanCounter%10 == 1 || updateRes.AnyInstalled {
 		reportKBScan(ctx, log, c, f)
 	}
 	// Setup-lock: the deployment is closed and all post-install work is done, so
@@ -436,6 +429,11 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// The marker was already cleared above.
 	if setupLockReboot {
 		scheduleSetupLockReboot(ctx, log, f.dryRun, "AutoDeploy setup complete")
+	} else if updateRes.RebootNeeded {
+		// An installed update demands a reboot and its operator opted in via
+		// reboot_after. The setup-lock reboot above covers this case when
+		// both trigger in one cycle.
+		scheduleUpdateReboot(ctx, log, f.dryRun)
 	}
 	if resp.PollIntervalSeconds > 0 {
 		return time.Duration(resp.PollIntervalSeconds) * time.Second
@@ -487,68 +485,6 @@ func scheduleSetupLockReboot(ctx context.Context, log *slog.Logger, dryRun bool,
 		return
 	}
 	log.Info("setuplock.reboot", slog.String("note", reason))
-}
-
-var kbScanCounter int
-
-func processUpdateJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, jobs []updateJob) {
-	for _, j := range jobs {
-		log.Info("update.job.start",
-			slog.Int64("job_id", j.ID),
-			slog.Int64("update_id", j.UpdateID))
-		msuPath := filepath.Join(f.workDir, fmt.Sprintf("update-%d.msu", j.UpdateID))
-		url := fmt.Sprintf("/payload/updates/%d", j.UpdateID)
-		out, err := os.Create(msuPath)
-		if err != nil {
-			log.Error("update.download.create", slog.String("error", err.Error()))
-			reportUpdateJobResult(ctx, c, j.ID, "failed", `{"error":"create file"}`)
-			continue
-		}
-		if err := c.Download(ctx, f.server+url, out); err != nil {
-			_ = out.Close()
-			log.Error("update.download", slog.String("error", err.Error()))
-			reportUpdateJobResult(ctx, c, j.ID, "failed", fmt.Sprintf(`{"error":%q}`, err.Error()))
-			continue
-		}
-		_ = out.Close()
-		exitCode, err := updates.Install(ctx, msuPath)
-		if err != nil || (exitCode != 0 && exitCode != 3010) {
-			log.Error("update.install.fail",
-				slog.Int64("job_id", j.ID),
-				slog.Int("exit_code", exitCode),
-				slog.String("error", errString(err)))
-			reportUpdateJobResult(ctx, c, j.ID, "failed",
-				fmt.Sprintf(`{"exit_code":%d,"error":%q}`, exitCode, errString(err)))
-			continue
-		}
-		log.Info("update.install.ok", slog.Int64("job_id", j.ID), slog.Int("exit_code", exitCode))
-		reportUpdateJobResult(ctx, c, j.ID, "ok", fmt.Sprintf(`{"exit_code":%d}`, exitCode))
-		// Clean up the downloaded .msu.
-		_ = os.Remove(msuPath)
-	}
-}
-
-func reportUpdateJobResult(ctx context.Context, c *httpc.Client, jobID int64, status, resultJSON string) {
-	_ = c.PostJSON(ctx,
-		fmt.Sprintf("/api/v1/agent/update-job/%d/result", jobID),
-		map[string]any{"status": status, "result_json": resultJSON}, nil)
-}
-
-func reportKBScan(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
-	kbs, err := updates.ScanInstalledKBs(ctx)
-	if err != nil {
-		log.Warn("kbscan.fail", slog.String("error", err.Error()))
-		return
-	}
-	if len(kbs) == 0 {
-		return
-	}
-	if err := c.PostJSON(ctx, "/api/v1/agent/update-status",
-		map[string]any{"agent_id": f.agentID, "kb_numbers": kbs}, nil); err != nil {
-		log.Warn("kbscan.report", slog.String("error", err.Error()))
-		return
-	}
-	log.Info("kbscan.reported", slog.Int("count", len(kbs)))
 }
 
 // domainJoined guards maybeDomainJoin so a successful join (which schedules a
