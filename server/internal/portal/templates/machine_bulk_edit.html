@@ -1,0 +1,177 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Bulk edit machines</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>Back to machines</a></div>
+</div>
+
+<form class="std" method="POST" action="/portal/machines/bulk-edit" id="bulk-edit-form" onsubmit="return onSubmit()">
+
+  <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
+  <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. The changes apply only to the selected machines.</p>
+  <div class="row">
+    <label><span class="lbl">Name regex</span><input type="text" id="filter_name" placeholder="^LAB-"></label>
+    <label><span class="lbl">OU (DN)</span><input type="text" id="filter_ou" placeholder="OU=Lab,DC=corp,DC=example"></label>
+    <label><span class="lbl">AD group</span><input type="text" id="filter_group" placeholder="Lab-Computers"></label>
+  </div>
+  <div class="actions actions-start">
+    <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
+    <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
+  </div>
+
+  <div id="results-wrap" hidden>
+    <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
+    <div class="tablewrap max-h-scroll">
+      <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-head"><h3>2. Selection (<span id="sel-count">0</span> machine<span id="sel-plural">s</span>)</h3><div class="line"></div></div>
+  <div id="sel-empty" class="muted">No machines selected yet. Search above and add some.</div>
+  <div class="tablewrap max-h-scroll" id="sel-wrap" hidden>
+    <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
+      <tbody id="sel-body"></tbody>
+    </table>
+  </div>
+  <div id="sel-inputs"></div>
+
+  <div class="section-head"><h3>3. Changes</h3><div class="line"></div></div>
+  <p class="hint">Only the fields you tick are changed; everything else is left exactly as it is on each machine.
+    Bindings are <strong>intended</strong> state — a new OU, name, or image takes effect at the machine's next
+    deploy / domain join / rename, it doesn't move or rename machines by itself.</p>
+
+  <fieldset>
+    <legend>Image</legend>
+    <div class="row">
+      <label><span class="lbl">Action</span>
+        <select name="image_mode" id="image_mode" onchange="imageModeChanged()">
+          <option value="">Leave unchanged</option>
+          <option value="set">Set to…</option>
+          <option value="clear">Clear (unbind image)</option>
+        </select>
+      </label>
+      <label id="image-pick" hidden><span class="lbl">Image</span>
+        <select name="image_id">
+          {{range .Data.Images}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Name &amp; AD path</legend>
+    <label class="check">
+      <input type="checkbox" name="set_name" value="1" id="set_name" onchange="toggleField('set_name','machine_name')">
+      <span>Change machine name template</span>
+    </label>
+    <label><span class="lbl">Name template</span>
+      <input type="text" name="machine_name" id="machine_name" disabled placeholder="LAB-%serial(6)%">
+      <span class="hint">Applied to every selected machine, so use placeholders for uniqueness:
+        <code>%serial(N)%</code>, <code>%uuid(N)%</code>, <code>%random(N)%</code>, <code>%agent(N)%</code>.
+        Empty clears the name (a deploy then falls back to the unattend's naming). </span>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="set_ou" value="1" id="set_ou" onchange="toggleField('set_ou','target_ou')">
+      <span>Change target OU</span>
+    </label>
+    <label><span class="lbl">Target OU (DN)</span>
+      <input type="text" name="target_ou" id="target_ou" disabled placeholder="OU=Lab,DC=corp,DC=example">
+      <span class="hint">Empty clears the OU (the domain join then uses its default container).</span>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Group memberships</legend>
+    <div class="row">
+      <label><span class="lbl">Add groups</span>
+        <input type="text" name="add_groups" placeholder="Lab-Computers, WSUS-Ring1">
+      </label>
+      <label><span class="lbl">Remove groups</span>
+        <input type="text" name="remove_groups" placeholder="Old-Group">
+      </label>
+    </div>
+    <span class="hint">Comma-separated. Adds and removals merge with each machine's existing list (case-insensitive); other memberships are untouched.</span>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/machines">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>Apply to selection</button>
+  </div>
+</form>
+
+<script>
+var selection = {}; // id -> {id,name,make,product}
+
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+
+var lastResults = [];
+function runSearch(){
+  var q = new URLSearchParams({
+    name_regex: document.getElementById('filter_name').value,
+    ou: document.getElementById('filter_ou').value,
+    group: document.getElementById('filter_group').value
+  });
+  fetch('/portal/bulk/search?'+q.toString(), {credentials:'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      lastResults = Array.isArray(rows) ? rows : [];
+      document.getElementById('results-wrap').hidden = false;
+      document.getElementById('results-count').textContent = lastResults.length;
+      var b = document.getElementById('results-body');
+      b.innerHTML = '';
+      lastResults.forEach(function(m){
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td><td><code>'+esc((m.uuid||'').slice(0,8))+'…</code></td>'+
+          '<td class="actions"><button type="button" class="ghost sm" onclick="addOne('+m.id+')">Add</button></td>';
+        b.appendChild(tr);
+      });
+    })
+    .catch(function(){ alert('Search failed.'); });
+}
+
+function addOne(id){ var m = lastResults.find(function(x){ return x.id===id; }); if(m){ selection[id]=m; renderSelection(); } }
+function addAllResults(){ lastResults.forEach(function(m){ selection[m.id]=m; }); renderSelection(); }
+function removeOne(id){ delete selection[id]; renderSelection(); }
+
+function renderSelection(){
+  var ids = Object.keys(selection);
+  document.getElementById('sel-count').textContent = ids.length;
+  document.getElementById('sel-plural').style.display = ids.length===1 ? 'none' : '';
+  document.getElementById('sel-empty').hidden = ids.length > 0;
+  document.getElementById('sel-wrap').hidden = ids.length === 0;
+  var body = document.getElementById('sel-body'); body.innerHTML='';
+  var inputs = document.getElementById('sel-inputs'); inputs.innerHTML='';
+  ids.forEach(function(id){
+    var m = selection[id];
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td>'+
+      '<td class="actions"><button type="button" class="ghost sm" onclick="removeOne('+id+')">Remove</button></td>';
+    body.appendChild(tr);
+    var inp = document.createElement('input'); inp.type='hidden'; inp.name='machine_ids'; inp.value=id; inputs.appendChild(inp);
+  });
+}
+
+function imageModeChanged(){
+  document.getElementById('image-pick').hidden = document.getElementById('image_mode').value !== 'set';
+}
+function toggleField(cb, field){
+  document.getElementById(field).disabled = !document.getElementById(cb).checked;
+}
+
+function onSubmit(){
+  var n = Object.keys(selection).length;
+  if(n===0){ alert('Add at least one machine to the selection.'); return false; }
+  var changes = [];
+  var im = document.getElementById('image_mode').value;
+  if(im==='set'){ changes.push('set image'); }
+  if(im==='clear'){ changes.push('clear image'); }
+  if(document.getElementById('set_name').checked){ changes.push('name template'); }
+  if(document.getElementById('set_ou').checked){ changes.push('target OU'); }
+  if(document.querySelector('input[name=add_groups]').value.trim()){ changes.push('add groups'); }
+  if(document.querySelector('input[name=remove_groups]').value.trim()){ changes.push('remove groups'); }
+  if(changes.length===0){ alert('Tick at least one change to apply.'); return false; }
+  return confirm('Apply '+changes.join(', ')+' to '+n+' machine(s)?');
+}
+</script>
+{{end}}

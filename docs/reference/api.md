@@ -142,6 +142,7 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 | `GET /api/v1/machines/{id}/history` | Deployment history. |
 | `GET /api/v1/machines/{id}/binding` | Current image binding. |
 | `PUT /api/v1/machines/{id}/binding` | Set the binding: `{ "image_id", "machine_name", "target_ou", "group_memberships" }`. |
+| `POST /api/v1/machines/bulk-binding` | Apply one binding edit to many machines: `{ "machine_ids": [..], "set": { "image_id", "machine_name", "target_ou", "add_groups", "remove_groups" } }`. Omitted fields are untouched; zero values clear (image 0, empty name/OU). Returns `{ "matched", "updated" }`. |
 | `GET /api/v1/machines/{id}/detected` | Per-package detected state. |
 
 ### BitLocker
@@ -266,9 +267,10 @@ information).
 
 The boot client and agent use a dedicated set of endpoints for AutoDeploy's internal protocol —
 `POST /api/v1/clients/menu`, `POST /api/v1/clients/deploy-status`,
-`POST /api/v1/clients/validate-pin`, and the `/api/v1/agent/*` family (check-in, hardware reports,
-job results, software state, BitLocker config/escrow, self-update, and `domain-join`). These are
-not intended for operator scripting and are listed here only for completeness.
+`POST /api/v1/clients/validate-pin`, and the `/api/v1/agent/*` family (`enroll` for manual
+installs to acquire the machine's agent id, check-in, hardware reports, job results, software
+state, BitLocker config/escrow, self-update, and `domain-join`). These are not intended for
+operator scripting and are listed here only for completeness.
 
 `POST /api/v1/agent/domain-join` returns the [agent-driven domain join](../operations/active-directory.md#agent-driven-join-recommended)
 configuration for the calling machine's bound image (domain, OU, join account and — only over this

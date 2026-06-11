@@ -127,11 +127,23 @@ func main() {
 		slog.Bool("dry_run", f.dryRun),
 	)
 
+	// Manual install: the operator gave --server but nothing provisioned an
+	// agent_id (no registry config, no flag). Enroll by SMBIOS identity to
+	// obtain this machine's server-minted id and persist it the way
+	// SetupComplete.cmd does at PXE deploy, so a manually added machine
+	// inventories (hardware, name, AD path) and polls like any other from
+	// its very first run.
+	if f.server != "" && f.agentID == "" {
+		ensureEnrolled(context.Background(), log, &f)
+	}
+
 	// New model: identify by the server-minted agent_id and poll
 	// /api/v1/agent/self for desired state. This is how the deployed agent
 	// runs -- as a Windows service, polling forever; the SCM Stop handler
-	// cancels the loop.
-	if f.server != "" && f.agentID != "" {
+	// cancels the loop. An explicit --image-id skips this in favor of the
+	// deploy-time path below (deploy that image now), which converges to
+	// the same self loop afterwards.
+	if f.server != "" && f.agentID != "" && f.imageID == 0 {
 		if err := os.MkdirAll(f.workDir, 0o755); err != nil {
 			log.Error("workdir.create", slog.String("error", err.Error()))
 			os.Exit(1)
@@ -194,6 +206,7 @@ func main() {
 		MachineID    int64  `json:"machine_id"`
 		DeploymentID int64  `json:"deployment_id"`
 		DeployToken  string `json:"deploy_token,omitempty"`
+		AgentID      string `json:"agent_id,omitempty"`
 	}
 	identityBody := map[string]any{
 		"system_uuid": f.uuid,
@@ -210,6 +223,17 @@ func main() {
 	// endpoints (BitLocker config) for the lifetime of this deploy.
 	// Kept in memory only; never written to disk; never logged.
 	c.DeployToken = openResp.DeployToken
+	// The report response also carries the machine's agent_id (servers
+	// that predate /agent/enroll included): adopt it if enrollment didn't.
+	if f.agentID == "" && openResp.AgentID != "" {
+		adoptAgentID(log, &f, openResp.AgentID)
+	}
+	// Inventory this machine the same way the resident loop does —
+	// hardware spec (SMBIOS/WMI) once, plus the observed computer name
+	// and AD path. Without these a manually added machine sat in the
+	// inventory as a bare UUID. Both no-op if no agent_id was acquired.
+	reportHardwareOnce(ctx, log, c, f)
+	reportObservedIdentity(ctx, log, c, f)
 
 	packageReports, failed := installPackages(ctx, log, c, f, resp.Items, nil)
 
@@ -245,11 +269,54 @@ func main() {
 
 	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
 
-	// Resident check-in mode (Phase 13). Run forever, polling for queued
-	// bulk jobs and executing them.
+	// Resident mode. With an agent_id (enrolled above, or adopted from the
+	// report response) run the full self loop — the same mode a PXE-
+	// provisioned service runs: hardware/identity reporting, bulk jobs,
+	// Windows Update jobs, BitLocker reconcile. The legacy check-in loop
+	// remains only as a fallback against servers too old to mint one.
 	if f.checkInInterval > 0 {
-		runCheckInLoop(ctx, log, c, f, identityBody, shipper)
+		if f.agentID != "" {
+			runSelfLoop(ctx, log, c, f, shipper, f.checkInInterval)
+		} else {
+			runCheckInLoop(ctx, log, c, f, identityBody, shipper)
+		}
 	}
+}
+
+// ensureEnrolled acquires this machine's server-minted agent_id by SMBIOS
+// identity and persists it (registry) so later runs — and the installed
+// service — start provisioned. Best-effort: on failure (e.g. a server
+// that predates /agent/enroll) the deploy path's report response is the
+// fallback source.
+func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
+	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	var resp struct {
+		MachineID int64  `json:"machine_id"`
+		AgentID   string `json:"agent_id"`
+	}
+	if err := c.PostJSON(ctx, "/api/v1/agent/enroll",
+		map[string]any{"identity": map[string]any{"system_uuid": f.uuid}}, &resp); err != nil {
+		log.Warn("enroll.fetch", slog.String("error", err.Error()))
+		return
+	}
+	if resp.AgentID == "" {
+		log.Warn("enroll.empty", slog.String("note", "server returned no agent_id"))
+		return
+	}
+	adoptAgentID(log, f, resp.AgentID)
+}
+
+// adoptAgentID stores a newly learned agent_id in memory and persists it
+// to the registry. Persistence is best-effort: a non-elevated run still
+// works for this process and re-learns the same id next time.
+func adoptAgentID(log *slog.Logger, f *agentFlags, agentID string) {
+	f.agentID = agentID
+	if err := saveConfig(f.server, agentID); err != nil {
+		log.Warn("enroll.persist", slog.String("error", err.Error()),
+			slog.String("note", "agent_id active for this run only; run elevated to persist"))
+		return
+	}
+	log.Info("enroll.ok", slog.String("agent_id", agentID))
 }
 
 // selfResponse mirrors the server's AgentSelfResponse from

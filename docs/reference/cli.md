@@ -86,7 +86,7 @@ autodeploy-agent [flags] [subcommand]
 |------|---------|-------------|
 | `-server <url>` | *(empty)* | AutoDeploy server base URL. |
 | `-agent-id <uuid>` | *(empty)* | Server-minted agent UUID (resident mode). |
-| `-image-id <id>` | `0` | Image ID to deploy (deployment-time mode). |
+| `-image-id <id>` | `0` | Image ID to deploy now (deployment-time mode), then converge to resident mode. |
 | `-uuid <uuid>` | *(empty)* | Machine SMBIOS UUID override (defaults to firmware value). |
 | `-check-in <duration>` | `0` | Resident check-in interval, e.g. `5m`. Zero means run once and exit. |
 | `-work <dir>` | *(platform default)* | Scratch directory (defaults to `C:\ProgramData\AutoDeploy\work` on Windows). |
@@ -95,14 +95,28 @@ autodeploy-agent [flags] [subcommand]
 | `-dry-run` | `false` | Log steps without executing them. |
 | `-version` | `false` | Print version and exit. |
 
-Examples:
+When run with `-server` and no agent identity (no `-agent-id`, no registry config), the agent
+**enrolls itself**: the server registers the machine by SMBIOS identity and returns its minted
+agent id, which the agent persists to `HKLM\SOFTWARE\AutoDeploy` — the same provisioning the PXE
+flow performs. The machine is fully inventoried (hardware, computer name, AD path) on that first
+run, so bringing an existing Windows machine under management is just:
 
 ```bash
-# Resident mode (what the Windows service runs)
-autodeploy-agent -server https://deploy.example.com -agent-id <uuid> -check-in 5m
+# 1. Enroll + inventory (elevated prompt; add -image-id <id> to also deploy software)
+autodeploy-agent -server https://deploy.example.com
 
-# One-shot deployment-time run
-autodeploy-agent -server https://deploy.example.com -image-id 42
+# 2. Make it permanent: auto-start service, resident polling
+autodeploy-agent install-service
+```
+
+More examples:
+
+```bash
+# Resident mode (what the Windows service runs; identity comes from the registry)
+autodeploy-agent -check-in 5m
+
+# Deployment-time run: install image 42's software set, then stay resident
+autodeploy-agent -server https://deploy.example.com -image-id 42 -check-in 5m
 
 # Service management
 autodeploy-agent install-service

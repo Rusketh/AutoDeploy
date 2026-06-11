@@ -64,8 +64,18 @@
 <div class="section-head"><h3>Usage notes</h3><div class="line"></div></div>
 <p class="muted">The Windows agent is normally installed during PXE deploy through the unattend's first-logon command; download it here when you need to:</p>
 <ul class="muted">
-  <li><strong>Bring an existing machine under management</strong> — copy the .exe to <code>C:\Windows\AutoDeploy\</code> and run it once with <code>--server &lt;portal URL&gt; --image-id 0 --check-in 5m</code>.</li>
-  <li><strong>Recover a broken install</strong> — re-run the agent after restoring a machine from backup so it re-registers in inventory.</li>
-  <li><strong>Test locally</strong> — point the agent at a dev portal with <code>--insecure-tls</code> for self-signed certs.</li>
+  <li><strong>Bring an existing machine under management</strong> — copy the .exe to a permanent
+    location (e.g. <code>C:\Windows\AutoDeploy\</code>) and, from an <em>elevated</em> prompt, run:
+    <pre class="code-block mt-2">autodeploy-agent.exe --server "&lt;portal URL&gt;"
+autodeploy-agent.exe install-service</pre>
+    The first run enrolls the machine (its identity is stored in the registry) and inventories it —
+    hardware, computer name, and AD path appear in the portal immediately. The second installs the
+    auto-start service that keeps checking in. Add <code>--image-id &lt;id&gt;</code> to the first
+    command if the machine should also install that image's software set right away.</li>
+  <li><strong>Recover a broken install</strong> — re-run the same two commands after restoring a
+    machine from backup so it re-registers in inventory.</li>
+  <li><strong>Test locally</strong> — point the agent at a dev portal with <code>--insecure-tls</code>
+    for self-signed certs; without <code>install-service</code> it runs one poll and exits
+    (add <code>--check-in 5m</code> to keep a foreground loop).</li>
 </ul>
 {{end}}

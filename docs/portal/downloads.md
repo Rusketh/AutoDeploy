@@ -25,6 +25,25 @@ The Windows agent is normally installed automatically during a PXE deploy, so yo
 need this page. Download the agent here when you want to bring an existing machine under management,
 recover a machine after a restore, or test the agent against a dev portal.
 
+## Bringing an existing machine under management
+
+Copy the agent to a permanent location on the machine (e.g. `C:\Windows\AutoDeploy\`) and run,
+from an **elevated** prompt:
+
+```
+autodeploy-agent.exe --server "<portal URL>"
+autodeploy-agent.exe install-service
+```
+
+The first command enrolls the machine — the server registers it by hardware identity and the agent
+persists the returned identity to the registry, exactly like a PXE deploy would — and inventories
+it immediately (hardware specs, computer name, AD path). The second installs the auto-start
+service so it keeps checking in for software, updates, and jobs.
+
+Add `--image-id <id>` to the first command if the machine should also install that image's
+software set right away; the agent deploys it, records the image against the machine in
+inventory, and then behaves like any resident agent.
+
 ## Related
 
 - [PXE & boot setup](../install/pxe-and-boot.md) — the Boot Client image and the network-boot chain.

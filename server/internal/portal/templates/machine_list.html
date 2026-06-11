@@ -7,6 +7,7 @@
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
   <div class="right">
+    <a class="btn secondary sm" href="/portal/machines/bulk-edit"><svg><use href="#i-pencil"/></svg>Bulk edit</a>
     <a class="btn secondary sm" href="/portal/machines.csv"><svg><use href="#i-download"/></svg>Export CSV</a>
     <span class="small muted">
       {{if $page}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{else}}<span data-filter-count="tbl">{{len .Data.Rows}}</span> machines{{end}}
