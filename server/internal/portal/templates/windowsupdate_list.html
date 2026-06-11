@@ -7,6 +7,7 @@
   </div>
   <div class="right">
     <a class="btn secondary" href="/portal/update-deployments/new"><svg><use href="#i-bolt"/></svg>Deploy updates</a>
+    <a class="btn secondary" href="/portal/updates/import"><svg><use href="#i-search"/></svg>Import from Microsoft</a>
     <a class="btn" href="/portal/updates/new"><svg><use href="#i-plus"/></svg>New update</a>
   </div>
 </div>
@@ -50,8 +51,10 @@
 <div class="empty">
   <svg class="empty-icon"><use href="#i-disc"/></svg>
   <h3>No Windows Updates yet</h3>
-  <p>Add KB patches and .msu files to deploy across your fleet with compliance tracking and OS-based targeting.</p>
-  <a class="btn" href="/portal/updates/new"><svg><use href="#i-plus"/></svg>Add update</a>
+  <p>Add KB patches and .msu files to deploy across your fleet with compliance tracking and OS-based targeting.
+     Import them straight from the Microsoft Update Catalog, or create one manually and upload the file yourself.</p>
+  <a class="btn" href="/portal/updates/import"><svg><use href="#i-search"/></svg>Import from Microsoft</a>
+  <a class="btn secondary" href="/portal/updates/new"><svg><use href="#i-plus"/></svg>Add update manually</a>
 </div>
 {{end}}
 {{end}}

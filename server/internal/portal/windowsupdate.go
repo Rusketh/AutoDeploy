@@ -16,6 +16,7 @@ func registerWindowsUpdateRoutes(get, post func(string, http.HandlerFunc), r Rep
 	}
 	get("/portal/updates", wuList(r))
 	get("/portal/updates/new", wuFormNew(r))
+	get("/portal/updates/import", wuImportPage(r))
 	post("/portal/updates", wuCreate(r))
 	get("/portal/update-deployments/new", wuDeployForm(r))
 	post("/portal/update-deployments", wuDeployCreate(r))
@@ -74,6 +75,16 @@ func wuCreate(r Repos) http.HandlerFunc {
 		}
 		flash(w, "ok", "Update "+created.KBNumber+" created")
 		http.Redirect(w, req, "/portal/updates/"+idStr(created.ID)+"/edit", http.StatusFound)
+	}
+}
+
+// wuImportPage renders the Microsoft Update Catalog import tool. All the
+// work (search, import kickoff, progress) runs client-side against the
+// authenticated /api/v1/mscatalog and /api/v1/updates/import endpoints —
+// nothing is downloaded without an explicit operator click.
+func wuImportPage(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		render(w, req, r, "windowsupdate_import.html", "Import from Microsoft", nil)
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/logging"
 	"github.com/rusketh/autodeploy/server/internal/metrics"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/mscatalog"
 	"github.com/rusketh/autodeploy/server/internal/notify"
 	"github.com/rusketh/autodeploy/server/internal/payload"
 	"github.com/rusketh/autodeploy/server/internal/portal"
@@ -219,6 +220,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		DomainJoin:    r.DomainJoin,
 		SetupLock:     r.SetupLock,
 		Updates:       r.Updates,
+		MSCatalog:     mscatalog.New(),
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Emitter:       emitter,

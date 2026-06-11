@@ -1,0 +1,183 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Import from Microsoft</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/updates">Back to list</a>
+  </div>
+</div>
+
+<fieldset>
+  <legend>Search the Microsoft Update Catalog</legend>
+  <p class="hint">Search catalog.update.microsoft.com by KB number or keywords (e.g. <code>KB5034122</code> or
+    <code>2024-01 cumulative windows 11 x64</code>), then import a result. The server downloads the file from
+    Microsoft and fills in the update's KB, title, OS filter, and payload — the same record you'd get by
+    creating it manually and uploading the .msu yourself. Only the first 25 catalog results are shown.</p>
+  <div class="flex gap-3" style="align-items:center;">
+    <input type="search" id="q" placeholder="KB5034122" style="flex:1; max-width:420px;" autofocus>
+    <button type="button" class="btn" id="searchBtn" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
+  </div>
+  <p id="searchStatus" class="hint"></p>
+</fieldset>
+
+<div class="tablewrap mt-3" id="resultsWrap" hidden>
+<table id="results">
+  <thead><tr>
+    <th>Title</th>
+    <th>Products</th>
+    <th>Classification</th>
+    <th>Last Updated</th>
+    <th class="num">Size</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+</div>
+
+<script>
+function el(tag, className, text) {
+  var e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text; // catalog strings are untrusted
+  return e;
+}
+
+function formatBytes(n) {
+  if (!n || n <= 0) return '';
+  var units = ['B', 'KB', 'MB', 'GB'], i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + ' ' + units[i];
+}
+
+function runSearch() {
+  var q = document.getElementById('q').value.trim();
+  var status = document.getElementById('searchStatus');
+  var btn = document.getElementById('searchBtn');
+  if (!q) { status.textContent = 'Enter a KB number or search terms.'; return; }
+  btn.disabled = true;
+  status.textContent = 'Searching the Microsoft Update Catalog…';
+  fetch('/api/v1/mscatalog/search?q=' + encodeURIComponent(q))
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(b) { throw new Error(b.error || ('search failed (' + r.status + ')')); });
+      return r.json();
+    })
+    .then(function(body) {
+      renderResults(body.results || []);
+      status.textContent = (body.results && body.results.length)
+        ? body.results.length + ' result(s).'
+        : 'No results. The catalog may not know that query, or it returned nothing importable.';
+    })
+    .catch(function(err) { status.textContent = err.message; })
+    .finally(function() { btn.disabled = false; });
+}
+
+function renderResults(results) {
+  var wrap = document.getElementById('resultsWrap');
+  var tbody = document.querySelector('#results tbody');
+  tbody.innerHTML = '';
+  wrap.hidden = results.length === 0;
+  results.forEach(function(r) {
+    var tr = document.createElement('tr');
+    var title = el('td');
+    title.appendChild(el('strong', '', r.kb_number || '—'));
+    title.appendChild(document.createTextNode(' '));
+    title.appendChild(el('span', '', r.title));
+    tr.appendChild(title);
+    tr.appendChild(el('td', '', r.products));
+    tr.appendChild(el('td', '', r.classification));
+    tr.appendChild(el('td', '', r.last_updated));
+    var size = el('td', 'num', r.size);
+    tr.appendChild(size);
+    var actions = el('td', 'actions');
+    if (r.kb_number) {
+      var btn = el('button', 'btn secondary sm', 'Import');
+      btn.type = 'button';
+      btn.onclick = function() { startImport(r, tr, actions, btn); };
+      actions.appendChild(btn);
+    } else {
+      actions.appendChild(el('span', 'muted', 'no KB — not importable'));
+    }
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+function startImport(r, tr, cell, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  fetch('/api/v1/updates/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+    body: JSON.stringify({
+      update_guid: r.update_id,
+      title: r.title,
+      products: r.products,
+      classification: r.classification
+    })
+  })
+    .then(function(resp) { return resp.json().then(function(b) { return { status: resp.status, body: b }; }); })
+    .then(function(out) {
+      if (out.status === 409 && out.body.existing_id) {
+        cell.innerHTML = '';
+        var a = el('a', 'btn secondary sm', 'Already imported — view');
+        a.href = '/portal/updates/' + out.body.existing_id + '/edit';
+        cell.appendChild(a);
+        return;
+      }
+      if (out.status !== 200 && out.status !== 201) {
+        throw new Error(out.body.error || ('import failed (' + out.status + ')'));
+      }
+      showProgress(cell, out.body.id);
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = 'Import';
+      cell.appendChild(el('div', 'hint', err.message));
+    });
+}
+
+function showProgress(cell, id) {
+  cell.innerHTML = '';
+  var box = el('div');
+  var bar = document.createElement('progress');
+  bar.max = 100; bar.value = 0;
+  var note = el('p', 'hint', 'Starting…');
+  box.appendChild(bar);
+  box.appendChild(note);
+  cell.appendChild(box);
+
+  var timer = setInterval(function() {
+    fetch('/api/v1/updates/' + id + '/import-status')
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        if (s.phase === 'resolving') note.textContent = 'Resolving download link…';
+        if (s.phase === 'downloading') {
+          bar.value = s.percent || 0;
+          note.textContent = 'Downloading ' + (s.filename || '') + ' — ' +
+            formatBytes(s.done_bytes) + (s.total_bytes ? ' of ' + formatBytes(s.total_bytes) : '') +
+            (s.percent ? ' (' + s.percent + '%)' : '');
+        }
+        if (s.finished) {
+          clearInterval(timer);
+          box.innerHTML = '';
+          if (s.error) {
+            box.appendChild(el('span', 'badge warn', 'failed'));
+            box.appendChild(el('p', 'hint', s.error));
+            var retry = el('a', 'btn secondary sm', 'Edit update (retry or upload manually)');
+            retry.href = '/portal/updates/' + id + '/edit';
+            box.appendChild(retry);
+          } else {
+            var a = el('a', 'btn sm', 'Imported — edit update');
+            a.href = '/portal/updates/' + id + '/edit';
+            box.appendChild(a);
+          }
+        }
+      })
+      .catch(function() { /* transient poll error: keep trying */ });
+  }, 1500);
+}
+
+document.getElementById('q').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+});
+</script>
+{{end}}

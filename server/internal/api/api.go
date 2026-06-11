@@ -15,6 +15,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/branding"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/mscatalog"
 	"github.com/rusketh/autodeploy/server/internal/notify"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
@@ -65,6 +66,10 @@ type Repos struct {
 	SetupLock *model.SetupLockRepo
 	// Updates manages Windows Update KB patches and deployment jobs.
 	Updates *model.WindowsUpdateRepo
+	// MSCatalog searches the Microsoft Update Catalog for the
+	// operator-driven import flow. Optional; nil disables the import
+	// endpoints (manual upload always works).
+	MSCatalog mscatalog.Searcher
 	// Notifications handles in-portal notification CRUD and preferences.
 	Notifications *model.NotificationRepo
 	// WebhookRepo manages webhook endpoints and delivery logs.
@@ -87,6 +92,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterVersion(mux, r)
 	RegisterDomainJoin(mux, r)
 	RegisterWindowsUpdates(mux, r)
+	RegisterMSCatalog(mux, r)
 	RegisterNotifications(mux, r)
 	RegisterWebhooks(mux, r)
 
