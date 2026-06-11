@@ -31,6 +31,7 @@ func newUpdatesTestServer(t *testing.T) (*httptest.Server, Repos) {
 		Bulk:      model.NewBulkRepo(db, inv),
 		Resolver:  resolve.New(model.NewImageRepo(db), model.NewISORepo(db), model.NewUnattendRepo(db)),
 		Updates:   model.NewWindowsUpdateRepo(db, inv),
+		Logs:      model.NewLogRepo(db),
 	}
 	mux := http.NewServeMux()
 	Register(mux, repos)
@@ -111,6 +112,16 @@ func TestAgentSelfEnrichedUpdateJobs(t *testing.T) {
 	if len(legacy.UpdateJobs) != 1 || legacy.UpdateJobs[0].UpdateID != int64(u.ID) {
 		t.Errorf("legacy decode mismatch: %+v", legacy.UpdateJobs)
 	}
+
+	// The hand-off is audited so operators can see jobs reached the
+	// machine even when its agent logs nothing.
+	events, err := repos.Logs.Search(context.Background(), model.LogSearch{Action: "update.jobs.claimed"})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("claim audit events: %v %+v", err, events)
+	}
+	if events[0].Actor != m.AgentID || !bytes.Contains([]byte(events[0].Fields), []byte("KB5034441")) {
+		t.Errorf("claim audit event = %+v", events[0])
+	}
 }
 
 // A job result must update per-machine compliance immediately: ok →
@@ -166,5 +177,18 @@ func TestUpdateJobResultUpdatesMachineStatus(t *testing.T) {
 	post(jobs[0].ID, "ok")
 	if got := statusOf(); got != "installed" {
 		t.Errorf("status after ok result = %q, want installed", got)
+	}
+
+	// Both results were audited; the failed one at WARN.
+	events, err := repos.Logs.Search(ctx, model.LogSearch{Action: "update.job.result"})
+	if err != nil || len(events) != 2 {
+		t.Fatalf("result audit events: %v %+v", err, events)
+	}
+	levels := map[string]bool{}
+	for _, e := range events {
+		levels[e.Level] = true
+	}
+	if !levels["WARN"] || !levels["INFO"] {
+		t.Errorf("expected one WARN and one INFO result event, got %+v", events)
 	}
 }

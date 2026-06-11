@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -222,18 +223,36 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			updateJobs, uerr := r.Updates.ClaimUpdateJobs(req.Context(), m.ID, 4)
 			if uerr == nil && len(updateJobs) > 0 {
 				cache := map[model.ID]model.WindowsUpdate{}
+				kbs := make([]string, 0, len(updateJobs))
 				for _, j := range updateJobs {
 					u, ok := cache[j.UpdateID]
 					if !ok {
 						u, _ = r.Updates.Get(req.Context(), j.UpdateID)
 						cache[j.UpdateID] = u
 					}
+					kbs = append(kbs, u.KBNumber)
 					resp.UpdateJobs = append(resp.UpdateJobs, AgentUpdateJob{
 						UpdateDeploymentJob: j,
 						KBNumber:            u.KBNumber,
 						PayloadFilename:     u.PayloadFilename,
 						RebootAfter:         u.RebootAfter,
 						SizeBytes:           u.SizeBytes,
+					})
+				}
+				// Audit the hand-off: this is the proof in the server's
+				// Logs page that jobs reached a machine, even when the
+				// agent on it is too old to act on (or log) them.
+				if r.Logs != nil {
+					fields, _ := json.Marshal(map[string]any{
+						"machine_id": m.ID, "count": len(updateJobs),
+						"kbs": strings.Join(kbs, ","),
+					})
+					_ = r.Logs.Append(req.Context(), model.LogEvent{
+						Component: "updates",
+						Actor:     m.AgentID,
+						Action:    "update.jobs.claimed",
+						Target:    "machine:" + strconv.FormatInt(int64(m.ID), 10),
+						Fields:    string(fields),
 					})
 				}
 			}
