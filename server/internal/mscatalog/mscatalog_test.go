@@ -19,12 +19,16 @@ func readFixture(t *testing.T, name string) []byte {
 }
 
 func TestParseSearchHTML(t *testing.T) {
-	results := parseSearchHTML(readFixture(t, "search_results.html"))
+	results, err := parseSearchHTML(readFixture(t, "search_results.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d: %+v", len(results), results)
 	}
 
 	r := results[0]
+	// GUID comes from the Download button input in the last cell.
 	if r.UpdateID != "234c1b3d-6b53-4d11-a4a8-2e8b1afa1e5a" {
 		t.Errorf("UpdateID = %q", r.UpdateID)
 	}
@@ -52,12 +56,38 @@ func TestParseSearchHTML(t *testing.T) {
 		t.Errorf("second row mismatch: %+v", results[1])
 	}
 
-	// Third row: a driver with no KB and an HTML entity in the title.
+	// Third row: its Download button has a non-GUID ASP.NET id, so the
+	// GUID must come from the "<guid>_link" title-anchor fallback. It is
+	// a driver — no KB — and its title carries an HTML entity.
+	if results[2].UpdateID != "51c8b1a2-94f0-4d44-a3f1-7be81e83ac21" {
+		t.Errorf("fallback GUID = %q", results[2].UpdateID)
+	}
 	if results[2].KBNumber != "" {
 		t.Errorf("driver row should have no KB, got %q", results[2].KBNumber)
 	}
 	if results[2].Title != "Intel & Co. - Net - 22.40.0.7" {
 		t.Errorf("entity-unescaped title = %q", results[2].Title)
+	}
+}
+
+// A "we did not find any results" page is a legitimate empty answer, not
+// an error.
+func TestParseSearchHTMLNoResults(t *testing.T) {
+	results, err := parseSearchHTML(readFixture(t, "no_results.html"))
+	if err != nil || len(results) != 0 {
+		t.Fatalf("results=%v err=%v, want empty + nil", results, err)
+	}
+}
+
+// A page without the results table (markup drift, interstitial, error
+// page) must surface as an error so the portal shows a message instead of
+// a silent "no results".
+func TestParseSearchHTMLUnrecognizedPage(t *testing.T) {
+	if _, err := parseSearchHTML([]byte("<html><body>maintenance</body></html>")); err == nil {
+		t.Error("expected error for a page without the results table")
+	}
+	if _, err := parseSearchHTML([]byte(`<div id="errorPageDisplayedError">8DDD0010</div>`)); err == nil {
+		t.Error("expected error for the catalog error page")
 	}
 }
 
@@ -151,9 +181,12 @@ func TestClientAgainstHTTPTest(t *testing.T) {
 			if err := r.ParseForm(); err != nil {
 				t.Error(err)
 			}
-			ids := r.PostFormValue("updateIDs")
-			if !strings.Contains(ids, `"updateID":"234c1b3d-6b53-4d11-a4a8-2e8b1afa1e5a"`) {
-				t.Errorf("updateIDs form field = %q", ids)
+			ids := r.PostFormValue("UpdateIDs")
+			if !strings.Contains(ids, `"UpdateID":"234c1b3d-6b53-4d11-a4a8-2e8b1afa1e5a"`) {
+				t.Errorf("UpdateIDs form field = %q", ids)
+			}
+			if ua := r.Header.Get("User-Agent"); !strings.HasPrefix(ua, "Mozilla/5.0") {
+				t.Errorf("User-Agent = %q, want Mozilla-compatible", ua)
 			}
 			w.Write(readFixture(t, "download_dialog.txt"))
 		default:
