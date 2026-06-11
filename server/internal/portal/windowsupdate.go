@@ -64,6 +64,7 @@ func wuCreate(r Repos) http.HandlerFunc {
 			Severity:       strings.TrimSpace(req.FormValue("severity")),
 			SupersedesJSON: strings.TrimSpace(req.FormValue("supersedes_json")),
 			RebootAfter:    req.FormValue("reboot_after") == "1",
+			AutoDeploy:     req.FormValue("auto_deploy") == "1",
 		}
 		if u.SupersedesJSON == "" {
 			u.SupersedesJSON = "[]"
@@ -130,6 +131,7 @@ func wuSave(r Repos) http.HandlerFunc {
 		u.Severity = strings.TrimSpace(req.FormValue("severity"))
 		u.SupersedesJSON = strings.TrimSpace(req.FormValue("supersedes_json"))
 		u.RebootAfter = req.FormValue("reboot_after") == "1"
+		u.AutoDeploy = req.FormValue("auto_deploy") == "1"
 		if u.SupersedesJSON == "" {
 			u.SupersedesJSON = "[]"
 		}

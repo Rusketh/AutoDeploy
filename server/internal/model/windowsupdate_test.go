@@ -198,6 +198,161 @@ func TestClaimUpdateJobsRequeuesStaleRunning(t *testing.T) {
 	}
 }
 
+func TestAutoDeployFlagRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, _, _ := newUpdateTestEnv(t)
+	u, err := repo.Create(ctx, WindowsUpdate{KBNumber: "KB1", Title: "t", AutoDeploy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Get(ctx, u.ID); !got.AutoDeploy {
+		t.Errorf("AutoDeploy lost on Get: %+v", got)
+	}
+	list, _ := repo.List(ctx)
+	if len(list) != 1 || !list[0].AutoDeploy {
+		t.Errorf("AutoDeploy lost on List: %+v", list)
+	}
+	u.AutoDeploy = false
+	if err := repo.Update(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Get(ctx, u.ID); got.AutoDeploy {
+		t.Errorf("AutoDeploy not cleared on Update: %+v", got)
+	}
+}
+
+func TestEnsureAutoDeployJobs(t *testing.T) {
+	ctx := context.Background()
+	repo, _, addMachine := newUpdateTestEnv(t)
+	win10 := addMachine("uuid-10", "Microsoft Windows 10 Pro")
+	win11 := addMachine("uuid-11", "Microsoft Windows 11 Pro")
+	done := addMachine("uuid-done", "Microsoft Windows 10 Pro")
+
+	u, err := repo.Create(ctx, WindowsUpdate{
+		KBNumber: "KB5034122", Title: "CU", OSFilter: "windows-10", AutoDeploy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No payload yet: nothing queues anywhere.
+	if err := repo.EnsureAutoDeployJobs(ctx, win10); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, win10, 4); len(jobs) != 0 {
+		t.Fatalf("payloadless update must not auto-queue: %+v", jobs)
+	}
+
+	if err := repo.SetPayload(ctx, u.ID, "updates/1/kb.msu", "kb.msu", 1); err != nil {
+		t.Fatal(err)
+	}
+	// done already has the KB installed.
+	if err := repo.UpsertMachineStatuses(ctx, done, []MachineUpdateStatus{
+		{MachineID: done, KBNumber: "KB5034122", Status: "installed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, m := range []ID{win10, win11, done} {
+		if err := repo.EnsureAutoDeployJobs(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Idempotent: a second pass adds nothing.
+	if err := repo.EnsureAutoDeployJobs(ctx, win10); err != nil {
+		t.Fatal(err)
+	}
+
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, win10, 8); len(jobs) != 1 || jobs[0].UpdateID != u.ID {
+		t.Fatalf("win10 should have exactly one auto job: %+v", jobs)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, win11, 8); len(jobs) != 0 {
+		t.Fatalf("win11 fails the OS filter, got %+v", jobs)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, done, 8); len(jobs) != 0 {
+		t.Fatalf("already-installed machine must not requeue, got %+v", jobs)
+	}
+
+	// The auto jobs hang off one per-update deployment owned by 'auto-deploy'.
+	deps, err := repo.ListDeployments(ctx)
+	if err != nil || len(deps) != 1 || deps[0].CreatedBy != "auto-deploy" {
+		t.Fatalf("auto deployment row: %v %+v", err, deps)
+	}
+
+	// A reimage wipes the machine's update state; the next ensure pass
+	// queues the update again.
+	if err := repo.ClearMachineState(ctx, win10); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnsureAutoDeployJobs(ctx, win10); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, win10, 8); len(jobs) != 1 {
+		t.Fatalf("reimaged machine should be requeued: %+v", jobs)
+	}
+}
+
+func TestEnsureAutoDeployRetryPolicy(t *testing.T) {
+	ctx := context.Background()
+	repo, _, addMachine := newUpdateTestEnv(t)
+	m := addMachine("uuid-1", "Microsoft Windows 10 Pro")
+	u, err := repo.Create(ctx, WindowsUpdate{KBNumber: "KB1", Title: "t", AutoDeploy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetPayload(ctx, u.ID, "updates/1/kb.msu", "kb.msu", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	failOnce := func() UpdateDeploymentJob {
+		t.Helper()
+		if err := repo.EnsureAutoDeployJobs(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := repo.ClaimUpdateJobs(ctx, m, 8)
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("expected one job to claim: %v %+v", err, jobs)
+		}
+		if err := repo.CompleteUpdateJob(ctx, jobs[0].ID, "failed", "{}"); err != nil {
+			t.Fatal(err)
+		}
+		return jobs[0]
+	}
+	backdate := func(jobID ID) {
+		t.Helper()
+		if _, err := repo.db.ExecContext(ctx, `
+			UPDATE update_deployment_job
+			SET completed_at = datetime('now', '-7 hours')
+			WHERE id = ?`, jobID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Attempt 1 fails; a fresh failure blocks an immediate retry.
+	j := failOnce()
+	if err := repo.EnsureAutoDeployJobs(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, m, 8); len(jobs) != 0 {
+		t.Fatalf("recent failure must not retry immediately: %+v", jobs)
+	}
+
+	// Once the failure ages past the spacing window, attempt 2 queues.
+	backdate(j.ID)
+	j = failOnce()
+	backdate(j.ID)
+	j = failOnce()
+	backdate(j.ID)
+
+	// Three attempts exhausted: no more auto retries, ever.
+	if err := repo.EnsureAutoDeployJobs(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := repo.ClaimUpdateJobs(ctx, m, 8); len(jobs) != 0 {
+		t.Fatalf("attempt cap must hold: %+v", jobs)
+	}
+}
+
 // matchMachines must honor the OS filter: the portal's dash-style values
 // ("windows-10") must match WMI captions ("Microsoft Windows 10 Pro"), and a
 // machine with no reported hardware never matches an explicit filter.

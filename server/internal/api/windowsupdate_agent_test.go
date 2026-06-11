@@ -124,6 +124,56 @@ func TestAgentSelfEnrichedUpdateJobs(t *testing.T) {
 	}
 }
 
+// An auto-deploy update must reach an applicable machine through the
+// normal /agent/self poll with NO operator-created deployment.
+func TestAgentSelfAutoDeployJobs(t *testing.T) {
+	srv, repos := newUpdatesTestServer(t)
+	ctx := context.Background()
+
+	m, err := repos.Inventory.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "auto-uuid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.Inventory.UpdateHardware(ctx, m.ID, model.Hardware{
+		OSCaption: "Microsoft Windows 10 Pro",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := repos.Updates.Create(ctx, model.WindowsUpdate{
+		KBNumber: "KB5034122", Title: "CU", OSFilter: "windows-10", AutoDeploy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.Updates.SetPayload(ctx, u.ID, "updates/1/kb.msu", "kb.msu", 7); err != nil {
+		t.Fatal(err)
+	}
+
+	poll := func() AgentSelfResponse {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/v1/agent/self?id=" + m.AgentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out AgentSelfResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	first := poll()
+	if len(first.UpdateJobs) != 1 || first.UpdateJobs[0].UpdateID != u.ID ||
+		first.UpdateJobs[0].KBNumber != "KB5034122" {
+		t.Fatalf("auto job not delivered: %+v", first.UpdateJobs)
+	}
+	// The job is now running; the next poll must not duplicate it.
+	if second := poll(); len(second.UpdateJobs) != 0 {
+		t.Fatalf("auto job duplicated on second poll: %+v", second.UpdateJobs)
+	}
+}
+
 // A job result must update per-machine compliance immediately: ok →
 // installed, failed → failed.
 func TestUpdateJobResultUpdatesMachineStatus(t *testing.T) {

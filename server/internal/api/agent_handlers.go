@@ -220,6 +220,11 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		// can pick the right installer and honor reboot_after. At most 4
 		// jobs per poll, so the per-job lookup is cheap.
 		if r.Updates != nil {
+			// Auto-deploy: queue any flagged updates this machine is
+			// missing before claiming, so new/reimaged machines converge
+			// without an operator-created deployment. Best-effort — the
+			// poll itself must not fail over it.
+			_ = r.Updates.EnsureAutoDeployJobs(req.Context(), m.ID)
 			updateJobs, uerr := r.Updates.ClaimUpdateJobs(req.Context(), m.ID, 4)
 			if uerr == nil && len(updateJobs) > 0 {
 				cache := map[model.ID]model.WindowsUpdate{}
