@@ -641,6 +641,29 @@ func (r *InventoryRepo) UpsertBinding(ctx context.Context, b MachineBinding) err
 	return err
 }
 
+// EnsureBindingImage records the image a machine was deployed from when
+// its binding doesn't already name one. Manually enrolled machines have
+// no operator-created binding, so without this the inventory never shows
+// what image is on the box; an operator-chosen image is never
+// overwritten.
+func (r *InventoryRepo) EnsureBindingImage(ctx context.Context, machineID, imageID ID) error {
+	if imageID == 0 {
+		return nil
+	}
+	b, err := r.GetBinding(ctx, machineID)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		b = MachineBinding{MachineID: machineID}
+	}
+	if b.ImageID != nil && *b.ImageID != 0 {
+		return nil
+	}
+	b.ImageID = &imageID
+	return r.UpsertBinding(ctx, b)
+}
+
 // RecordDeployment opens a new dated history row in state 'in_progress'.
 // The agent calls CompleteDeployment when the deployment finishes.
 func (r *InventoryRepo) RecordDeployment(ctx context.Context, machineID ID, imageID *ID) (ID, error) {

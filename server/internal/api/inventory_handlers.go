@@ -25,6 +25,13 @@ func RegisterInventory(mux *http.ServeMux, r Repos) {
 	// outcome, replace detected state for the packages it just ran.
 	mux.HandleFunc("POST /api/v1/agent/report", handleAgentReport(r))
 
+	// Agent-facing enrollment: register (or refresh) a machine from its
+	// SMBIOS identity and return its server-minted agent_id. Manually
+	// installed agents call this once on first contact so they can persist
+	// the same registry config the PXE flow provisions, after which they
+	// report hardware/identity and poll /agent/self like any machine.
+	mux.HandleFunc("POST /api/v1/agent/enroll", handleAgentEnroll(r))
+
 	// Agent-facing hardware report: store the collected spec set.
 	mux.HandleFunc("POST /api/v1/agent/hardware", handleAgentHardware(r))
 
@@ -313,6 +320,11 @@ type agentReportResponse struct {
 	// that return secrets (currently the BitLocker config endpoint).
 	// Empty on close reports.
 	DeployToken string `json:"deploy_token,omitempty"`
+	// AgentID is the machine's server-minted resident identity. Returned
+	// so a manually run agent (no registry provisioning) can adopt and
+	// persist it, then report hardware/identity and poll /agent/self like
+	// a PXE-provisioned machine.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // deployTokenTTL is how long an issued token stays valid. A whole
@@ -320,6 +332,31 @@ type agentReportResponse struct {
 // than a typical Windows install. Beyond this the agent re-opens a
 // report and gets a fresh token.
 const deployTokenTTL = 24 * time.Hour
+
+// handleAgentEnroll upserts a machine by SMBIOS identity and hands back
+// its agent_id — the same trust model as the boot-client manifest flow,
+// which also derives the id from unauthenticated hardware identity.
+func handleAgentEnroll(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in struct {
+			Identity match.Identity `json:"identity"`
+		}
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		m, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		_ = r.Inventory.TouchLastSeen(req.Context(), m.ID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"machine_id": m.ID,
+			"agent_id":   m.AgentID,
+		})
+	}
+}
 
 func handleAgentReport(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -364,12 +401,19 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 				return
 			}
 		}
+		// A machine deployed by a manually run agent has no operator-
+		// created binding; record the deployed image on it so the
+		// inventory shows what's on the box. Never overwrites an image an
+		// operator already bound. Best-effort.
+		if in.Outcome == "in_progress" && in.ImageID != nil {
+			_ = r.Inventory.EnsureBindingImage(req.Context(), machine.ID, *in.ImageID)
+		}
 		// Issue / rotate a deploy token on the open report so the
 		// agent has a bearer credential for subsequent secret-
 		// returning calls (BitLocker config). On close reports we
 		// don't issue -- the agent only needs the token while a
 		// deploy is in flight.
-		resp := agentReportResponse{MachineID: machine.ID, DeploymentID: depID}
+		resp := agentReportResponse{MachineID: machine.ID, DeploymentID: depID, AgentID: machine.AgentID}
 		if in.Outcome == "in_progress" {
 			tok, err := r.Inventory.IssueDeployToken(req.Context(), machine.ID, deployTokenTTL)
 			if err != nil {

@@ -21,3 +21,20 @@ func loadConfig() (serverURL, agentID string) {
 	agentID, _, _ = k.GetStringValue("AgentID")
 	return serverURL, agentID
 }
+
+// saveConfig persists ServerURL and AgentID to HKLM\SOFTWARE\AutoDeploy —
+// the same values SetupComplete.cmd provisions at deploy time — so a
+// manually run agent keeps its identity across runs and an installed
+// service finds its config. Needs an elevated process (HKLM write).
+func saveConfig(serverURL, agentID string) error {
+	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, registryPath,
+		registry.SET_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	if err := k.SetStringValue("ServerURL", serverURL); err != nil {
+		return err
+	}
+	return k.SetStringValue("AgentID", agentID)
+}
