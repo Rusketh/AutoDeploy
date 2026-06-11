@@ -25,6 +25,7 @@ type WindowsUpdate struct {
 	SizeBytes       int64     `json:"size_bytes"`
 	SupersedesJSON  string    `json:"supersedes_json"`
 	RebootAfter     bool      `json:"reboot_after"`
+	AutoDeploy      bool      `json:"auto_deploy"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -96,12 +97,16 @@ func (r *WindowsUpdateRepo) Create(ctx context.Context, in WindowsUpdate) (Windo
 	if in.RebootAfter {
 		reboot = 1
 	}
+	auto := 0
+	if in.AutoDeploy {
+		auto = 1
+	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO windows_update (kb_number, title, description, os_filter, severity,
-			storage_path, payload_filename, size_bytes, supersedes_json, reboot_after)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			storage_path, payload_filename, size_bytes, supersedes_json, reboot_after, auto_deploy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.KBNumber, in.Title, in.Description, in.OSFilter, in.Severity,
-		in.StoragePath, in.PayloadFilename, in.SizeBytes, in.SupersedesJSON, reboot)
+		in.StoragePath, in.PayloadFilename, in.SizeBytes, in.SupersedesJSON, reboot, auto)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return WindowsUpdate{}, fmt.Errorf("%w: KB %s already exists", ErrConflict, in.KBNumber)
@@ -115,19 +120,20 @@ func (r *WindowsUpdateRepo) Create(ctx context.Context, in WindowsUpdate) (Windo
 // Get returns a single update by ID.
 func (r *WindowsUpdateRepo) Get(ctx context.Context, id ID) (WindowsUpdate, error) {
 	var u WindowsUpdate
-	var reboot int
+	var reboot, auto int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, kb_number, title, description, os_filter, severity,
 			storage_path, payload_filename, size_bytes, supersedes_json,
-			reboot_after, created_at, updated_at
+			reboot_after, auto_deploy, created_at, updated_at
 		FROM windows_update WHERE id = ?`, id).Scan(
 		&u.ID, &u.KBNumber, &u.Title, &u.Description, &u.OSFilter, &u.Severity,
 		&u.StoragePath, &u.PayloadFilename, &u.SizeBytes, &u.SupersedesJSON,
-		&reboot, &u.CreatedAt, &u.UpdatedAt)
+		&reboot, &auto, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return WindowsUpdate{}, ErrNotFound
 	}
 	u.RebootAfter = reboot != 0
+	u.AutoDeploy = auto != 0
 	return u, err
 }
 
@@ -136,7 +142,7 @@ func (r *WindowsUpdateRepo) List(ctx context.Context) ([]WindowsUpdate, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, kb_number, title, description, os_filter, severity,
 			storage_path, payload_filename, size_bytes, supersedes_json,
-			reboot_after, created_at, updated_at
+			reboot_after, auto_deploy, created_at, updated_at
 		FROM windows_update ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -145,13 +151,14 @@ func (r *WindowsUpdateRepo) List(ctx context.Context) ([]WindowsUpdate, error) {
 	var out []WindowsUpdate
 	for rows.Next() {
 		var u WindowsUpdate
-		var reboot int
+		var reboot, auto int
 		if err := rows.Scan(&u.ID, &u.KBNumber, &u.Title, &u.Description,
 			&u.OSFilter, &u.Severity, &u.StoragePath, &u.PayloadFilename,
-			&u.SizeBytes, &u.SupersedesJSON, &reboot, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			&u.SizeBytes, &u.SupersedesJSON, &reboot, &auto, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		u.RebootAfter = reboot != 0
+		u.AutoDeploy = auto != 0
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -169,12 +176,17 @@ func (r *WindowsUpdateRepo) Update(ctx context.Context, in WindowsUpdate) error 
 	if in.RebootAfter {
 		reboot = 1
 	}
+	auto := 0
+	if in.AutoDeploy {
+		auto = 1
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE windows_update SET kb_number=?, title=?, description=?, os_filter=?,
-			severity=?, supersedes_json=?, reboot_after=?, updated_at=CURRENT_TIMESTAMP
+			severity=?, supersedes_json=?, reboot_after=?, auto_deploy=?,
+			updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.KBNumber, in.Title, in.Description, in.OSFilter, in.Severity,
-		in.SupersedesJSON, reboot, in.ID)
+		in.SupersedesJSON, reboot, auto, in.ID)
 	return err
 }
 
@@ -374,16 +386,7 @@ func (r *WindowsUpdateRepo) CreateDeployment(ctx context.Context, d UpdateDeploy
 			jobs = append(jobs, UpdateDeploymentJob{
 				ID: ID(jobID), DeploymentID: d.ID, MachineID: m.ID, UpdateID: ID(uid), Status: "queued",
 			})
-			// Mark the machine pending for this KB so compliance reflects
-			// the queued work immediately. Never downgrade an existing
-			// 'installed' row (e.g. a redundant re-deploy).
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO machine_update_status (machine_id, kb_number, status, reported_at)
-				VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
-				ON CONFLICT(machine_id, kb_number) DO UPDATE SET
-					status='pending', reported_at=CURRENT_TIMESTAMP
-				WHERE machine_update_status.status != 'installed'`,
-				m.ID, kbByUpdate[uid]); err != nil {
+			if err := markPendingTx(ctx, tx, m.ID, kbByUpdate[uid]); err != nil {
 				return UpdateDeployment{}, nil, err
 			}
 		}
@@ -393,6 +396,144 @@ func (r *WindowsUpdateRepo) CreateDeployment(ctx context.Context, d UpdateDeploy
 	}
 	d.CreatedAt = time.Now()
 	return d, jobs, nil
+}
+
+// markPendingTx marks a machine pending for a KB so compliance reflects
+// queued work immediately. Never downgrades an existing 'installed' row
+// (e.g. a redundant re-deploy).
+func markPendingTx(ctx context.Context, tx *sql.Tx, machineID ID, kb string) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO machine_update_status (machine_id, kb_number, status, reported_at)
+		VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
+		ON CONFLICT(machine_id, kb_number) DO UPDATE SET
+			status='pending', reported_at=CURRENT_TIMESTAMP
+		WHERE machine_update_status.status != 'installed'`, machineID, kb)
+	return err
+}
+
+// Auto-deploy pacing: a (machine, update) pair is attempted at most
+// autoDeployMaxAttempts times, with attempts spaced by the SQLite
+// datetime modifier autoDeployRetrySpacing, then left alone until an
+// operator intervenes (a manual deployment still queues regardless and
+// a reimage wipes the history, starting fresh).
+const (
+	autoDeployMaxAttempts  = 3
+	autoDeployRetrySpacing = "-6 hours"
+)
+
+// EnsureAutoDeployJobs queues install jobs for every auto-deploy update
+// applicable to this machine (OS-filter match) that is not already
+// installed, in flight, retry-capped, or attempted too recently. Called
+// on each agent poll before jobs are claimed, so machines added or
+// reimaged later receive flagged updates with no operator action. Cheap
+// when nothing has auto-deploy enabled. Auto jobs hang off a per-update
+// deployment row (created_by='auto-deploy') so the portal shows their
+// progress like any manual rollout.
+func (r *WindowsUpdateRepo) EnsureAutoDeployJobs(ctx context.Context, machineID ID) error {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, kb_number, os_filter FROM windows_update
+		WHERE auto_deploy = 1 AND storage_path != ''`)
+	if err != nil {
+		return err
+	}
+	type autoUpdate struct {
+		id       ID
+		kb       string
+		osFilter string
+	}
+	var autos []autoUpdate
+	for rows.Next() {
+		var a autoUpdate
+		if err := rows.Scan(&a.id, &a.kb, &a.osFilter); err != nil {
+			rows.Close()
+			return err
+		}
+		autos = append(autos, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(autos) == 0 {
+		return err
+	}
+
+	// The machine's OS caption decides applicability (List doesn't load
+	// hardware, Get does).
+	m, err := r.Inventory.Get(ctx, machineID)
+	if err != nil {
+		return err
+	}
+	caption := ""
+	if m.Hardware != nil {
+		caption = m.Hardware.OSCaption
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, a := range autos {
+		if !osFilterMatches(caption, a.osFilter) {
+			continue
+		}
+		var status sql.NullString
+		_ = tx.QueryRowContext(ctx, `
+			SELECT status FROM machine_update_status
+			WHERE machine_id = ? AND kb_number = ?`, machineID, a.kb).Scan(&status)
+		if status.String == "installed" {
+			continue
+		}
+		var attempts, active, recent int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*),
+			       COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN 1 ELSE 0 END), 0),
+			       COALESCE(SUM(CASE WHEN completed_at >= datetime('now', ?) THEN 1 ELSE 0 END), 0)
+			FROM update_deployment_job
+			WHERE machine_id = ? AND update_id = ?`,
+			autoDeployRetrySpacing, machineID, a.id).Scan(&attempts, &active, &recent); err != nil {
+			return err
+		}
+		if active > 0 || attempts >= autoDeployMaxAttempts || recent > 0 {
+			continue
+		}
+		depID, err := autoDeploymentTx(ctx, tx, a.id, a.osFilter)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO update_deployment_job (deployment_id, machine_id, update_id, status)
+			VALUES (?, ?, ?, 'queued')`, depID, machineID, a.id); err != nil {
+			return err
+		}
+		if err := markPendingTx(ctx, tx, machineID, a.kb); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// autoDeploymentTx returns the persistent auto-deploy deployment row for
+// an update, creating it on first use. Grouping every auto-queued job
+// under one deployment per update keeps the rollout observable on the
+// deployment detail page.
+func autoDeploymentTx(ctx context.Context, tx *sql.Tx, updateID ID, osFilter string) (int64, error) {
+	idsJSON := fmt.Sprintf("[%d]", updateID)
+	var id int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id FROM update_deployment
+		WHERE created_by = 'auto-deploy' AND update_ids_json = ?`, idsJSON).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO update_deployment (update_ids_json, target_json, os_filter, created_by)
+		VALUES (?, '{}', ?, 'auto-deploy')`, idsJSON, osFilter)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // ListDeployments returns all update deployments (newest first).
@@ -635,6 +776,24 @@ func (r *WindowsUpdateRepo) AllComplianceSummaries(ctx context.Context) (map[ID]
 	return out, nil
 }
 
+// osFilterMatches reports whether a machine's reported OS caption
+// satisfies a portal OS filter. Filters are dash-style ("windows-10",
+// "server-2022") while WMI captions read "Microsoft Windows 10 Pro", so
+// the filter is normalized to spaces for the substring match. An empty
+// filter matches every machine; an empty caption (no reported hardware,
+// so an unknown OS) never matches an explicit filter.
+func osFilterMatches(caption, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	filter = strings.ReplaceAll(filter, "-", " ")
+	if filter == "" {
+		return true
+	}
+	if caption == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(caption), filter)
+}
+
 // matchMachines resolves a BulkTarget + OS filter to matching machines.
 func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osFilter string) ([]MachineRecord, error) {
 	all, err := r.Inventory.List(ctx)
@@ -652,17 +811,12 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 	for _, id := range t.MachineIDs {
 		idSet[id] = true
 	}
-	// Portal filters are dash-style ("windows-10", "server-2022") but WMI
-	// captions read "Microsoft Windows 10 Pro" — normalize to spaces so the
-	// substring match works for both styles.
-	osFilter = strings.ToLower(strings.TrimSpace(osFilter))
-	osFilter = strings.ReplaceAll(osFilter, "-", " ")
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
 		if len(idSet) > 0 && !idSet[m.ID] {
 			continue
 		}
-		if osFilter != "" {
+		if strings.TrimSpace(osFilter) != "" {
 			// List doesn't load hardware_json; fetch the full record for
 			// the caption. A machine with no reported hardware has an
 			// unknown OS and never matches an explicit filter.
@@ -674,8 +828,11 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 					continue
 				}
 			}
-			if full.Hardware == nil ||
-				!strings.Contains(strings.ToLower(full.Hardware.OSCaption), osFilter) {
+			caption := ""
+			if full.Hardware != nil {
+				caption = full.Hardware.OSCaption
+			}
+			if !osFilterMatches(caption, osFilter) {
 				continue
 			}
 		}

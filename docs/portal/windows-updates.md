@@ -72,6 +72,24 @@ per-machine job for each selected update; the agent picks up queued jobs at its 
 
 ![Deploying Windows Updates](../images/windowsupdate-deploy.png)
 
+## Automatic deployment
+
+Tick **Auto-deploy to applicable machines** on an update to roll it out without creating
+deployments by hand. On every agent check-in the server queues the update for that machine if it
+matches the OS filter and doesn't already have the KB installed — so machines added later, and
+machines that are reimaged (their patch state resets with the new OS), converge automatically.
+
+Details worth knowing:
+
+- Auto-deploy starts once the update has a payload; flagging a payloadless update does nothing
+  until a file is uploaded or imported.
+- Auto-queued jobs are grouped under a single deployment per update (created by `auto-deploy`),
+  so progress and failures are visible on the deployment detail page like any manual rollout.
+- A machine that fails the install is retried up to 3 times, spaced at least 6 hours apart, then
+  left alone — check the job's failure reason and re-deploy manually once the cause is fixed
+  (a manual deployment always queues, regardless of the retry cap).
+- Untick the box to stop new machines from receiving it; already-queued jobs still run.
+
 ## Agent reporting
 
 The agent reports installed KBs on each check-in. The server matches reported KB numbers against

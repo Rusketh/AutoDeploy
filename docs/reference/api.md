@@ -233,7 +233,7 @@ information).
 | Method & path | Purpose |
 |---------------|---------|
 | `GET /api/v1/updates` | List tracked KB updates. |
-| `POST /api/v1/updates` | Create an update: `{ "kb_number", "title", "description", "os_filter", "severity", "supersedes_json", "reboot_after" }`. |
+| `POST /api/v1/updates` | Create an update: `{ "kb_number", "title", "description", "os_filter", "severity", "supersedes_json", "reboot_after", "auto_deploy" }`. With `auto_deploy` true (and a payload uploaded), the server queues the update for every applicable machine at its next check-in — including machines added or reimaged later. |
 | `GET /api/v1/updates/{id}` | Get an update. |
 | `PUT /api/v1/updates/{id}` | Update metadata. |
 | `DELETE /api/v1/updates/{id}` | Delete an update (cascades to its deployment jobs). |

@@ -55,6 +55,14 @@
       Reboot after install
       <span class="hint">If checked, the agent schedules a reboot after successful install.</span>
     </label>
+    <label>
+      <input type="checkbox" name="auto_deploy" value="1" {{if $u.AutoDeploy}}checked{{end}}>
+      Auto-deploy to applicable machines
+      <span class="hint">Automatically queues this update for every machine matching the OS filter that
+        doesn't have it installed — including machines added or reimaged later. Takes effect once a
+        payload is uploaded; failed installs are retried up to 3 times. Manual "Deploy updates"
+        keeps working as before.</span>
+    </label>
   </fieldset>
   <div class="actions">
     <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create update{{else}}Save changes{{end}}</button>

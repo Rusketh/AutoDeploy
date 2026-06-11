@@ -21,6 +21,7 @@
     <th>Severity</th>
     <th class="num" data-sort="num">Size</th>
     <th>Reboot</th>
+    <th>Auto</th>
     <th>Compliance</th>
     <th data-nosort></th>
   </tr></thead>
@@ -34,6 +35,7 @@
       <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="num">{{if .SizeBytes}}{{humanBytes .SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .RebootAfter}}yes{{else}}<span class="muted">no</span>{{end}}</td>
+      <td>{{if .AutoDeploy}}<span class="badge accent" {{if not .StoragePath}}title="No payload uploaded yet — auto-deploy starts once one is added"{{end}}>auto</span>{{else}}<span class="muted">manual</span>{{end}}</td>
       <td>{{if $c}}{{if $c.Total}}{{$c.Installed}} / {{$c.Total}} <span class="badge {{if eq $c.Installed $c.Total}}ok{{else}}warn{{end}}">{{pct $c.Installed $c.Total}}%</span>{{else}}<span class="muted">N/A</span>{{end}}{{else}}<span class="muted">N/A</span>{{end}}</td>
       <td class="actions">
         <a class="btn secondary sm" href="/portal/updates/{{int64 .ID}}/compliance"><svg><use href="#i-list"/></svg>Compliance</a>
