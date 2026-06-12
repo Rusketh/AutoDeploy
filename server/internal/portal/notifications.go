@@ -39,22 +39,28 @@ func registerNotificationRoutes(get, post func(string, http.HandlerFunc), r Repo
 func notificationsPage(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		u, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
-		limit := 50
-		offset, _ := strconv.Atoi(req.URL.Query().Get("offset"))
+		// Same pager as the other lists (?page=/?size= plus the shared
+		// template) instead of the old bespoke ?offset= links. The repo
+		// pages in SQL, so ask for the requested window first and let the
+		// returned total clamp an out-of-range page (e.g. after deletes).
+		pageN, size := pageAndSize(req, 50)
 		s := model.NotificationSearch{
 			UserID:   u.ID,
 			Severity: req.URL.Query().Get("severity"),
 			Event:    req.URL.Query().Get("event"),
 			Unread:   req.URL.Query().Get("unread") == "1",
-			Limit:    limit,
-			Offset:   offset,
+			Limit:    size,
+			Offset:   (pageN - 1) * size,
 		}
 		list, total, _ := r.Notifications.List(req.Context(), s)
+		page := paginate(req, total, 50)
+		if page.Offset != s.Offset {
+			s.Offset = page.Offset
+			list, _, _ = r.Notifications.List(req.Context(), s)
+		}
 		render(w, req, r, "notifications.html", "Notifications", map[string]any{
 			"Notifications": list,
-			"Total":         total,
-			"Offset":        offset,
-			"Limit":         limit,
+			"Page":          page,
 			"Severity":      s.Severity,
 			"Event":         s.Event,
 			"Unread":        s.Unread,

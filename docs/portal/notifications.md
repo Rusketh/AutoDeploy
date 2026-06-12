@@ -56,7 +56,8 @@ Features:
 
 - **Filter bar** — filter by severity, event type, or unread-only
 - **Mark all read** — clears the unread badge in one click
-- **Pagination** — browse through large notification histories
+- **Pagination** — numbered page links with an items-per-page selector; page links keep the
+  active filters
 - **Click-through links** — each notification links to the relevant portal page (machine detail,
   bulk operation, etc.)
 

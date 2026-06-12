@@ -285,9 +285,11 @@ func main() {
 
 // ensureEnrolled acquires this machine's server-minted agent_id by SMBIOS
 // identity and persists it (registry) so later runs — and the installed
-// service — start provisioned. Best-effort: on failure (e.g. a server
-// that predates /agent/enroll) the deploy path's report response is the
-// fallback source.
+// service — start provisioned. The full identity (make/model, base board,
+// BIOS — whatever WMI could read) is sent, so even a machine that never
+// PXE-boots enrolls with the facts driver filters match on. Best-effort:
+// on failure (e.g. a server that predates /agent/enroll) the deploy
+// path's report response is the fallback source.
 func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
 	var resp struct {
@@ -295,7 +297,7 @@ func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
 		AgentID   string `json:"agent_id"`
 	}
 	if err := c.PostJSON(ctx, "/api/v1/agent/enroll",
-		map[string]any{"identity": map[string]any{"system_uuid": f.uuid}}, &resp); err != nil {
+		map[string]any{"identity": smbiosIdentityBody(f.uuid)}, &resp); err != nil {
 		log.Warn("enroll.fetch", slog.String("error", err.Error()))
 		return
 	}
@@ -657,7 +659,10 @@ var hardwareReported bool
 
 // reportHardwareOnce collects and posts the machine's hardware spec the
 // first time it's called in this process. Needs the agent_id (the server
-// keys hardware by it). All failures are logged and swallowed.
+// keys hardware by it). The SMBIOS identity rides along so a manually-
+// installed machine — whose only voice is this agent, never the PXE boot
+// client — still gets its make/model and base-board facts into inventory
+// for driver-filter building. All failures are logged and swallowed.
 func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) {
 	if hardwareReported || f.agentID == "" {
 		return
@@ -668,12 +673,39 @@ func reportHardwareOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, 
 		return
 	}
 	if err := c.PostJSON(ctx, "/api/v1/agent/hardware",
-		map[string]any{"agent_id": f.agentID, "hardware": hw}, nil); err != nil {
+		map[string]any{
+			"agent_id": f.agentID,
+			"hardware": hw,
+			"identity": smbiosIdentityBody(f.uuid),
+		}, nil); err != nil {
 		log.Warn("hardware.report", slog.String("error", err.Error()))
 		return // leave the guard unset so the next poll retries
 	}
 	hardwareReported = true
 	log.Info("hardware.reported")
+}
+
+// smbiosIdentityCached holds the one-per-process result of the WMI SMBIOS
+// sweep; the query costs a PowerShell start, so callers share it.
+var smbiosIdentityCached map[string]any
+var smbiosIdentityFetched bool
+
+// smbiosIdentityBody returns the agent's best-known SMBIOS identity for
+// server upserts: whatever WMI could read (nil fields simply absent, and
+// nothing at all off Windows) plus the UUID the agent already trusts —
+// which always wins over anything the sweep returned.
+func smbiosIdentityBody(uuid string) map[string]any {
+	if !smbiosIdentityFetched {
+		smbiosIdentityCached = collectSMBIOSIdentity()
+		smbiosIdentityFetched = true
+	}
+	id := map[string]any{"system_uuid": uuid}
+	for k, v := range smbiosIdentityCached {
+		if k != "system_uuid" {
+			id[k] = v
+		}
+	}
+	return id
 }
 
 // reportObservedIdentity posts the machine's current computer name and AD

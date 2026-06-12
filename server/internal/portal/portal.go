@@ -544,7 +544,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
 		assetsFS, "templates/_layout.html", "templates/_icons.html",
-		"templates/_action_picker.html", "templates/"+page)
+		"templates/_action_picker.html", "templates/_pagination.html",
+		"templates/"+page)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
@@ -614,12 +615,12 @@ type PageLink struct {
 // clamps any explicit ?size= to the same 10–500 envelope.
 var pageSizeChoices = []int{10, 25, 50, 100, 250, 500}
 
-// paginate computes the slice bounds for the requested page given the
-// total row count and a default page size. ?page=N (1-based) and
-// ?size=N override the defaults; size is clamped to a reasonable range
-// so a single client cannot ask for a million-row payload.
-func paginate(req *http.Request, total, defaultSize int) PageInfo {
-	size := defaultSize
+// pageAndSize reads ?page= (1-based) and ?size= (clamped 10–500) with the
+// given default size. Shared by paginate and by handlers that must compute
+// a row offset before they know the total (SQL LIMIT/OFFSET lists, e.g.
+// notifications).
+func pageAndSize(req *http.Request, defaultSize int) (page, size int) {
+	size = defaultSize
 	if s := req.URL.Query().Get("size"); s != "" {
 		if v, err := strconv.Atoi(s); err == nil && v > 0 {
 			size = v
@@ -631,12 +632,21 @@ func paginate(req *http.Request, total, defaultSize int) PageInfo {
 	if size > 500 {
 		size = 500
 	}
-	page := 1
+	page = 1
 	if p := req.URL.Query().Get("page"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil && v > 0 {
 			page = v
 		}
 	}
+	return page, size
+}
+
+// paginate computes the slice bounds for the requested page given the
+// total row count and a default page size. ?page=N (1-based) and
+// ?size=N override the defaults; size is clamped to a reasonable range
+// so a single client cannot ask for a million-row payload.
+func paginate(req *http.Request, total, defaultSize int) PageInfo {
+	page, size := pageAndSize(req, defaultSize)
 	pages := (total + size - 1) / size
 	if pages < 1 {
 		pages = 1

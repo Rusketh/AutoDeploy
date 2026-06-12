@@ -129,13 +129,32 @@
   // ---- Filter-as-you-type -------------------------------------------
   // <input data-filter="#table-id">  -> hides table rows whose textContent
   // doesn't contain the (case-insensitive, whitespace-collapsed) query.
+  // The value is mirrored into the URL hash (replaceState, so no history
+  // spam), which is what lets back/forward — and a reload — restore the
+  // filter until the operator clears it.
   document.querySelectorAll('input[data-filter]').forEach(function (inp) {
     const target = document.querySelector(inp.getAttribute('data-filter'));
     if (!target) return;
-    inp.addEventListener('input', function () { applyFilter(target, inp.value); });
-    // Apply once in case the URL hash carried a value.
+    const hashKey = 'f-' + (target.id || 'tbl');
+    try {
+      const saved = new URLSearchParams(location.hash.slice(1)).get(hashKey);
+      if (saved && !inp.value) inp.value = saved;
+    } catch (_) {}
+    inp.addEventListener('input', function () {
+      applyFilter(target, inp.value);
+      writeFilterHash(hashKey, inp.value);
+    });
+    // Apply once in case the hash (or the markup) carried a value.
     if (inp.value) applyFilter(target, inp.value);
   });
+  function writeFilterHash(key, val) {
+    try {
+      const p = new URLSearchParams(location.hash.slice(1));
+      if (val) p.set(key, val); else p.delete(key);
+      const s = p.toString();
+      history.replaceState(null, '', location.pathname + location.search + (s ? '#' + s : ''));
+    } catch (_) {}
+  }
   function applyFilter(table, raw) {
     const q = raw.trim().toLowerCase();
     let matched = 0;
@@ -419,7 +438,7 @@
     }
     if (e.key === 'g') { gPressed = true; setTimeout(function () { gPressed = false; }, 1000); return; }
     if (gPressed) {
-      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software' };
+      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software', n: '/portal/notifications', b: '/portal/bulk' };
       const dest = map[e.key];
       if (dest) { e.preventDefault(); window.location.href = dest; }
       gPressed = false;
@@ -448,6 +467,8 @@
       '<dt><kbd>g</kbd> <kbd>d</kbd></dt><dd>go to Drivers</dd>' +
       '<dt><kbd>g</kbd> <kbd>w</kbd></dt><dd>go to soft<u>w</u>are</dd>' +
       '<dt><kbd>g</kbd> <kbd>o</kbd></dt><dd>go to Loadouts</dd>' +
+      '<dt><kbd>g</kbd> <kbd>n</kbd></dt><dd>go to Notifications</dd>' +
+      '<dt><kbd>g</kbd> <kbd>b</kbd></dt><dd>go to Bulk operations</dd>' +
       '<dt><kbd>g</kbd> <kbd>s</kbd></dt><dd>go to Settings</dd>' +
       '<dt><kbd>?</kbd></dt><dd>this help</dd>' +
       '</dl></div>' +

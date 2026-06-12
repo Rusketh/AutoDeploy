@@ -2806,3 +2806,81 @@ tests: `TestBootMenuStoresFullIdentity` (full + legacy menu identity),
 **NEXT.** Optional: have Export CSV honour the active `?q=`; teach the
 Windows agent to report base-board identity (WMI Win32_BaseBoard) so
 manually-enrolled machines that never PXE-boot also carry board data.
+
+---
+
+## 2026-06-12 — Portal consistency pass: honest sorting/CSV, shared pager, filter persistence everywhere, agent SMBIOS identity
+
+**WHAT.** Follow-ups rounding out the machines-list rework, applied across the
+portal.
+
+1) *Machines list finished.*
+- **Server-side sorting**: `?sort=&dir=` orders the entire (filtered) fleet;
+  the old `data-sortable` client sort only reordered the visible page — the
+  same lie the filter had. Headers are now server-driven links (active column
+  flips direction; others start on their natural one, `last_seen` desc). The
+  existing `th.sortable` arrow CSS is reused.
+- **OS column N+1 killed**: new `InventoryRepo.ListOSCaptions` (one query over
+  `hardware_json`) replaces a full `Get` per visible row — at the new 500-rows
+  page size that was up to 500 queries per render. Bindings/image names/
+  BitLocker/re-image flags are likewise loaded once for the whole fleet (one
+  query each), which is also what sorting needs. Bonus: `?q=` now searches the
+  OS column too.
+- **CSV honours the view**: `machines.csv?q=&sort=&dir=` (the toolbar link
+  carries them) filters + orders the export to match the screen.
+- **Honest bulk selection**: the delete button now reads "(N on this page)"
+  and the select-all checkbox says it selects this page only.
+
+2) *Shared pager everywhere.* The `pagination` define moved out of
+machine_list.html into `templates/_pagination.html`, parsed by `render()` for
+every page. Notifications dropped its bespoke `?offset=` pager for the shared
+`?page=/?size=` one (numbered links, items-per-page, filter-preserving URLs);
+its repo `List` limit cap was raised 200→500 to match `paginate()`'s envelope,
+and an out-of-range page (post-deletion) clamps and re-queries once.
+`pageAndSize()` was extracted from `paginate()` for SQL LIMIT/OFFSET callers
+that need the window before they know the total.
+
+3) *Client-side filters persist too.* `data-filter` inputs (images, ISOs,
+drivers, software, loadouts, mirrors, logs, …) now mirror their value into the
+URL hash via `history.replaceState` (`#f-<tableid>=…`, no history spam) and
+restore it on load — back/forward keeps those filters as well, until cleared.
+
+4) *Agent reports SMBIOS identity (WMI).* A manually-installed machine's only
+voice is the agent, so it sat in inventory as a bare UUID — invisible to
+driver-filter building. `collectSMBIOSIdentity()` (Win32_ComputerSystem/
+Win32_BIOS/Win32_BaseBoard, one PowerShell call, cached per process) now rides
+along on `/agent/enroll` and the `/agent/hardware` report. The server folds it
+in via `UpsertFromIdentity` — guarded so the posted UUID must match the
+agent_id's record (a confused client can't relabel another machine), and
+absent fields never wipe stored values. Old agents posting the legacy bodies
+are unaffected.
+
+5) *Small polish.* `g n` / `g b` shortcuts (Notifications / Bulk operations) +
+help entries; tooltip on the machines filter box stating what it searches.
+
+**WHY (decisions).** Full-fleet batched loads (5 single queries) over
+slice-scoped loading: sorting and searching need the whole set anyway, the CSV
+path already did it, and it deletes the only N+1 on the hottest page.
+Hash-based persistence for client-side filters (vs promoting them all to
+server-side `?q=`): those lists are small enough that round-tripping adds
+latency for nothing — the hash gives the same back/forward behaviour with zero
+server involvement. The hardware-report identity is UUID-guarded because the
+endpoint is unauthenticated by design (same trust model as enroll); matching
+the agent_id's stored UUID keeps a wrong/forged identity from relabelling a
+different machine's record.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, full `go test ./...` green for
+server and agent (native + GOOS=windows build; the pre-existing
+`internal/detect` windows-vet test quirk is untouched);
+`scripts/check-secrets.sh` OK. New tests: `TestSortMachineRecords`,
+`TestMachineSortColumns`, OS search in `TestMachineMatchesQuery`,
+`TestListOSCaptions` (model), `TestAgentHardwareReportUpsertsIdentity`
+(identity folded in, UUID-mismatch rejected, legacy body safe),
+`TestNotificationsRender` (shared pager + filter-preserving links), and
+`TestAllTemplatesParse` (every page parses with render()'s partial set — a
+template typo can no longer hide until an operator opens the page). Docs:
+machines.md (sorting, CSV-matches-view, page-scoped selection),
+notifications.md (pager).
+
+**NEXT.** Optional: Gmail-style "select all N matching" for cross-page bulk
+delete; surface board_product as a column option on the machines list.

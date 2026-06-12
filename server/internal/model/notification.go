@@ -102,8 +102,10 @@ func (r *NotificationRepo) List(ctx context.Context, s NotificationSearch) ([]No
 		return nil, 0, err
 	}
 
+	// Clamp to the same 10–500 envelope the portal's paginate() offers, so
+	// an items-per-page choice made in the UI is never silently shrunk.
 	limit := s.Limit
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
 	q := `SELECT id, user_id, occurred_at, event, severity, title, body, link, read_at

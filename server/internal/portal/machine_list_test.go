@@ -66,7 +66,7 @@ func TestPaginateNumberedLinks(t *testing.T) {
 
 // TestMachineMatchesQuery: the ?q= predicate must search the fields an
 // operator can see or paste — including the base-board identity, the
-// reported/bound machine names and the bound image's name.
+// reported/bound machine names, the reported OS and the bound image's name.
 func TestMachineMatchesQuery(t *testing.T) {
 	imgID := model.ID(4)
 	m := model.MachineRecord{
@@ -80,15 +80,73 @@ func TestMachineMatchesQuery(t *testing.T) {
 	}
 	b := model.MachineBinding{MachineName: "LAB-PC-07-NEW", ImageID: &imgID}
 	names := map[model.ID]string{imgID: "Win11 Lab"}
+	os := "Microsoft Windows 11 Pro"
 
-	for _, q := range []string{"0k240y", "optiplex", "lab-pc-07", "win11 lab", "abcd1234", "ser99", "-new"} {
-		if !machineMatchesQuery(m, b, names, q) {
+	for _, q := range []string{"0k240y", "optiplex", "lab-pc-07", "win11 lab", "abcd1234", "ser99", "-new", "windows 11"} {
+		if !machineMatchesQuery(m, b, names, os, q) {
 			t.Errorf("query %q should match", q)
 		}
 	}
 	for _, q := range []string{"latitude", "hp", "zzz"} {
-		if machineMatchesQuery(m, b, names, q) {
+		if machineMatchesQuery(m, b, names, os, q) {
 			t.Errorf("query %q should NOT match", q)
+		}
+	}
+}
+
+// TestSortMachineRecords: server-side sorting orders the WHOLE set by the
+// displayed value — including columns derived from bindings (name, image)
+// — in both directions, with a stable ID tie-break.
+func TestSortMachineRecords(t *testing.T) {
+	imgID := model.ID(9)
+	v := []model.MachineRecord{
+		{ID: 1, SystemManufacturer: "HP", SystemProduct: "EliteDesk"},
+		{ID: 2, SystemManufacturer: "Dell Inc.", SystemProduct: "OptiPlex"},
+		{ID: 3, SystemManufacturer: "Acer", SystemProduct: "Veriton"},
+	}
+	bindings := map[model.ID]model.MachineBinding{
+		1: {MachineName: "PC-C"},
+		2: {MachineName: "PC-A", ImageID: &imgID},
+		3: {MachineName: "PC-B"},
+	}
+	names := map[model.ID]string{imgID: "Win11"}
+
+	sortMachineRecords(v, "model", "asc", bindings, names, nil, nil)
+	if v[0].ID != 3 || v[1].ID != 2 || v[2].ID != 1 {
+		t.Errorf("model asc: got order %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
+	}
+	sortMachineRecords(v, "name", "desc", bindings, names, nil, nil)
+	if v[0].ID != 1 || v[1].ID != 3 || v[2].ID != 2 {
+		t.Errorf("name desc: got order %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
+	}
+	// Image sort: bound machine vs unbound (empty sorts first asc).
+	sortMachineRecords(v, "image", "asc", bindings, names, nil, nil)
+	if v[2].ID != 2 {
+		t.Errorf("image asc: bound machine should sort last, got %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
+	}
+}
+
+// TestMachineSortColumns: clicking the active column flips direction, any
+// other column starts on its natural one, and links keep the filter while
+// resetting to page 1.
+func TestMachineSortColumns(t *testing.T) {
+	req := httptest.NewRequest("GET", "/portal/machines?q=dell&sort=name&dir=asc&page=3", nil)
+	cols := machineSortColumns(req, "name", "asc")
+	if cols["name"].State != "asc" || !strings.Contains(cols["name"].URL, "dir=desc") {
+		t.Errorf("active column should flip to desc: %+v", cols["name"])
+	}
+	if cols["model"].State != "" || !strings.Contains(cols["model"].URL, "dir=asc") {
+		t.Errorf("inactive text column should start asc: %+v", cols["model"])
+	}
+	if !strings.Contains(cols["last_seen"].URL, "dir=desc") {
+		t.Errorf("last_seen should start desc: %+v", cols["last_seen"])
+	}
+	for k, c := range cols {
+		if !strings.Contains(c.URL, "q=dell") {
+			t.Errorf("column %s dropped the filter: %s", k, c.URL)
+		}
+		if strings.Contains(c.URL, "page=") {
+			t.Errorf("column %s should reset paging: %s", k, c.URL)
 		}
 	}
 }
@@ -103,9 +161,16 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"add":        func(a, b int) int { return a + b },
 	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/machine_list.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
+		"templates/machine_list.html", "templates/_pagination.html")
 	if err != nil {
 		t.Fatalf("parse machine_list.html: %v", err)
+	}
+	if data["Sort"] == nil {
+		data["Sort"] = machineSortColumns(httptest.NewRequest("GET", "/portal/machines", nil), "last_seen", "desc")
+	}
+	if data["CSVURL"] == nil {
+		data["CSVURL"] = "/portal/machines.csv"
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "body", map[string]any{"Data": data}); err != nil {
@@ -155,6 +220,11 @@ func TestMachineListRender(t *testing.T) {
 		// Items-per-page selector present with the active size selected.
 		if !strings.Contains(out, "data-page-size") || !strings.Contains(out, `<option value="10" selected>`) {
 			t.Errorf("want items-per-page select with active size; got:\n%s", out)
+		}
+		// Sortable headers are server-driven links (sort the whole fleet,
+		// not the visible page).
+		if !strings.Contains(out, `class="sortable`) || !strings.Contains(out, "sort=model") {
+			t.Errorf("want server-sort header links; got:\n%s", out)
 		}
 	})
 
