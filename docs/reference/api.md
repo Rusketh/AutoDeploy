@@ -185,6 +185,12 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 | `target` | yes | Selection: `{ "name_regex", "ou", "group", "machine_ids" }` (empty fields are ignored). |
 | `payload` | yes | A JSON **string** carrying action-specific parameters (must be valid JSON). |
 | `reimage_image_id` | for `reimage` | Image to deploy; `0`/omitted uses each machine's existing binding. |
+| `schedule_kind` | no | `now` (default), `once` (set `run_at`), or `recurring` (set `recur_spec`). |
+| `run_at` | for `once` | RFC 3339 fire time. |
+| `recur_spec` | for `recurring` | JSON string, e.g. `{"every":1,"unit":"day","at":"02:00"}` or `{"cron":"0 2 * * 1"}`. |
+| `target_mode` | no | `selection` (default; replay the frozen `machine_ids`) or `filter` (re-resolve each run). |
+| `wake_on_lan` | no | `true` sends a Wake-on-LAN magic packet to each targeted machine's known MACs whenever a run starts. |
+| `cancel_after_minutes` | no | Cancel a job still queued this long after its run started (and clear the re-image flag it set); the deadline is also enforced at agent claim time. `0`/omitted = never. |
 
 ## Branding
 

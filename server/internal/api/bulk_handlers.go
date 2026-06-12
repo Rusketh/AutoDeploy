@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 // RegisterBulk mounts the bulk-operations and agent-checkin endpoints.
@@ -62,6 +64,12 @@ func handleBulkCreate(r Repos) http.HandlerFunc {
 		if err != nil {
 			writeError(w, err)
 			return
+		}
+		r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
+		// An immediate run queued its jobs above; scheduled/recurring runs
+		// are woken by the scheduler when they materialise.
+		if op.WakeOnLAN && r.Waker != nil && len(jobs) > 0 {
+			r.Waker.WakeForJobs(req.Context(), jobs)
 		}
 		// AD coordination for bulk rename (§13.2). The design sequences a
 		// rename as: rename -> directory update -> reboot. The directory
@@ -229,6 +237,7 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		emitFirstSeen(req, r, m)
 		jobs, err := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
 		if err != nil {
 			writeError(w, err)
@@ -282,10 +291,54 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
-		if err := r.Bulk.CompleteJob(req.Context(), id, in.Status, in.Result); err != nil {
+		completedOp, err := r.Bulk.CompleteJob(req.Context(), id, in.Status, in.Result)
+		if err != nil {
 			writeError(w, err)
 			return
 		}
+		emitSoftwarePushResult(req, r, id, in.Status)
+		emitBulkFinished(req, r, completedOp)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// emitSoftwarePushResult fires software.install_ok/failed for a finished
+// software_push job, naming the package and machine.
+func emitSoftwarePushResult(req *http.Request, r Repos, jobID model.ID, status string) {
+	if r.Emitter == nil {
+		return
+	}
+	job, err := r.Bulk.GetJob(req.Context(), jobID)
+	if err != nil || job.Action != model.BulkActionSoftwarePush {
+		return
+	}
+	pkgName := "software package"
+	var payload struct {
+		PackageID int64 `json:"package_id"`
+	}
+	if json.Unmarshal([]byte(job.Payload), &payload) == nil && payload.PackageID > 0 && r.Software != nil {
+		if pkg, perr := r.Software.Get(req.Context(), model.ID(payload.PackageID)); perr == nil {
+			pkgName = pkg.Name
+		}
+	}
+	machine := fmt.Sprintf("machine #%d", int64(job.MachineID))
+	if r.Inventory != nil {
+		if m, merr := r.Inventory.Get(req.Context(), job.MachineID); merr == nil {
+			machine = machineDisplayName(req.Context(), r, m)
+		}
+	}
+	ev := notify.Event{
+		Name:     notify.EventSoftwareInstallOK,
+		Severity: notify.SevSuccess,
+		Title:    fmt.Sprintf("Installed %s on %s", pkgName, machine),
+		Link:     machineLink(job.MachineID),
+		Actor:    "system",
+	}
+	if status == "failed" {
+		ev.Name = notify.EventSoftwareInstallFailed
+		ev.Severity = notify.SevError
+		ev.Title = fmt.Sprintf("Install of %s failed on %s", pkgName, machine)
+		ev.Body = "See the bulk job result for the failing step's output."
+	}
+	r.Emitter.Emit(req.Context(), ev)
 }

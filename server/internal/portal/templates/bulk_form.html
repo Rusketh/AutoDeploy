@@ -112,6 +112,23 @@
     </div>
   </div>
 
+  <div class="section-head"><h3>5. Delivery options</h3><div class="line"></div></div>
+  <label class="check">
+    <input type="checkbox" name="wake_on_lan" value="1" {{if $ap.WakeOnLAN}}checked{{end}}>
+    <span>Send Wake-on-LAN — broadcast a magic packet to each targeted machine's known MACs when a run starts, so powered-off machines boot and pick the job up. Machines must have reported their hardware (NIC MACs) and have WoL enabled in firmware.</span>
+  </label>
+  <div class="row mt-2">
+    <label><span class="lbl">Cancel undelivered jobs after</span>
+      <input type="number" name="cancel_after_value" min="0" value="{{$ap.CancelAfterValue}}" placeholder="never"></label>
+    <label><span class="lbl">Unit</span>
+      <select name="cancel_after_unit">
+        <option value="hours" {{if eq $ap.CancelAfterUnit "hours"}}selected{{end}}>hour(s)</option>
+        <option value="minutes" {{if eq $ap.CancelAfterUnit "minutes"}}selected{{end}}>minute(s)</option>
+      </select>
+    </label>
+  </div>
+  <p class="hint">A job still waiting this long after a run starts is cancelled, and any re-image flag it set is cleared — so a re-image scheduled overnight can't wipe a machine someone first powers on during office hours. Leave blank to wait indefinitely.</p>
+
   <div class="actions">
     <a class="btn secondary" href="/portal/bulk">Cancel</a>
     <button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>{{if .Data.Editing}}Save changes{{else}}Queue operation{{end}}</button>

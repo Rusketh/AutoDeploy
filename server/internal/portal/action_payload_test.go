@@ -47,3 +47,54 @@ func TestActionPayloadFromForm(t *testing.T) {
 		t.Error("software push without a package should error")
 	}
 }
+
+func TestBulkFormDeliveryOptions(t *testing.T) {
+	mk := func(extra url.Values) *http.Request {
+		vals := url.Values{
+			"action":      {"script"},
+			"script_body": {"echo hi"},
+			"machine_ids": {"1"},
+		}
+		for k, v := range extra {
+			vals[k] = v
+		}
+		req := httptest.NewRequest("POST", "/x", strings.NewReader(vals.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
+	}
+
+	// Defaults: WoL off, never cancel.
+	p, err := parseBulkForm(mk(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.WakeOnLAN || p.CancelAfterMinutes != 0 {
+		t.Errorf("defaults: wol=%v cancel=%d, want off/0", p.WakeOnLAN, p.CancelAfterMinutes)
+	}
+
+	// Hours normalise to minutes; checkbox read.
+	p, err = parseBulkForm(mk(url.Values{
+		"wake_on_lan": {"1"}, "cancel_after_value": {"6"}, "cancel_after_unit": {"hours"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.WakeOnLAN || p.CancelAfterMinutes != 360 {
+		t.Errorf("wol=%v cancel=%d, want on/360", p.WakeOnLAN, p.CancelAfterMinutes)
+	}
+
+	// Minutes pass through.
+	p, err = parseBulkForm(mk(url.Values{
+		"cancel_after_value": {"90"}, "cancel_after_unit": {"minutes"},
+	}))
+	if err != nil || p.CancelAfterMinutes != 90 {
+		t.Errorf("cancel=%d err=%v, want 90", p.CancelAfterMinutes, err)
+	}
+
+	// Garbage rejected with a friendly error.
+	if _, err := parseBulkForm(mk(url.Values{
+		"cancel_after_value": {"soon"}, "cancel_after_unit": {"hours"},
+	})); err == nil {
+		t.Error("non-numeric cancel-after should error")
+	}
+}

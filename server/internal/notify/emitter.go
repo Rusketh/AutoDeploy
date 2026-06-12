@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ type Emitter struct {
 
 	// WebhookSender delivers webhook payloads.
 	WebhookSender *WebhookSender
+
+	// BaseURLFn returns the operator-configured external URL (may be "").
+	// Event links are portal-relative ("/portal/..."); email recipients are
+	// outside the portal, so the email channel prefixes them with this.
+	BaseURLFn func() string
 
 	work chan func()
 	done chan struct{}
@@ -60,14 +66,23 @@ func (e *Emitter) Stop() {
 	})
 }
 
-// Emit fans out an event to all channels asynchronously.
+// Emit fans out an event to all channels asynchronously. Safe to call on a
+// nil emitter (no-op) so handlers don't need a guard at every call site.
 func (e *Emitter) Emit(ctx context.Context, ev Event) {
+	if e == nil {
+		return
+	}
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = time.Now()
 	}
 	if ev.Severity == "" {
 		ev.Severity = SevInfo
 	}
+	// Callers pass request-scoped contexts that are cancelled the moment the
+	// handler returns; the fan-out below runs after that on worker
+	// goroutines. Keep the context's values (logging) but not its
+	// cancellation, or every DB insert/SMTP send would fail mid-flight.
+	ctx = context.WithoutCancel(ctx)
 
 	e.submit(func() { e.fanOutPortal(ctx, ev) })
 	e.submit(func() { e.fanOutEmail(ctx, ev) })
@@ -120,6 +135,12 @@ func (e *Emitter) fanOutPortal(ctx context.Context, ev Event) {
 func (e *Emitter) fanOutEmail(ctx context.Context, ev Event) {
 	if e.Email == nil || e.Notifications == nil || e.Users == nil {
 		return
+	}
+	// Make the "View in Portal" link absolute for mail clients.
+	if e.BaseURLFn != nil && strings.HasPrefix(ev.Link, "/") {
+		if base := strings.TrimSuffix(e.BaseURLFn(), "/"); base != "" {
+			ev.Link = base + ev.Link
+		}
 	}
 	users, err := e.Users.ListUsers(ctx)
 	if err != nil {

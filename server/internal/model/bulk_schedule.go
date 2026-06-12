@@ -52,6 +52,9 @@ func validateSchedule(op BulkOperation) error {
 	default:
 		return fmt.Errorf("%w: unknown target mode %q", ErrValidation, op.TargetMode)
 	}
+	if op.CancelAfterMinutes < 0 {
+		return fmt.Errorf("%w: cancel-after must be zero (never) or a positive number of minutes", ErrValidation)
+	}
 	return nil
 }
 
@@ -225,6 +228,118 @@ func (r *BulkRepo) AdvanceSchedule(ctx context.Context, id ID, now time.Time) er
 	return err
 }
 
+// ExpireOverdueJobs cancels every queued job that has outlived its
+// operation's cancel-after window, clears the re-image flag those jobs set
+// (unless another live re-image job still wants it), and completes any
+// non-recurring operation whose last outstanding job just expired. The bulk
+// scheduler calls it each tick; ClaimJobsFor independently refuses expired
+// jobs so the deadline holds even between ticks.
+//
+// Returns the number of jobs cancelled and the IDs of operations this sweep
+// flipped to 'completed' (so the caller can emit finished notifications).
+func (r *BulkRepo) ExpireOverdueJobs(ctx context.Context, now time.Time) (int64, []ID, error) {
+	// Candidate scan outside the transaction (the pool caps at one
+	// connection); the UPDATEs below re-check status='queued' so a job
+	// claimed in between is left alone.
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT j.id, j.machine_id, j.queued_at, o.id, o.action, o.cancel_after_minutes
+		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+		WHERE j.status='queued' AND o.cancel_after_minutes>0`)
+	if err != nil {
+		return 0, nil, err
+	}
+	type expired struct {
+		jobID, machineID, opID ID
+		action                 string
+	}
+	var todo []expired
+	opSeen := map[ID]bool{}
+	var opOrder []ID
+	for rows.Next() {
+		var e expired
+		var queuedAt time.Time
+		var cancelAfter int
+		if err := rows.Scan(&e.jobID, &e.machineID, &queuedAt, &e.opID, &e.action, &cancelAfter); err != nil {
+			rows.Close()
+			return 0, nil, err
+		}
+		if !jobExpired(queuedAt, cancelAfter, now) {
+			continue
+		}
+		todo = append(todo, e)
+		if !opSeen[e.opID] {
+			opSeen[e.opID] = true
+			opOrder = append(opOrder, e.opID)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+	if len(todo) == 0 {
+		return 0, nil, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var cancelled int64
+	for _, e := range todo {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE bulk_job
+			   SET status='cancelled',
+			       result_json='{"cancelled":"not picked up before the operation''s cancel-after deadline"}',
+			       completed_at=CURRENT_TIMESTAMP
+			 WHERE id=? AND status='queued'`, int64(e.jobID))
+		if err != nil {
+			return 0, nil, err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			continue // claimed since the scan; the deadline already passed claim's filter, so this is a near-miss race — leave it
+		}
+		cancelled += n
+		// An expired re-image must not fire when someone powers the machine
+		// on later: drop the boot-time flag, unless a different still-live
+		// re-image job (another op, or a newer run) legitimately wants it.
+		if e.action == BulkActionReimage {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE machine_record SET reimage_pending=0, reimage_image_id=0
+				WHERE id=? AND NOT EXISTS (
+				  SELECT 1 FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+				  WHERE j.machine_id=machine_record.id AND o.action=?
+				    AND j.status IN ('queued','running'))`,
+				int64(e.machineID), BulkActionReimage); err != nil {
+				return 0, nil, err
+			}
+		}
+	}
+	// Mirror CompleteJob's terminal flip for ops whose last outstanding job
+	// just expired.
+	var completedOps []ID
+	for _, opID := range opOrder {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE bulk_operation SET status='completed'
+			WHERE id=? AND status='active' AND schedule_kind!='recurring'
+			  AND NOT EXISTS (
+			    SELECT 1 FROM bulk_job
+			    WHERE operation_id=bulk_operation.id AND status IN ('queued','running'))`,
+			int64(opID))
+		if err != nil {
+			return 0, nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			completedOps = append(completedOps, opID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
+	}
+	return cancelled, completedOps, nil
+}
+
 // CancelOperation cancels every queued/running job (so agents stop claiming
 // them), clears any pending re-image flags it set, and marks the operation
 // cancelled.
@@ -346,11 +461,11 @@ func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error 
 		UPDATE bulk_operation
 		SET action=?, payload=?, target_json=?, target_mode=?, schedule_kind=?,
 		    run_at=?, recur_spec=?, next_run_at=?, reimage_image_id=?, status=?,
-		    name=?, description=?
+		    name=?, description=?, wake_on_lan=?, cancel_after_minutes=?
 		WHERE id=?`,
 		in.Action, in.Payload, string(targetJSON), in.TargetMode, in.ScheduleKind,
 		in.RunAt, in.RecurSpec, nextRunAt, int64(in.ReimageImageID), status,
-		in.Name, in.Description, int64(in.ID))
+		in.Name, in.Description, in.WakeOnLAN, in.CancelAfterMinutes, int64(in.ID))
 	return err
 }
 

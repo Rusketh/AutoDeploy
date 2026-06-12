@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -230,12 +231,179 @@ func TestCompleteJobMarksOperationCompleted(t *testing.T) {
 		Action: BulkActionScript, Payload: `{"shell":"cmd","body":"x"}`,
 		Target: BulkTarget{MachineIDs: []ID{id}},
 	})
-	if err := bulk.CompleteJob(ctx, jobs[0].ID, "ok", `{}`); err != nil {
+	completedOp, err := bulk.CompleteJob(ctx, jobs[0].ID, "ok", `{}`)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if completedOp != op.ID {
+		t.Errorf("CompleteJob should report op %d completed, got %d", op.ID, completedOp)
 	}
 	after, _, _ := bulk.GetOperation(ctx, op.ID)
 	if after.Status != BulkStatusCompleted {
 		t.Errorf("status = %q, want completed", after.Status)
+	}
+}
+
+// backdateJobs ages every job of an operation so cancel-after windows can be
+// exercised without sleeping.
+func backdateJobs(t *testing.T, bulk *BulkRepo, opID ID, minutes int) {
+	t.Helper()
+	if _, err := bulk.db.ExecContext(context.Background(),
+		`UPDATE bulk_job SET queued_at=datetime('now', '-' || ? || ' minutes') WHERE operation_id=?`,
+		minutes, int64(opID)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCancelAfterBlocksClaimAndExpires(t *testing.T) {
+	ctx := context.Background()
+	inv, bulk := openBulk(t)
+	id := seedMachine(t, inv, "u1", "LAB-01", "OU=Lab")
+
+	op, jobs, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action:  BulkActionReimage,
+		Payload: `{}`,
+		Target:  BulkTarget{MachineIDs: []ID{id}},
+		// Run-now reimage with a 2h cancel-after window.
+		CancelAfterMinutes: 120,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if pending, _, _ := inv.ReimagePendingByID(ctx, id); !pending {
+		t.Fatal("reimage flag should be set after create")
+	}
+
+	// Within the window: claimable (don't claim — we want it queued below).
+	// Past the window: the agent must get nothing.
+	backdateJobs(t, bulk, op.ID, 121)
+	claimed, err := bulk.ClaimJobsFor(ctx, id, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 0 {
+		t.Errorf("expired job must not be claimable, got %d", len(claimed))
+	}
+
+	// The sweep cancels it, clears the re-image flag, and completes the op.
+	cancelled, completedOps, err := bulk.ExpireOverdueJobs(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 1 {
+		t.Errorf("expected 1 cancelled job, got %d", cancelled)
+	}
+	if len(completedOps) != 1 || completedOps[0] != op.ID {
+		t.Errorf("expected op %d completed by sweep, got %v", op.ID, completedOps)
+	}
+	if pending, _, _ := inv.ReimagePendingByID(ctx, id); pending {
+		t.Error("reimage flag should be cleared once the job expired")
+	}
+	after, _, _ := bulk.GetOperation(ctx, op.ID)
+	if after.Status != BulkStatusCompleted {
+		t.Errorf("status = %q, want completed", after.Status)
+	}
+	prog, _ := bulk.ProgressFor(ctx, op.ID)
+	if prog.Cancelled != 1 {
+		t.Errorf("expected 1 cancelled in progress rollup, got %+v", prog)
+	}
+}
+
+func TestCancelAfterLeavesFreshJobsAlone(t *testing.T) {
+	ctx := context.Background()
+	inv, bulk := openBulk(t)
+	id := seedMachine(t, inv, "u1", "LAB-01", "OU=Lab")
+
+	_, jobs, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action:             BulkActionScript,
+		Payload:            `{"shell":"cmd","body":"x"}`,
+		Target:             BulkTarget{MachineIDs: []ID{id}},
+		CancelAfterMinutes: 120,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inside the window: sweep does nothing, claim works.
+	cancelled, _, err := bulk.ExpireOverdueJobs(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 0 {
+		t.Errorf("nothing should expire inside the window, got %d", cancelled)
+	}
+	claimed, _ := bulk.ClaimJobsFor(ctx, id, 10)
+	if len(claimed) != 1 || claimed[0].ID != jobs[0].ID {
+		t.Errorf("job inside the window should be claimable, got %+v", claimed)
+	}
+}
+
+func TestCancelAfterRecurringStaysActive(t *testing.T) {
+	ctx := context.Background()
+	inv, bulk := openBulk(t)
+	id := seedMachine(t, inv, "u1", "LAB-01", "OU=Lab")
+
+	op, _, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action:             BulkActionScript,
+		Payload:            `{"shell":"cmd","body":"x"}`,
+		Target:             BulkTarget{MachineIDs: []ID{id}},
+		TargetMode:         BulkTargetSelection,
+		ScheduleKind:       BulkScheduleRecurring,
+		RecurSpec:          `{"every":1,"unit":"day","at":"02:00"}`,
+		CancelAfterMinutes: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bulk.RunOperationNow(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	backdateJobs(t, bulk, op.ID, 61)
+	cancelled, completedOps, err := bulk.ExpireOverdueJobs(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 1 {
+		t.Errorf("expected 1 cancelled job, got %d", cancelled)
+	}
+	if len(completedOps) != 0 {
+		t.Errorf("a recurring op must not complete on expiry, got %v", completedOps)
+	}
+	after, _, _ := bulk.GetOperation(ctx, op.ID)
+	if after.Status != BulkStatusActive {
+		t.Errorf("recurring op status = %q, want active (next run still fires)", after.Status)
+	}
+}
+
+func TestCancelAfterRoundTripAndValidation(t *testing.T) {
+	ctx := context.Background()
+	inv, bulk := openBulk(t)
+	id := seedMachine(t, inv, "u1", "LAB-01", "OU=Lab")
+
+	at := time.Now().Add(time.Hour)
+	op, _, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action: BulkActionScript, Payload: `{"shell":"cmd","body":"x"}`,
+		Target: BulkTarget{MachineIDs: []ID{id}}, ScheduleKind: BulkScheduleOnce, RunAt: &at,
+		WakeOnLAN: true, CancelAfterMinutes: 360,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := bulk.GetOperation(ctx, op.ID)
+	if !got.WakeOnLAN || got.CancelAfterMinutes != 360 {
+		t.Errorf("options didn't round-trip: wol=%v cancel=%d", got.WakeOnLAN, got.CancelAfterMinutes)
+	}
+	if got.CancelAfterLabel() != "6 hours" {
+		t.Errorf("CancelAfterLabel = %q, want %q", got.CancelAfterLabel(), "6 hours")
+	}
+
+	if _, _, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action: BulkActionScript, Payload: `{}`,
+		Target: BulkTarget{MachineIDs: []ID{id}}, CancelAfterMinutes: -5,
+	}); !errors.Is(err, ErrValidation) {
+		t.Errorf("negative cancel-after should fail validation, got %v", err)
 	}
 }
 

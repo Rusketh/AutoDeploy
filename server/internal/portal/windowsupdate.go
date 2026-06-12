@@ -8,6 +8,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 func registerWindowsUpdateRoutes(get, post func(string, http.HandlerFunc), r Repos) {
@@ -252,11 +253,12 @@ func wuDeployCreate(r Repos) http.HandlerFunc {
 			OSFilter:  strings.TrimSpace(req.FormValue("os_filter")),
 			CreatedBy: user.Username,
 		}
-		dep, _, err := r.Updates.CreateDeployment(req.Context(), d)
+		dep, jobs, err := r.Updates.CreateDeployment(req.Context(), d)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs)))
 		flash(w, "ok", "Deployment created")
 		http.Redirect(w, req, "/portal/update-deployments/"+idStr(dep.ID), http.StatusFound)
 	}

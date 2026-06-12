@@ -83,6 +83,7 @@ func TestBulkDetailRenders(t *testing.T) {
 		Status: model.BulkStatusActive, ScheduleKind: "recurring",
 		TargetMode: "filter", CreatedBy: "alice", CreatedAt: now, Payload: "{}",
 		NextRunAt: &now, Progress: model.BulkProgress{Total: 2, OK: 1, Queued: 1},
+		WakeOnLAN: true, CancelAfterMinutes: 360,
 	}
 	type run struct {
 		No   int
@@ -94,7 +95,8 @@ func TestBulkDetailRenders(t *testing.T) {
 		"Runs": []*run{{No: 1, Jobs: []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}}}},
 	})
 	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "re-evaluated each run",
-		"Weekly patch run", "patches the fleet"} {
+		"Weekly patch run", "patches the fleet",
+		"Wake-on-LAN", "cancel undelivered jobs after 6 hours"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_detail missing %q", want)
 		}

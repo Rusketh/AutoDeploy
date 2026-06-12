@@ -420,6 +420,7 @@ func handleAgentEnroll(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		emitFirstSeen(req, r, m)
 		_ = r.Inventory.TouchLastSeen(req.Context(), m.ID)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"machine_id": m.ID,
@@ -440,6 +441,7 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		emitFirstSeen(req, r, machine)
 		// Open or reuse the deployment row.
 		depID := model.ID(0)
 		if in.DeploymentID != nil {
@@ -459,6 +461,7 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
+			emitDeployOutcome(req, r, machine, in.Outcome, in.Notes)
 		}
 		// Record per-package detection state.
 		for _, p := range in.Packages {

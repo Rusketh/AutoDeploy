@@ -39,6 +39,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/tftp"
+	"github.com/rusketh/autodeploy/server/internal/wol"
 )
 
 var base64URL = base64URLpkg.RawURLEncoding
@@ -194,10 +195,18 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			},
 		},
 		WebhookSender: webhookSender,
+		// Emails leave the portal, so their links need the operator's
+		// external URL prefixed (in-portal notifications keep relative
+		// links). Read per-send so a settings change applies live.
+		BaseURLFn: rt.ExternalURL,
 	}
 	emitter.Start()
 	defer emitter.Stop()
 	r.Emitter = emitter
+
+	// Wake-on-LAN sender for bulk operations that request it. MACs come
+	// from agent-reported hardware inventory.
+	waker := &wol.Waker{Inventory: r.Inventory, Logger: logger}
 
 	// Expose the build-time version through the api package so the
 	// /api/v1/version handler and the agent update-info handler
@@ -224,6 +233,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Emitter:       emitter,
+		Waker:         waker,
 	}
 
 	api.Register(mux, apiRepos)
@@ -293,6 +303,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Emitter:       emitter,
+		Waker:         waker,
 		SecretsBox:    bx,
 		DataDir:       cfg.DataDir,
 		ServerVersion: Version,
@@ -323,10 +334,21 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	// Start the bulk-operation scheduler. It fires one-time and recurring
 	// bulk operations when their next_run_at arrives, materialising a fresh
-	// run of agent jobs for each.
-	bsch := &bulksched.Scheduler{Bulk: r.Bulk, Logger: logger}
+	// run of agent jobs for each, waking machines for runs that ask for it,
+	// and reaping jobs past their cancel-after window.
+	bsch := &bulksched.Scheduler{Bulk: r.Bulk, Logger: logger, Waker: waker, Emitter: emitter}
 	go bsch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "bulksched.scheduler_started")
+
+	// Start the machine-offline watcher: emits machine.offline once per
+	// offline episode, threshold configured in Settings > Notifications.
+	ow := &notify.OfflineWatcher{
+		Inventory:        r.Inventory,
+		Emitter:          emitter,
+		ThresholdMinutes: rt.NotifyMachineOfflineMinutes,
+		Logger:           logger,
+	}
+	go ow.Start(ctx)
 
 	// Apply portal-managed network overrides. The runtime settings
 	// layer seeds from env on first start, so env-only installs work

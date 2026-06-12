@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 func init() {
@@ -156,17 +157,21 @@ func machineAction(r Repos) http.HandlerFunc {
 			return
 		}
 		user, _ := sessionUser(req, r)
-		if _, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
+		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
 			Action:         action,
 			Payload:        payload,
 			Target:         model.BulkTarget{MachineIDs: []model.ID{id}},
 			CreatedBy:      user.Username,
 			ReimageImageID: reimageImageIDFromForm(req),
-		}); err != nil {
+		})
+		switch {
+		case err != nil:
 			flash(w, "err", err.Error())
-		} else if action == model.BulkActionReimage {
+		case action == model.BulkActionReimage:
+			r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
 			flash(w, "ok", "Re-image queued. The machine will reboot and re-image on its next check-in.")
-		} else {
+		default:
+			r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
 			flash(w, "ok", "Action queued for this machine.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
