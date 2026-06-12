@@ -1,0 +1,29 @@
+{{/*
+  Shared pager: row range, items-per-page selector, and (when there is
+  more than one page) prev/next plus a numbered strip. Invoke with a
+  portal.PageInfo: {{template "pagination" .Data.Page}}. Page links
+  preserve the request's other query parameters (filter, sort, size, …).
+*/}}
+{{define "pagination"}}
+{{if .}}
+<nav class="pager" aria-label="Pagination">
+  <div class="pager-info small muted">
+    Showing <strong>{{add .Offset 1}}</strong>–<strong>{{.End}}</strong> of <strong>{{.TotalRow}}</strong>
+    <label class="pager-size">
+      <select data-page-size aria-label="Items per page">
+        {{$size := .Size}}
+        {{range .SizeOptions}}<option value="{{.}}" {{if eq . $size}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      per page
+    </label>
+  </div>
+  {{if gt .Total 1}}
+  <div class="pager-links">
+    {{if .PrevURL}}<a class="btn secondary sm" href="{{.PrevURL}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
+    {{range .Links}}{{if .Gap}}<span class="pager-gap" aria-hidden="true">…</span>{{else if .Current}}<span class="pager-num current" aria-current="page">{{.Num}}</span>{{else}}<a class="pager-num" href="{{.URL}}">{{.Num}}</a>{{end}}{{end}}
+    {{if .NextURL}}<a class="btn secondary sm" href="{{.NextURL}}">Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></button>{{end}}
+  </div>
+  {{end}}
+</nav>
+{{end}}
+{{end}}

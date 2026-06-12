@@ -544,7 +544,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
 		assetsFS, "templates/_layout.html", "templates/_icons.html",
-		"templates/_action_picker.html", "templates/"+page)
+		"templates/_action_picker.html", "templates/_pagination.html",
+		"templates/"+page)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
@@ -591,14 +592,35 @@ type PageInfo struct {
 	PrevURL  string // empty if no previous page
 	NextURL  string // empty if no next page
 	Path     string // base path so the template can build other links
+	// Links is the numbered page strip: first and last page plus a
+	// window around the current one, with Gap entries where pages are
+	// elided. Every URL preserves the request's other query parameters
+	// (filter, size, …) so jumping pages never drops the active filter.
+	Links []PageLink
+	// SizeOptions are the selectable items-per-page choices, always
+	// including the currently active size so the select shows it.
+	SizeOptions []int
 }
 
-// paginate computes the slice bounds for the requested page given the
-// total row count and a default page size. ?page=N (1-based) and
-// ?size=N override the defaults; size is clamped to a reasonable range
-// so a single client cannot ask for a million-row payload.
-func paginate(req *http.Request, total, defaultSize int) PageInfo {
-	size := defaultSize
+// PageLink is one entry in the numbered page strip; Gap entries render
+// as an ellipsis between non-adjacent page numbers.
+type PageLink struct {
+	Num     int
+	URL     string
+	Current bool
+	Gap     bool
+}
+
+// pageSizeChoices are the standard items-per-page options; paginate
+// clamps any explicit ?size= to the same 10–500 envelope.
+var pageSizeChoices = []int{10, 25, 50, 100, 250, 500}
+
+// pageAndSize reads ?page= (1-based) and ?size= (clamped 10–500) with the
+// given default size. Shared by paginate and by handlers that must compute
+// a row offset before they know the total (SQL LIMIT/OFFSET lists, e.g.
+// notifications).
+func pageAndSize(req *http.Request, defaultSize int) (page, size int) {
+	size = defaultSize
 	if s := req.URL.Query().Get("size"); s != "" {
 		if v, err := strconv.Atoi(s); err == nil && v > 0 {
 			size = v
@@ -610,12 +632,21 @@ func paginate(req *http.Request, total, defaultSize int) PageInfo {
 	if size > 500 {
 		size = 500
 	}
-	page := 1
+	page = 1
 	if p := req.URL.Query().Get("page"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil && v > 0 {
 			page = v
 		}
 	}
+	return page, size
+}
+
+// paginate computes the slice bounds for the requested page given the
+// total row count and a default page size. ?page=N (1-based) and
+// ?size=N override the defaults; size is clamped to a reasonable range
+// so a single client cannot ask for a million-row payload.
+func paginate(req *http.Request, total, defaultSize int) PageInfo {
+	page, size := pageAndSize(req, defaultSize)
 	pages := (total + size - 1) / size
 	if pages < 1 {
 		pages = 1
@@ -632,21 +663,52 @@ func paginate(req *http.Request, total, defaultSize int) PageInfo {
 		offset = total
 	}
 	q := req.URL.Query()
+	pageURL := func(n int) string {
+		q.Set("page", strconv.Itoa(n))
+		return req.URL.Path + "?" + q.Encode()
+	}
 	prev := ""
 	if page > 1 {
-		q.Set("page", strconv.Itoa(page-1))
-		prev = req.URL.Path + "?" + q.Encode()
+		prev = pageURL(page - 1)
 	}
 	next := ""
 	if page < pages {
-		q.Set("page", strconv.Itoa(page+1))
-		next = req.URL.Path + "?" + q.Encode()
+		next = pageURL(page + 1)
+	}
+	// Numbered strip: 1 … (page-2 .. page+2) … last.
+	var links []PageLink
+	last := 0
+	for n := 1; n <= pages; n++ {
+		if n != 1 && n != pages && (n < page-2 || n > page+2) {
+			continue
+		}
+		if last != 0 && n != last+1 {
+			links = append(links, PageLink{Gap: true})
+		}
+		links = append(links, PageLink{Num: n, URL: pageURL(n), Current: n == page})
+		last = n
+	}
+	sizes := make([]int, 0, len(pageSizeChoices)+1)
+	seenCur := false
+	for _, s := range pageSizeChoices {
+		if !seenCur && size < s {
+			sizes = append(sizes, size)
+			seenCur = true
+		}
+		if s == size {
+			seenCur = true
+		}
+		sizes = append(sizes, s)
+	}
+	if !seenCur {
+		sizes = append(sizes, size)
 	}
 	return PageInfo{
 		Current: page, Total: pages, Size: size, TotalRow: total,
 		Offset: offset, End: end,
 		PrevURL: prev, NextURL: next,
-		Path: req.URL.Path,
+		Path:  req.URL.Path,
+		Links: links, SizeOptions: sizes,
 	}
 }
 

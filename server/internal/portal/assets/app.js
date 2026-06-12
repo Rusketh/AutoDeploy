@@ -129,13 +129,32 @@
   // ---- Filter-as-you-type -------------------------------------------
   // <input data-filter="#table-id">  -> hides table rows whose textContent
   // doesn't contain the (case-insensitive, whitespace-collapsed) query.
+  // The value is mirrored into the URL hash (replaceState, so no history
+  // spam), which is what lets back/forward — and a reload — restore the
+  // filter until the operator clears it.
   document.querySelectorAll('input[data-filter]').forEach(function (inp) {
     const target = document.querySelector(inp.getAttribute('data-filter'));
     if (!target) return;
-    inp.addEventListener('input', function () { applyFilter(target, inp.value); });
-    // Apply once in case the URL hash carried a value.
+    const hashKey = 'f-' + (target.id || 'tbl');
+    try {
+      const saved = new URLSearchParams(location.hash.slice(1)).get(hashKey);
+      if (saved && !inp.value) inp.value = saved;
+    } catch (_) {}
+    inp.addEventListener('input', function () {
+      applyFilter(target, inp.value);
+      writeFilterHash(hashKey, inp.value);
+    });
+    // Apply once in case the hash (or the markup) carried a value.
     if (inp.value) applyFilter(target, inp.value);
   });
+  function writeFilterHash(key, val) {
+    try {
+      const p = new URLSearchParams(location.hash.slice(1));
+      if (val) p.set(key, val); else p.delete(key);
+      const s = p.toString();
+      history.replaceState(null, '', location.pathname + location.search + (s ? '#' + s : ''));
+    } catch (_) {}
+  }
   function applyFilter(table, raw) {
     const q = raw.trim().toLowerCase();
     let matched = 0;
@@ -149,6 +168,74 @@
     const counter = document.querySelector('[data-filter-count="' + table.id + '"]');
     if (counter) counter.textContent = matched;
   }
+
+  // ---- Server-side list filter ---------------------------------------
+  // <input data-server-filter name="q"> inside a GET form. The list is
+  // filtered and paginated server-side, so the filter must live in the
+  // URL — that's also what makes browser back/forward keep it until the
+  // operator clears it. Typing navigates after a short debounce using
+  // location.replace (no history spam from intermediate keystrokes);
+  // Enter navigates immediately with a real history entry; Escape (or
+  // the clear button) clears. Focus is restored after each navigation
+  // so typing flows through the reloads.
+  (function initServerFilter() {
+    var inp = document.querySelector('input[data-server-filter]');
+    if (!inp) return;
+    var FOCUS_KEY = 'ad-filter-focus';
+    try {
+      if (sessionStorage.getItem(FOCUS_KEY) === location.pathname) {
+        sessionStorage.removeItem(FOCUS_KEY);
+        inp.focus();
+        var n = inp.value.length;
+        if (inp.setSelectionRange) inp.setSelectionRange(n, n);
+      }
+    } catch (_) {}
+    function urlFor(value) {
+      var u = new URL(location.href);
+      if (value) u.searchParams.set('q', value); else u.searchParams.delete('q');
+      u.searchParams.delete('page'); // a changed filter restarts at page 1
+      return u.pathname + u.search;
+    }
+    function go(value, push) {
+      var dest = urlFor(value);
+      if (dest === location.pathname + location.search) return;
+      try { sessionStorage.setItem(FOCUS_KEY, location.pathname); } catch (_) {}
+      if (push) location.assign(dest); else location.replace(dest);
+    }
+    var timer = null;
+    inp.addEventListener('input', function (e) {
+      clearTimeout(timer);
+      // Synthetic input events come from the clear button — apply now.
+      if (!e.isTrusted) { go(inp.value, false); return; }
+      timer = setTimeout(function () { go(inp.value, false); }, 450);
+    });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(timer);
+        go(inp.value, true);
+      } else if (e.key === 'Escape' && inp.value) {
+        e.preventDefault();
+        clearTimeout(timer);
+        inp.value = '';
+        go('', false);
+      }
+    });
+    // No-JS fallback is the form's own GET submit; don't double-navigate.
+    if (inp.form) inp.form.addEventListener('submit', function () { clearTimeout(timer); });
+  })();
+
+  // ---- Items-per-page selector ----------------------------------------
+  // <select data-page-size> navigates with ?size=N, returning to page 1.
+  // The server remembers the choice in a cookie so it sticks.
+  document.querySelectorAll('select[data-page-size]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var u = new URL(location.href);
+      u.searchParams.set('size', sel.value);
+      u.searchParams.delete('page');
+      location.assign(u.pathname + u.search);
+    });
+  });
 
   // ---- Confirm-via-dialog -------------------------------------------
   // Forms with data-confirm="msg" open a styled <dialog> instead of the
@@ -345,13 +432,13 @@
       return;
     }
     if (e.key === '/') {
-      const inp = document.querySelector('input[data-filter]');
+      const inp = document.querySelector('input[data-filter], input[data-server-filter]');
       if (inp) { e.preventDefault(); inp.focus(); inp.select(); }
       return;
     }
     if (e.key === 'g') { gPressed = true; setTimeout(function () { gPressed = false; }, 1000); return; }
     if (gPressed) {
-      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software' };
+      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software', n: '/portal/notifications', b: '/portal/bulk' };
       const dest = map[e.key];
       if (dest) { e.preventDefault(); window.location.href = dest; }
       gPressed = false;
@@ -380,6 +467,8 @@
       '<dt><kbd>g</kbd> <kbd>d</kbd></dt><dd>go to Drivers</dd>' +
       '<dt><kbd>g</kbd> <kbd>w</kbd></dt><dd>go to soft<u>w</u>are</dd>' +
       '<dt><kbd>g</kbd> <kbd>o</kbd></dt><dd>go to Loadouts</dd>' +
+      '<dt><kbd>g</kbd> <kbd>n</kbd></dt><dd>go to Notifications</dd>' +
+      '<dt><kbd>g</kbd> <kbd>b</kbd></dt><dd>go to Bulk operations</dd>' +
       '<dt><kbd>g</kbd> <kbd>s</kbd></dt><dd>go to Settings</dd>' +
       '<dt><kbd>?</kbd></dt><dd>this help</dd>' +
       '</dl></div>' +
@@ -825,19 +914,31 @@
   })();
 
   // ---- Filter clear button -------------------------------------------
-  document.querySelectorAll('.filter').forEach(function (input) {
-    if (input.tagName !== 'INPUT') return;
-    var wrap = document.createElement('span');
-    wrap.style.cssText = 'position:relative;display:inline-block';
-    input.parentNode.insertBefore(wrap, input);
-    wrap.appendChild(input);
+  // Works for both shapes in the templates: a bare <input class="filter">
+  // (wrapped so the × can be positioned) and the <div class="filter">
+  // search box (already position:relative). Clearing dispatches a
+  // synthetic input event, which the client-side filter applies
+  // instantly and the server-side filter treats as "navigate now".
+  document.querySelectorAll('.filter').forEach(function (el) {
+    var input, host;
+    if (el.tagName === 'INPUT') {
+      input = el;
+      host = document.createElement('span');
+      host.style.cssText = 'position:relative;display:inline-block';
+      el.parentNode.insertBefore(host, el);
+      host.appendChild(el);
+    } else {
+      input = el.querySelector('input');
+      host = el;
+    }
+    if (!input) return;
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'filter-clear';
     btn.setAttribute('aria-label', 'Clear filter');
     btn.textContent = '×';
     btn.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:1.1rem;color:var(--fg-muted);cursor:pointer;padding:0 4px;display:none';
-    wrap.appendChild(btn);
+    host.appendChild(btn);
     function toggle() { btn.style.display = input.value ? '' : 'none'; }
     input.addEventListener('input', toggle);
     toggle();

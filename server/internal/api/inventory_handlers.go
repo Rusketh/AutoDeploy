@@ -147,9 +147,14 @@ func ouFromDN(dn string) string {
 
 // AgentHardwareRequest is the body the agent POSTs with its collected
 // hardware spec. Identified by agent_id (the server-minted object id).
+// Identity is optional: agents that can read SMBIOS via WMI include it so
+// a manually-installed machine (which never PXE-boots) still gets its
+// make/model and base-board facts into inventory — without them the
+// machine sits as a bare UUID and can't seed driver filters.
 type AgentHardwareRequest struct {
 	AgentID  string         `json:"agent_id"`
 	Hardware model.Hardware `json:"hardware"`
+	Identity match.Identity `json:"identity,omitempty"`
 }
 
 func handleAgentHardware(r Repos) http.HandlerFunc {
@@ -163,6 +168,16 @@ func handleAgentHardware(r Repos) http.HandlerFunc {
 		if err != nil {
 			writeError(w, err)
 			return
+		}
+		// Fold any reported SMBIOS identity into the machine record first.
+		// Guarded by the UUID matching the agent_id's record so a confused
+		// client can't relabel a different machine; absent fields never
+		// overwrite stored values (UpsertFromIdentity COALESCEs).
+		if in.Identity.SystemUUID != "" && in.Identity.SystemUUID == m.SystemUUID {
+			if _, uerr := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity); uerr != nil {
+				writeError(w, uerr)
+				return
+			}
 		}
 		if err := r.Inventory.UpdateHardware(req.Context(), m.ID, in.Hardware); err != nil {
 			writeError(w, err)

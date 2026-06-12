@@ -61,3 +61,51 @@ $nics  = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=tr
 	}
 	return hw
 }
+
+// collectSMBIOSIdentity reads the machine's SMBIOS identity (make/model,
+// serial, SKU/family, BIOS, base board) via CIM, keyed the way the server's
+// match.Identity expects. The PXE path reports these from firmware tables
+// pre-boot, but a manually-installed agent is the machine's only voice —
+// without this its inventory record never gains the make/model/board facts
+// that driver filters (and the portal's filter helpers) need. The system
+// UUID is deliberately NOT read here; the caller injects the one it already
+// trusts. Returns nil if the query fails; each field is best-effort.
+func collectSMBIOSIdentity() map[string]any {
+	const script = `
+$ErrorActionPreference='SilentlyContinue'
+$cs   = Get-CimInstance Win32_ComputerSystem
+$bios = Get-CimInstance Win32_BIOS
+$bb   = Get-CimInstance Win32_BaseBoard
+[pscustomobject]@{
+    system_manufacturer = "$($cs.Manufacturer)"
+    system_product      = "$($cs.Model)"
+    system_serial       = "$($bios.SerialNumber)"
+    system_sku          = "$($cs.SystemSKUNumber)"
+    system_family       = "$($cs.SystemFamily)"
+    bios_vendor         = "$($bios.Manufacturer)"
+    bios_version        = "$($bios.SMBIOSBIOSVersion)"
+    board_manufacturer  = "$($bb.Manufacturer)"
+    board_product       = "$($bb.Product)"
+    board_serial        = "$($bb.SerialNumber)"
+} | ConvertTo-Json -Compress`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell",
+		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+		"-Command", script).Output()
+	if err != nil {
+		return nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &parsed); err != nil {
+		return nil
+	}
+	id := map[string]any{}
+	for k, v := range parsed {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			id[k] = strings.TrimSpace(s)
+		}
+	}
+	return id
+}

@@ -361,6 +361,9 @@ th.sortable::after {
 }
 th.sortable.asc::after  { opacity: 1; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: currentColor; }
 th.sortable.desc::after { opacity: 1; clip-path: polygon(0 0, 100% 0, 50% 100%); background: currentColor; }
+/* Server-side sort headers are links; keep them looking like plain headers. */
+th.sortable a { color: inherit; text-decoration: none; display: inline-block; }
+th.sortable a:hover { color: var(--accent); }
 
 /* ---------- Forms ---------- */
 form.std {
@@ -850,8 +853,39 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
   flex-wrap: wrap;
   gap: var(--sp-3);
 }
-.pager-links { display: flex; align-items: center; gap: var(--sp-2); }
+.pager-links { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .pager-links .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.pager-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
+.pager-num.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  cursor: default;
+}
+.pager-gap { color: var(--fg-muted); padding: 0 2px; }
+.pager-size { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: var(--sp-3); }
+.pager-size select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+}
 
 /* ---------- Bulk-select on lists ---------- */
 .tablewrap input[type="checkbox"].row-check { accent-color: var(--accent); cursor: pointer; }

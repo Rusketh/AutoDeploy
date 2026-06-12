@@ -68,18 +68,7 @@
   </tbody>
 </table>
 </div>
-{{if gt .Data.Total .Data.Limit}}
-<nav class="pager" aria-label="Pagination">
-  <div class="pager-info small muted">
-    Showing <strong>{{add .Data.Offset 1}}</strong>–<strong>{{min (add .Data.Offset .Data.Limit) .Data.Total}}</strong> of <strong>{{.Data.Total}}</strong>
-  </div>
-  <div class="pager-links">
-    {{if gt .Data.Offset 0}}<a class="btn secondary sm" href="/portal/notifications?offset={{sub .Data.Offset .Data.Limit}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
-    {{$nextOffset := add .Data.Offset .Data.Limit}}
-    {{if lt $nextOffset .Data.Total}}<a class="btn secondary sm" href="/portal/notifications?offset={{$nextOffset}}&severity={{.Data.Severity}}&event={{.Data.Event}}{{if .Data.Unread}}&unread=1{{end}}">Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></button>{{end}}
-  </div>
-</nav>
-{{end}}
+{{template "pagination" .Data.Page}}
 {{else}}
 <p class="muted">No notifications.</p>
 {{end}}

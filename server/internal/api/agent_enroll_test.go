@@ -81,6 +81,73 @@ func TestAgentEnroll(t *testing.T) {
 	}
 }
 
+// The hardware report carries the agent's WMI-read SMBIOS identity so a
+// manually-installed machine (which never PXE-boots) still gains the
+// make/model and base-board facts driver filters match on. The identity
+// only lands when its UUID matches the agent_id's record, and a UUID-only
+// report never wipes stored fields.
+func TestAgentHardwareReportUpsertsIdentity(t *testing.T) {
+	srv, repos, _ := newEnrollTestServer(t)
+	ctx := context.Background()
+
+	var enrolled struct {
+		AgentID string `json:"agent_id"`
+	}
+	postJSON(t, srv.URL+"/api/v1/agent/enroll",
+		map[string]any{"identity": map[string]any{"system_uuid": "manual-uuid"}}, &enrolled)
+	if enrolled.AgentID == "" {
+		t.Fatal("no agent_id from enroll")
+	}
+
+	code := postJSON(t, srv.URL+"/api/v1/agent/hardware", map[string]any{
+		"agent_id": enrolled.AgentID,
+		"hardware": map[string]any{"os_caption": "Microsoft Windows 11 Pro"},
+		"identity": map[string]any{
+			"system_uuid":         "manual-uuid",
+			"system_manufacturer": "Dell Inc.",
+			"system_product":      "OptiPlex 7090",
+			"board_manufacturer":  "Dell Inc.",
+			"board_product":       "0K240Y",
+		},
+	}, nil)
+	if code != http.StatusOK {
+		t.Fatalf("hardware report: code=%d", code)
+	}
+	m, err := repos.Inventory.GetByAgentID(ctx, enrolled.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.BoardProduct != "0K240Y" || m.SystemProduct != "OptiPlex 7090" {
+		t.Errorf("identity not stored from hardware report: %+v", m)
+	}
+
+	// A mismatched UUID must not relabel the record.
+	postJSON(t, srv.URL+"/api/v1/agent/hardware", map[string]any{
+		"agent_id": enrolled.AgentID,
+		"hardware": map[string]any{},
+		"identity": map[string]any{
+			"system_uuid":    "someone-else",
+			"system_product": "Wrong Machine",
+		},
+	}, nil)
+	m, _ = repos.Inventory.GetByAgentID(ctx, enrolled.AgentID)
+	if m.SystemProduct != "OptiPlex 7090" {
+		t.Errorf("mismatched-UUID identity relabelled the record: %+v", m)
+	}
+
+	// Legacy body (no identity field) still accepted; stored fields kept.
+	if code := postJSON(t, srv.URL+"/api/v1/agent/hardware", map[string]any{
+		"agent_id": enrolled.AgentID,
+		"hardware": map[string]any{"os_caption": "x"},
+	}, nil); code != http.StatusOK {
+		t.Errorf("legacy hardware report: code=%d", code)
+	}
+	m, _ = repos.Inventory.GetByAgentID(ctx, enrolled.AgentID)
+	if m.BoardProduct != "0K240Y" {
+		t.Errorf("legacy report wiped identity: %+v", m)
+	}
+}
+
 // The deploy report response must carry the agent_id (fallback source for
 // agents talking to it before enrolling) and bind the deployed image to
 // the machine when no operator-chosen image exists.

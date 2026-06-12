@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -80,7 +82,10 @@ func plural(n int) string {
 	return "s"
 }
 
-// machineCSV streams the full machine inventory as a CSV download.
+// machineCSV streams the machine inventory as a CSV download. It honours
+// the list page's ?q= filter and ?sort=/?dir= ordering (the export link
+// carries them), so the download matches what the operator is looking at;
+// without them it exports the whole fleet.
 func machineCSV(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		machines, err := r.Inventory.List(req.Context())
@@ -88,12 +93,27 @@ func machineCSV(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Batch-load bindings for all machines.
+		bindings, imageNames := loadMachineBindings(req, r, machines)
+		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
+
+		if query := strings.TrimSpace(req.URL.Query().Get("q")); query != "" {
+			needle := strings.ToLower(query)
+			filtered := make([]model.MachineRecord, 0, len(machines))
+			for _, m := range machines {
+				if machineMatchesQuery(m, bindings[m.ID], imageNames, osCaptions[m.ID], needle) {
+					filtered = append(filtered, m)
+				}
+			}
+			machines = filtered
+		}
+
 		machineIDs := make([]model.ID, len(machines))
 		for i, m := range machines {
 			machineIDs[i] = m.ID
 		}
-		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
+		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
+		sortKey, sortDir := machineSort(req)
+		sortMachineRecords(machines, sortKey, sortDir, bindings, imageNames, osCaptions, blStatuses)
 
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
@@ -249,34 +269,67 @@ func machineList(r Repos) http.HandlerFunc {
 			OS             string
 			ReimagePending bool
 		}
-		// Pagination. Client-side filtering still works within the
-		// page; pagination is a guard against a multi-thousand-row
-		// payload, not a substitute for search.
-		page := paginate(req, len(v), 50)
-		slice := v[page.Offset:page.End]
 
-		// Batch-load bindings, images, and BitLocker status for the
-		// page slice instead of N+1 per-machine queries.
-		machineIDs := make([]model.ID, len(slice))
-		for i, m := range slice {
-			machineIDs[i] = m.ID
+		query := strings.TrimSpace(req.URL.Query().Get("q"))
+		totalAll := len(v)
+
+		// One query each for the whole fleet: bindings, image names, OS
+		// captions, BitLocker PIN state and pending-re-image flags.
+		// Loading the lot up front (rather than per page) is what lets
+		// ?q= search and ?sort= order the entire inventory, and it
+		// replaces the old per-visible-row hardware Get — an N+1 that
+		// cost up to a query per row at render time.
+		bindings, imageNames := loadMachineBindings(req, r, v)
+		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
+		allIDs := make([]model.ID, len(v))
+		for i, m := range v {
+			allIDs[i] = m.ID
 		}
-		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
-		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
-		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), machineIDs)
+		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), allIDs)
+		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), allIDs)
 
-		// Collect unique image IDs from bindings so we can batch-load names.
-		imageIDSet := map[model.ID]struct{}{}
-		for _, b := range bindings {
-			if b.ImageID != nil {
-				imageIDSet[*b.ImageID] = struct{}{}
+		// Server-side filter: ?q= narrows the whole inventory BEFORE
+		// pagination, so the page count, numbered links and totals all
+		// describe the filtered set (filtering only the rows of the
+		// current page made the pager lie). Keeping the filter in the
+		// URL is also what lets browser back/forward restore it until
+		// the operator clears it.
+		if query != "" {
+			needle := strings.ToLower(query)
+			filtered := make([]model.MachineRecord, 0, len(v))
+			for _, m := range v {
+				if machineMatchesQuery(m, bindings[m.ID], imageNames, osCaptions[m.ID], needle) {
+					filtered = append(filtered, m)
+				}
+			}
+			v = filtered
+		}
+
+		// Server-side sort: ?sort=&dir= orders the whole (filtered) set,
+		// not just the visible page the old client-side sort reordered.
+		sortKey, sortDir := machineSort(req)
+		sortMachineRecords(v, sortKey, sortDir, bindings, imageNames, osCaptions, blStatuses)
+
+		// Page size: an explicit ?size= wins and is remembered in a
+		// cookie, so the choice sticks on later visits that don't carry
+		// the parameter; without either the list defaults to 50.
+		defSize := 50
+		if c, cerr := req.Cookie(machinePageSizeCookie); cerr == nil {
+			if n, aerr := strconv.Atoi(c.Value); aerr == nil && n >= 10 && n <= 500 {
+				defSize = n
 			}
 		}
-		imageIDs := make([]model.ID, 0, len(imageIDSet))
-		for id := range imageIDSet {
-			imageIDs = append(imageIDs, id)
+		if s := req.URL.Query().Get("size"); s != "" {
+			if n, aerr := strconv.Atoi(s); aerr == nil && n >= 10 && n <= 500 {
+				http.SetCookie(w, &http.Cookie{
+					Name: machinePageSizeCookie, Value: strconv.Itoa(n),
+					Path: "/portal/machines", MaxAge: 365 * 24 * 60 * 60,
+					SameSite: http.SameSiteLaxMode,
+				})
+			}
 		}
-		imageNames, _ := r.Images.ListNamesByIDs(req.Context(), imageIDs)
+		page := paginate(req, len(v), defSize)
+		slice := v[page.Offset:page.End]
 
 		rows := make([]row, 0, len(slice))
 		for _, m := range slice {
@@ -285,21 +338,205 @@ func machineList(r Repos) http.HandlerFunc {
 			if b.ImageID != nil {
 				imgName = imageNames[*b.ImageID]
 			}
-			bl := blStatuses[m.ID]
 			name := m.ReportedName
 			if name == "" {
 				name = b.MachineName
 			}
-			osCaption := ""
-			if full, err := r.Inventory.Get(req.Context(), m.ID); err == nil && full.Hardware != nil {
-				osCaption = full.Hardware.OSCaption
-			}
-			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet, OS: osCaption, ReimagePending: reimaging[m.ID]})
+			rows = append(rows, row{
+				Machine: m, Name: name, ImageName: imgName,
+				BLSet: blStatuses[m.ID].PINSet, OS: osCaptions[m.ID],
+				ReimagePending: reimaging[m.ID],
+			})
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
-			"Rows": rows, "Page": page,
+			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
+			"Sort":   machineSortColumns(req, sortKey, sortDir),
+			"CSVURL": machineCSVURL(req),
 		})
 	}
+}
+
+// loadMachineBindings batch-loads bindings plus bound image names for the
+// given machines (one query each, never N+1).
+func loadMachineBindings(req *http.Request, r Repos, ms []model.MachineRecord) (map[model.ID]model.MachineBinding, map[model.ID]string) {
+	ids := make([]model.ID, len(ms))
+	for i, m := range ms {
+		ids[i] = m.ID
+	}
+	bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), ids)
+	imageIDSet := map[model.ID]struct{}{}
+	for _, b := range bindings {
+		if b.ImageID != nil {
+			imageIDSet[*b.ImageID] = struct{}{}
+		}
+	}
+	imageIDs := make([]model.ID, 0, len(imageIDSet))
+	for id := range imageIDSet {
+		imageIDs = append(imageIDs, id)
+	}
+	imageNames, _ := r.Images.ListNamesByIDs(req.Context(), imageIDs)
+	return bindings, imageNames
+}
+
+// machineSortKeys are the columns the machines list can be ordered by.
+var machineSortKeys = map[string]bool{
+	"uuid": true, "name": true, "model": true, "serial": true,
+	"os": true, "image": true, "bitlocker": true, "last_seen": true,
+}
+
+// machineSort reads ?sort=&dir=, defaulting to last_seen desc (the repo's
+// natural order: most recently seen first).
+func machineSort(req *http.Request) (key, dir string) {
+	key = req.URL.Query().Get("sort")
+	if !machineSortKeys[key] {
+		key = "last_seen"
+	}
+	dir = req.URL.Query().Get("dir")
+	if dir != "asc" && dir != "desc" {
+		if key == "last_seen" {
+			dir = "desc"
+		} else {
+			dir = "asc"
+		}
+	}
+	return key, dir
+}
+
+// sortMachineRecords orders the full machine set by the chosen column.
+// Display-derived columns (name, image, OS, BitLocker) sort by the same
+// values the rows show. Ties break by ID so paging is stable.
+func sortMachineRecords(v []model.MachineRecord, key, dir string,
+	bindings map[model.ID]model.MachineBinding, imageNames, osCaptions map[model.ID]string,
+	bl map[model.ID]model.BitLockerPIN) {
+	if key == "last_seen" && dir == "desc" {
+		return // the repo already returns last_seen DESC
+	}
+	val := func(m model.MachineRecord) string {
+		b := bindings[m.ID]
+		switch key {
+		case "uuid":
+			return m.SystemUUID
+		case "name":
+			if m.ReportedName != "" {
+				return m.ReportedName
+			}
+			return b.MachineName
+		case "model":
+			return m.SystemManufacturer + " " + m.SystemProduct
+		case "serial":
+			return m.SystemSerial
+		case "os":
+			return osCaptions[m.ID]
+		case "image":
+			if b.ImageID != nil {
+				return imageNames[*b.ImageID]
+			}
+			return ""
+		case "bitlocker":
+			if bl[m.ID].PINSet {
+				return "1"
+			}
+			return "0"
+		}
+		return ""
+	}
+	asc := func(i, j int) bool {
+		if key == "last_seen" {
+			if v[i].LastSeen.Equal(v[j].LastSeen) {
+				return v[i].ID < v[j].ID
+			}
+			return v[i].LastSeen.Before(v[j].LastSeen)
+		}
+		a, b := strings.ToLower(val(v[i])), strings.ToLower(val(v[j]))
+		if a == b {
+			return v[i].ID < v[j].ID
+		}
+		return a < b
+	}
+	sort.SliceStable(v, func(i, j int) bool {
+		if dir == "desc" {
+			return asc(j, i)
+		}
+		return asc(i, j)
+	})
+}
+
+// machineSortCol is one sortable header: the link to click and the state
+// class ("asc"/"desc"/"") that drives the header's arrow indicator.
+type machineSortCol struct {
+	URL   string
+	State string
+}
+
+// machineSortColumns builds a header link per sortable column. Clicking
+// the active column flips its direction; any other column starts on its
+// natural direction (text asc, last_seen desc). Links keep the filter and
+// page size but reset to page 1.
+func machineSortColumns(req *http.Request, activeKey, activeDir string) map[string]machineSortCol {
+	out := make(map[string]machineSortCol, len(machineSortKeys))
+	for key := range machineSortKeys {
+		dir := "asc"
+		if key == "last_seen" {
+			dir = "desc"
+		}
+		state := ""
+		if key == activeKey {
+			state = activeDir
+			if activeDir == "asc" {
+				dir = "desc"
+			} else {
+				dir = "asc"
+			}
+		}
+		q := req.URL.Query()
+		q.Set("sort", key)
+		q.Set("dir", dir)
+		q.Del("page")
+		out[key] = machineSortCol{URL: req.URL.Path + "?" + q.Encode(), State: state}
+	}
+	return out
+}
+
+// machineCSVURL carries the active filter and ordering onto the CSV
+// export link, so the download matches what's on screen.
+func machineCSVURL(req *http.Request) string {
+	q := url.Values{}
+	for _, k := range []string{"q", "sort", "dir"} {
+		if v := req.URL.Query().Get(k); v != "" {
+			q.Set(k, v)
+		}
+	}
+	if len(q) == 0 {
+		return "/portal/machines.csv"
+	}
+	return "/portal/machines.csv?" + q.Encode()
+}
+
+// machinePageSizeCookie remembers the operator's items-per-page choice on
+// the machines list across visits.
+const machinePageSizeCookie = "ad_machines_size"
+
+// machineMatchesQuery is the machines list's ?q= predicate: a case-
+// insensitive substring test across the fields an operator can see or
+// paste — names, system AND base-board SMBIOS identity, serials, UUID,
+// BIOS, the reported OS and the bound image's name. needle must already
+// be lower-cased.
+func machineMatchesQuery(m model.MachineRecord, b model.MachineBinding, imageNames map[model.ID]string, os, needle string) bool {
+	hay := []string{
+		m.SystemUUID, m.ReportedName, b.MachineName,
+		m.SystemManufacturer, m.SystemProduct, m.SystemSerial,
+		m.BoardManufacturer, m.BoardProduct, m.BoardSerial,
+		m.BIOSVendor, m.BIOSVersion, os,
+	}
+	if b.ImageID != nil {
+		hay = append(hay, imageNames[*b.ImageID])
+	}
+	for _, h := range hay {
+		if h != "" && strings.Contains(strings.ToLower(h), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func machineDetail(r Repos) http.HandlerFunc {

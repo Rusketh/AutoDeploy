@@ -11,12 +11,15 @@ import (
 
 // BootMenuRequest is the body a Boot Client posts to /api/v1/clients/menu.
 // Identity comes from SMBIOS read pre-boot; the server is the sole authority
-// for which configurations the operator is offered.
+// for which configurations the operator is offered. The full identity is
+// accepted (not just make/model/serial/UUID) so the inventory record carries
+// the base-board and BIOS facts from the machine's very first menu boot —
+// an operator building a driver filter on e.g. board_product needs those
+// values visible in the portal before the machine has ever been deployed.
+// Older boot clients that post only the original four fields still decode
+// cleanly; the missing fields stay empty and never overwrite stored values.
 type BootMenuRequest struct {
-	SystemUUID         string `json:"system_uuid"`
-	SystemManufacturer string `json:"system_manufacturer"`
-	SystemProduct      string `json:"system_product"`
-	SystemSerial       string `json:"system_serial"`
+	match.Identity
 }
 
 // BootMenuResponse is what the client receives back. Items list deployable
@@ -208,12 +211,7 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 		// inventory tracks every machine that boots into AutoDeploy —
 		// even ones that have no binding yet.
 		if r.Inventory != nil && in.SystemUUID != "" {
-			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), match.Identity{
-				SystemUUID:         in.SystemUUID,
-				SystemManufacturer: in.SystemManufacturer,
-				SystemProduct:      in.SystemProduct,
-				SystemSerial:       in.SystemSerial,
-			})
+			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
 		}
 		images, err := r.Images.List(req.Context())
 		if err != nil {

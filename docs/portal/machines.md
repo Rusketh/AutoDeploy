@@ -21,13 +21,24 @@ The list shows, per machine:
 | BitLocker | Whether a pre-boot PIN is configured |
 | Last seen | When the machine last contacted the server |
 
-Use the **filter** box to narrow the list. You can also select machines with the checkboxes and
-**delete** them in bulk.
+Use the **filter** box to narrow the list. Filtering happens server-side across the whole
+inventory — names, make/model, base-board identity, serials, UUIDs, the reported OS and the
+bound image's name — so the page numbers and totals always describe what you're looking at. The
+filter is kept in the page URL, which means the browser's back/forward buttons restore it; it
+stays until you clear it (the **×** in the box, <kbd>Esc</kbd>, or the **Clear filter** link).
+
+Click a **column header** to sort. Sorting is also server-side, ordering the entire (filtered)
+fleet rather than just the visible page; click the active column again to flip the direction.
+
+The pager below the list offers numbered page links and an **items per page** selector
+(10–500); your choice is remembered for future visits. You can also select machines with the
+checkboxes and **delete** them in bulk — the selection covers the current page.
 
 ### Exporting to CSV
 
 Click **Export CSV** to download the inventory as `machines.csv` for reporting or to feed into
-other tools.
+other tools. The export honours the active filter and sort order, so it matches what's on
+screen; visit the page unfiltered to export the whole fleet.
 
 ## Machine detail
 

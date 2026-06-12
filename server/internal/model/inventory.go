@@ -302,6 +302,36 @@ func (r *InventoryRepo) UpdateHardware(ctx context.Context, machineID ID, h Hard
 	return err
 }
 
+// ListOSCaptions returns every machine's reported OS caption in one query,
+// keyed by machine ID. Machines with no hardware report are absent. The
+// machines list needs each visible row's OS without paying a per-machine
+// Get (List deliberately skips hardware_json).
+func (r *InventoryRepo) ListOSCaptions(ctx context.Context) (map[ID]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, hardware_json FROM machine_record
+		WHERE hardware_json IS NOT NULL AND hardware_json != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[ID]string{}
+	for rows.Next() {
+		var id ID
+		var raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		// Decode only the one field we need; garbage JSON just yields "".
+		var hw struct {
+			OSCaption string `json:"os_caption"`
+		}
+		if json.Unmarshal([]byte(raw), &hw) == nil && hw.OSCaption != "" {
+			out[id] = hw.OSCaption
+		}
+	}
+	return out, rows.Err()
+}
+
 // UpdateObservedIdentity stores the running agent's reported current computer
 // name and AD distinguished name, and refreshes last_seen. Keyed by the
 // server-minted agent_id. Returns the machine so the caller can sync the

@@ -341,3 +341,28 @@ func TestUpdateLatestInProgressNote(t *testing.T) {
 		t.Errorf("late milestone must not mutate a closed row: %+v", hist[0])
 	}
 }
+
+// ListOSCaptions returns every machine's reported OS in one query — the
+// machines list renders (and searches/sorts) the OS column from it instead
+// of paying a per-row Get.
+func TestListOSCaptions(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInventoryRepo(openTestDB(t))
+
+	a, _ := repo.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "os-a"})
+	b, _ := repo.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "os-b"})
+	if err := repo.UpdateHardware(ctx, a.ID, Hardware{OSCaption: "Microsoft Windows 11 Pro"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ListOSCaptions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[a.ID] != "Microsoft Windows 11 Pro" {
+		t.Errorf("caption for a: %q", got[a.ID])
+	}
+	if _, ok := got[b.ID]; ok {
+		t.Errorf("machine with no hardware report should be absent, got %q", got[b.ID])
+	}
+}

@@ -17,9 +17,15 @@
     {{if .Data.Machines}}
     <div class="row machine-picker-bar">
       <label><span class="lbl">Use a known machine as a filter</span>
-        <select id="machine-as-filter">
+        <select id="machine-as-filter" onchange="syncMachineFilterSource()">
           <option value="">Pick a machine…</option>
-          {{range .Data.Machines}}<option value="{{.ID}}" data-manufacturer="{{.Manufacturer}}" data-product="{{.Product}}">{{.Label}}</option>{{end}}
+          {{range .Data.Machines}}<option value="{{.ID}}" data-manufacturer="{{.Manufacturer}}" data-product="{{.Product}}" data-board-manufacturer="{{.BoardManufacturer}}" data-board-product="{{.BoardProduct}}">{{.Label}}</option>{{end}}
+        </select>
+      </label>
+      <label><span class="lbl">Match on</span>
+        <select id="machine-filter-source">
+          <option value="system">System make + model</option>
+          <option value="board">Base board make + product</option>
         </select>
       </label>
       <button type="button" class="secondary sm" onclick="useMachineAsFilter()"><svg><use href="#i-plus"/></svg>Add as filter</button>
@@ -124,8 +130,19 @@
     <label><span class="lbl">system_uuid</span><input type="text" name="p_system_uuid" value="{{if $prev}}{{$prev.Identity.SystemUUID}}{{end}}"></label>
   </div>
   <div class="row">
+    <label><span class="lbl">system_sku</span><input type="text" name="p_system_sku" value="{{if $prev}}{{$prev.Identity.SystemSKU}}{{end}}"></label>
+    <label><span class="lbl">system_family</span><input type="text" name="p_system_family" value="{{if $prev}}{{$prev.Identity.SystemFamily}}{{end}}"></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">bios_vendor</span><input type="text" name="p_bios_vendor" value="{{if $prev}}{{$prev.Identity.BIOSVendor}}{{end}}"></label>
+    <label><span class="lbl">bios_version</span><input type="text" name="p_bios_version" value="{{if $prev}}{{$prev.Identity.BIOSVersion}}{{end}}"></label>
+  </div>
+  <div class="row">
     <label><span class="lbl">board_manufacturer</span><input type="text" name="p_board_manufacturer" value="{{if $prev}}{{$prev.Identity.BoardManufacturer}}{{end}}"></label>
     <label><span class="lbl">board_product</span><input type="text" name="p_board_product" value="{{if $prev}}{{$prev.Identity.BoardProduct}}{{end}}"></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">board_serial</span><input type="text" name="p_board_serial" value="{{if $prev}}{{$prev.Identity.BoardSerial}}{{end}}"></label>
   </div>
   <div class="actions"><button type="submit"><svg><use href="#i-bolt"/></svg>Evaluate</button></div>
 </form>
@@ -205,21 +222,56 @@ function appendFilterBlock(constraints) {
   document.getElementById('filters').appendChild(fb);
   return fb;
 }
-// useMachineAsFilter copies the SMBIOS manufacturer/product of the
-// machine selected in the helper dropdown into a fresh filter block.
+// useMachineAsFilter copies the SMBIOS identity of the machine selected
+// in the helper dropdown into a fresh filter block. The "Match on"
+// selector picks which identity pair is used: the system make + model,
+// or the base-board make + product (useful where the system fields are
+// generic, e.g. white-box builds reporting "To Be Filled By O.E.M.").
 // The operator can edit the values or add more constraints afterward.
 function useMachineAsFilter() {
   var sel = document.getElementById('machine-as-filter');
   if (!sel || !sel.value) return;
   var opt = sel.options[sel.selectedIndex];
-  var manuf = opt.getAttribute('data-manufacturer') || '';
-  var prod  = opt.getAttribute('data-product') || '';
-  if (!manuf && !prod) return;
+  var srcSel = document.getElementById('machine-filter-source');
+  var src = srcSel ? srcSel.value : 'system';
   var constraints = [];
-  if (manuf) constraints.push({key:'system_manufacturer', value: manuf});
-  if (prod)  constraints.push({key:'system_product', value: prod});
+  if (src === 'board') {
+    var bManuf = opt.getAttribute('data-board-manufacturer') || '';
+    var bProd  = opt.getAttribute('data-board-product') || '';
+    if (bManuf) constraints.push({key:'board_manufacturer', value: bManuf});
+    if (bProd)  constraints.push({key:'board_product', value: bProd});
+  } else {
+    var manuf = opt.getAttribute('data-manufacturer') || '';
+    var prod  = opt.getAttribute('data-product') || '';
+    if (manuf) constraints.push({key:'system_manufacturer', value: manuf});
+    if (prod)  constraints.push({key:'system_product', value: prod});
+  }
+  if (!constraints.length) return;
   appendFilterBlock(constraints);
   sel.selectedIndex = 0;
+  syncMachineFilterSource();
 }
+// syncMachineFilterSource greys out the "Match on" choices the selected
+// machine has no data for, so the Add button never silently produces an
+// empty filter.
+function syncMachineFilterSource() {
+  var sel = document.getElementById('machine-as-filter');
+  var srcSel = document.getElementById('machine-filter-source');
+  if (!sel || !srcSel) return;
+  var opt = sel.options[sel.selectedIndex];
+  var hasSys = !!(opt && ((opt.getAttribute('data-manufacturer') || '') || (opt.getAttribute('data-product') || '')));
+  var hasBoard = !!(opt && ((opt.getAttribute('data-board-manufacturer') || '') || (opt.getAttribute('data-board-product') || '')));
+  // No machine picked yet: leave both choices available.
+  if (!sel.value) { hasSys = true; hasBoard = true; }
+  for (var i = 0; i < srcSel.options.length; i++) {
+    var o = srcSel.options[i];
+    o.disabled = (o.value === 'system' && !hasSys) || (o.value === 'board' && !hasBoard);
+  }
+  var cur = srcSel.options[srcSel.selectedIndex];
+  if (cur && cur.disabled) {
+    srcSel.value = hasSys ? 'system' : 'board';
+  }
+}
+syncMachineFilterSource();
 </script>
 {{end}}
