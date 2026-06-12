@@ -199,12 +199,12 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
 
 	var resp menuResponse
-	if err := c.PostJSON(ctx, "/api/v1/clients/menu", map[string]any{
-		"system_uuid":         id.SystemUUID,
-		"system_manufacturer": id.SystemManufacturer,
-		"system_product":      id.SystemProduct,
-		"system_serial":       id.SystemSerial,
-	}, &resp); err != nil {
+	// Full SMBIOS identity, not just make/model/serial/UUID: the menu boot
+	// is usually the machine's first contact with the server, and sending
+	// the base-board and BIOS facts here is what lets an operator build a
+	// driver filter on e.g. board_product from the portal's inventory
+	// before the machine has ever been deployed.
+	if err := c.PostJSON(ctx, "/api/v1/clients/menu", identityBody(id), &resp); err != nil {
 		log.Error("menu.fetch", slog.String("error", err.Error()))
 		os.Exit(0) // fail-safe
 	}

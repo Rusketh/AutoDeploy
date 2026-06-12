@@ -47,13 +47,16 @@ type uiPair struct{ Key, Value string }
 
 // machineFilterChoice is one entry in the "use machine as filter"
 // dropdown on the driver form. The label is what the operator sees;
-// the manufacturer/product values are what get written into the new
-// filter constraint when the operator picks one.
+// the system and base-board values are what get written into the new
+// filter constraints when the operator picks one — the "Match on"
+// selector decides which pair is used.
 type machineFilterChoice struct {
-	ID           int64
-	Label        string
-	Manufacturer string
-	Product      string
+	ID                int64
+	Label             string
+	Manufacturer      string
+	Product           string
+	BoardManufacturer string
+	BoardProduct      string
 }
 
 func driverForm(r Repos, p model.DriverPackage, isNew bool) http.HandlerFunc {
@@ -90,20 +93,29 @@ func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model
 		title = "Edit driver package: " + p.Name
 	}
 	// Build the "use machine as filter" dropdown. Only machines whose
-	// SMBIOS makes a meaningful filter (manufacturer + product) are
-	// included; an empty list collapses the helper UI gracefully.
+	// SMBIOS makes a meaningful filter — system manufacturer + product,
+	// or a base-board product — are included; an empty list collapses
+	// the helper UI gracefully.
 	var machines []machineFilterChoice
 	if !isNew && r.Inventory != nil {
 		all, _ := r.Inventory.List(req.Context())
 		for _, m := range all {
-			if strings.TrimSpace(m.SystemManufacturer) == "" || strings.TrimSpace(m.SystemProduct) == "" {
+			sysOK := strings.TrimSpace(m.SystemManufacturer) != "" && strings.TrimSpace(m.SystemProduct) != ""
+			boardOK := strings.TrimSpace(m.BoardProduct) != ""
+			if !sysOK && !boardOK {
 				continue
 			}
+			label := strings.TrimSpace(m.SystemManufacturer + " " + m.SystemProduct)
+			if label == "" {
+				label = strings.TrimSpace(m.BoardManufacturer+" "+m.BoardProduct) + " (board)"
+			}
 			machines = append(machines, machineFilterChoice{
-				ID:           int64(m.ID),
-				Label:        m.SystemManufacturer + " " + m.SystemProduct,
-				Manufacturer: m.SystemManufacturer,
-				Product:      m.SystemProduct,
+				ID:                int64(m.ID),
+				Label:             label,
+				Manufacturer:      m.SystemManufacturer,
+				Product:           m.SystemProduct,
+				BoardManufacturer: m.BoardManufacturer,
+				BoardProduct:      m.BoardProduct,
 			})
 		}
 	}
@@ -406,6 +418,8 @@ func driverPreviewForm(r Repos) http.HandlerFunc {
 			SystemProduct:      req.FormValue("p_system_product"),
 			SystemSerial:       req.FormValue("p_system_serial"),
 			SystemUUID:         req.FormValue("p_system_uuid"),
+			SystemSKU:          req.FormValue("p_system_sku"),
+			SystemFamily:       req.FormValue("p_system_family"),
 			BIOSVendor:         req.FormValue("p_bios_vendor"),
 			BIOSVersion:        req.FormValue("p_bios_version"),
 			BoardManufacturer:  req.FormValue("p_board_manufacturer"),

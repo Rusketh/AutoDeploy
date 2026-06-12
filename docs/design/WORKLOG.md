@@ -2737,3 +2737,72 @@ deliberately wrong column). Troubleshooting doc gained a "short read" section.
 416-on-resume as terminal (fail fast or accept) instead of spinning the full
 stall budget, so any future size disagreement fails in seconds, not minutes.
 Left out here to avoid changing truncation semantics without sign-off.
+
+---
+
+## 2026-06-12 — Base-board driver filters end-to-end; machines list filter/paging rework
+
+**WHAT.** Two related operator-facing fixes.
+
+1) *Base Board Product in driver filters, boot image + portal.* The match
+engine already knew `board_product`, but the Boot Client's menu request only
+posted four identity fields (UUID/make/model/serial) — and the menu boot is
+usually a machine's first contact with the server. Result: machines sat in
+inventory with empty base-board (and SKU/family/BIOS) fields until their
+first actual deploy, so an operator could not see or seed a board-based
+filter from the portal. Changes:
+- Boot Client `runMenu` now posts the full `identityBody(id)` (all 11
+  SMBIOS fields) to `/api/v1/clients/menu`.
+- `BootMenuRequest` embeds `match.Identity`; the menu handler upserts the
+  complete identity. Old clients posting four fields still decode, and
+  `UpsertFromIdentity`'s COALESCE keeps absent fields from wiping stored
+  values (test: `TestBootMenuStoresFullIdentity`).
+- Driver form's "use a known machine as a filter" gained a **Match on**
+  selector: system make + model (as before) or base-board make + product,
+  for white-box builds whose system fields are generic. Choices the picked
+  machine lacks data for are greyed out.
+- Filter preview now offers every matchable field (added system_sku,
+  system_family, bios_vendor, bios_version, board_serial inputs; the
+  handler also reads SKU/family now).
+
+2) *Machines list: server-side filter + honest pagination.* The filter box
+was client-side over the current page only, so the counts and pager lied
+under a filter, and navigation lost the filter text. Changes:
+- `?q=` filters the whole inventory server-side BEFORE pagination
+  (case-insensitive substring over UUID, names, system + board identity,
+  serials, BIOS, bound image name). Pager totals/links now describe the
+  filtered set, and every page link preserves `q`.
+- Numbered page strip (1 … window … last) added to the shared
+  `pagination` template via `PageInfo.Links`.
+- Items-per-page selector (10–500) on the pager; explicit `?size=` is
+  remembered in an `ad_machines_size` cookie so the choice sticks.
+- The filter lives in the URL: browser back/forward restores it until the
+  operator clears it (× button, Esc, or the empty-state "Clear filter"
+  link). Typing navigates after a 450ms debounce via `location.replace`
+  (no history spam from intermediate keystrokes); Enter pushes a real
+  history entry; focus is restored across the reload so typing flows.
+- New `data-server-filter` / `data-page-size` opt-ins in app.js; the
+  clear-button helper now also handles the `<div class="filter">` box.
+
+**WHY (decisions).** Server-side q over fetch-and-swap: the portal is
+server-rendered everywhere, and URL-held state is what makes back/forward
+"just work" — a JS-held filter cache would fight the navigation model. The
+OS column is deliberately NOT searched (it lives in per-machine hardware
+JSON; scanning it costs a query per machine). `location.replace` for
+debounced keystrokes keeps history clean while still letting Back return
+to the pre-filter view. Menu request carries the full identity rather than
+a second "inventory" endpoint: one fewer round-trip in the pre-boot
+environment and the upsert path already existed.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, full `go test ./...` green
+for server and boot-client modules; `scripts/check-secrets.sh` OK. New
+tests: `TestBootMenuStoresFullIdentity` (full + legacy menu identity),
+`TestPaginateNumberedLinks`, `TestMachineMatchesQuery`,
+`TestMachineListRender` (filter box / counts / pager / empty states),
+`TestDriverFormRenderBoardFilterHelper`. Docs updated:
+`docs/portal/machines.md` (filter + pager behaviour),
+`docs/portal/payloads.md` (full filter-key list, board helper).
+
+**NEXT.** Optional: have Export CSV honour the active `?q=`; teach the
+Windows agent to report base-board identity (WMI Win32_BaseBoard) so
+manually-enrolled machines that never PXE-boot also carry board data.

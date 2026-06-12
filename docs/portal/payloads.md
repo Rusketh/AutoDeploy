@@ -138,11 +138,15 @@ A package can have several **filters**. The matching rule is:
 - An **empty filter never matches** (a safety default — a package with no filters won't be applied
   to anything).
 
-Each constraint is a key/value pair. Keys come from the machine's SMBIOS data — for example
-`system_manufacturer`, `system_product`, `system_serial`, `system_uuid`, `board_manufacturer`,
-`board_product`. A value of `*` matches any non-empty value for that key. There's also a helper to
-**use a known machine as a filter**, which seeds a filter from an inventory machine's manufacturer
-and product so you can start from a real device.
+Each constraint is a key/value pair. Keys come from the machine's SMBIOS data:
+`system_manufacturer`, `system_product`, `system_serial`, `system_uuid`, `system_sku`,
+`system_family`, `bios_vendor`, `bios_version`, `board_manufacturer`, `board_product` (the base
+board / motherboard product) and `board_serial`. A value of `*` matches any non-empty value for
+that key. There's also a helper to **use a known machine as a filter**, which seeds a filter from
+an inventory machine — choose whether to match on its system make + model or on its base-board
+make + product (handy for white-box builds whose system fields are generic, where the base board
+is the identity that matters). Machines report their full identity, base board included, from
+their very first network boot, so the values are available before a machine is ever deployed.
 
 ![Editing a driver package](../images/driver-edit.png)
 

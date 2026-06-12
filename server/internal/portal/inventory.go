@@ -249,34 +249,83 @@ func machineList(r Repos) http.HandlerFunc {
 			OS             string
 			ReimagePending bool
 		}
-		// Pagination. Client-side filtering still works within the
-		// page; pagination is a guard against a multi-thousand-row
-		// payload, not a substitute for search.
-		page := paginate(req, len(v), 50)
+
+		query := strings.TrimSpace(req.URL.Query().Get("q"))
+		totalAll := len(v)
+
+		// loadBindings batch-loads bindings plus bound image names for a
+		// set of machines (one query each, never N+1): the whole fleet
+		// when the filter must search names, just the visible page
+		// otherwise.
+		var bindings map[model.ID]model.MachineBinding
+		var imageNames map[model.ID]string
+		loadBindings := func(ms []model.MachineRecord) {
+			ids := make([]model.ID, len(ms))
+			for i, m := range ms {
+				ids[i] = m.ID
+			}
+			bindings, _ = r.Inventory.ListBindingsForMachines(req.Context(), ids)
+			imageIDSet := map[model.ID]struct{}{}
+			for _, b := range bindings {
+				if b.ImageID != nil {
+					imageIDSet[*b.ImageID] = struct{}{}
+				}
+			}
+			imageIDs := make([]model.ID, 0, len(imageIDSet))
+			for id := range imageIDSet {
+				imageIDs = append(imageIDs, id)
+			}
+			imageNames, _ = r.Images.ListNamesByIDs(req.Context(), imageIDs)
+		}
+
+		// Server-side filter: ?q= narrows the whole inventory BEFORE
+		// pagination, so the page count, numbered links and totals all
+		// describe the filtered set (filtering only the rows of the
+		// current page made the pager lie). Keeping the filter in the
+		// URL is also what lets browser back/forward restore it until
+		// the operator clears it.
+		if query != "" {
+			loadBindings(v)
+			needle := strings.ToLower(query)
+			filtered := make([]model.MachineRecord, 0, len(v))
+			for _, m := range v {
+				if machineMatchesQuery(m, bindings[m.ID], imageNames, needle) {
+					filtered = append(filtered, m)
+				}
+			}
+			v = filtered
+		}
+
+		// Page size: an explicit ?size= wins and is remembered in a
+		// cookie, so the choice sticks on later visits that don't carry
+		// the parameter; without either the list defaults to 50.
+		defSize := 50
+		if c, cerr := req.Cookie(machinePageSizeCookie); cerr == nil {
+			if n, aerr := strconv.Atoi(c.Value); aerr == nil && n >= 10 && n <= 500 {
+				defSize = n
+			}
+		}
+		if s := req.URL.Query().Get("size"); s != "" {
+			if n, aerr := strconv.Atoi(s); aerr == nil && n >= 10 && n <= 500 {
+				http.SetCookie(w, &http.Cookie{
+					Name: machinePageSizeCookie, Value: strconv.Itoa(n),
+					Path: "/portal/machines", MaxAge: 365 * 24 * 60 * 60,
+					SameSite: http.SameSiteLaxMode,
+				})
+			}
+		}
+		page := paginate(req, len(v), defSize)
 		slice := v[page.Offset:page.End]
 
-		// Batch-load bindings, images, and BitLocker status for the
-		// page slice instead of N+1 per-machine queries.
 		machineIDs := make([]model.ID, len(slice))
 		for i, m := range slice {
 			machineIDs[i] = m.ID
 		}
-		bindings, _ := r.Inventory.ListBindingsForMachines(req.Context(), machineIDs)
+		if query == "" {
+			loadBindings(slice)
+		}
 		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
 		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), machineIDs)
-
-		// Collect unique image IDs from bindings so we can batch-load names.
-		imageIDSet := map[model.ID]struct{}{}
-		for _, b := range bindings {
-			if b.ImageID != nil {
-				imageIDSet[*b.ImageID] = struct{}{}
-			}
-		}
-		imageIDs := make([]model.ID, 0, len(imageIDSet))
-		for id := range imageIDSet {
-			imageIDs = append(imageIDs, id)
-		}
-		imageNames, _ := r.Images.ListNamesByIDs(req.Context(), imageIDs)
 
 		rows := make([]row, 0, len(slice))
 		for _, m := range slice {
@@ -297,9 +346,37 @@ func machineList(r Repos) http.HandlerFunc {
 			rows = append(rows, row{Machine: m, Name: name, ImageName: imgName, BLSet: bl.PINSet, OS: osCaption, ReimagePending: reimaging[m.ID]})
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
-			"Rows": rows, "Page": page,
+			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
 		})
 	}
+}
+
+// machinePageSizeCookie remembers the operator's items-per-page choice on
+// the machines list across visits.
+const machinePageSizeCookie = "ad_machines_size"
+
+// machineMatchesQuery is the machines list's ?q= predicate: a case-
+// insensitive substring test across the fields an operator can see or
+// paste — names, system AND base-board SMBIOS identity, serials, UUID,
+// BIOS, and the bound image's name. needle must already be lower-cased.
+// (The OS column is not searched: it lives in per-machine hardware JSON,
+// which would cost a query per machine to scan.)
+func machineMatchesQuery(m model.MachineRecord, b model.MachineBinding, imageNames map[model.ID]string, needle string) bool {
+	hay := []string{
+		m.SystemUUID, m.ReportedName, b.MachineName,
+		m.SystemManufacturer, m.SystemProduct, m.SystemSerial,
+		m.BoardManufacturer, m.BoardProduct, m.BoardSerial,
+		m.BIOSVendor, m.BIOSVersion,
+	}
+	if b.ImageID != nil {
+		hay = append(hay, imageNames[*b.ImageID])
+	}
+	for _, h := range hay {
+		if h != "" && strings.Contains(strings.ToLower(h), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func machineDetail(r Repos) http.HandlerFunc {

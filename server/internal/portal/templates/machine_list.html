@@ -2,15 +2,15 @@
 {{$page := .Data.Page}}
 <div class="toolbar">
   <h2>Machines</h2>
-  <div class="filter">
+  <form class="filter" method="GET" action="/portal/machines">
     <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+    <input type="search" name="q" value="{{.Data.Query}}" placeholder="Filter — press /" data-server-filter autocomplete="off" aria-label="Filter machines">
+  </form>
   <div class="right">
     <a class="btn secondary sm" href="/portal/machines/bulk-edit"><svg><use href="#i-pencil"/></svg>Bulk edit</a>
     <a class="btn secondary sm" href="/portal/machines.csv"><svg><use href="#i-download"/></svg>Export CSV</a>
     <span class="small muted">
-      {{if $page}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{else}}<span data-filter-count="tbl">{{len .Data.Rows}}</span> machines{{end}}
+      {{if .Data.Query}}{{$page.TotalRow}} of {{.Data.TotalAll}} machine{{if ne .Data.TotalAll 1}}s{{end}} match{{else}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{end}}
     </span>
   </div>
 </div>
@@ -63,23 +63,38 @@ function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').le
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-server"/></svg>
+  {{if .Data.Query}}
+  <h3>No machines match “{{.Data.Query}}”</h3>
+  <p>The filter searches names, make/model, base board, serials, UUIDs and bound images.</p>
+  <p><a class="btn secondary sm" href="/portal/machines">Clear filter</a></p>
+  {{else}}
   <h3>No machines yet</h3>
   <p>Machines appear here the first time they PXE-boot the AutoDeploy Boot Client. Once they do, bind each one to an image to enable re-imaging.</p>
+  {{end}}
 </div>
 {{end}}
 {{end}}
 
 {{define "pagination"}}
-{{if and . (gt .Total 1)}}
+{{if .}}
 <nav class="pager" aria-label="Pagination">
   <div class="pager-info small muted">
     Showing <strong>{{add .Offset 1}}</strong>–<strong>{{.End}}</strong> of <strong>{{.TotalRow}}</strong>
+    <label class="pager-size">
+      <select data-page-size aria-label="Items per page">
+        {{$size := .Size}}
+        {{range .SizeOptions}}<option value="{{.}}" {{if eq . $size}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      per page
+    </label>
   </div>
+  {{if gt .Total 1}}
   <div class="pager-links">
     {{if .PrevURL}}<a class="btn secondary sm" href="{{.PrevURL}}"><svg><use href="#i-arrow-left"/></svg>Prev</a>{{else}}<button class="btn secondary sm" disabled><svg><use href="#i-arrow-left"/></svg>Prev</button>{{end}}
-    <span class="small muted">page {{.Current}} of {{.Total}}</span>
+    {{range .Links}}{{if .Gap}}<span class="pager-gap" aria-hidden="true">…</span>{{else if .Current}}<span class="pager-num current" aria-current="page">{{.Num}}</span>{{else}}<a class="pager-num" href="{{.URL}}">{{.Num}}</a>{{end}}{{end}}
     {{if .NextURL}}<a class="btn secondary sm" href="{{.NextURL}}">Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></a>{{else}}<button class="btn secondary sm" disabled>Next <svg class="flip-h"><use href="#i-arrow-left"/></svg></button>{{end}}
   </div>
+  {{end}}
 </nav>
 {{end}}
 {{end}}
