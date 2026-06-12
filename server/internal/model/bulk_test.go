@@ -94,7 +94,7 @@ func TestBulkPreviewAndCreate(t *testing.T) {
 	}
 
 	// Complete.
-	if err := bulk.CompleteJob(ctx, claimed[0].ID, "ok", `{"exit_code":0}`); err != nil {
+	if _, err := bulk.CompleteJob(ctx, claimed[0].ID, "ok", `{"exit_code":0}`); err != nil {
 		t.Fatal(err)
 	}
 }

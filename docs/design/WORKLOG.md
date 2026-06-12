@@ -2884,3 +2884,83 @@ notifications.md (pager).
 
 **NEXT.** Optional: Gmail-style "select all N matching" for cross-page bulk
 delete; surface board_product as a column option on the machines list.
+
+---
+
+## 2026-06-12 — Bulk delivery options (WoL + cancel-after) and notification wiring
+
+**WHAT.** Two new per-operation delivery options for scheduled bulk work, and
+the notification system actually emits events now.
+
+1) *Wake-on-LAN* (`bulk_operation.wake_on_lan`, migration 0028). New
+`internal/wol` package builds the 102-byte magic packet and broadcasts it
+(UDP :9, SO_BROADCAST via x/sys on both platforms) to every targeted
+machine's known NIC MACs — sourced from the agent-reported hardware
+inventory, deduped, dash/colon formats accepted. Fired wherever a run
+materialises: the scheduler tick, immediate create (API + portal), and
+portal Run-now — always AFTER jobs/re-image flags commit, so a machine that
+boots straight into PXE finds its flag set.
+
+2) *Cancel-after* (`bulk_operation.cancel_after_minutes`). A job still
+queued this long after it was created is cancelled by a new scheduler sweep
+(`ExpireOverdueJobs`): job -> cancelled with a result note, the machine's
+reimage_pending flag cleared (guarded by NOT EXISTS against other live
+re-image jobs), and a non-recurring operation whose last outstanding job
+expired flips to completed. Enforcement is server-side in BOTH directions —
+`ClaimJobsFor` (used by /agent/checkin and /agent/self) refuses expired jobs
+even before the sweep runs, and the boot client's auto-deploy check reads
+the (now cleared) flag — so agents "respect" the deadline with zero agent
+changes, per the authority-lives-on-the-server rule. This is the
+"overnight re-image must not fire at 09:00" fence.
+
+3) *Notifications actually fire.* Root cause of "notifications do not
+work": the channels, preferences, webhooks and UI all existed but NOTHING
+called `Emitter.Emit()` — zero call sites repo-wide — so no event was ever
+produced. Also fixed a latent bug for the day callers existed: Emit ran its
+async fan-out on request-scoped contexts (dead before the workers run); it
+now detaches with `context.WithoutCancel`. Wired events: bulk.created
+(API+portal), bulk.completed/failed/partial (CompleteJob now reports the
+flip atomically via RowsAffected so concurrent agents can't double-emit;
+expiry sweep emits for ops it finishes), deploy.started/deploy.reimage
+(boot staging, using the existing reimageSourceFor classification),
+deploy.failed (staging failure + agent final report), deploy.completed
+(agent final report), machine.first_seen (derived FirstContact flag on
+UpsertFromIdentity insert; emitted at every upsert handler), machine.offline
+(new notify.OfflineWatcher, 1-min tick, threshold from the existing — and
+previously unread — Settings > Notifications value; once per episode via
+machine_record.offline_notified_at, cleared on next contact),
+software.install_ok/failed (software_push job results),
+auth.login_failed (API + portal login), bitlocker.recovery_used (key
+retrieval handler, value never travels), update.deployed (API + portal
+deployment create). Emails get absolute links via the external-URL setting
+(BaseURLFn); in-portal links stay relative.
+
+**WHY (decisions).** Cancel-after stores minutes (form offers hours/minutes)
+and keys each job's deadline on its own queued_at, not the operation's
+last_run_at — recurring runs leave stale older-run jobs behind, and
+per-job clocks reap those too without touching a newer run's jobs. Expired
+jobs become 'cancelled' (not 'failed'): the work was never attempted.
+Recurring operations never complete on expiry — the next slot still fires.
+WoL deliberately has no per-subnet config yet: PXE already presumes
+broadcast-domain reachability; the address is a Waker field, so a settings
+knob can land later without redesign. machine.offline dedup lives in a DB
+column rather than watcher memory so a server restart doesn't re-spam
+long-dead machines. Events not yet emitted (hardware_change,
+update.compliance_fail, system.*) are listed as reserved in the docs.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, full `go test ./...` green;
+`scripts/check-secrets.sh` OK. New tests: magic-packet bytes + a real UDP
+round-trip with MAC dedup/format/no-hardware cases (wol), claim-refusal and
+sweep behaviour incl. flag clearing + op completion + recurring-stays-active
+(model), scheduler wakes only wake_on_lan ops (bulksched, fake waker),
+offline watcher notifies once per episode end-to-end through a real emitter
+(notify), outcome classification table (notify), delivery-options form
+parsing (portal), and a full HTTP lifecycle test asserting
+machine.first_seen + bulk.created + bulk.completed notifications land
+(api). Docs: bulk-operations.md (schedule + delivery options), api.md
+(create-body fields), notifications.md (emission notes + reserved events).
+
+**NEXT.** Wire the reserved events (hardware_change diffing,
+update.compliance_fail, storage_low via x/sys statfs, agent_outdated from
+the version handler); optional per-site WoL broadcast addresses; surface
+expired-job counts on the bulk list page.

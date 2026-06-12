@@ -33,6 +33,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/wol"
 )
 
 //go:embed templates/*.html assets/*
@@ -73,6 +74,9 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
+	// Waker sends Wake-on-LAN packets for bulk operations that request it.
+	// Optional; nil skips waking.
+	Waker *wol.Waker
 	// SecretsBox is unused at the portal layer but kept here so the
 	// bundle matches the api one-for-one if we ever want to swap.
 	SecretsBox *secrets.Box
@@ -221,6 +225,18 @@ func loginSubmit(r Repos) http.HandlerFunc {
 		u, err := r.Users.Authenticate(req.Context(),
 			req.FormValue("username"), req.FormValue("password"))
 		if err != nil {
+			username := req.FormValue("username")
+			if username == "" {
+				username = "(blank)"
+			}
+			r.Emitter.Emit(req.Context(), notify.Event{
+				Name:     notify.EventAuthLoginFailed,
+				Severity: notify.SevWarning,
+				Title:    "Failed login attempt for " + username,
+				Body:     "A portal sign-in with this username was rejected.",
+				Link:     "/portal/logs",
+				Actor:    username,
+			})
 			q := url.Values{}
 			q.Set("error", "invalid credentials")
 			if n := req.FormValue("next"); n != "" {

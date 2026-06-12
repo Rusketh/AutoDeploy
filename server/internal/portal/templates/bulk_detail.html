@@ -51,6 +51,10 @@
     {{if eq $op.ScheduleKind "recurring"}} · target {{if eq $op.TargetMode "filter"}}re-evaluated each run{{else}}fixed selection{{end}}{{end}}
   </dd>
   <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code> {{end}}{{if $op.Target.MachineIDs}}{{len $op.Target.MachineIDs}} machine(s){{end}}</dd>
+  <dt>Delivery</dt><dd class="small">
+    Wake-on-LAN {{if $op.WakeOnLAN}}<span class="badge ok">on</span>{{else}}<span class="badge muted">off</span>{{end}}
+    · cancel undelivered jobs after {{$op.CancelAfterLabel}}
+  </dd>
   <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
   <dt>Created</dt><dd>{{formatTime $op.CreatedAt}}</dd>
   <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>

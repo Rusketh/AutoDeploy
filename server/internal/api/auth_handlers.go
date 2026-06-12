@@ -76,6 +76,7 @@ func handleLogin(r Repos) http.HandlerFunc {
 		}
 		u, err := r.Users.Authenticate(req.Context(), in.Username, in.Password)
 		if err != nil {
+			emitLoginFailed(req, r, in.Username, ip)
 			// Constant error message — do not leak whether user exists.
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return

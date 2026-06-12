@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 // RegisterBitLocker mounts the BitLocker endpoints. Operator-facing
@@ -150,6 +152,16 @@ func handleRetrieveRecoveryKey(r Repos) http.HandlerFunc {
 			slog.String("target", "bitlocker.recovery_key:"+itoa64(int64(id))),
 			slog.String("note", "value returned to client; not logged"),
 		)
+		// Key ACCESS is the notable security event (the key value itself
+		// never travels through the notification system).
+		r.Emitter.Emit(req.Context(), notify.Event{
+			Name:     notify.EventBitLockerRecovery,
+			Severity: notify.SevWarning,
+			Title:    "BitLocker recovery key accessed by " + u.Username,
+			Body:     fmt.Sprintf("Recovery key record #%d was retrieved through the portal/API.", int64(id)),
+			Link:     machineLink(v.MachineID),
+			Actor:    u.Username,
+		})
 		writeJSON(w, http.StatusOK, v)
 	}
 }

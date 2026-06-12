@@ -49,6 +49,10 @@ type MachineRecord struct {
 	Hardware  *Hardware `json:"hardware,omitempty"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	// FirstContact is set (derived, never persisted) when UpsertFromIdentity
+	// just created this record — i.e. the machine was seen for the very first
+	// time. Handlers use it to emit the machine.first_seen notification.
+	FirstContact bool `json:"-"`
 }
 
 // Hardware is the machine's reported hardware inventory. The agent
@@ -229,7 +233,8 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 			    board_product       = COALESCE(NULLIF(?, ''), board_product),
 			    board_serial        = COALESCE(NULLIF(?, ''), board_serial),
 			    agent_id=CASE WHEN agent_id='' THEN ? ELSE agent_id END,
-			    last_seen=CURRENT_TIMESTAMP
+			    last_seen=CURRENT_TIMESTAMP,
+			    offline_notified_at=NULL
 			WHERE id=?`,
 			id.SystemSerial, id.SystemManufacturer, id.SystemProduct,
 			id.BIOSVendor, id.BIOSVersion,
@@ -256,7 +261,9 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 		return MachineRecord{}, err
 	}
 	newID, _ := res.LastInsertId()
-	return r.Get(ctx, ID(newID))
+	m, err := r.Get(ctx, ID(newID))
+	m.FirstContact = err == nil
+	return m, err
 }
 
 // Get returns the machine record by primary key.
@@ -381,10 +388,59 @@ func (r *InventoryRepo) SyncBindingFromObserved(ctx context.Context, machineID I
 
 // TouchLastSeen bumps a machine's last_seen to now. Called on every resident
 // agent /self poll so "last seen" reflects real check-in liveness, not just
-// the last boot-client/identity report. Best-effort at the call site.
+// the last boot-client/identity report. Best-effort at the call site. Also
+// closes any open offline episode so the next one notifies again.
 func (r *InventoryRepo) TouchLastSeen(ctx context.Context, id ID) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE machine_record SET last_seen=CURRENT_TIMESTAMP WHERE id=?`, id)
+		`UPDATE machine_record SET last_seen=CURRENT_TIMESTAMP, offline_notified_at=NULL WHERE id=?`, id)
+	return err
+}
+
+// ListOfflineUnnotified returns machines that have not been seen for at
+// least thresholdMinutes and have no machine.offline notification recorded
+// for the current episode. The comparison runs entirely in SQLite
+// (last_seen is CURRENT_TIMESTAMP-written) so no Go/DB time-format mixing.
+func (r *InventoryRepo) ListOfflineUnnotified(ctx context.Context, thresholdMinutes int) ([]MachineRecord, error) {
+	if thresholdMinutes <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, system_uuid, agent_id, reported_name, first_seen, last_seen
+		FROM machine_record
+		WHERE last_seen < datetime('now', '-' || ? || ' minutes')
+		  AND offline_notified_at IS NULL
+		ORDER BY id`, thresholdMinutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MachineRecord
+	for rows.Next() {
+		var v MachineRecord
+		if err := rows.Scan(&v.ID, &v.SystemUUID, &v.AgentID, &v.ReportedName,
+			&v.FirstSeen, &v.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// MarkOfflineNotified records that a machine.offline notification went out
+// for these machines' current offline episode (cleared on next contact).
+func (r *InventoryRepo) MarkOfflineNotified(ctx context.Context, ids []ID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = int64(id)
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE machine_record SET offline_notified_at=CURRENT_TIMESTAMP
+		 WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	return err
 }
 

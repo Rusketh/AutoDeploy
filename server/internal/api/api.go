@@ -20,6 +20,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/wol"
 )
 
 // Repos is the bundle of repositories the API depends on. Pass one
@@ -76,6 +77,9 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
+	// Waker sends Wake-on-LAN packets for bulk operations that request it.
+	// Optional; nil skips waking.
+	Waker *wol.Waker
 }
 
 // Register mounts /api/v1/* routes on mux.

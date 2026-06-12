@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 // AgentUpdateJob is one claimed update-deployment job enriched with the
@@ -162,6 +163,7 @@ func handleCreateUpdateDeployment(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs)))
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"deployment": dep,
 			"jobs":       jobs,

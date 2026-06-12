@@ -170,9 +170,38 @@ type BulkOperation struct {
 	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
 	RunCount     int        `json:"run_count"`
 
+	// Delivery options (migration 0028). WakeOnLAN sends a magic packet to
+	// every targeted machine's known MACs each time a run materialises, so
+	// powered-off machines boot and pick the job up. CancelAfterMinutes
+	// cancels a job still queued this long after it was created — and clears
+	// the re-image flag it set — so e.g. a re-image scheduled overnight can't
+	// fire mid-morning on a machine that stayed powered off. 0 = never.
+	WakeOnLAN          bool `json:"wake_on_lan"`
+	CancelAfterMinutes int  `json:"cancel_after_minutes"`
+
 	// Progress is a derived (not persisted) per-status job rollup, filled
 	// by ListOperationsWithProgress / ProgressFor for the portal.
 	Progress BulkProgress `json:"progress"`
+}
+
+// CancelAfterLabel renders the cancel-after window for display: "never",
+// "45 minutes", "6 hours". Whole hours read as hours, everything else in
+// minutes, matching the form's two units.
+func (op BulkOperation) CancelAfterLabel() string {
+	m := op.CancelAfterMinutes
+	switch {
+	case m <= 0:
+		return "never"
+	case m%60 == 0:
+		if m == 60 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", m/60)
+	case m == 1:
+		return "1 minute"
+	default:
+		return fmt.Sprintf("%d minutes", m)
+	}
 }
 
 // BulkProgress is the per-status job rollup for an operation (latest run for
@@ -329,11 +358,11 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 		`INSERT INTO bulk_operation
 		   (action, payload, target_json, created_by, status, schedule_kind,
 		    target_mode, run_at, recur_spec, next_run_at, last_run_at, run_count,
-		    reimage_image_id, name, description)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    reimage_image_id, name, description, wake_on_lan, cancel_after_minutes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		op.Action, op.Payload, string(targetJSON), op.CreatedBy, status, op.ScheduleKind,
 		op.TargetMode, op.RunAt, op.RecurSpec, nextRun, nil, runCount,
-		int64(op.ReimageImageID), op.Name, op.Description)
+		int64(op.ReimageImageID), op.Name, op.Description, op.WakeOnLAN, op.CancelAfterMinutes)
 	if err != nil {
 		return BulkOperation{}, nil, err
 	}
@@ -378,7 +407,8 @@ func (r *BulkRepo) insertJobsTx(ctx context.Context, tx *sql.Tx, opID ID, action
 // sync with scanOperation.
 const bulkOpColumns = `id, action, payload, target_json, created_by, created_at,
 	status, schedule_kind, target_mode, run_at, recur_spec, next_run_at,
-	last_run_at, run_count, reimage_image_id, name, description`
+	last_run_at, run_count, reimage_image_id, name, description,
+	wake_on_lan, cancel_after_minutes`
 
 // scanOperation reads a bulk_operation row in bulkOpColumns order.
 func scanOperation(s interface{ Scan(...any) error }) (BulkOperation, error) {
@@ -388,7 +418,8 @@ func scanOperation(s interface{ Scan(...any) error }) (BulkOperation, error) {
 	var reimageID int64
 	if err := s.Scan(&v.ID, &v.Action, &v.Payload, &targetJSON, &v.CreatedBy, &v.CreatedAt,
 		&v.Status, &v.ScheduleKind, &v.TargetMode, &runAt, &v.RecurSpec, &nextRun,
-		&lastRun, &v.RunCount, &reimageID, &v.Name, &v.Description); err != nil {
+		&lastRun, &v.RunCount, &reimageID, &v.Name, &v.Description,
+		&v.WakeOnLAN, &v.CancelAfterMinutes); err != nil {
 		return BulkOperation{}, err
 	}
 	_ = json.Unmarshal([]byte(targetJSON), &v.Target)
@@ -455,11 +486,15 @@ func (r *BulkRepo) jobsFor(ctx context.Context, opID ID) ([]BulkJob, error) {
 }
 
 // ClaimJobsFor returns up to max queued jobs for the machine, marking
-// them 'running'. Called by the agent on check-in.
+// them 'running'. Called by the agent on check-in. Jobs past their
+// operation's cancel-after window are never handed out — the agent must not
+// start work the operator said expires (the scheduler's expiry sweep
+// cancels them; this filter closes the gap between deadline and next tick).
 func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]BulkJob, error) {
 	if max <= 0 {
 		max = 8
 	}
+	now := time.Now()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -468,7 +503,7 @@ func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]B
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT j.id, j.operation_id, j.machine_id, o.action, o.payload,
-		       j.status, j.queued_at
+		       j.status, j.queued_at, o.cancel_after_minutes
 		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
 		WHERE j.machine_id=? AND j.status='queued'
 		  AND o.status NOT IN ('cancelled','paused')
@@ -481,9 +516,13 @@ func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]B
 	var out []BulkJob
 	for rows.Next() {
 		var j BulkJob
+		var cancelAfter int
 		if err := rows.Scan(&j.ID, &j.OperationID, &j.MachineID, &j.Action, &j.Payload,
-			&j.Status, &j.QueuedAt); err != nil {
+			&j.Status, &j.QueuedAt, &cancelAfter); err != nil {
 			return nil, err
+		}
+		if jobExpired(j.QueuedAt, cancelAfter, now) {
+			continue
 		}
 		out = append(out, j)
 	}
@@ -516,35 +555,77 @@ func (r *BulkRepo) ClaimJobsFor(ctx context.Context, machineID ID, max int) ([]B
 	return claimed, nil
 }
 
-// CompleteJob writes the final status + result.
-func (r *BulkRepo) CompleteJob(ctx context.Context, jobID ID, status, resultJSON string) error {
+// CompleteJob writes the final status + result. The returned ID is non-zero
+// when this call flipped the parent operation to 'completed' (this was its
+// last outstanding job) — the caller uses it to emit one finished event
+// without racing other agents reporting concurrently.
+func (r *BulkRepo) CompleteJob(ctx context.Context, jobID ID, status, resultJSON string) (ID, error) {
 	if status != "ok" && status != "failed" {
-		return fmt.Errorf("%w: invalid status %q", ErrValidation, status)
+		return 0, fmt.Errorf("%w: invalid status %q", ErrValidation, status)
 	}
 	if resultJSON == "" {
 		resultJSON = "{}"
 	}
 	if !json.Valid([]byte(resultJSON)) {
-		return fmt.Errorf("%w: result_json must be valid JSON", ErrValidation)
+		return 0, fmt.Errorf("%w: result_json must be valid JSON", ErrValidation)
+	}
+	var opID int64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT operation_id FROM bulk_job WHERE id=?`, jobID).Scan(&opID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("job %d: %w", jobID, ErrNotFound)
+		}
+		return 0, err
 	}
 	if _, err := r.db.ExecContext(ctx,
 		`UPDATE bulk_job SET status=?, result_json=?, completed_at=CURRENT_TIMESTAMP WHERE id=?`,
 		status, resultJSON, jobID); err != nil {
-		return err
+		return 0, err
 	}
 	// Flip a non-recurring operation to 'completed' once this was its last
 	// outstanding job. Keeps the list query simple (status is authoritative)
 	// without a separate sweep. Recurring operations stay active so they can
 	// fire again; scheduled/cancelled/paused are left untouched.
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE bulk_operation SET status='completed'
-		WHERE id=(SELECT operation_id FROM bulk_job WHERE id=?)
+		WHERE id=?
 		  AND status='active' AND schedule_kind!='recurring'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM bulk_job
 		    WHERE operation_id=bulk_operation.id AND status IN ('queued','running'))`,
-		jobID)
-	return err
+		opID)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return ID(opID), nil
+	}
+	return 0, nil
+}
+
+// jobExpired reports whether a queued job has outlived its operation's
+// cancel-after window. cancelAfterMinutes 0 means never.
+func jobExpired(queuedAt time.Time, cancelAfterMinutes int, now time.Time) bool {
+	if cancelAfterMinutes <= 0 {
+		return false
+	}
+	return !now.Before(queuedAt.Add(time.Duration(cancelAfterMinutes) * time.Minute))
+}
+
+// GetJob returns a single job row (action/payload joined from its operation).
+func (r *BulkRepo) GetJob(ctx context.Context, jobID ID) (BulkJob, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT j.id, j.operation_id, j.machine_id, o.action, o.payload,
+		       j.status, j.result_json, j.run_no, j.queued_at
+		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+		WHERE j.id=?`, jobID)
+	var j BulkJob
+	err := row.Scan(&j.ID, &j.OperationID, &j.MachineID, &j.Action, &j.Payload,
+		&j.Status, &j.ResultJSON, &j.RunNo, &j.QueuedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BulkJob{}, fmt.Errorf("job %d: %w", jobID, ErrNotFound)
+	}
+	return j, err
 }
 
 // DeleteJobsForMachine removes every bulk_job row for a machine. Called when

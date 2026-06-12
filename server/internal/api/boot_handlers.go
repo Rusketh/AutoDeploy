@@ -82,6 +82,7 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		emitFirstSeen(req, r, m)
 		switch in.Status {
 		case "staging":
 			// Classify the deploy as a re-image (and how it was triggered)
@@ -94,6 +95,7 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
+			emitDeployStarted(req, r, m, in.ImageID, reimageSource)
 			// Clear any remote-reimage flag now the deploy has begun, so it
 			// fires exactly once and the machine doesn't re-image on every
 			// subsequent network boot.
@@ -129,6 +131,9 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			if err := r.Inventory.UpdateLatestDeployment(req.Context(), m.ID, outcome, notes, in.Status); err != nil {
 				writeError(w, err)
 				return
+			}
+			if outcome == "failed" {
+				emitDeployOutcome(req, r, m, "failed", notes)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
 			return
@@ -211,7 +216,9 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 		// inventory tracks every machine that boots into AutoDeploy —
 		// even ones that have no binding yet.
 		if r.Inventory != nil && in.SystemUUID != "" {
-			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
+			if m, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity); err == nil {
+				emitFirstSeen(req, r, m)
+			}
 		}
 		images, err := r.Images.List(req.Context())
 		if err != nil {

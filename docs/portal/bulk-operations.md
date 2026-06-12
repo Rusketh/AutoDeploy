@@ -38,6 +38,26 @@ Pick the action type; the form reveals only the fields it needs:
 | Push software | Install a package (and its dependencies) on each machine | **Software package** |
 | Re-image | Rebuild each machine from an image | **Image** (optional — defaults to each machine's bound image) |
 
+### 4. Choose when it runs
+
+| Schedule | Behaviour |
+|----------|-----------|
+| **Run now** | Jobs are queued immediately; agents pick them up at their next check-in. |
+| **Run once** | Jobs are queued at the date/time you pick (server time). |
+| **Recurring** | Re-fires on a preset cadence (hourly / daily / weekly) or a cron expression. A recurring task can either replay the **fixed selection** every run or **re-evaluate the filter** so newly matching machines are picked up. |
+
+### 5. Delivery options
+
+| Option | What it does |
+|--------|--------------|
+| **Send Wake-on-LAN** | When a run starts, the server broadcasts a magic packet to every targeted machine's known NIC MACs (UDP port 9), so powered-off machines boot and pick the job up. The machine must have reported its hardware inventory at least once (that's where the MACs come from), have WoL enabled in firmware, and be reachable by broadcast from the server. For a re-image this is usually all that's needed: the woken machine network-boots straight into the deploy. |
+| **Cancel undelivered jobs after** | A job still waiting this long after its run started is cancelled, and any re-image flag it set is cleared. Use it to fence a scheduled job out of office hours: a re-image queued at 02:00 with *cancel after 5 hours* will never fire on a machine someone first powers on at 09:00 — it boots normally and the job shows as **cancelled**. Blank = wait indefinitely. |
+
+The deadline is enforced server-side, so agents and the boot client respect it no matter when they
+appear: an agent checking in after the deadline is never handed the job, and a machine
+network-booting after the deadline finds no re-image flag. Both options can be edited on a
+scheduled operation until its first run is in flight.
+
 Click **Queue operation** to start it.
 
 ## Tracking results
@@ -56,3 +76,6 @@ claimed and completed, and a result. Results fill in as agents pick up and repor
   network-boot.
 - Renames coordinate with Active Directory server-side before the local job is queued.
 - Every bulk operation, and every script run, is recorded in the [activity log](logs.md).
+- Creating an operation fires a `bulk.created` [notification](notifications.md); when its last job
+  finishes the matching `bulk.completed` / `bulk.partial` / `bulk.failed` event fires (jobs
+  cancelled by the cancel-after window count toward *partial*).

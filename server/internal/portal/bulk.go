@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 func init() {
@@ -119,6 +120,9 @@ type bulkParams struct {
 	ScheduleKind   string
 	RunAt          *time.Time
 	RecurSpec      string
+	// Delivery options.
+	WakeOnLAN          bool
+	CancelAfterMinutes int
 }
 
 // parseBulkForm reads the shared action + target + schedule fields. It returns
@@ -156,6 +160,14 @@ func parseBulkForm(req *http.Request) (bulkParams, error) {
 	default:
 		return p, fmt.Errorf("unknown schedule type")
 	}
+
+	// Delivery options: Wake-on-LAN and the cancel-after window.
+	p.WakeOnLAN = req.FormValue("wake_on_lan") != ""
+	cancelAfter, err := cancelAfterFromForm(req)
+	if err != nil {
+		return p, err
+	}
+	p.CancelAfterMinutes = cancelAfter
 
 	// Target. A recurring "filter" task stores the live filter so each run
 	// re-resolves it; everything else uses the explicit selection basket.
@@ -219,6 +231,27 @@ func parseBulkForm(req *http.Request) (bulkParams, error) {
 	return p, nil
 }
 
+// cancelAfterFromForm reads the optional cancel-after window: a number plus
+// a minutes/hours unit, normalised to minutes. Blank or 0 = never cancel.
+func cancelAfterFromForm(req *http.Request) (int, error) {
+	raw := strings.TrimSpace(req.FormValue("cancel_after_value"))
+	if raw == "" || raw == "0" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("cancel-after must be a whole number (or blank for never)")
+	}
+	switch req.FormValue("cancel_after_unit") {
+	case "minutes":
+		return n, nil
+	case "", "hours":
+		return n * 60, nil
+	default:
+		return 0, fmt.Errorf("cancel-after unit must be minutes or hours")
+	}
+}
+
 // parseLocalDateTime parses an <input type=datetime-local> value (no zone) in
 // the server's local timezone.
 func parseLocalDateTime(s string) (time.Time, error) {
@@ -274,23 +307,31 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			return
 		}
 		user, _ := sessionUser(req, r)
-		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
-			Name:           p.Name,
-			Description:    p.Description,
-			Action:         p.Action,
-			Payload:        p.Payload,
-			Target:         p.Target,
-			TargetMode:     p.TargetMode,
-			CreatedBy:      user.Username,
-			ReimageImageID: p.ReimageImageID,
-			ScheduleKind:   p.ScheduleKind,
-			RunAt:          p.RunAt,
-			RecurSpec:      p.RecurSpec,
+		op, jobs, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
+			Name:               p.Name,
+			Description:        p.Description,
+			Action:             p.Action,
+			Payload:            p.Payload,
+			Target:             p.Target,
+			TargetMode:         p.TargetMode,
+			CreatedBy:          user.Username,
+			ReimageImageID:     p.ReimageImageID,
+			ScheduleKind:       p.ScheduleKind,
+			RunAt:              p.RunAt,
+			RecurSpec:          p.RecurSpec,
+			WakeOnLAN:          p.WakeOnLAN,
+			CancelAfterMinutes: p.CancelAfterMinutes,
 		})
 		if err != nil {
 			flash(w, "err", err.Error())
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
 			return
+		}
+		r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
+		// "Run now" queued its jobs above — wake the targets; scheduled and
+		// recurring runs are woken by the scheduler when they materialise.
+		if op.WakeOnLAN && r.Waker != nil && len(jobs) > 0 {
+			r.Waker.WakeForJobs(req.Context(), jobs)
 		}
 		switch p.ScheduleKind {
 		case model.BulkScheduleOnce:
@@ -343,17 +384,19 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 			return
 		}
 		if err := r.Bulk.UpdateOperation(req.Context(), model.BulkOperation{
-			ID:             id,
-			Name:           p.Name,
-			Description:    p.Description,
-			Action:         p.Action,
-			Payload:        p.Payload,
-			Target:         p.Target,
-			TargetMode:     p.TargetMode,
-			ReimageImageID: p.ReimageImageID,
-			ScheduleKind:   p.ScheduleKind,
-			RunAt:          p.RunAt,
-			RecurSpec:      p.RecurSpec,
+			ID:                 id,
+			Name:               p.Name,
+			Description:        p.Description,
+			Action:             p.Action,
+			Payload:            p.Payload,
+			Target:             p.Target,
+			TargetMode:         p.TargetMode,
+			ReimageImageID:     p.ReimageImageID,
+			ScheduleKind:       p.ScheduleKind,
+			RunAt:              p.RunAt,
+			RecurSpec:          p.RecurSpec,
+			WakeOnLAN:          p.WakeOnLAN,
+			CancelAfterMinutes: p.CancelAfterMinutes,
 		}); err != nil {
 			flash(w, "err", err.Error())
 			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
@@ -403,10 +446,14 @@ func bulkResume(r Repos) http.HandlerFunc {
 func bulkRunNow(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if _, err := r.Bulk.RunOperationNow(req.Context(), id); err != nil {
+		if jobs, err := r.Bulk.RunOperationNow(req.Context(), id); err != nil {
 			flash(w, "err", err.Error())
 		} else {
 			_ = r.Bulk.AdvanceSchedule(req.Context(), id, time.Now())
+			if op, _, oerr := r.Bulk.GetOperation(req.Context(), id); oerr == nil &&
+				op.WakeOnLAN && r.Waker != nil {
+				r.Waker.WakeForJobs(req.Context(), jobs)
+			}
 			flash(w, "ok", "A run was queued now.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
@@ -515,6 +562,9 @@ func formPrefill(op *model.BulkOperation) map[string]any {
 		"FilterName":        "",
 		"FilterOU":          "",
 		"FilterGroup":       "",
+		"WakeOnLAN":         false,
+		"CancelAfterValue":  "",
+		"CancelAfterUnit":   "hours",
 	}
 	if op == nil {
 		return ap
@@ -564,5 +614,16 @@ func formPrefill(op *model.BulkOperation) map[string]any {
 		ap["RecurCron"] = rs.Cron
 	}
 	ap["FilterName"], ap["FilterOU"], ap["FilterGroup"] = op.Target.NameRegex, op.Target.OU, op.Target.Group
+	ap["WakeOnLAN"] = op.WakeOnLAN
+	if op.CancelAfterMinutes > 0 {
+		// Render whole hours as hours, anything else in minutes.
+		if op.CancelAfterMinutes%60 == 0 {
+			ap["CancelAfterValue"] = strconv.Itoa(op.CancelAfterMinutes / 60)
+			ap["CancelAfterUnit"] = "hours"
+		} else {
+			ap["CancelAfterValue"] = strconv.Itoa(op.CancelAfterMinutes)
+			ap["CancelAfterUnit"] = "minutes"
+		}
+	}
 	return ap
 }

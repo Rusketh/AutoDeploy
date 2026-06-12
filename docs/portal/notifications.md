@@ -45,6 +45,18 @@ Events are grouped into seven categories:
 
 Each event has a severity: **info**, **success**, **warning**, or **error**.
 
+Notes on when events fire:
+
+- `deploy.started` fires for a first-time install; a rebuild of an existing machine fires
+  `deploy.reimage` instead (severity **warning**, since it wipes the machine).
+- `machine.offline` fires **once per offline episode**: when the machine next checks in, the
+  episode closes and a later disappearance notifies again.
+- `bulk.partial` covers runs that mixed successes with failures *or* jobs cancelled by the
+  operation's cancel-after window.
+- `machine.hardware_change`, `update.compliance_fail`, `system.storage_low` and
+  `system.agent_outdated` are reserved: they appear in the preference/webhook pickers but are not
+  emitted yet.
+
 ## Notification center
 
 The **Notifications** page (`/portal/notifications`) lists all in-portal notifications for the
