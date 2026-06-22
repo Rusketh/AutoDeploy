@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestActionPayloadFromForm(t *testing.T) {
@@ -64,7 +65,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	}
 
 	// Defaults: WoL off, never cancel.
-	p, err := parseBulkForm(mk(nil))
+	p, err := parseBulkForm(mk(nil), time.UTC)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Hours normalise to minutes; checkbox read.
 	p, err = parseBulkForm(mk(url.Values{
 		"wake_on_lan": {"1"}, "cancel_after_value": {"6"}, "cancel_after_unit": {"hours"},
-	}))
+	}), time.UTC)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Minutes pass through.
 	p, err = parseBulkForm(mk(url.Values{
 		"cancel_after_value": {"90"}, "cancel_after_unit": {"minutes"},
-	}))
+	}), time.UTC)
 	if err != nil || p.CancelAfterMinutes != 90 {
 		t.Errorf("cancel=%d err=%v, want 90", p.CancelAfterMinutes, err)
 	}
@@ -94,7 +95,31 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Garbage rejected with a friendly error.
 	if _, err := parseBulkForm(mk(url.Values{
 		"cancel_after_value": {"soon"}, "cancel_after_unit": {"hours"},
-	})); err == nil {
+	}), time.UTC); err == nil {
 		t.Error("non-numeric cancel-after should error")
+	}
+}
+
+// TestParseLocalDateTimeUsesZone: an <input type=datetime-local> value (no
+// zone) is interpreted in the supplied zone, so the operator's entered
+// wall-clock means the configured zone rather than the server's OS zone.
+func TestParseLocalDateTimeUsesZone(t *testing.T) {
+	const in = "2026-06-22T14:30"
+	utc, err := parseLocalDateTime(in, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plus5 := time.FixedZone("Z+5", 5*3600)
+	got, err := parseLocalDateTime(in, plus5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same wall clock, different zones -> instants differ by the offset.
+	if d := utc.Sub(got); d != 5*time.Hour {
+		t.Errorf("UTC vs +5 interpretation differ by %s, want 5h", d)
+	}
+	// And the entered wall-clock is preserved when read back in its zone.
+	if h := got.In(plus5).Hour(); h != 14 {
+		t.Errorf("14:30 entered in +5 reads hour %d, want 14", h)
 	}
 }

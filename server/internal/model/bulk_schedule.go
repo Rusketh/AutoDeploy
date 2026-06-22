@@ -219,12 +219,12 @@ func (r *BulkRepo) AdvanceSchedule(ctx context.Context, id ID, now time.Time) er
 	if err != nil {
 		return err
 	}
-	nr, err := nextRun(now, rs)
+	nr, err := nextRun(now.In(r.location()), rs)
 	if err != nil {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`UPDATE bulk_operation SET next_run_at=? WHERE id=?`, nr, int64(id))
+		`UPDATE bulk_operation SET next_run_at=? WHERE id=?`, nr.UTC(), int64(id))
 	return err
 }
 
@@ -402,12 +402,12 @@ func (r *BulkRepo) ResumeOperation(ctx context.Context, id ID) error {
 	if err != nil {
 		return err
 	}
-	nr, err := nextRun(time.Now(), rs)
+	nr, err := nextRun(time.Now().In(r.location()), rs)
 	if err != nil {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`UPDATE bulk_operation SET status='active', next_run_at=? WHERE id=?`, nr, int64(id))
+		`UPDATE bulk_operation SET status='active', next_run_at=? WHERE id=?`, nr.UTC(), int64(id))
 	return err
 }
 
@@ -428,6 +428,12 @@ func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error 
 		return err
 	}
 	applyBulkNameDefaults(&in)
+	// Store one-time times in UTC (see CreateOperation) so the driver reads
+	// next_run_at/run_at back cleanly regardless of the configured zone.
+	if in.RunAt != nil {
+		u := in.RunAt.UTC()
+		in.RunAt = &u
+	}
 	cur, _, err := r.GetOperation(ctx, in.ID)
 	if err != nil {
 		return err
@@ -451,10 +457,11 @@ func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error 
 		// schedule); keep it scheduled-immediate is out of scope.
 		return fmt.Errorf("%w: choose a one-time or recurring schedule when editing", ErrValidation)
 	}
-	nr, err := firstRun(time.Now(), in)
+	nr, err := firstRun(time.Now().In(r.location()), in)
 	if err != nil {
 		return err
 	}
+	nr = nr.UTC()
 	nextRunAt = &nr
 
 	_, err = r.db.ExecContext(ctx, `

@@ -59,7 +59,7 @@
         {{if .Body}}<br><span class="small muted">{{.Body}}</span>{{end}}
       </td>
       <td><code class="small">{{.Event}}</code></td>
-      <td class="small muted">{{.OccurredAt.Format "2006-01-02 15:04"}}</td>
+      <td class="small muted">{{formatTime .OccurredAt}}</td>
       <td>
         {{if not .ReadAt}}<span class="badge">new</span>{{end}}
       </td>

@@ -29,18 +29,18 @@ func TestFormatTimeHonorsDisplayTimezone(t *testing.T) {
 	req := httptest.NewRequest("GET", "/portal/machines/1", nil)
 	when := time.Date(2026, 1, 15, 17, 30, 0, 0, time.UTC) // 12:30 EST
 
-	// Unset -> UTC.
+	// Unset -> UTC, friendly format (no raw RFC3339 offset).
 	ft := funcsFor(req, Repos{Runtime: st})["formatTime"].(func(time.Time) string)
-	if got, want := ft(when), "2026-01-15T17:30:00Z"; got != want {
+	if got, want := ft(when), "15 Jan 2026, 17:30:00"; got != want {
 		t.Errorf("default formatTime = %q, want UTC %q", got, want)
 	}
 
-	// Configured -> rendered in that zone with its offset.
+	// Configured -> rendered in that zone (12:30 EST).
 	if err := st.SetDisplayTimezone(ctx, "America/New_York"); err != nil {
 		t.Fatal(err)
 	}
 	ft = funcsFor(req, Repos{Runtime: st})["formatTime"].(func(time.Time) string)
-	if got, want := ft(when), "2026-01-15T12:30:00-05:00"; got != want {
+	if got, want := ft(when), "15 Jan 2026, 12:30:00"; got != want {
 		t.Errorf("New York formatTime = %q, want %q", got, want)
 	}
 }

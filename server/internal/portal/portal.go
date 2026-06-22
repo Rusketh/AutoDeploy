@@ -421,6 +421,18 @@ func dashboardPage(r Repos) http.HandlerFunc {
 	}
 }
 
+// displayLoc resolves the operator-configured display/scheduling time zone,
+// falling back to UTC when runtime settings are unavailable or unset. Used by
+// handlers that parse schedule input or render times outside a template.
+func displayLoc(r Repos) *time.Location {
+	if r.Runtime != nil {
+		if l := r.Runtime.DisplayLocation(); l != nil {
+			return l
+		}
+	}
+	return time.UTC
+}
+
 // Template helper funcs available to every page.
 func funcsFor(req *http.Request, r Repos) template.FuncMap {
 	// Resolve the operator-configured display time zone once per render.
@@ -465,15 +477,20 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			return true
 		},
 		// formatTime renders an absolute timestamp in the operator's
-		// configured display time zone (RFC3339 keeps the offset, so the
-		// value stays unambiguous). Defaults to UTC when unset.
+		// configured display time zone, in a human-friendly form
+		// ("11 Jun 2026, 14:47:21"). The zone itself is shown once in the
+		// page footer rather than on every stamp. Defaults to UTC when unset.
 		"formatTime": func(t time.Time) string {
 			if t.IsZero() {
 				return ""
 			}
-			return t.In(loc).Format(time.RFC3339)
+			return t.In(loc).Format("2 Jan 2006, 15:04:05")
 		},
-		"list": func(args ...any) []any { return args },
+		// displayTZName is the configured display zone's name (e.g.
+		// "Europe/London" or "UTC"). Shown once in the footer and handed to
+		// the live-tail JS so client-rendered times match the server.
+		"displayTZName": func() string { return loc.String() },
+		"list":          func(args ...any) []any { return args },
 		"dict": func(args ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(args); i += 2 {

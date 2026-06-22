@@ -22,7 +22,7 @@
   <tbody>
   {{range .Data.Deliveries}}
     <tr>
-      <td class="small">{{.AttemptedAt.Format "2006-01-02 15:04:05"}}</td>
+      <td class="small">{{formatTime .AttemptedAt}}</td>
       <td><code class="small">{{.Event}}</code></td>
       <td>
         {{if .StatusCode}}

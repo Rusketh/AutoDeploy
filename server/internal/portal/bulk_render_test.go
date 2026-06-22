@@ -47,7 +47,7 @@ func TestBulkFormRenders(t *testing.T) {
 		"Images":      []model.Image{},
 		"FormAction":  "/portal/bulk",
 		"Editing":     false,
-		"AP":          formPrefill(nil),
+		"AP":          formPrefill(nil, time.UTC),
 		"SelInitJSON": "[]",
 	})
 	for _, want := range []string{`name="name"`, `name="description"`, `name="action"`, `name="schedule_kind"`, "action-picker", "Recurring", "Run once"} {

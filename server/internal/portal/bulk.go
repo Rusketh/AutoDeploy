@@ -61,7 +61,7 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 			"Images":      imgs,
 			"FormAction":  "/portal/bulk",
 			"Editing":     false,
-			"AP":          formPrefill(nil),
+			"AP":          formPrefill(nil, displayLoc(r)),
 			"SelInitJSON": "[]",
 		})
 	}
@@ -127,7 +127,7 @@ type bulkParams struct {
 
 // parseBulkForm reads the shared action + target + schedule fields. It returns
 // a human-readable error suitable for a flash on failure.
-func parseBulkForm(req *http.Request) (bulkParams, error) {
+func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	if err := req.ParseForm(); err != nil {
 		return bulkParams{}, err
 	}
@@ -146,7 +146,7 @@ func parseBulkForm(req *http.Request) (bulkParams, error) {
 	switch p.ScheduleKind {
 	case model.BulkScheduleNow:
 	case model.BulkScheduleOnce:
-		t, err := parseLocalDateTime(req.FormValue("run_at"))
+		t, err := parseLocalDateTime(req.FormValue("run_at"), loc)
 		if err != nil {
 			return p, fmt.Errorf("choose when the one-time operation should run")
 		}
@@ -253,14 +253,15 @@ func cancelAfterFromForm(req *http.Request) (int, error) {
 }
 
 // parseLocalDateTime parses an <input type=datetime-local> value (no zone) in
-// the server's local timezone.
-func parseLocalDateTime(s string) (time.Time, error) {
+// the configured display/scheduling timezone, so the operator's entered
+// wall-clock means that zone (not the server's OS zone).
+func parseLocalDateTime(s string, loc *time.Location) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Time{}, fmt.Errorf("empty")
 	}
 	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
 			return t, nil
 		}
 	}
@@ -300,7 +301,8 @@ func recurSpecFromForm(req *http.Request) (string, error) {
 
 func bulkCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		p, err := parseBulkForm(req)
+		loc := displayLoc(r)
+		p, err := parseBulkForm(req, loc)
 		if err != nil {
 			flash(w, "err", err.Error())
 			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
@@ -335,7 +337,7 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		}
 		switch p.ScheduleKind {
 		case model.BulkScheduleOnce:
-			flash(w, "ok", "Operation scheduled for "+op.RunAt.Local().Format("Mon 2 Jan 15:04")+".")
+			flash(w, "ok", "Operation scheduled for "+op.RunAt.In(loc).Format("Mon 2 Jan 15:04")+".")
 		case model.BulkScheduleRecurring:
 			flash(w, "ok", "Recurring operation scheduled.")
 		default:
@@ -368,7 +370,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 			"FormAction":  fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
 			"Editing":     true,
 			"Op":          op,
-			"AP":          formPrefill(&op),
+			"AP":          formPrefill(&op, displayLoc(r)),
 			"SelInitJSON": string(selJSON),
 		})
 	}
@@ -377,7 +379,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 func bulkEditSave(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		p, err := parseBulkForm(req)
+		p, err := parseBulkForm(req, displayLoc(r))
 		if err != nil {
 			flash(w, "err", err.Error())
 			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
@@ -547,8 +549,10 @@ func bulkDetail(r Repos) http.HandlerFunc {
 func pathStr(req *http.Request) string { return req.PathValue("id") }
 
 // formPrefill builds the values the create/edit form needs to seed the action
-// picker and schedule controls. op is nil for a new operation.
-func formPrefill(op *model.BulkOperation) map[string]any {
+// picker and schedule controls. op is nil for a new operation. loc is the
+// configured display/scheduling zone the datetime-local control is filled in,
+// so editing round-trips the wall-clock the operator originally entered.
+func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 	ap := map[string]any{
 		"Name":              "",
 		"Description":       "",
@@ -604,7 +608,7 @@ func formPrefill(op *model.BulkOperation) map[string]any {
 		ap["TargetMode"] = op.TargetMode
 	}
 	if op.RunAt != nil {
-		ap["RunAtLocal"] = op.RunAt.Local().Format("2006-01-02T15:04")
+		ap["RunAtLocal"] = op.RunAt.In(loc).Format("2006-01-02T15:04")
 	}
 	if op.RecurSpec != "" {
 		var rs model.RecurSpec

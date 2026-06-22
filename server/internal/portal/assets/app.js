@@ -384,6 +384,18 @@
     let lastID = parseInt(tail.getAttribute('data-since-id') || '0', 10) || 0;
     let timer = null;
     const intervalMs = parseInt(tail.getAttribute('data-interval-ms') || '4000', 10);
+    // Format a log timestamp as date+time in the operator's configured zone
+    // (body[data-tz]) so the live tail matches the server-rendered table
+    // ("11 Jun 2026, 14:47:21"), not the browser's local clock.
+    const tailTZ = document.body.getAttribute('data-tz') || 'UTC';
+    function tailTs(iso) {
+      try {
+        return new Date(iso).toLocaleString('en-GB', {
+          timeZone: tailTZ, day: 'numeric', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        });
+      } catch (e) { return new Date(iso).toLocaleString(); }
+    }
     function poll() {
       fetch(url, { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : []; })
@@ -397,7 +409,7 @@
             row.className = 'row ' + (ev.level === 'ERROR' ? 'error' : (ev.level === 'WARN' ? 'warn' : ''));
             const machine = ev.machine_name || ev.actor || '';
             row.innerHTML =
-              '<span class="ts">' + escapeHTML(new Date(ev.occurred_at).toLocaleTimeString()) + '</span>' +
+              '<span class="ts">' + escapeHTML(tailTs(ev.occurred_at)) + '</span>' +
               '<span class="lvl">' + escapeHTML(ev.level || '') + '</span>' +
               '<span class="mc">' + (machine ? escapeHTML(machine) : '<span class="muted">—</span>') + '</span>' +
               '<span class="msg"><code>' + escapeHTML(ev.component) + '</code> ' + escapeHTML(ev.action) +
