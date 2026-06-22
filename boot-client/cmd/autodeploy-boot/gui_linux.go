@@ -47,6 +47,9 @@ func startGUI(log *slog.Logger, brand brandResp) *guiSession {
 		_ = surface.Close()
 		return nil
 	}
+	// Operator logo for the menu header (nil/skipped for an unset or
+	// non-raster logo — SVG has no Go decoder).
+	theme.Logo = ui.DecodeLogo(brand.LogoDataURL)
 	reader, err := input.NewReader(w, h)
 	if err != nil {
 		log.Info("gui.noinput", slog.String("reason", err.Error()))

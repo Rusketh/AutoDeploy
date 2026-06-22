@@ -2,6 +2,10 @@
 #include "lockstate.h"
 
 #include <vector>
+#include <string>
+#include <cstring>
+#include <objbase.h>
+#include <gdiplus.h>
 
 namespace fullscreen {
 
@@ -15,6 +19,80 @@ static DWORD g_threadId = 0;
 static std::vector<HWND> g_windows;
 static bool g_classRegistered = false;
 static volatile LONG g_unlockRequested = 0;
+
+// GDI+ token for the lock-screen thread, plus a one-entry cache of the decoded
+// logo keyed on its data URL so the 500ms repaint doesn't re-decode every tick.
+static ULONG_PTR g_gdiplusToken = 0;
+static std::string g_logoKey;
+static Gdiplus::Bitmap* g_logoBmp = nullptr;
+
+// base64Decode decodes standard base64, skipping whitespace and stopping at
+// padding. Returns the raw bytes (empty on no input).
+static std::string base64Decode(const std::string& in) {
+    auto val = [](unsigned char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    std::string out;
+    int buf = 0, bits = 0;
+    for (unsigned char c : in) {
+        if (c == '=') break;
+        int v = val(c);
+        if (v < 0) continue; // skip newlines / stray whitespace
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back((char)((buf >> bits) & 0xFF));
+        }
+    }
+    return out;
+}
+
+// decodeLogoBitmap turns a "data:image/...;base64,…" URL into an owned GDI+
+// bitmap (caller deletes), or nullptr for anything it can't decode. The decoded
+// bytes are streamed to GDI+, then cloned into a standalone ARGB bitmap so the
+// backing stream can be released immediately. Best-effort: every failure path
+// returns nullptr and the screen just shows no logo.
+static Gdiplus::Bitmap* decodeLogoBitmap(const std::string& dataURL) {
+    if (g_gdiplusToken == 0) return nullptr;
+    if (dataURL.compare(0, 11, "data:image/") != 0) return nullptr;
+    size_t m = dataURL.find("base64,");
+    if (m == std::string::npos) return nullptr;
+    std::string bytes = base64Decode(dataURL.substr(m + 7));
+    if (bytes.size() < 8) return nullptr;
+
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes.size());
+    if (!hMem) return nullptr;
+    void* p = GlobalLock(hMem);
+    if (!p) { GlobalFree(hMem); return nullptr; }
+    memcpy(p, bytes.data(), bytes.size());
+    GlobalUnlock(hMem);
+
+    IStream* stream = nullptr;
+    if (CreateStreamOnHGlobal(hMem, TRUE, &stream) != S_OK || !stream) {
+        GlobalFree(hMem);
+        return nullptr;
+    }
+    Gdiplus::Bitmap* tmp = Gdiplus::Bitmap::FromStream(stream);
+    Gdiplus::Bitmap* owned = nullptr;
+    if (tmp && tmp->GetLastStatus() == Gdiplus::Ok &&
+        tmp->GetWidth() > 0 && tmp->GetHeight() > 0) {
+        owned = tmp->Clone(0, 0, (INT)tmp->GetWidth(), (INT)tmp->GetHeight(),
+                           PixelFormat32bppARGB);
+        if (owned && owned->GetLastStatus() != Gdiplus::Ok) {
+            delete owned;
+            owned = nullptr;
+        }
+    }
+    if (tmp) delete tmp;
+    stream->Release(); // frees hMem (CreateStreamOnHGlobal fDeleteOnRelease=TRUE)
+    return owned;
+}
 
 bool ConsumeUnlockRequest() {
     return InterlockedCompareExchange(&g_unlockRequested, 0, 1) == 1;
@@ -108,6 +186,33 @@ static void paint(HWND hwnd) {
 
     int cx = w / 2;
     int y = h / 3;
+
+    // Operator logo, drawn centred just above the organisation line. Cached by
+    // data URL so the repaint timer doesn't re-decode. Best-effort: an unset or
+    // undecodable logo simply leaves the text-only layout untouched.
+    if (br.logoDataURL != g_logoKey) {
+        if (g_logoBmp) { delete g_logoBmp; g_logoBmp = nullptr; }
+        g_logoBmp = br.logoDataURL.empty() ? nullptr : decodeLogoBitmap(br.logoDataURL);
+        g_logoKey = br.logoDataURL;
+    }
+    if (g_logoBmp) {
+        UINT iw = g_logoBmp->GetWidth(), ih = g_logoBmp->GetHeight();
+        if (iw > 0 && ih > 0) {
+            int lh = unit / 8;
+            int lw = (int)((long long)iw * lh / ih);
+            int maxW = w / 3;
+            if (lw > maxW) {
+                lw = maxW;
+                lh = (int)((long long)ih * lw / iw);
+            }
+            int lx = cx - lw / 2;
+            int ly = y - lh - unit / 24;
+            if (ly < unit / 24) ly = unit / 24;
+            Gdiplus::Graphics g(dc);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.DrawImage(g_logoBmp, lx, ly, lw, lh);
+        }
+    }
 
     std::wstring org = !br.organisation.empty() ? br.organisation : br.product;
     drawCentered(dc, org, cx, y, fOrg, muted);
@@ -230,6 +335,10 @@ static BOOL CALLBACK monitorEnum(HMONITOR hMon, HDC, LPRECT, LPARAM) {
 }
 
 static DWORD WINAPI threadProc(LPVOID) {
+    // GDI+ for the lifetime of the lock screen, so paint() can render an
+    // operator logo. Failure is non-fatal: decodeLogoBitmap checks the token.
+    Gdiplus::GdiplusStartupInput gpsi;
+    Gdiplus::GdiplusStartup(&g_gdiplusToken, &gpsi, nullptr);
     if (!g_classRegistered) {
         WNDCLASSEXW wc;
         ZeroMemory(&wc, sizeof(wc));
@@ -269,6 +378,13 @@ static DWORD WINAPI threadProc(LPVOID) {
     }
     for (HWND h : g_windows) DestroyWindow(h);
     g_windows.clear();
+    // Release the cached logo (a GDI+ object) before shutting GDI+ down.
+    if (g_logoBmp) { delete g_logoBmp; g_logoBmp = nullptr; }
+    g_logoKey.clear();
+    if (g_gdiplusToken) {
+        Gdiplus::GdiplusShutdown(g_gdiplusToken);
+        g_gdiplusToken = 0;
+    }
     return 0;
 }
 

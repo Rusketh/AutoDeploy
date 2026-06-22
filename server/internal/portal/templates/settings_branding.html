@@ -35,6 +35,8 @@
       <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…">
       <span class="hint">Paste a data URL, or upload an image to embed it:
         <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" class="logo-file-input">
+        <br>A <strong>PNG</strong> (or JPEG) also shows on the boot menu and the
+        setup-lock screen; SVG renders in the portal only. Keep it under 1&nbsp;MB.
       </span>
     </label>
     {{if $b.LogoDataURL}}<div class="mt-2">Current logo: <img src="{{brandLogo $b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}

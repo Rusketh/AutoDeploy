@@ -32,6 +32,11 @@ type Theme struct {
 	Title font.Face
 	Body  font.Face
 	Small font.Face
+
+	// Logo is the operator's brand logo decoded for blitting (nil when none is
+	// set, or it is a format the boot UI can't decode, e.g. SVG). Screens draw
+	// it in their header when present. Set by the GUI session after NewTheme.
+	Logo image.Image
 }
 
 // NewTheme builds a theme from a primary colour (CSS hex like "#0b65c2";

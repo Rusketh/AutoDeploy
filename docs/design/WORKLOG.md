@@ -3030,3 +3030,55 @@ bulk-operations / logs, an API-reference section, and the docs index.
 **NEXT.** Optional: a dashboard per-group tile; a `group.membership_changed`
 notification event; refuse-on-delete when a bulk op references a group (today it
 resolves to empty); count caching only if the sidebar profiles hot.
+
+---
+
+## 2026-06-22 — Branding logo: portal display fix + client rendering
+
+**WHAT.** Made the operator logo actually appear. Three parts:
+
+1) *Portal display bug.* A pasted/uploaded logo (a `data:image/…` URL) never
+showed in the branding settings preview or the portal nav: `html/template`'s
+URL sanitiser rewrites any non-http(s)/mailto scheme — including `data:` — to
+`#ZgotmplZ`, blanking the `<img src>`. Added a `brandLogo` template helper
+returning a `template.URL`, gated by a new `branding.SafeLogoURL` (image data
+URLs / http(s) only, 1 MiB cap), used in `_layout.html` and
+`settings_branding.html`. The portal validates uploads up front (clear flash)
+and `branding.Set` normalises on store (drops anything unsafe) as defence in
+depth.
+
+2) *Boot menu logo.* `brandResp` gained `logo_data_url`; `ui.DecodeLogo` decodes
+a base64 PNG/JPEG/GIF data URL to an `image.Image` (SVG/unsupported → nil →
+no logo), stored on `Theme.Logo` by the Linux GUI session. The menu header
+blits it above the title (scaled, aspect-preserved, alpha-composited) and
+shifts the title/rows down only when a logo is present, so the no-logo layout
+is unchanged.
+
+3) *Setup-lock screen logo.* The agent already shipped `logo_data_url` in
+`branding.json`; the C++ credential provider now renders it. `lockstate`
+parses the field; `fullscreen.cpp` starts GDI+ for the lock-screen thread,
+base64-decodes the data URL, streams it into a GDI+ bitmap (cloned to a
+standalone ARGB bitmap, cached by URL so the 500 ms repaint doesn't
+re-decode), and draws it centred above the organisation line. Every failure
+path is non-fatal — the text-only screen renders unchanged. `-lgdiplus`
+added to the credprovider Makefile.
+
+**WHY (decisions).** Logo rendering on the clients was never implemented (the
+boot brand payload had no logo field; the credprovider drew text + colour
+only), so this is net-new, not a regression — only the portal was meant to show
+it and that was broken. Raster only on the clients: Go has no SVG decoder and
+the credprovider decodes via GDI+, so the settings hint/docs now recommend PNG
+for client surfaces (SVG stays portal-only). The OEM System Properties logo was
+deliberately left out of scope per the operator's choice. The credprovider
+change was compile-verified with the same MinGW-w64 cross-build CI uses; it
+cannot be run here, so the drawing is written fail-safe.
+
+**STATE.** Server: `go build`/`vet`/`test ./...` green, `check-secrets` OK, new
+branding unit + portal render tests (the render test fails against the pre-fix
+template). Boot client: `gofmt`/`build`/`vet`/`test ./...` green, new
+`DecodeLogo`/`drawLogo` tests. Credprovider: builds clean (`-Wall`, no warnings)
+with `x86_64-w64-mingw32-g++` + `-lgdiplus`.
+
+**NEXT.** Optional follow-ups: OEM System Properties logo (120×120 BMP →
+`OEMInformation\Logo`); logo on the boot progress/PIN screens; server-side
+raster transcode so an SVG logo could also reach the clients.
