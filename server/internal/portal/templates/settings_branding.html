@@ -37,7 +37,7 @@
         <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" class="logo-file-input">
       </span>
     </label>
-    {{if $b.LogoDataURL}}<div class="mt-2">Current logo: <img src="{{$b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}
+    {{if $b.LogoDataURL}}<div class="mt-2">Current logo: <img src="{{brandLogo $b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}
   </fieldset>
 
   <div class="actions">

@@ -28,7 +28,7 @@ func TestAllTemplatesParse(t *testing.T) {
 		"derefID", "idEq", "int64", "derefIDtoID", "deref", "join",
 		"hasItems", "formatTime", "list", "dict", "add", "sub", "min",
 		"derefInt", "lt", "toFloat", "div", "mul", "pct", "humanBytes",
-		"relTime", "formatDate", "displayTZName",
+		"relTime", "formatDate", "displayTZName", "brandLogo",
 	} {
 		funcs[name] = func(args ...any) string { return "" }
 	}
