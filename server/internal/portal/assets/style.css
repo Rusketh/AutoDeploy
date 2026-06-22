@@ -914,11 +914,76 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
   max-height: 60vh;
   overflow-y: auto;
 }
-.logs-tail .row { padding: 2px 4px; border-bottom: 1px dashed var(--border); display: grid; grid-template-columns: 110px 60px auto; gap: 0.5rem; }
+.logs-tail .row { padding: 2px 4px; border-bottom: 1px dashed var(--border); display: grid; grid-template-columns: 96px 52px 150px auto; gap: 0.5rem; align-items: baseline; }
 .logs-tail .row:last-child { border-bottom: none; }
 .logs-tail .row .ts { color: var(--fg-muted); }
+.logs-tail .row .mc { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logs-tail .row.error { background: var(--bad-soft); }
 .logs-tail .row.warn  { background: var(--warn-soft); }
+
+/* ---------- Logs page table ---------- */
+.log-presets { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: var(--sp-3); }
+.log-presets .lbl { margin-right: var(--sp-1); }
+
+.log-levels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: var(--sp-2) 0 var(--sp-3); }
+.log-levels .pill {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: 600 var(--fs-sm)/1 var(--font-sans);
+  cursor: pointer;
+  transition: background var(--tx-fast), border-color var(--tx-fast), color var(--tx-fast);
+}
+.log-levels .pill:hover { border-color: var(--border-strong); color: var(--fg); }
+.log-levels .pill.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.log-levels .pill.lvl-warn.on  { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.log-levels .pill.lvl-error.on { background: var(--bad-soft);  border-color: var(--bad);  color: var(--bad); }
+
+.logwrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: auto;
+  max-height: 70vh;
+}
+.logwrap > table { border: none; border-radius: 0; box-shadow: none; }
+.logs-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.logs-table td { vertical-align: top; }
+.logs-table .nowrap { white-space: nowrap; }
+.logs-table th.log-exp, .logs-table td.log-exp { width: 1.6rem; padding-left: var(--sp-3); padding-right: 0; text-align: center; }
+.log-machine .machine-name { font-weight: 600; }
+.log-target { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.log-row { cursor: pointer; }
+.log-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.log-row .chev {
+  display: inline-block;
+  width: 0; height: 0;
+  border-left: 5px solid var(--fg-subtle);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--tx-fast);
+}
+.log-row.open .chev { transform: rotate(90deg); }
+.log-row.open > td { border-bottom: none; }
+
+.log-detail > td { background: var(--surface-2); padding: 0; }
+.log-fields {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font: 12px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
 
 /* ---- Upload progress ----
  * Rendered by app.js when a form with data-upload-progress submits.
@@ -1175,7 +1240,6 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 /* ---------- Form page utilities ---------- */
 .code-name { font-size: 0.95rem; }
 .upload-empty-form { margin: var(--sp-3) auto 0; max-width: 460px; }
-.reveal-value { user-select: all; margin-left: var(--sp-2); font-size: 1.05em; }
 .toolbar-code { font-size: 0.7em; }
 .order-input { max-width: 6rem; }
 .stat-text { font-size: var(--fs-lg); }
@@ -1198,8 +1262,6 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .login-logo { height: 32px; display: block; margin: 0 auto var(--sp-3); }
 .flash-inline { border-radius: var(--r); margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-3); }
 
-/* Recovery key note margin */
-.recovery-note { margin-top: var(--sp-2); }
 .dropzone .upload-progress { text-align: left; }
 
 /* Unattend form */

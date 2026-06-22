@@ -86,26 +86,12 @@ type AgentSelfResponse struct {
 	// Remote agents can use this to reconnect through a reverse proxy or
 	// firewall. Empty when not configured (all agents on the LAN).
 	ExternalURL string `json:"external_url,omitempty"`
-	// DeployToken is a short-lived bearer token the agent presents to
-	// secret-returning endpoints (BitLocker config). Issued when a PIN is
-	// configured so the resident agent can fetch the cleartext PIN.
-	DeployToken string `json:"deploy_token,omitempty"`
-	// BitLocker carries the PIN-set flag and version so the agent can
-	// reconcile encryption state on every poll.
-	BitLocker *AgentSelfBitLocker `json:"bitlocker,omitempty"`
 	// SetupLock is true when the deployed image locks the machine with a
 	// branded setup screen until the agent finishes the initial software
 	// rollout. While this is true AND a deployment is open, the agent keeps
 	// the on-disk lock marker that the credential provider reads; it clears
 	// the marker once it closes the deployment, so later pushes never lock.
 	SetupLock bool `json:"setup_lock,omitempty"`
-}
-
-// AgentSelfBitLocker is the BitLocker reconciliation info returned by
-// /api/v1/agent/self, mirroring the check-in response's bitlocker block.
-type AgentSelfBitLocker struct {
-	PINSet  bool  `json:"pin_set"`
-	Version int64 `json:"version"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -260,22 +246,6 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 						Fields:    string(fields),
 					})
 				}
-			}
-		}
-		// BitLocker reconcile info: whether a PIN is configured and its
-		// version, plus a fresh deploy token when a PIN is set so the
-		// agent can fetch the cleartext PIN from the audited config
-		// endpoint. Mirrors the check-in handler's bitlocker block.
-		if r.BitLocker != nil {
-			if st, berr := r.BitLocker.PINStatus(req.Context(), m.ID); berr == nil {
-				bl := &AgentSelfBitLocker{PINSet: st.PINSet}
-				if st.PINSet {
-					bl.Version = st.UpdatedAt.Unix()
-					if tok, terr := r.Inventory.IssueDeployToken(req.Context(), m.ID, deployTokenTTL); terr == nil {
-						resp.DeployToken = tok
-					}
-				}
-				resp.BitLocker = bl
 			}
 		}
 		writeJSON(w, http.StatusOK, resp)

@@ -97,6 +97,6 @@ Every action is recorded in the [audit log](portal/logs.md).
 - Add **[software packages](portal/software.md)** and group them into **[loadouts](portal/software.md#loadouts)**.
 - Match **[drivers to hardware](portal/payloads.md#driver-packages)** automatically.
 - Manage many machines at once with **[bulk operations](portal/bulk-operations.md)**.
-- Turn on **[BitLocker](operations/bitlocker.md)** and **[Active Directory](operations/active-directory.md)** join.
+- Set up **[Active Directory](operations/active-directory.md)** domain join.
 - Scale out with **[mirrors](portal/mirrors.md)**.
 </content>

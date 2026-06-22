@@ -21,8 +21,7 @@ import (
 // Returns the normalised UUID string (no whitespace, lower-case) or
 // "" if both methods fail. Callers should treat "" as a hard error in
 // production: the server identifies machines by SMBIOS UUID and an
-// empty UUID silently breaks inventory, BitLocker config retrieval
-// and bulk-job claims.
+// empty UUID silently breaks inventory and bulk-job claims.
 func readSystemUUIDPlatform() string {
 	if u := readUUIDViaPowerShell(); u != "" {
 		return u

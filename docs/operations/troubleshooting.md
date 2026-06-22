@@ -203,12 +203,6 @@ computers to the target OU.
 After a successful join the agent reports the machine's new computer name and AD location, which
 appear on the [machine's page](../portal/machines.md).
 
-## Recovery keys / BitLocker PINs can't be read
-
-These are encrypted with the server's [secrets key](security.md#secrets-at-rest). If the key was
-lost or changed, previously escrowed values cannot be decrypted. Keep the key in your
-[backup plan](backup-and-retention.md).
-
 ## Still stuck?
 
 Search the [audit log](../portal/logs.md) filtered by the affected machine, component, and time

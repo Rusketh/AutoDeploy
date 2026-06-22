@@ -110,9 +110,8 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			// detection results, Windows-update compliance, and the agent
 			// job queue/results — so the portal shows the freshly-imaged
 			// machine accurately instead of carrying over data from its old
-			// OS. Deployment history and escrowed BitLocker keys are kept
-			// (audit/recovery). Best-effort: a cleanup hiccup must not block
-			// the deploy from starting.
+			// OS. Deployment history is kept (audit). Best-effort: a cleanup
+			// hiccup must not block the deploy from starting.
 			clearReimagedState(req.Context(), r, m.ID)
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID, "deployment_id": id})
 			return
@@ -184,8 +183,8 @@ func reimageSourceFor(ctx context.Context, r Repos, machineID model.ID, uuid str
 // invalidates: software detection results, Windows-update compliance and
 // jobs, and bulk-job queue/results. Each step is best-effort and independent
 // so one repo being absent (nil) or erroring doesn't abort the others — the
-// deploy must proceed regardless. Deployment history and BitLocker escrow are
-// intentionally NOT touched.
+// deploy must proceed regardless. Deployment history is intentionally NOT
+// touched.
 func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) {
 	if r.Inventory != nil {
 		_ = r.Inventory.ClearDetectedState(ctx, machineID)
@@ -195,13 +194,6 @@ func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) {
 	}
 	if r.Updates != nil {
 		_ = r.Updates.ClearMachineState(ctx, machineID)
-	}
-	// Drop escrowed BitLocker recovery keys — the wiped-and-re-encrypted
-	// volume gets a fresh key during the new deploy, so the old ones unlock
-	// a disk that no longer exists. The assigned PIN/password is kept so the
-	// re-image re-applies it to the device.
-	if r.BitLocker != nil {
-		_ = r.BitLocker.ClearRecoveryKeys(ctx, machineID)
 	}
 }
 

@@ -39,6 +39,11 @@ func logsView(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Resolve each agent event's actor (an SMBIOS UUID) to a machine
+		// name so rows show a name instead of a raw UUID.
+		if names, nerr := r.Inventory.NamesByUUID(req.Context()); nerr == nil {
+			model.EnrichMachineNames(ev, names)
+		}
 		render(w, req, r, "logs.html", "Logs", map[string]any{
 			"Events": ev,
 			"Query":  s,

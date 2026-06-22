@@ -105,56 +105,6 @@
   <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
 
-<div class="section-head"><h3>BitLocker</h3><div class="line"></div></div>
-<p>Current state:
-{{if .Data.BL.PINSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN configured</span>
-{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}
-</p>
-{{if .Data.BL.PINSet}}
-{{/* Reveal control: the cleartext PIN is NEVER rendered into the page. The
-     button fetches it on demand from the audited endpoint, shows it inline,
-     and app.js hides it again automatically so it doesn't linger on screen. */}}
-<div class="reveal-pin mb-3">
-  <button type="button" class="btn ghost sm" data-reveal-pin="{{int64 $m.ID}}">
-    <svg><use href="#i-eye"/></svg><span class="reveal-pin-label">Reveal PIN</span>
-  </button>
-  <code class="reveal-pin-value reveal-value" hidden></code>
-</div>
-{{end}}
-<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/bitlocker/pin">
-  <label><span class="lbl">Pre-boot PIN</span>
-    <input type="password" name="pin" autocomplete="new-password" placeholder="{{if .Data.BL.PINSet}}Type a new PIN to replace the existing one{{else}}Type a PIN to enable BitLocker on this machine{{end}}">
-    <span class="hint">No PIN = machine is left unencrypted. Stored AES-256-GCM at rest; reapplied on re-image; never logged. The agent only receives the PIN over a per-deploy bearer token.</span>
-  </label>
-  <div class="actions">
-    <button type="submit"><svg><use href="#i-check"/></svg>Save PIN</button>
-    <button type="submit" name="pin" value="" class="danger" data-confirm="Clear the BitLocker PIN? Future deploys will leave the volume unencrypted.">
-      <svg><use href="#i-trash"/></svg>Clear PIN
-    </button>
-  </div>
-</form>
-
-<div class="section-head"><h4>Recovery keys</h4><div class="line"></div></div>
-{{if .Data.Recovery}}
-<div class="tablewrap">
-<table>
-  <thead><tr><th>Escrowed</th><th>Note</th><th></th></tr></thead>
-  <tbody>
-    {{range .Data.Recovery}}
-    <tr>
-      <td class="small muted">{{formatTime .EscrowedAt}}</td>
-      <td>{{.Note}}</td>
-      <td class="actions"><a class="btn ghost sm" href="/api/v1/recovery-keys/{{int64 .ID}}" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg>Retrieve key</a></td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-</div>
-<p class="small muted recovery-note">The server keeps its own encrypted copy of every BitLocker recovery key it's been sent (append-only history above). Retrieving one emits a <code>secret.access</code> audit event recording who, when, and which row — never the value. Any AD backup configured via GPO is separate and unaffected.</p>
-{{else}}
-<p class="small muted">No recovery keys escrowed for this machine yet. The agent sends the BitLocker recovery key to the server when it enables encryption — on deploy, or when you set a PIN above on an already-running machine — and it appears here. Any AD backup configured via GPO is separate and unaffected.</p>
-{{end}}
-
 <div class="section-head"><h3>Deployment</h3><div class="line"></div></div>
 
 {{/* Live progress bar — shown while a deployment is in flight (imaging or

@@ -16,11 +16,6 @@ type Client struct {
 	BaseURL    string
 	UUID       string
 	HTTPClient *http.Client
-	// DeployToken is the per-deploy bearer token issued by the agent
-	// report endpoint at the start of a deploy. When non-empty, the
-	// client sends it as X-AutoDeploy-Deploy-Token on every request,
-	// which secret-returning endpoints (BitLocker config) require.
-	DeployToken string
 }
 
 func New(baseURL, uuid string, insecureTLS bool) *Client {
@@ -46,9 +41,6 @@ func (c *Client) PostJSON(ctx context.Context, path string, in, out any) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
-	if c.DeployToken != "" {
-		req.Header.Set("X-AutoDeploy-Deploy-Token", c.DeployToken)
-	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -71,9 +63,6 @@ func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 		return err
 	}
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
-	if c.DeployToken != "" {
-		req.Header.Set("X-AutoDeploy-Deploy-Token", c.DeployToken)
-	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -95,9 +84,6 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer) error 
 		return err
 	}
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
-	if c.DeployToken != "" {
-		req.Header.Set("X-AutoDeploy-Deploy-Token", c.DeployToken)
-	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err

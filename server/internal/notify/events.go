@@ -47,8 +47,7 @@ const (
 	EventUpdateDeployed       = "update.deployed"
 	EventUpdateComplianceFail = "update.compliance_fail"
 
-	EventAuthLoginFailed   = "auth.login_failed"
-	EventBitLockerRecovery = "bitlocker.recovery_used"
+	EventAuthLoginFailed = "auth.login_failed"
 
 	EventSystemStorageLow    = "system.storage_low"
 	EventSystemAgentOutdated = "system.agent_outdated"
@@ -64,7 +63,7 @@ var EventCategories = []struct {
 	{"Software installs", []string{EventSoftwareInstallOK, EventSoftwareInstallFailed}},
 	{"Machine inventory", []string{EventMachineFirstSeen, EventMachineOffline, EventMachineHardwareChange}},
 	{"Windows Updates", []string{EventUpdateDeployed, EventUpdateComplianceFail}},
-	{"Security", []string{EventAuthLoginFailed, EventBitLockerRecovery}},
+	{"Security", []string{EventAuthLoginFailed}},
 	{"System health", []string{EventSystemStorageLow, EventSystemAgentOutdated}},
 }
 

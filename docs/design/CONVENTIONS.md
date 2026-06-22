@@ -60,8 +60,8 @@ trace, metric label, HTTP response body (except where they are the response),
 or test fixture committed to the repository:
 
 - The deployment access PIN (the front-end gate).
-- BitLocker pre-boot PINs.
-- BitLocker recovery keys.
+- Domain-join service-account passwords.
+- Webhook signing secrets.
 - Portal account passwords (always hashed; never stored or logged in cleartext).
 - AD service account credentials.
 

@@ -111,16 +111,16 @@ func TestSortMachineRecords(t *testing.T) {
 	}
 	names := map[model.ID]string{imgID: "Win11"}
 
-	sortMachineRecords(v, "model", "asc", bindings, names, nil, nil)
+	sortMachineRecords(v, "model", "asc", bindings, names, nil)
 	if v[0].ID != 3 || v[1].ID != 2 || v[2].ID != 1 {
 		t.Errorf("model asc: got order %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
 	}
-	sortMachineRecords(v, "name", "desc", bindings, names, nil, nil)
+	sortMachineRecords(v, "name", "desc", bindings, names, nil)
 	if v[0].ID != 1 || v[1].ID != 3 || v[2].ID != 2 {
 		t.Errorf("name desc: got order %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
 	}
 	// Image sort: bound machine vs unbound (empty sorts first asc).
-	sortMachineRecords(v, "image", "asc", bindings, names, nil, nil)
+	sortMachineRecords(v, "image", "asc", bindings, names, nil)
 	if v[2].ID != 2 {
 		t.Errorf("image asc: bound machine should sort last, got %d,%d,%d", v[0].ID, v[1].ID, v[2].ID)
 	}

@@ -395,9 +395,11 @@
             lastID = ev.id;
             const row = document.createElement('div');
             row.className = 'row ' + (ev.level === 'ERROR' ? 'error' : (ev.level === 'WARN' ? 'warn' : ''));
+            const machine = ev.machine_name || ev.actor || '';
             row.innerHTML =
               '<span class="ts">' + escapeHTML(new Date(ev.occurred_at).toLocaleTimeString()) + '</span>' +
               '<span class="lvl">' + escapeHTML(ev.level || '') + '</span>' +
+              '<span class="mc">' + (machine ? escapeHTML(machine) : '<span class="muted">—</span>') + '</span>' +
               '<span class="msg"><code>' + escapeHTML(ev.component) + '</code> ' + escapeHTML(ev.action) +
               (ev.target ? ' <span class="muted">(' + escapeHTML(ev.target) + ')</span>' : '') + '</span>';
             tail.insertBefore(row, tail.firstChild);
@@ -414,6 +416,97 @@
     });
     start();
   }
+
+  // ---- Logs table: expand rows, level pills, text filter, presets ----
+  // The logs table renders each event as a summary row plus a hidden detail
+  // row holding the Fields JSON. Clicking (or Enter/Space on) a summary row
+  // toggles its detail, which is pretty-printed on first open. Level pills
+  // and the text box filter the summary rows (and collapse hidden ones);
+  // the "Last N" buttons set the Since field and re-run the server search.
+  (function initLogsTable() {
+    const table = document.getElementById('log-rows');
+    if (!table) return;
+    const rows = Array.prototype.slice.call(table.querySelectorAll('tr.log-row'));
+
+    function detailOf(row) {
+      const d = row.nextElementSibling;
+      return d && d.classList.contains('log-detail') ? d : null;
+    }
+    function setOpen(row, open) {
+      const d = detailOf(row);
+      row.classList.toggle('open', open);
+      row.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!d) return;
+      if (open) {
+        const pre = d.querySelector('.log-fields');
+        if (pre && !pre.dataset.pretty) {
+          pre.dataset.pretty = '1';
+          try { pre.textContent = JSON.stringify(JSON.parse(pre.textContent), null, 2); } catch (_) {}
+        }
+        d.hidden = false;
+      } else {
+        d.hidden = true;
+      }
+    }
+    table.addEventListener('click', function (e) {
+      const row = e.target.closest('tr.log-row');
+      if (!row) return;
+      setOpen(row, row.getAttribute('aria-expanded') !== 'true');
+    });
+    table.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('tr.log-row');
+      if (!row) return;
+      e.preventDefault();
+      setOpen(row, row.getAttribute('aria-expanded') !== 'true');
+    });
+
+    let activeLevel = 'all';
+    let query = '';
+    function apply() {
+      rows.forEach(function (row) {
+        const lvlOK = activeLevel === 'all' || row.getAttribute('data-level') === activeLevel;
+        const txtOK = !query || (row.innerText || '').toLowerCase().indexOf(query) !== -1;
+        const ok = lvlOK && txtOK;
+        row.style.display = ok ? '' : 'none';
+        const d = detailOf(row);
+        if (!ok) { setOpen(row, false); if (d) d.style.display = 'none'; }
+        else if (d) { d.style.display = ''; }
+      });
+    }
+    const pills = document.querySelectorAll('[data-level-pill]');
+    pills.forEach(function (p) {
+      p.addEventListener('click', function () {
+        activeLevel = p.getAttribute('data-level-pill');
+        pills.forEach(function (q) { q.classList.toggle('on', q === p); });
+        apply();
+      });
+    });
+    const filterInp = document.getElementById('log-filter');
+    if (filterInp) {
+      filterInp.addEventListener('input', function () {
+        query = filterInp.value.trim().toLowerCase();
+        apply();
+      });
+    }
+
+    // Time-range presets: compute (now - minutes) and submit the search form.
+    // Formatted in UTC because the server parses the Since field as UTC, so
+    // this makes "Last 1h" filter the actual last hour regardless of zone.
+    document.querySelectorAll('[data-since-preset]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const since = document.getElementById('log-since');
+        const form = document.getElementById('log-search');
+        if (!since || !form) return;
+        const mins = parseInt(btn.getAttribute('data-since-preset'), 10) || 0;
+        const d = new Date(Date.now() - mins * 60000);
+        const pad = function (n) { return String(n).padStart(2, '0'); };
+        since.value = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) +
+          'T' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+        form.submit();
+      });
+    });
+  })();
 
   // ---- Keyboard shortcuts -------------------------------------------
   // "/" focuses the first filter input on the page; "?" shows a tiny
@@ -781,46 +874,6 @@
     }
     schedule();
   })();
-
-  // ----- Reveal BitLocker PIN ---------------------------------------------
-  // The pre-boot PIN is never embedded in the page. A reveal button fetches
-  // it from the audited /api endpoint on demand, shows it inline, and
-  // auto-hides it after a short delay so it doesn't linger on screen. A
-  // second click hides it immediately.
-  document.addEventListener('click', function (e) {
-    const btn = e.target.closest('[data-reveal-pin]');
-    if (!btn) return;
-    const wrap = btn.closest('.reveal-pin');
-    const out = wrap && wrap.querySelector('.reveal-pin-value');
-    const label = btn.querySelector('.reveal-pin-label');
-    if (!out) return;
-    if (!out.hidden) { hidePin(btn, out, label); return; }
-    const id = btn.getAttribute('data-reveal-pin');
-    btn.disabled = true;
-    fetch('/api/v1/machines/' + id + '/bitlocker/pin', {
-      credentials: 'same-origin', headers: { Accept: 'application/json' },
-    })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) {
-        btn.disabled = false;
-        out.textContent = (d && typeof d.pin === 'string' && d.pin !== '') ? d.pin : 'unavailable';
-        out.hidden = false;
-        if (label) label.textContent = 'Hide PIN';
-        clearTimeout(btn._pinTimer);
-        btn._pinTimer = setTimeout(function () { hidePin(btn, out, label); }, 30000);
-      })
-      .catch(function () {
-        btn.disabled = false;
-        out.textContent = 'error retrieving PIN';
-        out.hidden = false;
-      });
-  });
-  function hidePin(btn, out, label) {
-    out.hidden = true;
-    out.textContent = '';
-    if (label) label.textContent = 'Reveal PIN';
-    clearTimeout(btn._pinTimer);
-  }
 
   // ---- Notification badge poll ---------------------------------------
   (function initNotifyBadge() {

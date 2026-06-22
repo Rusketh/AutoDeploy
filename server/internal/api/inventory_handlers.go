@@ -3,11 +3,9 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -333,24 +331,12 @@ type AgentPackageReport struct {
 type agentReportResponse struct {
 	MachineID    model.ID `json:"machine_id"`
 	DeploymentID model.ID `json:"deployment_id"`
-	// DeployToken is the per-machine bearer token issued when a
-	// deploy opens (outcome=in_progress). The agent stores it and
-	// presents it as X-AutoDeploy-Deploy-Token on subsequent calls
-	// that return secrets (currently the BitLocker config endpoint).
-	// Empty on close reports.
-	DeployToken string `json:"deploy_token,omitempty"`
 	// AgentID is the machine's server-minted resident identity. Returned
 	// so a manually run agent (no registry provisioning) can adopt and
 	// persist it, then report hardware/identity and poll /agent/self like
 	// a PXE-provisioned machine.
 	AgentID string `json:"agent_id,omitempty"`
 }
-
-// deployTokenTTL is how long an issued token stays valid. A whole
-// deploy plus a generous buffer for first-logon agent work; far less
-// than a typical Windows install. Beyond this the agent re-opens a
-// report and gets a fresh token.
-const deployTokenTTL = 24 * time.Hour
 
 // handleBulkBinding applies one binding edit (image / name template / OU /
 // group membership changes) to many machines at once. Bindings are
@@ -481,25 +467,7 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 		if in.Outcome == "in_progress" && in.ImageID != nil {
 			_ = r.Inventory.EnsureBindingImage(req.Context(), machine.ID, *in.ImageID)
 		}
-		// Issue / rotate a deploy token on the open report so the
-		// agent has a bearer credential for subsequent secret-
-		// returning calls (BitLocker config). On close reports we
-		// don't issue -- the agent only needs the token while a
-		// deploy is in flight.
 		resp := agentReportResponse{MachineID: machine.ID, DeploymentID: depID, AgentID: machine.AgentID}
-		if in.Outcome == "in_progress" {
-			tok, err := r.Inventory.IssueDeployToken(req.Context(), machine.ID, deployTokenTTL)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			resp.DeployToken = tok
-			slog.Default().Info("deploy.token.issued",
-				slog.String("actor", "server"),
-				slog.String("target", "machine:"+itoa64(int64(machine.ID))),
-				slog.String("note", "token value not logged; SHA-256 hash stored"),
-			)
-		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }

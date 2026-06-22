@@ -22,7 +22,7 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Payloads](portal/payloads.md)** — ISOs, unattend files, and driver packages.
 - **[Software & loadouts](portal/software.md)** — software packages, detection, install steps, and loadouts.
 - **[Images](portal/images.md)** — composing ISOs, unattends, drivers and software into a deployable image.
-- **[Machines](portal/machines.md)** — inventory, machine detail, bindings, history and BitLocker.
+- **[Machines](portal/machines.md)** — inventory, machine detail, bindings, and history.
 - **[Windows Updates](portal/windows-updates.md)** — KB patches, compliance tracking, and fleet-wide deployment.
 - **[Bulk operations](portal/bulk-operations.md)** — act on many machines at once.
 - **[Mirrors](portal/mirrors.md)** — site-local payload caches.
@@ -41,7 +41,6 @@ from a single web portal. This guide takes you from a bare server to a fully man
 ### Operations
 - **[Security](operations/security.md)** — authentication, HTTPS, secrets at rest, the access PIN.
 - **[Active Directory](operations/active-directory.md)** — domain join and lookups.
-- **[BitLocker](operations/bitlocker.md)** — enabling encryption and escrowing recovery keys.
 - **[Scaling](operations/scaling.md)** — mirrors, payload throttling, large fleets.
 - **[Backup & retention](operations/backup-and-retention.md)** — protecting your data and pruning logs.
 - **[Updates](operations/updates.md)** — updating the server and distributing new agents.

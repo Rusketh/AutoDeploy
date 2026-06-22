@@ -21,6 +21,26 @@ type LogEvent struct {
 	Action     string    `json:"action"`
 	Target     string    `json:"target"`
 	Fields     string    `json:"fields"`
+	// MachineName is the human-readable name resolved from Actor (an agent's
+	// SMBIOS UUID) at read time. Never persisted; populated by
+	// EnrichMachineNames so the portal and the live-tail JSON can show a name
+	// instead of a raw UUID. Empty for non-machine actors (system/operator).
+	MachineName string `json:"machine_name,omitempty"`
+}
+
+// EnrichMachineNames fills MachineName on each event whose Actor (the agent's
+// system UUID) resolves to a name in the supplied map. Build the map once per
+// request with InventoryRepo.NamesByUUID. Events with an unknown or
+// non-machine actor are left untouched.
+func EnrichMachineNames(events []LogEvent, names map[string]string) {
+	if len(names) == 0 {
+		return
+	}
+	for i := range events {
+		if n := names[events[i].Actor]; n != "" {
+			events[i].MachineName = n
+		}
+	}
 }
 
 // LogRepo writes and reads log events.

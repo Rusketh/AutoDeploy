@@ -42,8 +42,7 @@ its existing OS instead of being left in a broken state.
 
 The agent is a **Windows** program. It runs in two ways:
 
-- **At deployment time**, right after Windows Setup, to install software, apply configuration,
-  and (optionally) enable BitLocker.
+- **At deployment time**, right after Windows Setup, to install software and apply configuration.
 - **As a resident Windows service** afterwards, polling the server on an interval for new work —
   software to push, a rename, a reimage, or a self-update.
 
@@ -63,8 +62,8 @@ A typical machine goes through these stages:
    [image](portal/images.md) onto disk and reboots into Windows Setup.
 5. **Windows Setup.** Windows installs using the image's [unattend](portal/payloads.md) answer
    file and matched [driver packages](portal/payloads.md#driver-packages).
-6. **Configure.** The agent runs, installs the image's [software](portal/software.md), applies
-   branding, and enables [BitLocker](operations/bitlocker.md) if configured.
+6. **Configure.** The agent runs, installs the image's [software](portal/software.md), and applies
+   branding.
 7. **Report & remain.** The agent reports hardware and deployment results to the server and stays
    resident as a service, ready for [bulk operations](portal/bulk-operations.md).
 

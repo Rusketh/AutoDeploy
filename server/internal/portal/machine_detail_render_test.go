@@ -56,8 +56,6 @@ func baseMachineData() map[string]any {
 		"Binding":    model.MachineBinding{MachineID: 1},
 		"Images":     []model.Image{},
 		"Packages":   []model.SoftwarePackage{},
-		"BL":         map[string]any{"PINSet": false},
-		"Recovery":   nil,
 		"Detected":   nil,
 		"KBStatuses": nil,
 		"History":    nil,
@@ -101,54 +99,6 @@ func TestMachineDetailReimageBanner(t *testing.T) {
 		out := renderMachineDetail(t, d)
 		if !strings.Contains(out, "couldn't be started") {
 			t.Errorf("want a failed-agent warning; got:\n%s", out)
-		}
-	})
-}
-
-// TestMachineDetailPINReveal covers the BitLocker pre-boot PIN reveal control:
-// it renders only when a PIN is configured, and the cleartext PIN is never
-// embedded in the page (it's fetched on demand from the audited endpoint).
-func TestMachineDetailPINReveal(t *testing.T) {
-	t.Run("no PIN: no reveal control", func(t *testing.T) {
-		out := renderMachineDetail(t, baseMachineData())
-		if strings.Contains(out, "data-reveal-pin") {
-			t.Errorf("reveal control must not render when no PIN is set; got:\n%s", out)
-		}
-	})
-	t.Run("PIN set: reveal button, value placeholder empty", func(t *testing.T) {
-		d := baseMachineData()
-		d["BL"] = map[string]any{"PINSet": true}
-		out := renderMachineDetail(t, d)
-		if !strings.Contains(out, "data-reveal-pin") || !strings.Contains(out, "Reveal PIN") {
-			t.Errorf("want a reveal button when a PIN is set; got:\n%s", out)
-		}
-		// The value element is present but empty -- the PIN is fetched
-		// on demand, never baked into the rendered HTML.
-		if !strings.Contains(out, `reveal-pin-value`) {
-			t.Error("want an (empty) value placeholder element")
-		}
-	})
-}
-
-// TestMachineDetailRecoveryKeys: the recovery-keys section always renders so an
-// admin can find escrowed keys (or see that none are escrowed yet) -- the
-// server keeps its own copy independent of any GPO-driven AD backup.
-func TestMachineDetailRecoveryKeys(t *testing.T) {
-	t.Run("no keys: section with empty state", func(t *testing.T) {
-		out := renderMachineDetail(t, baseMachineData())
-		if !strings.Contains(out, "Recovery keys") {
-			t.Error("want a Recovery keys section even when none are escrowed")
-		}
-		if !strings.Contains(out, "No recovery keys escrowed for this machine yet") {
-			t.Error("want the empty-state explanation")
-		}
-	})
-	t.Run("with keys: retrieve link", func(t *testing.T) {
-		d := baseMachineData()
-		d["Recovery"] = []model.RecoveryKeyRecord{{ID: 5, EscrowedAt: time.Now(), Note: "deploy"}}
-		out := renderMachineDetail(t, d)
-		if !strings.Contains(out, "/api/v1/recovery-keys/5") || !strings.Contains(out, "Retrieve key") {
-			t.Errorf("want a retrieve link for escrowed keys; got:\n%s", out)
 		}
 	})
 }

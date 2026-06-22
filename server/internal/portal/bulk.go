@@ -510,10 +510,18 @@ func bulkDetail(r Repos) http.HandlerFunc {
 		}
 		prog, _ := r.Bulk.ProgressFor(req.Context(), id)
 		op.Progress = prog
+		// Resolve each job's machine ID to a display name so the table shows
+		// names, not bare IDs. One fleet-wide lookup; unknown IDs fall back to
+		// the ID in the template.
+		names, _ := r.Inventory.NamesByID(req.Context())
 		// Group jobs by run number (newest run first) for recurring history.
+		type jobView struct {
+			model.BulkJob
+			MachineName string
+		}
 		type run struct {
 			No   int
-			Jobs []model.BulkJob
+			Jobs []jobView
 		}
 		order := []int{}
 		byRun := map[int]*run{}
@@ -523,7 +531,7 @@ func bulkDetail(r Repos) http.HandlerFunc {
 				byRun[n] = &run{No: n}
 				order = append(order, n)
 			}
-			byRun[n].Jobs = append(byRun[n].Jobs, j)
+			byRun[n].Jobs = append(byRun[n].Jobs, jobView{BulkJob: j, MachineName: names[j.MachineID]})
 		}
 		// order ascending by appearance (jobs come ORDER BY id); present newest run first.
 		runs := make([]*run, 0, len(order))

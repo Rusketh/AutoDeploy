@@ -250,26 +250,6 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 			"machine_id": m.ID,
 			"jobs":       jobs,
 		}
-		// BitLocker reconcile info for the resident agent: whether a PIN is
-		// configured and its version (updated_at), so the agent can (re)apply
-		// or decrypt after deploy when the operator changes it. When a PIN is
-		// set, mint a fresh short-lived token so the agent can fetch the
-		// cleartext PIN from the (audited) config endpoint -- the resident
-		// agent holds no live deploy token. Issued only for machines that
-		// actually have a PIN to manage; the config endpoint still requires
-		// and audits the token.
-		if r.BitLocker != nil {
-			if st, berr := r.BitLocker.PINStatus(req.Context(), m.ID); berr == nil {
-				bl := map[string]any{"pin_set": st.PINSet, "version": int64(0)}
-				if st.PINSet {
-					bl["version"] = st.UpdatedAt.Unix()
-					if tok, terr := r.Inventory.IssueDeployToken(req.Context(), m.ID, deployTokenTTL); terr == nil {
-						resp["deploy_token"] = tok
-					}
-				}
-				resp["bitlocker"] = bl
-			}
-		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }

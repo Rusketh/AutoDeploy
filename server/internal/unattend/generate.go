@@ -265,20 +265,6 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 		}
 	}
 
-	// TPM: clear and re-initialize the platform module for BitLocker. After
-	// a re-image the TPM ownership is stale (previous OS); Initialize-Tpm
-	// alone cannot take ownership of an already-owned TPM, so we must
-	// Clear-Tpm first. The registry key grants the OS full authority to
-	// clear without a physical-presence prompt (TPM 2.0). The specialize
-	// pass runs as SYSTEM; Windows Setup reboots after specialize, which
-	// finalises the clear so the TPM is ready when the agent runs.
-	// Best-effort: wrapped so a missing/unresponsive TPM can never fail
-	// the specialize pass.
-	push("AutoDeploy: allow OS-managed TPM clear",
-		`reg add HKLM\SOFTWARE\Policies\Microsoft\TPM /v OSManagedAuthLevel /t REG_DWORD /d 4 /f`)
-	push("AutoDeploy: clear and initialize TPM for BitLocker",
-		`cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Clear-Tpm -ErrorAction SilentlyContinue | Out-Null; Initialize-Tpm -ErrorAction SilentlyContinue | Out-Null\" & exit 0"`)
-
 	// Telemetry policy (1-3). 0 / negative leave the system default.
 	if s.TelemetryLevel >= 1 && s.TelemetryLevel <= 3 {
 		push(fmt.Sprintf("Policy: AllowTelemetry = %d", s.TelemetryLevel),

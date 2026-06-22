@@ -85,18 +85,25 @@ func TestBulkDetailRenders(t *testing.T) {
 		NextRunAt: &now, Progress: model.BulkProgress{Total: 2, OK: 1, Queued: 1},
 		WakeOnLAN: true, CancelAfterMinutes: 360,
 	}
+	// jobView mirrors the enriched job bulkDetail builds: a BulkJob plus the
+	// resolved machine display name.
+	type jobView struct {
+		model.BulkJob
+		MachineName string
+	}
 	type run struct {
 		No   int
-		Jobs []model.BulkJob
+		Jobs []jobView
 	}
 	out := renderBulk(t, "bulk_detail.html", map[string]any{
 		"Op":   op,
 		"Jobs": []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}},
-		"Runs": []*run{{No: 1, Jobs: []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}}}},
+		"Runs": []*run{{No: 1, Jobs: []jobView{{BulkJob: model.BulkJob{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}, MachineName: "WS-DEV-09"}}}},
 	})
 	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "re-evaluated each run",
 		"Weekly patch run", "patches the fleet",
-		"Wake-on-LAN", "cancel undelivered jobs after 6 hours"} {
+		"Wake-on-LAN", "cancel undelivered jobs after 6 hours",
+		"WS-DEV-09"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_detail missing %q", want)
 		}

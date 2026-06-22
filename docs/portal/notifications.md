@@ -40,7 +40,7 @@ Events are grouped into seven categories:
 | **Software installs** | `software.install_ok`, `software.install_failed` |
 | **Machine inventory** | `machine.first_seen`, `machine.offline`, `machine.hardware_change` |
 | **Windows Updates** | `update.deployed`, `update.compliance_fail` |
-| **Security** | `auth.login_failed`, `bitlocker.recovery_used` |
+| **Security** | `auth.login_failed` |
 | **System health** | `system.storage_low`, `system.agent_outdated` |
 
 Each event has a severity: **info**, **success**, **warning**, or **error**.

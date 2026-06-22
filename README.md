@@ -11,7 +11,7 @@ shows up in the portal, and you deploy to it.
 ```
    PXE boot ──► Boot Client (Linux)        Server (portal + API)        Agent (Windows)
    the machine   stages Windows media   ◄──►  decides what to deploy  ◄──►  installs software,
-   network-boots  onto the local disk         and records every fact        enables BitLocker,
+   network-boots  onto the local disk         and records every fact        applies config,
    into a menu                                                               stays resident
 ```
 
@@ -25,7 +25,6 @@ shows up in the portal, and you deploy to it.
 - **Software packages & loadouts** with detection rules and scripted install steps.
 - **Inventory** of every machine, its hardware, bindings, and deployment history.
 - **Bulk operations** — reimage, rename, run scripts, or push software to many machines at once.
-- **BitLocker** enablement with recovery-key escrow.
 - **Active Directory** domain join and lookups.
 - **Payload mirrors** for scaling deployments across sites.
 - **Audit logging** of every operator and client action.
@@ -38,7 +37,7 @@ AutoDeploy is three Go programs that talk to each other over HTTP(S):
 |-----------|--------|---------|------|
 | **Server** | `autodeploy-server` | Linux | Web portal, JSON API, deployment orchestration, SQLite store, optional built-in TFTP. The single source of truth. |
 | **Boot Client** | `autodeploy-boot` | Linux (in initramfs, via iPXE) | Pre-OS imaging: reads hardware identity, fetches the deployment manifest, stages Windows media onto disk, reboots. |
-| **Agent** | `autodeploy-agent` | Windows | Post-install configuration and a resident service that polls the server for work (software, rename, reimage, BitLocker). |
+| **Agent** | `autodeploy-agent` | Windows | Post-install configuration and a resident service that polls the server for work (software, rename, reimage). |
 
 The server **decides**; the boot client and agent **report facts and fail safe**.
 
@@ -90,7 +89,7 @@ The complete, screenshot-rich user guide lives in **[docs/](docs/README.md)**:
   [detection rules](docs/reference/detection-rules.md), [install steps](docs/reference/install-steps.md),
   [JSON API](docs/reference/api.md).
 - **Operations** — [security](docs/operations/security.md),
-  [Active Directory](docs/operations/active-directory.md), [BitLocker](docs/operations/bitlocker.md),
+  [Active Directory](docs/operations/active-directory.md),
   [scaling](docs/operations/scaling.md), [backup & retention](docs/operations/backup-and-retention.md),
   [updates](docs/operations/updates.md), [troubleshooting](docs/operations/troubleshooting.md).
 

@@ -282,7 +282,7 @@
   </fieldset>
 
   <fieldset id="sec-setupcomplete"><legend>14. SetupComplete.cmd</legend>
-    <p class="hint">Lines written to <code>%WINDIR%\Setup\Scripts\SetupComplete.cmd</code>. Windows runs that file <strong>after</strong> the specialize pass and <strong>before</strong> OOBE finishes — a no-user-session window ideal for system-level work like enabling BitLocker pre-provisioning or scheduled reboots.</p>
+    <p class="hint">Lines written to <code>%WINDIR%\Setup\Scripts\SetupComplete.cmd</code>. Windows runs that file <strong>after</strong> the specialize pass and <strong>before</strong> OOBE finishes — a no-user-session window ideal for system-level work like registry tweaks or scheduled reboots.</p>
     <div id="scs">
       {{range $i, $c := $s.SetupCompleteCommands}}
       <div class="rep">

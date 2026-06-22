@@ -50,7 +50,7 @@ func ListenAndServe(ctx context.Context, cfg config.Config, h http.Handler, logg
 	if !cfg.DevMode && !isLoopback(cfg.HTTPAddr) {
 		logger.LogAttrs(ctx, slog.LevelWarn, "http.cleartext_public_bind",
 			slog.String("addr", cfg.HTTPAddr),
-			slog.String("risk", "session cookies, admin credentials, BitLocker keys and agent payloads will travel unencrypted on the wire"),
+			slog.String("risk", "session cookies, admin credentials and agent payloads will travel unencrypted on the wire"),
 			slog.String("mitigation", "set AUTODEPLOY_HTTPS_ADDR + AUTODEPLOY_TLS_CERT/KEY for end-to-end TLS, or front this bind with a reverse proxy that terminates TLS and forwards to a loopback listener"),
 		)
 	}
