@@ -111,6 +111,33 @@ Extraction/boot-media fields (`install_image_format`, `swm_parts`, `bootloader_p
 | `parent_id` | no | Inherit from another loadout. |
 | `packages` | no | Array of `{ "package_id", "order_value", "opt_out" }`. |
 
+## Machine groups
+
+`GET/POST /api/v1/machine-groups`, `GET/PUT/DELETE /api/v1/machine-groups/{id}`
+
+AutoDeploy-local sets of machines, independent of Active Directory. Two kinds,
+resolved to a machine set the same way by every consumer.
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Unique. |
+| `description` | no | |
+| `kind` | no | `manual` (default) or `dynamic`. |
+| `filter` | for dynamic | `{ "name_regex", "os", "ou", "ou_subtree", "member_of" }`. All set criteria AND together. At least one is required for a dynamic group. |
+| `children` | no | Array of child group IDs to nest. The group includes each child's resolved members. Loops are rejected (422). |
+
+`GET` (list) returns each group with a resolved `member_count`.
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/v1/machine-groups/{id}/members` | Resolved member machine IDs: `{ "machine_ids": [..] }`. Works for both kinds. |
+| `POST /api/v1/machine-groups/{id}/members` | Add machines to a **manual** group: `{ "machine_ids": [..] }`. 400 on a dynamic group. |
+| `DELETE /api/v1/machine-groups/{id}/members` | Remove machines from a **manual** group: `{ "machine_ids": [..] }`. |
+
+A `bulk` operation can target a group by adding `"group_id"` to its `target`
+(see [Bulk operations](#bulk-operations)); a dynamic or nested group is
+re-resolved each run.
+
 ## Images
 
 `GET/POST /api/v1/images`, `GET/PUT/DELETE /api/v1/images/{id}`

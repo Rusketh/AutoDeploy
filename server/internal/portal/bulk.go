@@ -56,9 +56,11 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		pkgs, _ := r.Software.List(req.Context())
 		imgs, _ := r.Images.List(req.Context())
+		groups, _ := r.Groups.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
 			"Packages":    pkgs,
 			"Images":      imgs,
+			"Groups":      groups,
 			"FormAction":  "/portal/bulk",
 			"Editing":     false,
 			"AP":          formPrefill(nil, displayLoc(r)),
@@ -77,6 +79,11 @@ func bulkSearch(r Repos) http.HandlerFunc {
 			NameRegex: strings.TrimSpace(req.URL.Query().Get("name_regex")),
 			OU:        strings.TrimSpace(req.URL.Query().Get("ou")),
 			Group:     strings.TrimSpace(req.URL.Query().Get("group")),
+		}
+		if v := strings.TrimSpace(req.URL.Query().Get("group_id")); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				t.GroupID = model.ID(n)
+			}
 		}
 		machines, err := r.Bulk.PreviewTargets(req.Context(), t)
 		if err != nil {
@@ -178,8 +185,13 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 			OU:        strings.TrimSpace(req.FormValue("filter_ou")),
 			Group:     strings.TrimSpace(req.FormValue("filter_group")),
 		}
-		if p.Target.NameRegex == "" && p.Target.OU == "" && p.Target.Group == "" {
-			return p, fmt.Errorf("a re-evaluated recurring task needs a name, OU or group filter")
+		if v := strings.TrimSpace(req.FormValue("filter_group_id")); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				p.Target.GroupID = model.ID(n)
+			}
+		}
+		if p.Target.NameRegex == "" && p.Target.OU == "" && p.Target.Group == "" && p.Target.GroupID == 0 {
+			return p, fmt.Errorf("a re-evaluated recurring task needs a name, OU, AD group or machine-group filter")
 		}
 	} else {
 		p.TargetMode = model.BulkTargetSelection
@@ -364,9 +376,11 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 			selInit = machineItems(r, req, ms)
 		}
 		selJSON, _ := json.Marshal(selInit)
+		groups, _ := r.Groups.List(req.Context())
 		render(w, req, r, "bulk_form.html", fmt.Sprintf("Edit bulk operation #%d", int64(id)), map[string]any{
 			"Packages":    pkgs,
 			"Images":      imgs,
+			"Groups":      groups,
 			"FormAction":  fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
 			"Editing":     true,
 			"Op":          op,
@@ -574,6 +588,7 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 		"FilterName":        "",
 		"FilterOU":          "",
 		"FilterGroup":       "",
+		"FilterGroupID":     int64(0),
 		"WakeOnLAN":         false,
 		"CancelAfterValue":  "",
 		"CancelAfterUnit":   "hours",
@@ -626,6 +641,7 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 		ap["RecurCron"] = rs.Cron
 	}
 	ap["FilterName"], ap["FilterOU"], ap["FilterGroup"] = op.Target.NameRegex, op.Target.OU, op.Target.Group
+	ap["FilterGroupID"] = int64(op.Target.GroupID)
 	ap["WakeOnLAN"] = op.WakeOnLAN
 	if op.CancelAfterMinutes > 0 {
 		// Render whole hours as hours, anything else in minutes.

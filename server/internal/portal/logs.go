@@ -34,6 +34,22 @@ func logsView(r Repos) http.HandlerFunc {
 				s.Limit = n
 			}
 		}
+		// Group filter: restrict to events whose actor is one of the group's
+		// member machines (resolved to their SMBIOS UUIDs). An empty group
+		// forces an empty result rather than silently showing the whole log.
+		var groupID int64
+		if gs := strings.TrimSpace(q.Get("group")); gs != "" {
+			if gid, perr := strconv.ParseInt(gs, 10, 64); perr == nil && gid > 0 {
+				groupID = gid
+				if uuids, uerr := r.Groups.MemberUUIDs(req.Context(), model.ID(gid)); uerr == nil {
+					if len(uuids) == 0 {
+						s.Actors = []string{"\x00no-member"}
+					} else {
+						s.Actors = uuids
+					}
+				}
+			}
+		}
 		ev, err := r.Logs.Search(req.Context(), s)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -44,9 +60,12 @@ func logsView(r Repos) http.HandlerFunc {
 		if names, nerr := r.Inventory.NamesByUUID(req.Context()); nerr == nil {
 			model.EnrichMachineNames(ev, names)
 		}
+		groups, _ := r.Groups.List(req.Context())
 		render(w, req, r, "logs.html", "Logs", map[string]any{
-			"Events": ev,
-			"Query":  s,
+			"Events":  ev,
+			"Query":   s,
+			"Groups":  groups,
+			"GroupID": model.ID(groupID),
 		})
 	}
 }

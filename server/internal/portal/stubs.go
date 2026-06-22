@@ -34,6 +34,9 @@ var registerImageRoutes = func(get, post func(string, http.HandlerFunc), r Repos
 var registerInventoryRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 	get("/portal/machines", placeholder(r, "Machines"))
 }
+var registerMachineGroupRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
+	get("/portal/groups", placeholder(r, "Machine groups"))
+}
 var registerBulkRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 	get("/portal/bulk", placeholder(r, "Bulk operations"))
 }

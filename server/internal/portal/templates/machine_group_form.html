@@ -1,0 +1,100 @@
+{{define "body"}}
+{{$g := .Data.G}}
+{{$isNew := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $isNew}}New machine group{{else}}Edit group: {{$g.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/groups"><svg><use href="#i-arrow-left"/></svg>Back to groups</a></div>
+</div>
+<form class="std" method="POST" action="{{if $isNew}}/portal/groups{{else}}/portal/groups/{{int64 $g.ID}}{{end}}" id="group-form">
+  <div class="row">
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$g.Name}}" required autofocus></label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$g.Description}}" placeholder="Optional"></label>
+  </div>
+
+  <div class="section-head"><h3>Kind</h3><div class="line"></div></div>
+  <div class="checkgrid">
+    <label class="check"><input type="radio" name="kind" value="manual" {{if ne $g.Kind "dynamic"}}checked{{end}} data-kind-radio><span>Manual — add and remove machines by hand (and nest other groups)</span></label>
+    <label class="check"><input type="radio" name="kind" value="dynamic" {{if eq $g.Kind "dynamic"}}checked{{end}} data-kind-radio><span>Dynamic — a filter populates the group automatically</span></label>
+  </div>
+
+  <fieldset class="group-filter" data-kind-panel="dynamic"{{if ne $g.Kind "dynamic"}} hidden{{end}}>
+    <legend>Filter</legend>
+    <p class="small muted">All set criteria must match (AND). Leave a field blank to ignore it.</p>
+    <div class="row">
+      <label><span class="lbl">Name matches (regex)</span><input type="text" name="filter_name" value="{{$g.Filter.NameRegex}}" placeholder="^LAB-"></label>
+      <label><span class="lbl">OS contains</span><input type="text" name="filter_os" value="{{$g.Filter.OS}}" placeholder="Windows 11"></label>
+    </div>
+    <div class="row">
+      <label><span class="lbl">OU (distinguished name)</span><input type="text" name="filter_ou" value="{{$g.Filter.OU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
+    </div>
+    <div class="checkgrid">
+      <label class="check"><input type="checkbox" name="filter_ou_subtree" value="1" {{if $g.Filter.OUSubtree}}checked{{end}}><span>Include child OUs (subtree)</span></label>
+    </div>
+    <div class="row">
+      <label><span class="lbl">Member of (AD group)</span><input type="text" name="filter_member_of" value="{{$g.Filter.MemberOf}}" placeholder="Lab-Admins"></label>
+    </div>
+  </fieldset>
+
+  {{if .Data.Candidates}}
+  <div class="section-head"><h3>Subgroups</h3><div class="line"></div></div>
+  <p class="small muted">A group includes the resolved members of each subgroup it contains. Loops are rejected.</p>
+  <div class="checkgrid">
+    {{range .Data.Candidates}}
+    <label class="check"><input type="checkbox" name="child_ids" value="{{int64 .ID}}" {{if index $.Data.ChildSet .ID}}checked{{end}}><span>{{.Name}} <span class="muted small">({{.Kind}})</span></span></label>
+    {{end}}
+  </div>
+  {{end}}
+
+  <div class="actions mt-4">
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $isNew}}Create group{{else}}Save{{end}}</button>
+    <a class="btn ghost" href="/portal/groups">Cancel</a>
+  </div>
+</form>
+
+{{if not $isNew}}
+<div class="section-head">
+  <h3>Members ({{len .Data.Members}})</h3>
+  <div class="line"></div>
+  <a class="btn secondary sm" href="/portal/machines?group={{int64 $g.ID}}"><svg><use href="#i-server"/></svg>View on Machines</a>
+</div>
+{{if eq $g.Kind "manual"}}
+<p class="small muted">Add or remove machines from the <a href="/portal/machines?group={{int64 $g.ID}}">Machines</a> page: tick machines and use “Add to {{$g.Name}}”.</p>
+{{else}}
+<p class="small muted">Membership is computed live from the filter above.</p>
+{{end}}
+{{if .Data.Members}}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Name</th><th>UUID</th><th>Make / model</th><th class="small">Last seen</th></tr></thead>
+  <tbody>
+    {{range .Data.Members}}
+    <tr>
+      <td>{{if .ReportedName}}{{.ReportedName}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td><a href="/portal/machines/{{int64 .ID}}"><code>{{slice .SystemUUID 0 8}}…</code></a></td>
+      <td><strong>{{.SystemManufacturer}}</strong> <span class="small muted">{{.SystemProduct}}</span></td>
+      <td class="small muted">{{formatTime .LastSeen}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+{{end}}
+
+<script>
+(function(){
+  var radios = document.querySelectorAll('[data-kind-radio]');
+  var panel = document.querySelector('[data-kind-panel="dynamic"]');
+  if(!panel) return;
+  function sync(){
+    var dyn = false;
+    radios.forEach(function(r){ if(r.checked && r.value==='dynamic') dyn = true; });
+    panel.hidden = !dyn;
+  }
+  radios.forEach(function(r){ r.addEventListener('change', sync); });
+  sync();
+})();
+</script>
+{{end}}

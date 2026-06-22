@@ -166,3 +166,44 @@ type ImageSoftwareLink struct {
 	PackageID  ID    `json:"package_id"`
 	OrderValue int64 `json:"order_value"`
 }
+
+// Machine-group kinds. Both resolve to a flat machine set the same way for
+// every consumer; the kind only changes how membership is authored.
+const (
+	MachineGroupManual  = "manual"
+	MachineGroupDynamic = "dynamic"
+)
+
+// MachineGroup is an AutoDeploy-local named set of machines, independent of
+// Active Directory. A manual group has explicit machine members and may nest
+// child groups; a dynamic group is defined by Filter, evaluated against current
+// inventory at read time. Children lets groups NEST: a group's resolved
+// membership includes the resolved members of each child group (cycles are
+// prevented in the repository). MemberCount is derived (not persisted) and
+// populated by ListWithCounts for list/sidebar rendering.
+type MachineGroup struct {
+	ID          ID            `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Kind        string        `json:"kind"`
+	Filter      MachineFilter `json:"filter"`
+	Children    []ID          `json:"children,omitempty"`
+	MemberCount int           `json:"member_count"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+// MachineFilter is the dynamic-group selection, also reusable anywhere a "match
+// these machines" predicate is needed. Empty fields are ignored; all set fields
+// AND together. NameRegex matches the machine's display name (reported name,
+// binding name fallback) case-insensitively; OS is a case-insensitive substring
+// of the reported OS caption; OU matches the desired or observed AD location
+// (exact, or the OU and everything beneath it when OUSubtree); MemberOf tests AD
+// group membership.
+type MachineFilter struct {
+	NameRegex string `json:"name_regex,omitempty"`
+	OS        string `json:"os,omitempty"`
+	OU        string `json:"ou,omitempty"`
+	OUSubtree bool   `json:"ou_subtree,omitempty"`
+	MemberOf  string `json:"member_of,omitempty"`
+}

@@ -28,6 +28,50 @@ func init() {
 		post("/portal/machines/{id}/reimage/cancel", machineReimageCancel(r))
 		post("/portal/machines/{id}/delete", machineDelete(r))
 		post("/portal/machines/delete", machineBulkDelete(r))
+		post("/portal/machines/group-membership", machineGroupMembership(r))
+	}
+}
+
+// machineGroupMembership adds or removes the checked machines to/from a manual
+// group, straight from the inventory selection. It reuses the same machine_ids[]
+// the bulk-delete bar submits, with a group_id and an op (add|remove).
+func machineGroupMembership(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if err := req.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		gid, _ := strconv.ParseInt(req.FormValue("group_id"), 10, 64)
+		op := req.FormValue("op")
+		var ids []model.ID
+		for _, s := range req.Form["machine_ids"] {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
+				ids = append(ids, model.ID(n))
+			}
+		}
+		back := "/portal/machines"
+		if gid > 0 {
+			back = fmt.Sprintf("/portal/machines?group=%d", gid)
+		}
+		if gid <= 0 || len(ids) == 0 {
+			flash(w, "err", "Select a group and at least one machine.")
+			http.Redirect(w, req, back, http.StatusFound)
+			return
+		}
+		var err error
+		verb := "Added"
+		if op == "remove" {
+			err = r.Groups.RemoveMembers(req.Context(), model.ID(gid), ids)
+			verb = "Removed"
+		} else {
+			err = r.Groups.AddMembers(req.Context(), model.ID(gid), ids)
+		}
+		if err != nil {
+			flash(w, "err", err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("%s %d machine%s.", verb, len(ids), plural(len(ids))))
+		}
+		http.Redirect(w, req, back, http.StatusFound)
 	}
 }
 
@@ -93,6 +137,25 @@ func machineCSV(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Honour the list page's ?group= filter so the export matches what the
+		// operator is looking at.
+		if gs := strings.TrimSpace(req.URL.Query().Get("group")); gs != "" {
+			if gid, perr := strconv.ParseInt(gs, 10, 64); perr == nil && gid > 0 {
+				memberIDs, _ := r.Groups.Members(req.Context(), model.ID(gid))
+				set := make(map[model.ID]bool, len(memberIDs))
+				for _, id := range memberIDs {
+					set[id] = true
+				}
+				filtered := make([]model.MachineRecord, 0, len(set))
+				for _, m := range machines {
+					if set[m.ID] {
+						filtered = append(filtered, m)
+					}
+				}
+				machines = filtered
+			}
+		}
+
 		bindings, imageNames := loadMachineBindings(req, r, machines)
 		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
 
@@ -271,6 +334,39 @@ func machineList(r Repos) http.HandlerFunc {
 		query := strings.TrimSpace(req.URL.Query().Get("q"))
 		totalAll := len(v)
 
+		// Left sidebar: every group with its resolved member count.
+		groups, _ := r.Groups.ListWithCounts(req.Context())
+
+		// Group filter: ?group=<id> restricts the inventory to that group's
+		// resolved members BEFORE the text filter, sort and pagination run, so
+		// the pager and totals describe the in-group set. Manual groups also
+		// surface "add/remove selected" actions (membership is editable);
+		// dynamic groups don't (membership is computed from their filter).
+		var activeGroupID int64
+		var activeGroupName string
+		var activeGroupManual bool
+		if gs := strings.TrimSpace(req.URL.Query().Get("group")); gs != "" {
+			if gid, perr := strconv.ParseInt(gs, 10, 64); perr == nil && gid > 0 {
+				if g, gerr := r.Groups.Get(req.Context(), model.ID(gid)); gerr == nil {
+					activeGroupID = int64(g.ID)
+					activeGroupName = g.Name
+					activeGroupManual = g.Kind == model.MachineGroupManual
+					memberIDs, _ := r.Groups.Members(req.Context(), g.ID)
+					set := make(map[model.ID]bool, len(memberIDs))
+					for _, id := range memberIDs {
+						set[id] = true
+					}
+					filtered := make([]model.MachineRecord, 0, len(set))
+					for _, m := range v {
+						if set[m.ID] {
+							filtered = append(filtered, m)
+						}
+					}
+					v = filtered
+				}
+			}
+		}
+
 		// One query each for the whole fleet: bindings, image names, OS
 		// captions and pending-re-image flags. Loading the lot up front
 		// (rather than per page) is what lets ?q= search and ?sort= order
@@ -346,8 +442,12 @@ func machineList(r Repos) http.HandlerFunc {
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
-			"Sort":   machineSortColumns(req, sortKey, sortDir),
-			"CSVURL": machineCSVURL(req),
+			"Sort":              machineSortColumns(req, sortKey, sortDir),
+			"CSVURL":            machineCSVURL(req),
+			"Groups":            groups,
+			"ActiveGroupID":     activeGroupID,
+			"ActiveGroupName":   activeGroupName,
+			"ActiveGroupManual": activeGroupManual,
 		})
 	}
 }
@@ -491,7 +591,7 @@ func machineSortColumns(req *http.Request, activeKey, activeDir string) map[stri
 // export link, so the download matches what's on screen.
 func machineCSVURL(req *http.Request) string {
 	q := url.Values{}
-	for _, k := range []string{"q", "sort", "dir"} {
+	for _, k := range []string{"q", "sort", "dir", "group"} {
 		if v := req.URL.Query().Get(k); v != "" {
 			q.Set(k, v)
 		}
