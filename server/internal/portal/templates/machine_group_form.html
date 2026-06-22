@@ -60,7 +60,7 @@
   <a class="btn secondary sm" href="/portal/machines?group={{int64 $g.ID}}"><svg><use href="#i-server"/></svg>View on Machines</a>
 </div>
 {{if eq $g.Kind "manual"}}
-<p class="small muted">Add or remove machines from the <a href="/portal/machines?group={{int64 $g.ID}}">Machines</a> page: tick machines and use “Add to {{$g.Name}}”.</p>
+<p class="small muted">Add machines from the <a href="/portal/machines">Machines</a> page (or any group view): tick the machines you want, choose <strong>{{$g.Name}}</strong> in the selection bar's group menu, and click <strong>Add to group</strong>. To remove machines, view <a href="/portal/machines?group={{int64 $g.ID}}">this group</a>, tick them, and click <strong>Remove</strong>.</p>
 {{else}}
 <p class="small muted">Membership is computed live from the filter above.</p>
 {{end}}

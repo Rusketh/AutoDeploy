@@ -334,8 +334,17 @@ func machineList(r Repos) http.HandlerFunc {
 		query := strings.TrimSpace(req.URL.Query().Get("q"))
 		totalAll := len(v)
 
-		// Left sidebar: every group with its resolved member count.
+		// Left sidebar: every group with its resolved member count. The manual
+		// subset feeds the selection bar's "add ticked machines to a group"
+		// control, which works from any view (including All machines) so an
+		// empty manual group can still be filled.
 		groups, _ := r.Groups.ListWithCounts(req.Context())
+		manualGroups := make([]model.MachineGroup, 0, len(groups))
+		for _, g := range groups {
+			if g.Kind == model.MachineGroupManual {
+				manualGroups = append(manualGroups, g)
+			}
+		}
 
 		// Group filter: ?group=<id> restricts the inventory to that group's
 		// resolved members BEFORE the text filter, sort and pagination run, so
@@ -445,6 +454,7 @@ func machineList(r Repos) http.HandlerFunc {
 			"Sort":              machineSortColumns(req, sortKey, sortDir),
 			"CSVURL":            machineCSVURL(req),
 			"Groups":            groups,
+			"ManualGroups":      manualGroups,
 			"ActiveGroupID":     activeGroupID,
 			"ActiveGroupName":   activeGroupName,
 			"ActiveGroupManual": activeGroupManual,

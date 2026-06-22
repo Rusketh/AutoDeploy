@@ -253,4 +253,24 @@ func TestMachineListRender(t *testing.T) {
 			t.Errorf("numbered strip should hide on a single page; got:\n%s", out)
 		}
 	})
+
+	t.Run("group add control is present whenever manual groups exist", func(t *testing.T) {
+		// The selection bar must offer "add ticked machines to a group" on ANY
+		// view (here: All machines, no active group) so an empty manual group
+		// can be filled — not only when that group is the active filter.
+		out := renderMachineList(t, map[string]any{
+			"Rows": []machineListRowT{row}, "Page": page, "Query": "", "TotalAll": 1,
+			"ManualGroups":  []model.MachineGroup{{ID: 7, Name: "Lab", Kind: model.MachineGroupManual}},
+			"ActiveGroupID": int64(0),
+		})
+		if !strings.Contains(out, `name="group_id"`) || !strings.Contains(out, "Add to group") {
+			t.Errorf("want a group dropdown + Add to group in the selection bar; got:\n%s", out)
+		}
+		if !strings.Contains(out, "/portal/machines/group-membership") {
+			t.Errorf("want the membership formaction; got:\n%s", out)
+		}
+		if !strings.Contains(out, `value="7"`) || !strings.Contains(out, "Lab") {
+			t.Errorf("want the manual group offered as an option; got:\n%s", out)
+		}
+	})
 }

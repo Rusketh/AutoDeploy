@@ -41,13 +41,18 @@
 </div>
 {{if .Data.Rows}}
 <form method="post" action="/portal/machines/delete" id="bulk-del">
-<input type="hidden" name="group_id" value="{{.Data.ActiveGroupID}}">
 <div class="actions mb-2" id="bulk-del-bar" hidden>
-  {{if .Data.ActiveGroupManual}}
-  <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="add"><svg><use href="#i-plus"/></svg>Add to {{.Data.ActiveGroupName}}</button>
-  <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="remove"><svg><use href="#i-x"/></svg>Remove from {{.Data.ActiveGroupName}}</button>
+  <span class="sel-count small muted"><span id="del-count">0</span> selected</span>
+  {{if .Data.ManualGroups}}
+  <span class="sel-group">
+    <select name="group_id" aria-label="Target machine group">
+      {{range .Data.ManualGroups}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $.Data.ActiveGroupID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+    <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="add"><svg><use href="#i-plus"/></svg>Add to group</button>
+    <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="remove"><svg><use href="#i-x"/></svg>Remove</button>
+  </span>
   {{end}}
-  <button type="submit" class="danger sm" data-confirm="Delete the selected machines from inventory? This removes their binding, history and detection state."><svg><use href="#i-trash"/></svg>Delete selected (<span id="del-count">0</span> on this page)</button>
+  <button type="submit" class="danger sm" data-confirm="Delete the selected machines from inventory? This removes their binding, history and detection state."><svg><use href="#i-trash"/></svg>Delete from inventory</button>
 </div>
 <div class="tablewrap">
 <table id="tbl">
@@ -94,7 +99,7 @@ function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').le
   {{if .Data.ActiveGroupID}}
   <h3>No machines in “{{.Data.ActiveGroupName}}”{{if .Data.Query}} match “{{.Data.Query}}”{{end}}</h3>
   {{if .Data.ActiveGroupManual}}
-  <p>This is an empty manual group. Open <a href="/portal/machines">All machines</a>, tick the machines you want, and use <strong>Add to {{.Data.ActiveGroupName}}</strong>.</p>
+  <p>This is an empty manual group. Open <a href="/portal/machines">All machines</a>, tick the machines you want, choose <strong>{{.Data.ActiveGroupName}}</strong> in the selection bar's group menu, and click <strong>Add to group</strong>.</p>
   {{else}}
   <p>This dynamic group's filter currently matches no machines. <a href="/portal/groups">Adjust its filter</a> or wait for matching machines to check in.</p>
   {{end}}
