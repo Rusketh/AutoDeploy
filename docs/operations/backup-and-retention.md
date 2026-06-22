@@ -16,7 +16,7 @@ The data directory contains:
 See the [data directory layout](../reference/configuration.md#data-directory-layout) for the full
 breakdown.
 
-> Without the secrets key, escrowed [BitLocker](bitlocker.md) PINs and recovery keys in the
+> Without the secrets key, stored secrets such as domain-join passwords and webhook secrets in the
 > database cannot be decrypted. Treat the key with the same care as the backup itself.
 
 ## Backing up

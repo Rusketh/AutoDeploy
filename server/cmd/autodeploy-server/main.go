@@ -221,7 +221,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Images: r.Images, Inventory: r.Inventory,
 		Resolver: r.Resolver,
 		Users:    r.Users, Settings: r.Settings,
-		BitLocker: r.BitLocker, Bulk: r.Bulk,
+		Bulk: r.Bulk,
 		Logs: r.Logs, Branding: r.Branding,
 		Mirrors: r.Mirrors, Runtime: rt,
 		AD:            adSvc,
@@ -290,7 +290,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
 		Images: r.Images, Inventory: r.Inventory,
-		BitLocker: r.BitLocker, Bulk: r.Bulk, Logs: r.Logs,
+		Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
 		Mirrors:       r.Mirrors,
 		Runtime:       rt,
@@ -454,7 +454,6 @@ type appRepos struct {
 	Resolver      *resolve.Resolver
 	Users         *auth.Repo
 	Settings      *auth.SettingsRepo
-	BitLocker     *model.BitLockerRepo
 	Bulk          *model.BulkRepo
 	Logs          *model.LogRepo
 	Branding      *branding.Repo
@@ -478,7 +477,6 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	inventory := model.NewInventoryRepo(db)
 	users := auth.New(db)
 	settings := auth.MustNewSettingsRepo(users)
-	bitlocker := model.NewBitLockerRepo(db, bx)
 	bulk := model.NewBulkRepo(db, inventory)
 	logs := model.NewLogRepo(db)
 	brandRepo := branding.New(db)
@@ -495,7 +493,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Resolver: resolve.New(images, isos, unattend).
 			WithDrivers(drivers).WithLoadouts(loadouts),
 		Users: users, Settings: settings,
-		BitLocker: bitlocker, Bulk: bulk,
+		Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
 		DomainJoin:    domainJoin,
 		SetupLock:     setupLock,

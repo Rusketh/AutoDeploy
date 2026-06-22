@@ -59,8 +59,8 @@ The systemd unit grants only `CAP_NET_BIND_SERVICE` and runs the service as the 
 
 ## Secrets at rest
 
-Sensitive values — notably [BitLocker](bitlocker.md) PINs and recovery keys — are encrypted at
-rest. The encryption key comes from one of:
+Sensitive values — stored secrets such as domain-join passwords and webhook secrets — are
+encrypted at rest. The encryption key comes from one of:
 
 - `AUTODEPLOY_SECRETS_KEY` — a hex-encoded 32-byte key you supply, or
 - an auto-generated key file `<data-dir>/secrets-key.bin` (created with `0600` permissions if the
@@ -72,8 +72,9 @@ Generate a key with:
 openssl rand -hex 32
 ```
 
-> **Back up the key off-host.** If you lose it, escrowed BitLocker PINs and recovery keys become
-> unrecoverable. Include it (or the key file) in your [backup plan](backup-and-retention.md).
+> **Back up the key off-host.** If you lose it, stored secrets such as domain-join passwords and
+> webhook secrets become unrecoverable. Include it (or the key file) in your
+> [backup plan](backup-and-retention.md).
 
 The repository includes `scripts/check-secrets.sh` to validate a secrets file's format.
 

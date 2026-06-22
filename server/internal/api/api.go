@@ -37,8 +37,6 @@ type Repos struct {
 	// Phase 11.
 	Users    *auth.Repo
 	Settings *auth.SettingsRepo
-	// Phase 12.
-	BitLocker *model.BitLockerRepo
 	// Phase 13.
 	Bulk *model.BulkRepo
 	// Phase 14.
@@ -88,7 +86,6 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterAgent(mux, r)
 	RegisterInventory(mux, r)
 	RegisterAuth(mux, r)
-	RegisterBitLocker(mux, r)
 	RegisterBulk(mux, r)
 	RegisterLogs(mux, r)
 	RegisterBranding(mux, r)
@@ -150,6 +147,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// itoa64 formats an int64 as a base-10 string. A small shared helper used
+// when building human-readable target strings and test request bodies.
+func itoa64(n int64) string { return strconv.FormatInt(n, 10) }
 
 type apiError struct {
 	Error string `json:"error"`

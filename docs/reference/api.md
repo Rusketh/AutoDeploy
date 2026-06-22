@@ -145,15 +145,6 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 | `POST /api/v1/machines/bulk-binding` | Apply one binding edit to many machines: `{ "machine_ids": [..], "set": { "image_id", "machine_name", "target_ou", "add_groups", "remove_groups" } }`. Omitted fields are untouched; zero values clear (image 0, empty name/OU). Returns `{ "matched", "updated" }`. |
 | `GET /api/v1/machines/{id}/detected` | Per-package detected state. |
 
-### BitLocker
-
-| Method & path | Purpose |
-|---------------|---------|
-| `GET /api/v1/machines/{id}/bitlocker` | BitLocker status. |
-| `GET/PUT /api/v1/machines/{id}/bitlocker/pin` | Get / set the BitLocker PIN. |
-| `GET /api/v1/machines/{id}/bitlocker/recovery-keys` | List escrowed recovery keys. |
-| `GET /api/v1/recovery-keys/{id}` | Retrieve a single recovery key. |
-
 ## Mirrors
 
 `GET/POST /api/v1/mirrors`, `GET/PUT/DELETE /api/v1/mirrors/{id}`
@@ -275,7 +266,7 @@ The boot client and agent use a dedicated set of endpoints for AutoDeploy's inte
 `POST /api/v1/clients/menu`, `POST /api/v1/clients/deploy-status`,
 `POST /api/v1/clients/validate-pin`, and the `/api/v1/agent/*` family (`enroll` for manual
 installs to acquire the machine's agent id, check-in, hardware reports, job results, software
-state, BitLocker config/escrow, self-update, and `domain-join`). These are not intended for
+state, self-update, and `domain-join`). These are not intended for
 operator scripting and are listed here only for completeness.
 
 `POST /api/v1/agent/domain-join` returns the [agent-driven domain join](../operations/active-directory.md#agent-driven-join-recommended)

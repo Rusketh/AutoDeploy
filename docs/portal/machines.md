@@ -18,7 +18,6 @@ The list shows, per machine:
 | Serial | System serial |
 | OS | The running OS (e.g. "Microsoft Windows 10 Pro"), from the agent's hardware report |
 | Image | The bound image's name |
-| BitLocker | Whether a pre-boot PIN is configured |
 | Last seen | When the machine last contacted the server |
 
 Use the **filter** box to narrow the list. Filtering happens server-side across the whole
@@ -103,17 +102,6 @@ next check-in, typically within a few minutes):
   the machine network-boots and re-images on its next check-in.
 
 The same actions across many machines at once are [bulk operations](bulk-operations.md).
-
-### BitLocker
-
-The **BitLocker** panel manages a pre-boot **PIN** for the machine. Set a PIN to enable BitLocker
-on the next deploy; leave it empty to leave the volume unencrypted. The PIN is stored encrypted at
-rest, reapplied on re-image, and never logged.
-
-When recovery keys have been escrowed, a **recovery-key history** table lists each escrow with its
-time and note, and a link to retrieve the key (retrieval is itself audited — it records who and
-when, never the value). For the full workflow, see the
-[BitLocker operations guide](../operations/bitlocker.md).
 
 ### History and detected software
 

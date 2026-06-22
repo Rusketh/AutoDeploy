@@ -1,7 +1,7 @@
-// Package secrets owns the at-rest encryption used for BitLocker PINs and
-// recovery keys (and any other secret column added later). AES-256-GCM
-// with a key sourced from the AUTODEPLOY_SECRETS_KEY env var, or
-// auto-generated to data/secrets-key.bin (0600) on first start.
+// Package secrets owns the at-rest encryption used for secret columns such
+// as domain-join passwords and webhook signing secrets. AES-256-GCM with a
+// key sourced from the AUTODEPLOY_SECRETS_KEY env var, or auto-generated to
+// data/secrets-key.bin (0600) on first start.
 //
 // The key NEVER appears in any log line. The encrypted form is what the
 // rest of the system handles; only the audited retrieval boundary calls

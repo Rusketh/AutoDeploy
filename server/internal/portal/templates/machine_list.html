@@ -30,7 +30,6 @@
     {{with $sort.serial}}<th class="sortable {{.State}}"><a href="{{.URL}}">Serial</a></th>{{end}}
     {{with $sort.os}}<th class="sortable {{.State}}"><a href="{{.URL}}">OS</a></th>{{end}}
     {{with $sort.image}}<th class="sortable {{.State}}"><a href="{{.URL}}">Image</a></th>{{end}}
-    {{with $sort.bitlocker}}<th class="sortable {{.State}}"><a href="{{.URL}}">BitLocker</a></th>{{end}}
     {{with $sort.last_seen}}<th class="sortable {{.State}}"><a href="{{.URL}}">Last seen</a></th>{{end}}
     <th></th>
   </tr></thead>
@@ -47,7 +46,6 @@
       <td class="small">{{.Machine.SystemSerial}}</td>
       <td class="small">{{if .OS}}{{.OS}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
-      <td>{{if .BLSet}}<span class="badge ok"><svg><use href="#i-lock"/></svg>PIN set</span>{{else}}<span class="badge"><svg><use href="#i-shield"/></svg>no PIN</span>{{end}}</td>
       <td class="small muted">{{formatTime .Machine.LastSeen}}</td>
       <td class="actions"><a class="btn secondary sm" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
     </tr>

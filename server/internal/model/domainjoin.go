@@ -28,7 +28,7 @@ type ImageDomainJoin struct {
 }
 
 // DomainJoinRepo stores per-image domain-join config. The join password is
-// encrypted with the same secrets.Box used for BitLocker PINs.
+// encrypted at rest with the shared secrets.Box.
 type DomainJoinRepo struct {
 	db *storage.DB
 	bx *secrets.Box

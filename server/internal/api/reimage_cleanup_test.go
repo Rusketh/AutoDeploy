@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
-	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
@@ -112,11 +110,10 @@ func TestDeployStagingClearsReimagedState(t *testing.T) {
 	}
 }
 
-// TestReimageRecordsHistoryAndPreservesPIN verifies that re-imaging a
-// remote-flagged machine records a re-image history event, clears the stale
-// recovery keys, and KEEPS the assigned BitLocker PIN (so the re-image
-// re-applies it). A first-time deploy, by contrast, records no event.
-func TestReimageRecordsHistoryAndPreservesPIN(t *testing.T) {
+// TestReimageRecordsHistoryEvent verifies that re-imaging a remote-flagged
+// machine records a re-image history event, while a first-time deploy (no
+// flag, no prior deploy) records none.
+func TestReimageRecordsHistoryEvent(t *testing.T) {
 	ctx := context.Background()
 	db, _ := storage.Open(ctx, ":memory:")
 	t.Cleanup(func() { _ = db.Close() })
@@ -125,13 +122,8 @@ func TestReimageRecordsHistoryAndPreservesPIN(t *testing.T) {
 	una := model.NewUnattendRepo(db)
 	imgs := model.NewImageRepo(db)
 	inv := model.NewInventoryRepo(db)
-	bx, err := secrets.Open("", filepath.Join(t.TempDir(), "k.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	bl := model.NewBitLockerRepo(db, bx)
 	repos := Repos{
-		ISOs: isos, Unattend: una, Images: imgs, Inventory: inv, BitLocker: bl,
+		ISOs: isos, Unattend: una, Images: imgs, Inventory: inv,
 		Resolver: resolve.New(imgs, isos, una),
 	}
 	mux := http.NewServeMux()
@@ -144,14 +136,6 @@ func TestReimageRecordsHistoryAndPreservesPIN(t *testing.T) {
 	img, _ := imgs.Create(ctx, model.Image{Name: "lab", ISOID: &isoID})
 	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "ri-hist"})
 	_ = inv.UpsertBinding(ctx, model.MachineBinding{MachineID: m.ID, ImageID: &img.ID})
-
-	// Seed a BitLocker PIN + an escrowed recovery key from the prior install.
-	if err := bl.SetPIN(ctx, m.ID, "123456"); err != nil {
-		t.Fatal(err)
-	}
-	if err := bl.EscrowRecoveryKey(ctx, m.ID, "OLD-RECOVERY-KEY", "deploy"); err != nil {
-		t.Fatal(err)
-	}
 
 	stage := func() {
 		sbody, _ := json.Marshal(map[string]any{
@@ -180,16 +164,6 @@ func TestReimageRecordsHistoryAndPreservesPIN(t *testing.T) {
 	}
 	if events[0].Source != model.ReimageSourceRemoteFlag {
 		t.Errorf("source = %q, want %q", events[0].Source, model.ReimageSourceRemoteFlag)
-	}
-
-	// Recovery keys are cleared (stale: the volume is rebuilt)...
-	if keys, _ := bl.ListRecoveryKeys(ctx, m.ID); len(keys) != 0 {
-		t.Errorf("recovery keys should be cleared on re-image, got %d", len(keys))
-	}
-	// ...but the assigned PIN is preserved so the re-image re-applies it.
-	pin, err := bl.RetrievePIN(ctx, m.ID)
-	if err != nil || pin != "123456" {
-		t.Errorf("PIN should be preserved across re-image: got %q err=%v", pin, err)
 	}
 }
 

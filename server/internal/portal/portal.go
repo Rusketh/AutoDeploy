@@ -49,7 +49,6 @@ type Repos struct {
 	Loadouts  *model.SoftwareLoadoutRepo
 	Images    *model.ImageRepo
 	Inventory *model.InventoryRepo
-	BitLocker *model.BitLockerRepo
 	Bulk      *model.BulkRepo
 	Logs      *model.LogRepo
 	Users     *auth.Repo

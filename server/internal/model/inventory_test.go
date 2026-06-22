@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 )
@@ -67,74 +66,6 @@ func TestDeployRecordProgressInstallingOverlay(t *testing.T) {
 	spec := DeploymentRecord{Outcome: "in_progress", Phase: "specialize", ProgressTotal: 5}
 	if label, pct, _ := DeployRecordProgress(spec); label != "Windows Setup (specialize)" || pct != 55 {
 		t.Errorf("specialize overlay leaked: (%q,%d)", label, pct)
-	}
-}
-
-func TestDeployTokenIssueAndValidate(t *testing.T) {
-	ctx := context.Background()
-	repo := NewInventoryRepo(openTestDB(t))
-	m, err := repo.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "tok-uuid"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Issue.
-	tok, err := repo.IssueDeployToken(ctx, m.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tok) < 32 {
-		t.Errorf("token too short: %d chars", len(tok))
-	}
-	// Correct token passes.
-	ok, err := repo.ValidateDeployToken(ctx, m.ID, tok)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Error("valid token rejected")
-	}
-	// Wrong token fails.
-	ok, err = repo.ValidateDeployToken(ctx, m.ID, tok+"x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Error("wrong token accepted")
-	}
-	// Empty token fails.
-	ok, _ = repo.ValidateDeployToken(ctx, m.ID, "")
-	if ok {
-		t.Error("empty token accepted")
-	}
-	// Rotation: new token issued, old token invalidated.
-	tok2, err := repo.IssueDeployToken(ctx, m.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok2 == tok {
-		t.Error("rotation returned the same token")
-	}
-	ok, _ = repo.ValidateDeployToken(ctx, m.ID, tok)
-	if ok {
-		t.Error("old token still valid after rotation")
-	}
-	ok, _ = repo.ValidateDeployToken(ctx, m.ID, tok2)
-	if !ok {
-		t.Error("new token not valid after rotation")
-	}
-}
-
-func TestDeployTokenExpiry(t *testing.T) {
-	ctx := context.Background()
-	repo := NewInventoryRepo(openTestDB(t))
-	m, _ := repo.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "tok-exp"})
-	tok, err := repo.IssueDeployToken(ctx, m.ID, -1*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ok, _ := repo.ValidateDeployToken(ctx, m.ID, tok)
-	if ok {
-		t.Error("expired token accepted")
 	}
 }
 

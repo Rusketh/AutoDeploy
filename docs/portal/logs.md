@@ -20,7 +20,7 @@ The log captures events from across the system, including:
 Each entry records its **time**, **level**, **component** (server / boot / agent), **actor**,
 **action**, **target**, and a **fields** detail blob.
 
-> Secrets are never logged. Retrieving a stored secret (such as a BitLocker recovery key) emits a
+> Secrets are never logged. Retrieving a stored secret (such as a domain-join password) emits a
 > `secret.access` event recording the actor and target — but never the value.
 
 ## Live tail

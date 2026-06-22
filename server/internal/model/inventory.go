@@ -2,11 +2,7 @@ package model
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -606,6 +602,71 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 	return out, rows.Err()
 }
 
+// NamesByUUID maps each machine's SMBIOS system UUID to its best display
+// name -- the agent-reported computer name, falling back to the operator-
+// set binding name. This is the same precedence the machine list uses
+// (ReportedName, then MachineName). Used to resolve a log event's actor
+// (which carries the system UUID) to a human-readable machine name.
+// Records with an empty UUID or no resolvable name are omitted.
+func (r *InventoryRepo) NamesByUUID(ctx context.Context) (map[string]string, error) {
+	records, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]ID, 0, len(records))
+	for _, m := range records {
+		ids = append(ids, m.ID)
+	}
+	bindings, err := r.ListBindingsForMachines(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(records))
+	for _, m := range records {
+		if m.SystemUUID == "" {
+			continue
+		}
+		name := m.ReportedName
+		if name == "" {
+			name = bindings[m.ID].MachineName
+		}
+		if name != "" {
+			out[m.SystemUUID] = name
+		}
+	}
+	return out, nil
+}
+
+// NamesByID maps each machine's ID to its best display name, using the same
+// precedence as NamesByUUID (agent-reported computer name, then the operator-
+// set binding name). Machines with no resolvable name are omitted. Used to
+// label rows that reference a machine by ID, such as bulk-operation jobs.
+func (r *InventoryRepo) NamesByID(ctx context.Context) (map[ID]string, error) {
+	records, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]ID, 0, len(records))
+	for _, m := range records {
+		ids = append(ids, m.ID)
+	}
+	bindings, err := r.ListBindingsForMachines(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ID]string, len(records))
+	for _, m := range records {
+		name := m.ReportedName
+		if name == "" {
+			name = bindings[m.ID].MachineName
+		}
+		if name != "" {
+			out[m.ID] = name
+		}
+	}
+	return out, nil
+}
+
 // ListBindingsForMachines returns bindings for the given machine IDs in a
 // single query. Machines without a binding are absent from the map.
 func (r *InventoryRepo) ListBindingsForMachines(ctx context.Context, machineIDs []ID) (map[ID]MachineBinding, error) {
@@ -829,8 +890,8 @@ func (r *InventoryRepo) SetDeploymentProgress(ctx context.Context, id ID, phase,
 }
 
 // Delete removes a machine and all rows that reference it (binding,
-// deployment history, detected state, deploy tokens, bitlocker). Done in
-// one transaction so inventory can never be left with dangling references.
+// deployment history, detected state). Done in one transaction so
+// inventory can never be left with dangling references.
 func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -841,9 +902,6 @@ func (r *InventoryRepo) Delete(ctx context.Context, id ID) error {
 		`DELETE FROM machine_binding WHERE machine_id=?`,
 		`DELETE FROM deployment_history WHERE machine_id=?`,
 		`DELETE FROM machine_detected_state WHERE machine_id=?`,
-		`DELETE FROM bitlocker_pin WHERE machine_id=?`,
-		`DELETE FROM bitlocker_recovery_key WHERE machine_id=?`,
-		`DELETE FROM machine_deploy_token WHERE machine_id=?`,
 		`DELETE FROM bulk_job WHERE machine_id=?`,
 		`DELETE FROM reimage_event WHERE machine_id=?`,
 		`DELETE FROM machine_record WHERE id=?`,
@@ -930,63 +988,6 @@ func (r *InventoryRepo) RecordDetectedState(ctx context.Context, s DetectedState
 		    last_evaluated_at=CURRENT_TIMESTAMP`,
 		s.MachineID, s.SoftwarePackageID, detected)
 	return err
-}
-
-// IssueDeployToken rotates the per-machine deploy token. Returns the
-// cleartext token (caller's responsibility to hand it to the agent
-// and never log it). Only the SHA-256 hash is persisted. ttl is how
-// long the token stays valid; rotate-on-every-deploy means we never
-// need a long-lived token.
-func (r *InventoryRepo) IssueDeployToken(ctx context.Context, machineID ID, ttl time.Duration) (string, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(raw[:])
-	sum := sha256.Sum256([]byte(token))
-	hashHex := hex.EncodeToString(sum[:])
-	expires := time.Now().Add(ttl).UTC()
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO machine_deploy_token (machine_id, token_hash, expires_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(machine_id) DO UPDATE SET
-		    token_hash=excluded.token_hash,
-		    issued_at=CURRENT_TIMESTAMP,
-		    expires_at=excluded.expires_at`,
-		machineID, hashHex, expires)
-	if err != nil {
-		return "", err
-	}
-	return token, nil
-}
-
-// ValidateDeployToken returns true if token matches the stored hash
-// for machineID and hasn't expired. Constant-time compare prevents a
-// timing oracle. An empty token is always invalid.
-func (r *InventoryRepo) ValidateDeployToken(ctx context.Context, machineID ID, token string) (bool, error) {
-	if token == "" {
-		return false, nil
-	}
-	var hashHex string
-	var expires time.Time
-	err := r.db.QueryRowContext(ctx, `
-		SELECT token_hash, expires_at FROM machine_deploy_token WHERE machine_id=?`,
-		machineID).Scan(&hashHex, &expires)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if time.Now().After(expires) {
-		return false, nil
-	}
-	sum := sha256.Sum256([]byte(token))
-	want := hex.EncodeToString(sum[:])
-	if subtle.ConstantTimeCompare([]byte(hashHex), []byte(want)) != 1 {
-		return false, nil
-	}
-	return true, nil
 }
 
 // OSCount is one row of the OS distribution breakdown.

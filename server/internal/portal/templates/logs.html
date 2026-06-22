@@ -12,22 +12,31 @@
     Live tail — newest events stream in every few seconds
   </summary>
   <div id="logs-tail" class="logs-tail" data-url="/api/v1/logs?limit=50" data-interval-ms="4000" aria-live="polite">
-    <div class="row"><span class="ts">…</span><span class="lvl">INFO</span><span class="msg muted">waiting for events</span></div>
+    <div class="row"><span class="ts">…</span><span class="lvl">INFO</span><span class="mc muted">—</span><span class="msg muted">waiting for events</span></div>
   </div>
 </details>
 
 <h3>Search</h3>
-<form class="std" method="GET" action="/portal/logs">
+<form class="std" method="GET" action="/portal/logs" id="log-search">
   <div class="row">
     <label><span class="lbl">Component</span><input type="text" name="component" value="{{$q.Component}}" placeholder="server / boot / agent"></label>
     <label><span class="lbl">Actor</span><input type="text" name="actor" value="{{$q.Actor}}" placeholder="UUID or username"></label>
     <label><span class="lbl">Action</span><input type="text" name="action" value="{{$q.Action}}" placeholder="package.install.ok"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">Since</span><input type="datetime-local" name="since"></label>
+    <label><span class="lbl">Since</span><input type="datetime-local" name="since" id="log-since"></label>
     <label><span class="lbl">Limit</span><input type="number" name="limit" value="{{if $q.Limit}}{{$q.Limit}}{{else}}200{{end}}" min="1" max="10000"></label>
   </div>
-  <div class="actions"><button type="submit"><svg><use href="#i-search"/></svg>Search</button></div>
+  <div class="actions">
+    <button type="submit"><svg><use href="#i-search"/></svg>Search</button>
+    <span class="log-presets" role="group" aria-label="Quick time range">
+      <span class="lbl muted">Last</span>
+      <button type="button" class="btn ghost sm" data-since-preset="15">15m</button>
+      <button type="button" class="btn ghost sm" data-since-preset="60">1h</button>
+      <button type="button" class="btn ghost sm" data-since-preset="1440">24h</button>
+      <button type="button" class="btn ghost sm" data-since-preset="10080">7d</button>
+    </span>
+  </div>
 </form>
 
 <div class="section-head">
@@ -35,36 +44,56 @@
   <div class="line"></div>
   <div class="filter">
     <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter rows — press /" data-filter="#log-rows">
+    <input type="search" placeholder="Filter rows — press /" id="log-filter">
   </div>
 </div>
 
-<div class="tablewrap">
-<table id="log-rows" data-sortable>
+<div class="log-levels" role="group" aria-label="Filter by level">
+  <button type="button" class="pill on" data-level-pill="all">All</button>
+  <button type="button" class="pill lvl-info" data-level-pill="INFO">Info</button>
+  <button type="button" class="pill lvl-warn" data-level-pill="WARN">Warn</button>
+  <button type="button" class="pill lvl-error" data-level-pill="ERROR">Error</button>
+</div>
+
+{{if .Data.Events}}
+<div class="logwrap">
+<table id="log-rows" class="logs-table">
   <thead><tr>
-    <th data-sort="num">Time</th>
+    <th class="log-exp" aria-label="Expand"></th>
+    <th>Time</th>
     <th>Level</th>
+    <th>Machine</th>
     <th>Component</th>
-    <th>Actor</th>
     <th>Action</th>
     <th>Target</th>
-    <th data-nosort>Fields</th>
   </tr></thead>
   <tbody>
     {{range .Data.Events}}
-    <tr>
-      <td class="small" data-sort-value="{{.OccurredAt.Unix}}">{{formatTime .OccurredAt}}</td>
-      <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{end}}">{{.Level}}</span></td>
+    <tr class="log-row" data-log-row data-level="{{.Level}}" tabindex="0" role="button" aria-expanded="false">
+      <td class="log-exp"><span class="chev" aria-hidden="true"></span></td>
+      <td class="small nowrap" title="{{.OccurredAt}}">{{formatTime .OccurredAt}}</td>
+      <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}accent{{end}}">{{.Level}}</span></td>
+      <td class="log-machine">{{if .MachineName}}<span class="machine-name" title="{{.Actor}}">{{.MachineName}}</span>{{else if .Actor}}<code class="muted" title="actor">{{.Actor}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
       <td><code>{{.Component}}</code></td>
-      <td class="small"><code>{{.Actor}}</code></td>
       <td><code>{{.Action}}</code></td>
-      <td class="small">{{.Target}}</td>
-      <td class="small"><code>{{.Fields}}</code></td>
+      <td class="small log-target">{{if .Target}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
+    </tr>
+    <tr class="log-detail" hidden>
+      <td></td>
+      <td colspan="6"><pre class="log-fields">{{.Fields}}</pre></td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-search"/></svg>
+  <h3>No events</h3>
+  <p>Nothing matched this search. Widen the time range or clear the filters above.</p>
+</div>
+{{end}}
+
 <p class="muted small mt-3">
   <svg class="icon-inline"><use href="#i-shield"/></svg>
   Secrets are never logged. <code>secret.access</code> events record retrievals — actor + target — but not the value.

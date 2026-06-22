@@ -28,7 +28,6 @@ func init() {
 		post("/portal/machines/{id}/reimage/cancel", machineReimageCancel(r))
 		post("/portal/machines/{id}/delete", machineDelete(r))
 		post("/portal/machines/delete", machineBulkDelete(r))
-		post("/portal/machines/{id}/bitlocker/pin", machineBLPin(r))
 	}
 }
 
@@ -108,13 +107,8 @@ func machineCSV(r Repos) http.HandlerFunc {
 			machines = filtered
 		}
 
-		machineIDs := make([]model.ID, len(machines))
-		for i, m := range machines {
-			machineIDs[i] = m.ID
-		}
-		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), machineIDs)
 		sortKey, sortDir := machineSort(req)
-		sortMachineRecords(machines, sortKey, sortDir, bindings, imageNames, osCaptions, blStatuses)
+		sortMachineRecords(machines, sortKey, sortDir, bindings, imageNames, osCaptions)
 
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
@@ -270,7 +264,6 @@ func machineList(r Repos) http.HandlerFunc {
 			Machine        model.MachineRecord
 			Name           string
 			ImageName      string
-			BLSet          bool
 			OS             string
 			ReimagePending bool
 		}
@@ -279,18 +272,16 @@ func machineList(r Repos) http.HandlerFunc {
 		totalAll := len(v)
 
 		// One query each for the whole fleet: bindings, image names, OS
-		// captions, BitLocker PIN state and pending-re-image flags.
-		// Loading the lot up front (rather than per page) is what lets
-		// ?q= search and ?sort= order the entire inventory, and it
-		// replaces the old per-visible-row hardware Get — an N+1 that
-		// cost up to a query per row at render time.
+		// captions and pending-re-image flags. Loading the lot up front
+		// (rather than per page) is what lets ?q= search and ?sort= order
+		// the entire inventory, and it replaces the old per-visible-row
+		// hardware Get — an N+1 that cost up to a query per row at render time.
 		bindings, imageNames := loadMachineBindings(req, r, v)
 		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
 		allIDs := make([]model.ID, len(v))
 		for i, m := range v {
 			allIDs[i] = m.ID
 		}
-		blStatuses, _ := r.BitLocker.ListPINStatuses(req.Context(), allIDs)
 		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), allIDs)
 
 		// Server-side filter: ?q= narrows the whole inventory BEFORE
@@ -313,7 +304,7 @@ func machineList(r Repos) http.HandlerFunc {
 		// Server-side sort: ?sort=&dir= orders the whole (filtered) set,
 		// not just the visible page the old client-side sort reordered.
 		sortKey, sortDir := machineSort(req)
-		sortMachineRecords(v, sortKey, sortDir, bindings, imageNames, osCaptions, blStatuses)
+		sortMachineRecords(v, sortKey, sortDir, bindings, imageNames, osCaptions)
 
 		// Page size: an explicit ?size= wins and is remembered in a
 		// cookie, so the choice sticks on later visits that don't carry
@@ -349,7 +340,7 @@ func machineList(r Repos) http.HandlerFunc {
 			}
 			rows = append(rows, row{
 				Machine: m, Name: name, ImageName: imgName,
-				BLSet: blStatuses[m.ID].PINSet, OS: osCaptions[m.ID],
+				OS:             osCaptions[m.ID],
 				ReimagePending: reimaging[m.ID],
 			})
 		}
@@ -386,7 +377,7 @@ func loadMachineBindings(req *http.Request, r Repos, ms []model.MachineRecord) (
 // machineSortKeys are the columns the machines list can be ordered by.
 var machineSortKeys = map[string]bool{
 	"uuid": true, "name": true, "model": true, "serial": true,
-	"os": true, "image": true, "bitlocker": true, "last_seen": true,
+	"os": true, "image": true, "last_seen": true,
 }
 
 // machineSort reads ?sort=&dir=, defaulting to last_seen desc (the repo's
@@ -408,11 +399,10 @@ func machineSort(req *http.Request) (key, dir string) {
 }
 
 // sortMachineRecords orders the full machine set by the chosen column.
-// Display-derived columns (name, image, OS, BitLocker) sort by the same
-// values the rows show. Ties break by ID so paging is stable.
+// Display-derived columns (name, image, OS) sort by the same values the
+// rows show. Ties break by ID so paging is stable.
 func sortMachineRecords(v []model.MachineRecord, key, dir string,
-	bindings map[model.ID]model.MachineBinding, imageNames, osCaptions map[model.ID]string,
-	bl map[model.ID]model.BitLockerPIN) {
+	bindings map[model.ID]model.MachineBinding, imageNames, osCaptions map[model.ID]string) {
 	if key == "last_seen" && dir == "desc" {
 		return // the repo already returns last_seen DESC
 	}
@@ -437,11 +427,6 @@ func sortMachineRecords(v []model.MachineRecord, key, dir string,
 				return imageNames[*b.ImageID]
 			}
 			return ""
-		case "bitlocker":
-			if bl[m.ID].PINSet {
-				return "1"
-			}
-			return "0"
 		}
 		return ""
 	}
@@ -592,8 +577,6 @@ func machineDetail(r Repos) http.HandlerFunc {
 			deployLabel, deployPercent, deployIndeterminate = model.DeployRecordProgress(open)
 		}
 		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
-		bl, _ := r.BitLocker.PINStatus(req.Context(), id)
-		recovery, _ := r.BitLocker.ListRecoveryKeys(req.Context(), id)
 		images, _ := r.Images.List(req.Context())
 		var pkgs []model.SoftwarePackage
 		pkgs, _ = r.Software.List(req.Context())
@@ -648,7 +631,6 @@ func machineDetail(r Repos) http.HandlerFunc {
 			"M":              m, "Binding": binding, "History": historyRows,
 			"Reimages": reimages,
 			"Detected": detected, "Packages": pkgs,
-			"BL": bl, "Recovery": recovery,
 			"Images": images, "KBStatuses": kbStatuses,
 			"SWDetected": swDetected, "SWTotal": swTotal,
 			"KBInstalled": kbInstalled, "KBTotal": len(kbStatuses),
@@ -731,21 +713,6 @@ func machineBindingSubmit(r Repos) http.HandlerFunc {
 			flash(w, "err", err.Error())
 		} else {
 			flash(w, "ok", "Binding saved.")
-		}
-		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
-	}
-}
-
-func machineBLPin(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, _ := pathID(req)
-		pin := req.FormValue("pin")
-		if err := r.BitLocker.SetPIN(req.Context(), id, pin); err != nil {
-			flash(w, "err", err.Error())
-		} else if pin == "" {
-			flash(w, "ok", "BitLocker PIN cleared. Machine will not be re-encrypted on next deploy.")
-		} else {
-			flash(w, "ok", "BitLocker PIN saved. Will apply on next deploy or re-image.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
 	}
