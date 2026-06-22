@@ -245,10 +245,31 @@ type BulkJob struct {
 type BulkRepo struct {
 	db        *storage.DB
 	Inventory *InventoryRepo
+	// loc resolves the time zone recurrence wall-clock times ("daily at
+	// 02:00") are computed in, and that one-time "run at" inputs are taken to
+	// mean. Injected from the portal's configured display zone so scheduling
+	// and the displayed times agree. nil falls back to time.Local.
+	loc func() *time.Location
 }
 
 func NewBulkRepo(db *storage.DB, inv *InventoryRepo) *BulkRepo {
 	return &BulkRepo{db: db, Inventory: inv}
+}
+
+// SetLocation injects the time zone the scheduler interprets recurrence and
+// one-time wall-clock times in. Pass runtime.Settings.DisplayLocation so the
+// schedule fires at the wall-clock the operator sees in the portal.
+func (r *BulkRepo) SetLocation(fn func() *time.Location) { r.loc = fn }
+
+// location is the configured scheduling zone, defaulting to time.Local when
+// none was injected (keeps tests, which assert in time.Local, unchanged).
+func (r *BulkRepo) location() *time.Location {
+	if r.loc != nil {
+		if l := r.loc(); l != nil {
+			return l
+		}
+	}
+	return time.Local
 }
 
 // PreviewTargets resolves the target selection against current inventory
@@ -326,7 +347,15 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 		return BulkOperation{}, nil, err
 	}
 
-	now := time.Now()
+	// Interpret recurrence wall-clock times ("daily at 02:00") in the
+	// configured scheduling zone rather than the server's OS zone, but store
+	// the resulting instants in UTC -- the pure-Go SQLite driver only reads a
+	// UTC-formatted DATETIME back into time.Time cleanly.
+	now := time.Now().In(r.location())
+	if op.RunAt != nil {
+		u := op.RunAt.UTC()
+		op.RunAt = &u
+	}
 	immediate := op.ScheduleKind == BulkScheduleNow
 	status := BulkStatusScheduled
 	runCount := 0
@@ -346,6 +375,7 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 		if err != nil {
 			return BulkOperation{}, nil, err
 		}
+		nr = nr.UTC()
 		nextRun = &nr
 	}
 

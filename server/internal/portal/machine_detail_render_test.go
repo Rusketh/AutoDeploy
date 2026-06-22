@@ -65,7 +65,7 @@ func baseMachineData() map[string]any {
 		"LatestDeploy": nil, "LastReimage": nil,
 		"DeployActive": false, "DeployLabel": "", "DeployPercent": 0, "DeployIndeterminate": false,
 		"ReimagePending": map[string]any{"Pending": false},
-		"AP":             formPrefill(nil),
+		"AP":             formPrefill(nil, time.UTC),
 	}
 }
 

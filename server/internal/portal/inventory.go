@@ -638,7 +638,7 @@ func machineDetail(r Repos) http.HandlerFunc {
 			"LastReimage": lastReimage, "MachineStalled": machineStalled,
 			"DeployActive": deployActive, "DeployLabel": deployLabel,
 			"DeployPercent": deployPercent, "DeployIndeterminate": deployIndeterminate,
-			"AP": formPrefill(nil),
+			"AP": formPrefill(nil, displayLoc(r)),
 		})
 	}
 }

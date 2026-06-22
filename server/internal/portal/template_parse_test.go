@@ -28,7 +28,7 @@ func TestAllTemplatesParse(t *testing.T) {
 		"derefID", "idEq", "int64", "derefIDtoID", "deref", "join",
 		"hasItems", "formatTime", "list", "dict", "add", "sub", "min",
 		"derefInt", "lt", "toFloat", "div", "mul", "pct", "humanBytes",
-		"relTime", "formatDate",
+		"relTime", "formatDate", "displayTZName",
 	} {
 		funcs[name] = func(args ...any) string { return "" }
 	}
@@ -50,7 +50,8 @@ func TestAllTemplatesParse(t *testing.T) {
 // now; make sure the body executes with the handler's data shape.
 func TestNotificationsRender(t *testing.T) {
 	funcs := template.FuncMap{
-		"add": func(a, b int) int { return a + b },
+		"add":        func(a, b int) int { return a + b },
+		"formatTime": func(tm time.Time) string { return tm.Format("2 Jan 2006, 15:04:05") },
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 		"templates/notifications.html", "templates/_pagination.html")

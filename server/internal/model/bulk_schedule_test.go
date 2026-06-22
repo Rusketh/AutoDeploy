@@ -78,6 +78,37 @@ func TestScheduledOnceDoesNotQueueUntilRun(t *testing.T) {
 	}
 }
 
+// TestScheduleHonorsConfiguredZone: a "daily at 02:00" recurrence must resolve
+// to 02:00 in the repo's injected scheduling zone (Settings -> time zone), not
+// the server's OS zone. Guards the fix for schedules firing an hour off when
+// the OS runs UTC but the operator set, say, GMT+1.
+func TestScheduleHonorsConfiguredZone(t *testing.T) {
+	ctx := context.Background()
+	inv, bulk := openBulk(t)
+	id := seedMachine(t, inv, "tz1", "LAB-TZ", "OU=Lab")
+
+	zone := time.FixedZone("TZ+5", 5*3600) // distinct from the test host zone
+	bulk.SetLocation(func() *time.Location { return zone })
+
+	op, _, err := bulk.CreateOperation(ctx, BulkOperation{
+		Action:       BulkActionScript,
+		Payload:      `{"shell":"cmd","body":"echo hi"}`,
+		Target:       BulkTarget{MachineIDs: []ID{id}},
+		ScheduleKind: BulkScheduleRecurring,
+		RecurSpec:    `{"every":1,"unit":"day","at":"02:00"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.NextRunAt == nil {
+		t.Fatal("recurring op should have a next_run_at")
+	}
+	if got := op.NextRunAt.In(zone); got.Hour() != 2 || got.Minute() != 0 {
+		t.Errorf("next run = %s, want 02:00 in the configured zone",
+			got.Format("2006-01-02 15:04 -07:00"))
+	}
+}
+
 func TestRecurringFilterReResolves(t *testing.T) {
 	ctx := context.Background()
 	inv, bulk := openBulk(t)

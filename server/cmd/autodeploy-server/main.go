@@ -113,6 +113,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Interpret bulk schedules in the operator-configured display zone
+	// (Settings -> time zone). With the server set to GMT+1, "run at 14:30"
+	// then fires at 14:30 GMT+1 rather than 14:30 UTC.
+	r.Bulk.SetLocation(rt.DisplayLocation)
 	// Push any operator-configured storage path overrides into the
 	// blob store so payload writes/reads route to the configured
 	// directories instead of $DATA_DIR/<category>. Errors here are
