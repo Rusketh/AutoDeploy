@@ -2,9 +2,27 @@ package imaging
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+// TestOSRunnerRunsUnderUTF8Locale verifies imaging subprocesses inherit a UTF-8
+// locale. mkfs.fat iconv-converts the FAT label from codepage 850; under the
+// initramfs C/POSIX locale (charset ANSI_X3.4) iconv_open fails, so OSRunner
+// must export LC_ALL=C.UTF-8 to every command it runs.
+func TestOSRunnerRunsUnderUTF8Locale(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	out, err := (&OSRunner{}).Output(context.Background(), "sh", "-c", `printf %s "$LC_ALL"`)
+	if err != nil {
+		t.Fatalf("Output: %v", err)
+	}
+	if out != "C.UTF-8" {
+		t.Errorf("LC_ALL in imaging subprocess = %q, want C.UTF-8", out)
+	}
+}
 
 func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 	rec := &Recorder{}

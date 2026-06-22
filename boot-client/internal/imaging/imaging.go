@@ -62,6 +62,7 @@ func (r *OSRunner) Exec(ctx context.Context, name string, args ...string) error 
 		return nil
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = imagingEnv()
 	cmd.Stdout = stdoutWriter{r.Log}
 	cmd.Stderr = stderrWriter{r.Log}
 	return cmd.Run()
@@ -77,8 +78,19 @@ func (r *OSRunner) Output(ctx context.Context, name string, args ...string) (str
 			slog.String("target", name),
 			slog.String("args", fmt.Sprintf("%q", args)))
 	}
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = imagingEnv()
+	out, err := cmd.Output()
 	return string(out), err
+}
+
+// imagingEnv runs imaging subprocesses under a UTF-8 locale so tools that
+// convert text -- notably mkfs.fat, which iconv-converts the FAT volume label
+// from codepage 850 -- get a usable codeset instead of the initramfs C/POSIX
+// default (charset ANSI_X3.4), which makes iconv_open fail. The gconv modules
+// the conversion needs are bundled into the initramfs separately.
+func imagingEnv() []string {
+	return append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8")
 }
 
 type stdoutWriter struct{ log *slog.Logger }

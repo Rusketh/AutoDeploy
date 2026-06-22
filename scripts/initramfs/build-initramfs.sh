@@ -110,6 +110,30 @@ if [ -z "$EFIBOOTMGR" ] || ! copy_with_libs "$EFIBOOTMGR" 2>/dev/null; then
     missing+=("efibootmgr")
 fi
 
+# glibc gconv (character-set conversion) modules. iconv dlopen()s these at
+# runtime, so ldd never lists them and copy_with_libs above can't pull them in.
+# mkfs.fat iconv-converts the FAT volume label ("-n ADBOOT") from codepage 850;
+# without the modules iconv_open fails with "cannot initialize conversion from
+# codepage 850 to ANSI_X3.4" and the format step dies. Copy the whole gconv
+# directory (the .so modules plus the gconv-modules config and cache) to the
+# same absolute path so glibc's built-in module search finds it -- no
+# GCONV_PATH needed. The modules link only against libc, already bundled.
+gconv_marker="$(find /usr/lib /lib \( -name gconv-modules -o -name gconv-modules.cache \) -type f 2>/dev/null | head -1)"
+gconv_dir=""
+[ -n "$gconv_marker" ] && gconv_dir="$(dirname "$gconv_marker")"
+if [ -z "$gconv_dir" ]; then
+    for cand in "/usr/lib/$(uname -m)-linux-gnu/gconv" /usr/lib/gconv "/lib/$(uname -m)-linux-gnu/gconv"; do
+        [ -d "$cand" ] && { gconv_dir="$cand"; break; }
+    done
+fi
+if [ -n "$gconv_dir" ] && [ -d "$gconv_dir" ]; then
+    mkdir -p "$ROOTFS$gconv_dir"
+    cp -a "$gconv_dir/." "$ROOTFS$gconv_dir/"
+else
+    echo "WARNING: glibc gconv modules not found on the build host; mkfs.fat" >&2
+    echo "         FAT-label conversion will fail in the initramfs (iconv)." >&2
+fi
+
 # ethtool lets init disable NIC hardware offloads on USB Ethernet adapters
 # (the Realtek r8152 / RTL8153 large-transfer stall workaround). Optional: a
 # missing ethtool just means USB-NIC offloads stay on, so warn rather than
