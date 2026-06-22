@@ -1346,3 +1346,9 @@ fieldset.disabled::after { content: " (does not apply to selected target OS)"; c
   .group-nav { flex-direction: row; flex-wrap: wrap; }
   .group-nav li { flex: 1 1 auto; }
 }
+
+/* Selection bar: the "add ticked machines to a group" cluster sits between the
+   selected-count and the destructive Delete, visually grouped and separated. */
+.sel-group { display: inline-flex; align-items: center; gap: var(--sp-2); padding-left: var(--sp-3); margin-left: var(--sp-1); border-left: 1px solid var(--border); }
+.sel-group select { min-width: 9rem; }
+.sel-count { margin-right: var(--sp-1); }
