@@ -2964,3 +2964,69 @@ machine.first_seen + bulk.created + bulk.completed notifications land
 update.compliance_fail, storage_low via x/sys statfs, agent_outdated from
 the version handler); optional per-site WoL broadcast addresses; surface
 expired-job counts on the bulk list page.
+
+---
+
+## 2026-06-22 — Machine groups (manual + dynamic, nestable)
+
+**WHAT.** Added Machine Groups: an AutoDeploy-local, first-class object that
+names a set of machines, independent of Active Directory. Two kinds, treated
+identically by every consumer through one resolver:
+
+- `manual` — explicit machine membership (and optional child subgroups).
+- `dynamic` — a stored filter (`name_regex` / `os` / `ou` (+subtree) /
+  `member_of`) evaluated against current inventory at read time.
+
+Groups NEST: a group's resolved membership includes the flattened members of
+each child group (children may be either kind). Cycles are rejected and
+resolution carries a visited-set guard.
+
+Spine: migration `0030` (`machine_group`, `machine_group_member`,
+`machine_group_subgroup`); `model.MachineGroup`/`MachineFilter`;
+`MachineGroupRepo` (CRUD + `Members`/`MemberCount`/`MemberUUIDs`/`MemberRecords`,
+manual `AddMembers`/`RemoveMembers`, `GroupsForMachine`, nesting + cycle
+checks); a reusable in-Go matcher (`machinematch.go`) shared in spirit with the
+bulk-target path and extended with the OS predicate the bulk filter lacked.
+JSON API under `/api/v1/machine-groups` (+ `/members`), wired into `api.Repos`,
+`portal.Repos`, and `main.repos()`.
+
+Integrations: the Machines page grew a left **group sidebar** with live counts
+and `?group=` filtering threaded through the existing filter/sort/pager/CSV
+helpers, plus manual **Add to / Remove from group** actions on the inventory
+selection; `BulkTarget` gained a `group_id` (resolved in `PreviewTargets`, so a
+recurring filter-mode op against a dynamic group tracks live membership — no
+scheduler change, no migration since the target rides in `target_json`);
+`LogSearch.Actors []string` → `actor IN (...)` with a group selector on the
+Logs page; a top-nav **Groups** entry, a group list/create/edit page, and a
+machine-detail-friendly `GroupsForMachine`. Group CRUD + membership changes are
+audit-logged under the `groups` component.
+
+**WHY (decisions).** Membership is read through a single `Members()` seam so
+"the rest of the system treats both kinds the same" is enforced by construction
+— only the editor UI and the resolver branch on kind. Matching stays in Go over
+a single inventory load (the project's documented scale assumption), and
+`ListWithCounts` loads the group graph + inventory once and resolves all groups
+against that shared snapshot to keep the sidebar linear, not quadratic. Nesting
+is authored on manual groups (a dynamic group stays "purely a filter"), but a
+manual group may nest a dynamic child, which satisfies arbitrary nesting. A
+dynamic group must carry ≥1 criterion (an empty filter would silently mean
+"everything"). Group targeting was added to bulk by *reference* rather than
+refactoring the bulk predicate, so existing bulk behaviour is byte-for-byte
+unchanged; a deleted/unknown group resolves to an empty target (safe no-op)
+rather than erroring.
+
+**STATE.** `gofmt` clean; `go build`, `go vet`, full `go test ./...` green;
+`scripts/check-secrets.sh` OK. New tests: matcher table tests (each criterion,
+AND-combinations, OU exact vs subtree, invalid-regex → ErrValidation,
+empty-matches-none); repo tests (manual membership incl. machine-delete cascade,
+dynamic live resolution + dynamic-write rejection, validation/conflict, nesting
++ self/loop cycle rejection + child-delete edge cleanup, `GroupsForMachine`);
+bulk-target-by-group (incl. unknown group → empty); `LogSearch.Actors` IN
+filter; an API CRUD + members lifecycle over HTTP. Portal render tests still
+green (machine_list two-pane sidebar, logs group selector parse with the minimal
+funcmap). Docs: new `portal/machine-groups.md`, cross-links in machines /
+bulk-operations / logs, an API-reference section, and the docs index.
+
+**NEXT.** Optional: a dashboard per-group tile; a `group.membership_changed`
+notification event; refuse-on-delete when a bulk op references a group (today it
+resolves to empty); count caching only if the sidebar profiles hot.

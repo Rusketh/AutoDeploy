@@ -71,6 +71,8 @@ type Repos struct {
 	Notifications *model.NotificationRepo
 	// WebhookRepo manages webhook endpoints and delivery logs.
 	WebhookRepo *model.WebhookRepo
+	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
+	Groups *model.MachineGroupRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -153,6 +155,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerLoadoutRoutes(get, post, r)
 	registerImageRoutes(get, post, r)
 	registerInventoryRoutes(get, post, r)
+	registerMachineGroupRoutes(get, post, r)
 	registerBulkRoutes(get, post, r)
 	registerLogsRoutes(get, post, r)
 	registerSettingsRoutes(get, post, r)

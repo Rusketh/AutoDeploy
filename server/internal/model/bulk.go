@@ -138,6 +138,11 @@ type BulkTarget struct {
 	// per-machine "run on this machine" actions). When set, only these
 	// machines are considered (AND-combined with any other filters).
 	MachineIDs []ID `json:"machine_ids,omitempty"`
+	// GroupID targets an AutoDeploy machine group: only that group's resolved
+	// members are considered (AND-combined with any other filters). A dynamic
+	// or nested group is re-resolved every time the target is evaluated, so a
+	// recurring operation tracks the group's live membership. 0 = no group.
+	GroupID ID `json:"group_id,omitempty"`
 }
 
 // BulkOperation is the operator's intent.
@@ -245,6 +250,11 @@ type BulkJob struct {
 type BulkRepo struct {
 	db        *storage.DB
 	Inventory *InventoryRepo
+	// Groups resolves a BulkTarget.GroupID to its member machines. Optional;
+	// nil means group targeting is unavailable (a group-targeted operation then
+	// resolves to no machines). Injected via SetGroups after construction so the
+	// two repos can be wired in either order.
+	Groups *MachineGroupRepo
 	// loc resolves the time zone recurrence wall-clock times ("daily at
 	// 02:00") are computed in, and that one-time "run at" inputs are taken to
 	// mean. Injected from the portal's configured display zone so scheduling
@@ -255,6 +265,10 @@ type BulkRepo struct {
 func NewBulkRepo(db *storage.DB, inv *InventoryRepo) *BulkRepo {
 	return &BulkRepo{db: db, Inventory: inv}
 }
+
+// SetGroups injects the machine-group repo so BulkTarget.GroupID can be
+// resolved. Call once at wiring time.
+func (r *BulkRepo) SetGroups(g *MachineGroupRepo) { r.Groups = g }
 
 // SetLocation injects the time zone the scheduler interprets recurrence and
 // one-time wall-clock times in. Pass runtime.Settings.DisplayLocation so the
@@ -295,9 +309,27 @@ func (r *BulkRepo) PreviewTargets(ctx context.Context, t BulkTarget) ([]MachineR
 	for _, id := range t.MachineIDs {
 		idSet[id] = true
 	}
+	// Group target: resolve the group to its members and gate on membership.
+	// A deleted/unknown group resolves to no machines (a safe empty target).
+	var groupSet map[ID]bool
+	if t.GroupID != 0 {
+		groupSet = map[ID]bool{}
+		if r.Groups != nil {
+			members, gerr := r.Groups.Members(ctx, t.GroupID)
+			if gerr != nil && !errors.Is(gerr, ErrNotFound) {
+				return nil, gerr
+			}
+			for _, id := range members {
+				groupSet[id] = true
+			}
+		}
+	}
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
 		if len(idSet) > 0 && !idSet[m.ID] {
+			continue
+		}
+		if groupSet != nil && !groupSet[m.ID] {
 			continue
 		}
 		bind, _ := r.Inventory.GetBinding(ctx, m.ID)

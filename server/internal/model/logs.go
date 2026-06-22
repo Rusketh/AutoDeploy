@@ -135,10 +135,15 @@ func (r *LogRepo) appendBatchChunk(ctx context.Context, evs []LogEvent) error {
 type LogSearch struct {
 	Component string
 	Actor     string
-	Action    string
-	Since     time.Time
-	Until     time.Time
-	Limit     int
+	// Actors restricts results to events whose actor is one of these values
+	// (an `actor IN (...)` clause). Used to filter by a machine group: resolve
+	// the group to its members' SMBIOS UUIDs and pass them here. An empty slice
+	// is ignored; a non-empty Actors takes precedence over the single Actor.
+	Actors []string
+	Action string
+	Since  time.Time
+	Until  time.Time
+	Limit  int
 }
 
 func (r *LogRepo) Search(ctx context.Context, s LogSearch) ([]LogEvent, error) {
@@ -150,7 +155,14 @@ func (r *LogRepo) Search(ctx context.Context, s LogSearch) ([]LogEvent, error) {
 		where = append(where, "component=?")
 		args = append(args, s.Component)
 	}
-	if s.Actor != "" {
+	if len(s.Actors) > 0 {
+		ph := make([]string, len(s.Actors))
+		for i, a := range s.Actors {
+			ph[i] = "?"
+			args = append(args, a)
+		}
+		where = append(where, "actor IN ("+strings.Join(ph, ",")+")")
+	} else if s.Actor != "" {
 		where = append(where, "actor=?")
 		args = append(args, s.Actor)
 	}

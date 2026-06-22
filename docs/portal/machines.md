@@ -6,6 +6,15 @@ hand — they appear automatically, keyed by their SMBIOS UUID.
 
 ![Machine inventory](../images/machines-list.png)
 
+## Groups sidebar
+
+Down the left of the page is a list of [machine groups](machine-groups.md), each
+with a live member count, above an **All machines** entry. Click a group to
+filter the inventory to just its members — the text filter, sorting, paging and
+CSV export all stay scoped to it. The **+** creates a group; **Manage groups**
+opens the full list. With a **manual** group selected, the checkbox selection
+gains **Add to / Remove from** actions so you curate membership from the list.
+
 ## The inventory list
 
 The list shows, per machine:

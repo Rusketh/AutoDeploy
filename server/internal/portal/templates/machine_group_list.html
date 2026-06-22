@@ -1,0 +1,51 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Machine groups</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/groups/new"><svg><use href="#i-plus"/></svg>New group</a>
+  </div>
+</div>
+{{if .Data.Groups}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Name</th>
+    <th>Kind</th>
+    <th class="num" data-sort="num">Members</th>
+    <th class="num" data-sort="num">Subgroups</th>
+    <th>Description</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Groups}}
+    <tr>
+      <td><a href="/portal/groups/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
+      <td>{{if eq .Kind "dynamic"}}<span class="badge accent"><svg class="icon-inline"><use href="#i-bolt"/></svg>dynamic</span>{{else}}<span class="badge muted"><svg class="icon-inline"><use href="#i-stack"/></svg>manual</span>{{end}}</td>
+      <td class="num">{{.MemberCount}}</td>
+      <td class="num">{{len .Children}}</td>
+      <td class="small muted">{{.Description}}</td>
+      <td class="actions">
+        <a class="btn secondary sm" href="/portal/machines?group={{int64 .ID}}" title="Show this group's machines"><svg><use href="#i-server"/></svg>Machines</a>
+        <a class="btn secondary sm" href="/portal/groups/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/groups/{{int64 .ID}}/delete" data-confirm="Delete group “{{.Name}}”? Machines themselves are not affected.">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-stack"/></svg>
+  <h3>No machine groups yet</h3>
+  <p>Groups are AutoDeploy-local sets of machines. Use them to filter the inventory, target bulk operations, and scope log searches. Create a <strong>manual</strong> group you fill by hand (it can also nest other groups), or a <strong>dynamic</strong> group defined by a filter.</p>
+  <a class="btn" href="/portal/groups/new"><svg><use href="#i-plus"/></svg>Create group</a>
+</div>
+{{end}}
+{{end}}

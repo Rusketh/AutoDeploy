@@ -73,6 +73,8 @@ type Repos struct {
 	Notifications *model.NotificationRepo
 	// WebhookRepo manages webhook endpoints and delivery logs.
 	WebhookRepo *model.WebhookRepo
+	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
+	Groups *model.MachineGroupRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -140,6 +142,16 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/loadouts/{id}", requireAuth(r, handleGetLoadout(r)))
 	mux.HandleFunc("PUT /api/v1/loadouts/{id}", requireAuth(r, handleUpdateLoadout(r)))
 	mux.HandleFunc("DELETE /api/v1/loadouts/{id}", requireAuth(r, handleDeleteLoadout(r)))
+
+	// Machine groups (manual + dynamic, nestable).
+	mux.HandleFunc("GET /api/v1/machine-groups", requireAuth(r, handleListGroups(r)))
+	mux.HandleFunc("POST /api/v1/machine-groups", requireAuth(r, handleCreateGroup(r)))
+	mux.HandleFunc("GET /api/v1/machine-groups/{id}", requireAuth(r, handleGetGroup(r)))
+	mux.HandleFunc("PUT /api/v1/machine-groups/{id}", requireAuth(r, handleUpdateGroup(r)))
+	mux.HandleFunc("DELETE /api/v1/machine-groups/{id}", requireAuth(r, handleDeleteGroup(r)))
+	mux.HandleFunc("GET /api/v1/machine-groups/{id}/members", requireAuth(r, handleListGroupMembers(r)))
+	mux.HandleFunc("POST /api/v1/machine-groups/{id}/members", requireAuth(r, handleAddGroupMembers(r)))
+	mux.HandleFunc("DELETE /api/v1/machine-groups/{id}/members", requireAuth(r, handleRemoveGroupMembers(r)))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

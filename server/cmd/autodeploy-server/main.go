@@ -236,6 +236,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		MSCatalog:     mscatalog.New(),
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
+		Groups:        r.Groups,
 		Emitter:       emitter,
 		Waker:         waker,
 	}
@@ -306,6 +307,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Updates:       r.Updates,
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
+		Groups:        r.Groups,
 		Emitter:       emitter,
 		Waker:         waker,
 		SecretsBox:    bx,
@@ -468,6 +470,7 @@ type appRepos struct {
 	Updates       *model.WindowsUpdateRepo
 	Notifications *model.NotificationRepo
 	Webhooks      *model.WebhookRepo
+	Groups        *model.MachineGroupRepo
 	Emitter       *notify.Emitter
 }
 
@@ -479,9 +482,11 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	loadouts := model.NewSoftwareLoadoutRepo(db)
 	images := model.NewImageRepo(db)
 	inventory := model.NewInventoryRepo(db)
+	groups := model.NewMachineGroupRepo(db, inventory)
 	users := auth.New(db)
 	settings := auth.MustNewSettingsRepo(users)
 	bulk := model.NewBulkRepo(db, inventory)
+	bulk.SetGroups(groups)
 	logs := model.NewLogRepo(db)
 	brandRepo := branding.New(db)
 	mirrors := model.NewPayloadMirrorRepo(db)
@@ -504,6 +509,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Updates:       updates,
 		Notifications: notifications,
 		Webhooks:      webhooks,
+		Groups:        groups,
 	}
 }
 

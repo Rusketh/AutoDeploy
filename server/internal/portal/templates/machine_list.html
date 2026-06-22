@@ -1,9 +1,33 @@
 {{define "body"}}
 {{$page := .Data.Page}}
 {{$sort := .Data.Sort}}
+<div class="machines-layout">
+<aside class="group-sidebar" aria-label="Machine groups">
+  <div class="group-sidebar-head">
+    <span class="lbl">Groups</span>
+    <a class="iconbtn" href="/portal/groups/new" title="New group" aria-label="New group"><svg aria-hidden="true"><use href="#i-plus"/></svg></a>
+  </div>
+  <ul class="group-nav">
+    <li><a href="/portal/machines" class="{{if not .Data.ActiveGroupID}}on{{end}}">
+      <svg aria-hidden="true"><use href="#i-server"/></svg>
+      <span class="g-name">All machines</span>
+      <span class="g-count">{{.Data.TotalAll}}</span>
+    </a></li>
+    {{range .Data.Groups}}
+    <li><a href="/portal/machines?group={{int64 .ID}}" class="{{if eq (int64 .ID) $.Data.ActiveGroupID}}on{{end}}"{{if .Description}} title="{{.Description}}"{{end}}>
+      <svg aria-hidden="true"><use href="#i-{{if eq .Kind "dynamic"}}bolt{{else}}stack{{end}}"/></svg>
+      <span class="g-name">{{.Name}}</span>
+      <span class="g-count">{{.MemberCount}}</span>
+    </a></li>
+    {{end}}
+  </ul>
+  <a class="group-manage small muted" href="/portal/groups"><svg aria-hidden="true"><use href="#i-gear"/></svg>Manage groups</a>
+</aside>
+<div class="machines-main">
 <div class="toolbar">
-  <h2>Machines</h2>
+  <h2>{{if .Data.ActiveGroupName}}{{.Data.ActiveGroupName}}{{else}}Machines{{end}}</h2>
   <form class="filter" method="GET" action="/portal/machines">
+    {{if .Data.ActiveGroupID}}<input type="hidden" name="group" value="{{.Data.ActiveGroupID}}">{{end}}
     <svg><use href="#i-search"/></svg>
     <input type="search" name="q" value="{{.Data.Query}}" placeholder="Filter — press /" data-server-filter autocomplete="off" aria-label="Filter machines" title="Searches names, make/model, base board, serials, UUID, OS and bound image">
   </form>
@@ -16,9 +40,14 @@
   </div>
 </div>
 {{if .Data.Rows}}
-<form method="post" action="/portal/machines/delete" id="bulk-del" onsubmit="return confirm('Delete the selected machines from inventory? This removes their binding, history and detection state.');">
+<form method="post" action="/portal/machines/delete" id="bulk-del">
+<input type="hidden" name="group_id" value="{{.Data.ActiveGroupID}}">
 <div class="actions mb-2" id="bulk-del-bar" hidden>
-  <button type="submit" class="danger sm"><svg><use href="#i-trash"/></svg>Delete selected (<span id="del-count">0</span> on this page)</button>
+  {{if .Data.ActiveGroupManual}}
+  <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="add"><svg><use href="#i-plus"/></svg>Add to {{.Data.ActiveGroupName}}</button>
+  <button type="submit" class="secondary sm" formaction="/portal/machines/group-membership" name="op" value="remove"><svg><use href="#i-x"/></svg>Remove from {{.Data.ActiveGroupName}}</button>
+  {{end}}
+  <button type="submit" class="danger sm" data-confirm="Delete the selected machines from inventory? This removes their binding, history and detection state."><svg><use href="#i-trash"/></svg>Delete selected (<span id="del-count">0</span> on this page)</button>
 </div>
 <div class="tablewrap">
 <table id="tbl">
@@ -62,7 +91,15 @@ function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').le
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-server"/></svg>
-  {{if .Data.Query}}
+  {{if .Data.ActiveGroupID}}
+  <h3>No machines in “{{.Data.ActiveGroupName}}”{{if .Data.Query}} match “{{.Data.Query}}”{{end}}</h3>
+  {{if .Data.ActiveGroupManual}}
+  <p>This is an empty manual group. Open <a href="/portal/machines">All machines</a>, tick the machines you want, and use <strong>Add to {{.Data.ActiveGroupName}}</strong>.</p>
+  {{else}}
+  <p>This dynamic group's filter currently matches no machines. <a href="/portal/groups">Adjust its filter</a> or wait for matching machines to check in.</p>
+  {{end}}
+  <p><a class="btn secondary sm" href="/portal/machines">All machines</a></p>
+  {{else if .Data.Query}}
   <h3>No machines match “{{.Data.Query}}”</h3>
   <p>The filter searches names, make/model, base board, serials, UUIDs and bound images.</p>
   <p><a class="btn secondary sm" href="/portal/machines">Clear filter</a></p>
@@ -72,4 +109,6 @@ function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').le
   {{end}}
 </div>
 {{end}}
+</div>
+</div>
 {{end}}

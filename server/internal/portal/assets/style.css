@@ -1311,3 +1311,38 @@ fieldset.disabled::after { content: " (does not apply to selected target OS)"; c
 
 /* Table column widths */
 .col-icon { width: 32px; }
+
+/* ---- Machine groups -------------------------------------------------- */
+/* Two-pane Machines layout: a sticky group sidebar beside the inventory
+   table. Collapses to a single column under 900px (sidebar stacks above). */
+.machines-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: var(--sp-4); align-items: start; }
+.machines-main { min-width: 0; }
+.group-sidebar {
+  position: sticky; top: var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface); padding: var(--sp-2);
+}
+.group-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-1) var(--sp-2); }
+.group-sidebar-head .lbl { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--fg-muted); }
+.group-nav { list-style: none; margin: var(--sp-1) 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.group-nav a {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2); border-radius: var(--r); color: var(--fg);
+  text-decoration: none; font-size: var(--fs-sm);
+}
+.group-nav a:hover { background: var(--bg); }
+.group-nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.group-nav a svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .85; }
+.group-nav .g-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-nav .g-count { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--fg-muted); background: var(--bg); border-radius: 999px; padding: 1px 7px; }
+.group-nav a.on .g-count { background: var(--surface); color: var(--accent); }
+.group-manage { display: inline-flex; align-items: center; gap: 6px; padding: var(--sp-2); }
+.group-manage svg { width: 13px; height: 13px; }
+.group-filter { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3); margin: var(--sp-2) 0; }
+.group-filter legend { font-weight: 600; font-size: var(--fs-sm); padding: 0 var(--sp-1); }
+@media (max-width: 900px) {
+  .machines-layout { grid-template-columns: 1fr; }
+  .group-sidebar { position: static; }
+  .group-nav { flex-direction: row; flex-wrap: wrap; }
+  .group-nav li { flex: 1 1 auto; }
+}

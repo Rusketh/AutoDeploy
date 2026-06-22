@@ -30,8 +30,10 @@ unfold without refreshing. Toggle it from the button in the top bar.
 
 ## Searching and filtering
 
-The **Search** form filters by **component**, **actor**, **action**, a **since** time, and a result
-**limit**. Within the returned rows there's also a quick row-filter box. Results are newest-first.
+The **Search** form filters by **component**, **actor**, **action**, a **since** time, a
+**machine group**, and a result **limit**. Picking a [machine group](machine-groups.md) restricts
+results to events from that group's member machines. Within the returned rows there's also a quick
+row-filter box. Results are newest-first.
 
 ## Retention
 

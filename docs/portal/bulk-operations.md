@@ -18,9 +18,14 @@ Click **New bulk operation** and work through the steps.
 
 ### 1. Find machines
 
-Search by **name regex**, **OU** (distinguished name), and/or **AD group**, then click **Search**.
-The filter is a search tool only — the action runs on the *selection* you build, not on whatever
-currently matches.
+Search by **name regex**, **OU** (distinguished name), **AD group**, and/or a
+**machine group**, then click **Search**. The filter is a search tool only — the
+action runs on the *selection* you build, not on whatever currently matches.
+
+A [machine group](machine-groups.md) can also be the target of a re-evaluated
+recurring task (see step 4): choosing **re-evaluate the filter** with a machine
+group selected re-resolves that group on every run, so a recurring operation
+against a **dynamic** group automatically tracks its live membership.
 
 ### 2. Build the selection
 
