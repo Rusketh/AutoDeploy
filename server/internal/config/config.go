@@ -42,7 +42,7 @@ type Config struct {
 	// Phase 16. Log retention (days). 0 disables pruning.
 	LogRetentionDays int
 
-	// Mass-scale: bound concurrent /payload/* streams (default 64).
+	// Mass-scale: bound concurrent /payload/* streams (default 128).
 	// Zero = unlimited (don't pick this on a production node — a
 	// 500-machine PXE burst will exhaust the file-descriptor budget).
 	PayloadMaxInFlight int

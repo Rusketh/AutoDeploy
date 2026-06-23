@@ -11,17 +11,21 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
 
-// RegisterInventory mounts the machine inventory endpoints. The agent
-// posts reports here; the portal reads through /api/v1/machines/*.
+// RegisterInventory mounts the machine inventory endpoints. The
+// operator-facing /api/v1/machines/* routes require a session (the
+// portal itself renders machines through its own /portal/machines/*
+// handlers; these JSON routes are for API scripting). The agent-facing
+// report endpoints below are intentionally unauthenticated — clients
+// authenticate by SMBIOS identity, not a session.
 func RegisterInventory(mux *http.ServeMux, r Repos) {
-	mux.HandleFunc("GET /api/v1/machines", handleListMachines(r))
-	mux.HandleFunc("GET /api/v1/machines/{id}", handleGetMachine(r))
-	mux.HandleFunc("GET /api/v1/machines/{id}/history", handleMachineHistory(r))
-	mux.HandleFunc("GET /api/v1/machines/{id}/binding", handleGetBinding(r))
-	mux.HandleFunc("PUT /api/v1/machines/{id}/binding", handlePutBinding(r))
+	mux.HandleFunc("GET /api/v1/machines", requireAuth(r, handleListMachines(r)))
+	mux.HandleFunc("GET /api/v1/machines/{id}", requireAuth(r, handleGetMachine(r)))
+	mux.HandleFunc("GET /api/v1/machines/{id}/history", requireAuth(r, handleMachineHistory(r)))
+	mux.HandleFunc("GET /api/v1/machines/{id}/binding", requireAuth(r, handleGetBinding(r)))
+	mux.HandleFunc("PUT /api/v1/machines/{id}/binding", requireAuth(r, handlePutBinding(r)))
 	mux.HandleFunc("POST /api/v1/machines/bulk-binding", requireAuth(r, handleBulkBinding(r)))
-	mux.HandleFunc("GET /api/v1/machines/{id}/detected", handleDetectedState(r))
-	mux.HandleFunc("DELETE /api/v1/machines/{id}", handleDeleteMachine(r))
+	mux.HandleFunc("GET /api/v1/machines/{id}/detected", requireAuth(r, handleDetectedState(r)))
+	mux.HandleFunc("DELETE /api/v1/machines/{id}", requireAuth(r, handleDeleteMachine(r)))
 
 	// Agent-facing report endpoint: open a deployment row, record final
 	// outcome, replace detected state for the packages it just ran.

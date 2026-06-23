@@ -25,8 +25,8 @@ images. See [Payloads → Unattend files](portal/payloads.md#unattend-files).
 
 ### Driver package
 A bundle of **drivers** with an optional **SMBIOS match** (manufacturer, product, family, SKU,
-baseboard, chassis type). At deployment, AutoDeploy applies the driver packages whose match
-criteria fit the machine's hardware. See
+serial/UUID, baseboard, and BIOS vendor/version). At deployment, AutoDeploy applies the driver
+packages whose match criteria fit the machine's hardware. See
 [Payloads → Driver packages](portal/payloads.md#driver-packages).
 
 ## Software
@@ -55,9 +55,10 @@ appear automatically the first time they network-boot or an agent checks in. A m
 holds hardware details, deployment history, and its current binding. See [Machines](portal/machines.md).
 
 ### Binding
-The link between a **machine** and the **image** it should receive. Bind a machine to an image and
-it will deploy that image the next time it network-boots (or immediately, via a bulk reimage). See
-[Machines → Bindings](portal/machines.md#bindings).
+The link between a **machine** and the **image** it should receive — together with the machine's
+desired computer name, its Active Directory placement (OU), and group memberships. Bind a machine to
+an image and it will deploy that image the next time it network-boots (a bulk reimage can also reboot
+it for you). See [Machines → Bindings](portal/machines.md#bindings).
 
 ## Scaling & access
 

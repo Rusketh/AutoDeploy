@@ -17,8 +17,8 @@ A package's detection rules are stored as a JSON **array**. A package counts as 
 
 ## Rule types
 
-Every rule has a `type` field — one of `file`, `registry`, `msi`, `script` — that selects which
-other fields apply.
+Every rule has a `type` field — one of `file`, `registry`, `msi`, `script`, `winget` — that selects
+which other fields apply.
 
 ### `file`
 
@@ -74,6 +74,20 @@ with spaces work, and PowerShell runs with its execution policy bypassed).
 
 ```json
 { "type": "script", "script_shell": "powershell", "script_body": "if (Test-Path 'C:\\App') { exit 0 } else { exit 1 }" }
+```
+
+### `winget`
+
+Present if the Windows Package Manager reports the package installed. The agent runs
+`winget list --id <winget_id> --exact`; a match means "detected". Requires `winget` to be available
+on the target.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `winget_id` | yes | The exact winget package identifier, e.g. `Microsoft.VisualStudioCode`. |
+
+```json
+{ "type": "winget", "winget_id": "Microsoft.VisualStudioCode" }
 ```
 
 ## Notes

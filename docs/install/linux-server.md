@@ -91,7 +91,7 @@ The installer:
 - seeds bundled agent/boot binaries and fetches any missing ones for **all available platforms**
   from the release that matches the installed server version,
 - installs the self-update helper at `/usr/local/sbin/autodeploy-update` and a sudoers rule at
-  `/etc/sudoers.d/autodeploy` so the server can trigger in-place updates from the portal (see
+  `/etc/sudoers.d/autodeploy-update` so the server can trigger in-place updates from the portal (see
   [Updates](../operations/updates.md)),
 - installs the systemd unit at `/etc/systemd/system/autodeploy.service` and the environment file
   at `/etc/default/autodeploy`,
@@ -109,24 +109,39 @@ The installer:
 ## Step 4 — Configure
 
 The server reads its configuration from the environment file `/etc/default/autodeploy`. The
-defaults bind the portal on ports 80 (HTTP) and 443 (HTTPS) and enable the built-in TFTP server on
-port 69:
+default shape serves **HTTP on `0.0.0.0:8080`** with **HTTPS disabled**, plus the built-in TFTP
+server on **port 69**:
 
 ```ini
-AUTODEPLOY_HTTP_ADDR=0.0.0.0:80
-AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443
-AUTODEPLOY_TLS_CERT=
-AUTODEPLOY_TLS_KEY=
-AUTODEPLOY_DATA_DIR=/var/lib/autodeploy
+AUTODEPLOY_HTTP_ADDR=0.0.0.0:8080
+#AUTODEPLOY_HTTPS_ADDR=0.0.0.0:443
 AUTODEPLOY_TFTP_ADDR=:69
+AUTODEPLOY_DEV=false
+
+# TLS for the HTTPS listener (only needed once HTTPS is enabled):
+#AUTODEPLOY_TLS_CERT=/etc/autodeploy/tls/server.crt
+#AUTODEPLOY_TLS_KEY=/etc/autodeploy/tls/server.key
+
+# Secrets-at-rest key — generate with: openssl rand -hex 32
+#AUTODEPLOY_SECRETS_KEY=
 ```
 
-For a production HTTPS listener, set `AUTODEPLOY_TLS_CERT` and `AUTODEPLOY_TLS_KEY` to your
-certificate and key (both are required when HTTPS is enabled outside dev mode). The full list of
-settings is in the [configuration reference](../reference/configuration.md).
+(`AUTODEPLOY_DATA_DIR` is set to `/var/lib/autodeploy` by the systemd unit, so it does not appear
+in this file.)
 
-> The systemd unit grants the binary `CAP_NET_BIND_SERVICE`, so it can bind ports 80/443/69 while
-> running as the unprivileged `autodeploy` user.
+**To enable HTTPS**, uncomment `AUTODEPLOY_HTTPS_ADDR`. For a trusted certificate, also set
+`AUTODEPLOY_TLS_CERT` and `AUTODEPLOY_TLS_KEY`; if you leave them empty the server starts anyway but
+generates a **self-signed** certificate under `<data>/tls/` and logs a warning (browsers won't trust
+it). Alternatively, leave HTTPS off and terminate TLS at a reverse proxy.
+
+**Secrets at rest.** Domain-join and webhook secrets are encrypted with a key from
+`AUTODEPLOY_SECRETS_KEY` (64 hex chars). If you leave it unset, the server generates one at
+`<data>/secrets-key.bin` on first start — **back that file (or the key) up off-host**, or those
+secrets become unrecoverable. The full list of settings is in the
+[configuration reference](../reference/configuration.md).
+
+> The systemd unit grants the binary `CAP_NET_BIND_SERVICE`, so it can bind low ports (80/443/69) if
+> you switch to them, while running as the unprivileged `autodeploy` user.
 
 ## Step 5 — Start the service
 
@@ -151,7 +166,8 @@ the file):
 sudo cat /var/lib/autodeploy/admin-bootstrap.txt
 ```
 
-Open `https://<your-server>/portal/`, log in as `admin` with that password, then:
+Open **`http://<your-server>:8080/portal/`** (the default), log in as `admin` with that password,
+then:
 
 1. Change the password in **[Settings → Accounts](../portal/settings.md#accounts)**.
 2. Delete the bootstrap file:

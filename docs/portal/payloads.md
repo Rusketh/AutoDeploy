@@ -121,7 +121,7 @@ image.
 Go to **Drivers → New**, give it a **Name** (required) and optional **Description**, define the
 SMBIOS filters, save, then upload the driver archive (a `.zip` is recommended). After uploading,
 click **Extract & scan** to unpack the zip and list the discovered `.inf` files with their class,
-provider, and version.
+provider, version, and date.
 
 ![Creating a driver package](../images/driver-new.png)
 

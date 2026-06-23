@@ -8,15 +8,17 @@ from the very first line of code, so they do not have to be retrofitted later.
 
 ## 1. Language and toolchain
 
-- Go 1.22 or newer for all three components.
+- Go 1.25 or newer for all three components (the toolchain is pinned per module
+  in `go.mod`).
 - Each component is its own Go module (`server/`, `boot-client/`, `agent/`)
   with its own `go.mod`.
 - Pin the Go toolchain in each `go.mod` via the `toolchain` directive.
 - External dependencies must be vendored only when there is a reason; in
   general, use `go.sum` checksums and dependabot for updates.
 - Standard library first. Add a dependency only when the standard library does
-  not have a workable answer. (`chi` for routing, `pgx` for Postgres,
-  `htmx` and templates for the portal UI.)
+  not have a workable answer. (Routing is the standard-library `net/http`
+  `ServeMux`; the datastore is embedded SQLite via `modernc.org/sqlite`; the
+  portal UI is `html/template` + `htmx`.)
 
 ## 2. Project layout
 
@@ -80,9 +82,12 @@ Enforcement:
 
 ## 5. HTTP
 
-- HTTP server: `net/http` + `chi` for routing.
-- HTTPS is mandatory in production; the server must refuse to bind cleartext
-  to non-loopback in production mode.
+- HTTP server: `net/http` with the standard-library `ServeMux` (method-aware
+  routing patterns, Go 1.22+).
+- HTTPS is recommended in production, but HTTP-only is a supported deployment
+  shape (for example behind a TLS-terminating reverse proxy). The server logs a
+  clearly-marked warning when it binds cleartext on a non-loopback address; it
+  never refuses to start.
 - Large payloads (ISOs, WIM, drivers) are streamed with
   `io.Copy(w, src)`; never `ioutil.ReadAll`. Range requests are supported so
   the Boot Client can resume interrupted downloads.
@@ -90,15 +95,15 @@ Enforcement:
 ## 6. Errors
 
 - Wrap with `fmt.Errorf("context: %w", err)`.
-- The HTTP layer maps domain errors to status codes in one place
-  (`internal/httpx/errors.go`); handlers do not write status codes ad-hoc.
+- The API maps domain errors to status codes in one place (the `writeError`
+  helper in `internal/api`); handlers do not write status codes ad-hoc.
 
 ## 7. Tests
 
 - Table-driven unit tests for resolution rules and step execution.
-- Integration tests for the API live under `server/internal/api/...` and use
-  a real Postgres via `testcontainers-go` in CI (and on dev machines that
-  have Docker; skipped with a SKIP message otherwise).
+- Integration tests for the API live under `server/internal/api/...` and run
+  against an in-memory SQLite database (`storage.Open(":memory:")`), so they
+  need no external services and run anywhere.
 - A failed test fails the build.
 
 ## 8. Builds and CI

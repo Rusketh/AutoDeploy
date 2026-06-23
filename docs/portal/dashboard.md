@@ -18,9 +18,11 @@ its list page, so it doubles as navigation.
 
 ## Last 24 hours
 
-A rollup of deployment outcomes over the last 24 hours: **successful**, **in progress**, and
-**failed**. It's a quick health check — a rising "failed" count is your cue to open the affected
-machines or the [activity log](logs.md).
+A rollup of deployment outcomes over the last 24 hours: **successful**, **in progress**,
+**failed**, and **stalled** — a deployment that is in progress but has had no agent check-in for
+over 45 minutes (the machine may have failed Windows Setup or been powered off). It's a quick health
+check — a rising "failed" or "stalled" count is your cue to open the affected machines or the
+[activity log](logs.md).
 
 ## Software compliance
 

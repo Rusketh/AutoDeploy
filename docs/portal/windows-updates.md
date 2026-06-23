@@ -18,7 +18,8 @@ otherwise.
 
 Go to **Updates → New**. Give it a **KB number** (e.g. KB5034441), **title**, optional
 **description**, **OS filter** (e.g. "Windows 10" — matches machines whose OS caption contains this
-string), and **severity** (critical, important, moderate, low).
+string), and **severity** (critical, important, moderate, low). The form also has an optional
+**Supersedes** field for the replaced KB numbers this update obsoletes.
 
 ![Creating a Windows Update](../images/windowsupdate-new.png)
 
@@ -47,7 +48,7 @@ the payload manually. Nothing is imported or downloaded without an explicit oper
 
 Notes:
 
-- The server needs outbound HTTPS to `catalog.update.microsoft.com` and
+- The server needs outbound HTTPS to `www.catalog.update.microsoft.com` and
   `*.download.windowsupdate.com` (the standard `HTTPS_PROXY` environment variable is honored).
   Air-gapped installs keep using manual upload.
 - Importing a KB that's already tracked links you to the existing update instead of duplicating

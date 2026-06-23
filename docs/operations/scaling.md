@@ -23,8 +23,8 @@ The server bounds how many payload streams run concurrently with
 descriptors when a large batch of machines all start pulling media at once.
 
 When all slots are in use, additional requests queue for up to **2 minutes**. If a slot doesn't
-free up in time the request fails with a timeout, so machines retry on their next cycle rather than
-piling up indefinitely.
+free up before that wait expires, the request is rejected with **HTTP 503 Service Unavailable**, so
+machines retry on their next cycle rather than piling up indefinitely.
 
 - Raise the limit on a powerful server with fast storage and network.
 - **Do not set it to `0` (unlimited)** on a production node — a large simultaneous PXE burst can

@@ -1,6 +1,8 @@
 # Deploy Spine Realignment — Implementation Plan (SWM / boot-the-media)
 
-Status: PLAN — awaiting approval before implementation.
+Status: IMPLEMENTED (Parts 1–3 shipped — server-side prepare/split, portal
+status surfacing, and the `iso-media` Boot Client media-staging rewrite). Parts
+4–5 (unattend single-disk coexistence + this doc/roadmap rewrite) remain.
 Supersedes the layout sketch previously in this file.
 
 ## Decision

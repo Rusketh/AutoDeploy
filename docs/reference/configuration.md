@@ -33,13 +33,18 @@ first boot and can then be managed from **[Settings](../portal/settings.md)**. N
 (listen addresses, TLS paths) take effect on next restart; reverse proxy CIDRs and the external
 URL take effect immediately.
 
-### Validation
+### Startup behaviour
 
-At startup the server enforces:
+The server does not refuse to start over its listener configuration:
 
-- **At least one listener** — `AUTODEPLOY_HTTP_ADDR` or `AUTODEPLOY_HTTPS_ADDR` must be set.
-- **TLS in production** — when `AUTODEPLOY_HTTPS_ADDR` is set and `AUTODEPLOY_DEV` is `false`, both
-  `AUTODEPLOY_TLS_CERT` and `AUTODEPLOY_TLS_KEY` must be provided.
+- **Listeners** — set `AUTODEPLOY_HTTP_ADDR` and/or `AUTODEPLOY_HTTPS_ADDR`. If neither is set the
+  process still starts but serves nothing useful; `AUTODEPLOY_HTTP_ADDR` defaults to
+  `127.0.0.1:8080`, so a listener is normally present unless you explicitly blank it.
+- **HTTPS without a certificate** — when `AUTODEPLOY_HTTPS_ADDR` is set but no `AUTODEPLOY_TLS_CERT`
+  / `AUTODEPLOY_TLS_KEY` is given, the server generates a self-signed certificate under
+  `AUTODEPLOY_DATA_DIR/tls/` and starts anyway. In production (`AUTODEPLOY_DEV=false`) it logs a
+  warning, because clients cannot verify a self-signed certificate — supply a real cert/key (or
+  terminate TLS at a reverse proxy) for a trusted certificate. See [Security](../operations/security.md).
 
 ## Data directory layout
 
@@ -52,9 +57,9 @@ install):
 | `admin-bootstrap.txt` | One-time bootstrap admin password, written on first start. Delete after first login. |
 | `secrets-key.bin` | Generated at-rest encryption key (when `AUTODEPLOY_SECRETS_KEY` is not set). |
 | `tls/` | TLS certificates — auto-generated self-signed cert or operator-uploaded PEM files via the portal. |
-| `ipxe/` | iPXE bootstrap binaries served over TFTP/HTTP for PXE boot. |
-| `downloads/` | Agent and boot-client binaries handed out during deployment. |
-| `isos/`, `unattends/`, `drivers/`, `software/`, `payloads/` | Extracted/uploaded payload blobs by category. |
+| `ipxe/` | iPXE bootstrap binaries and the Boot Client kernel/initrd, served over TFTP/HTTP for PXE boot. |
+| `downloads/` | Agent and boot-client binaries handed out during deployment and from the portal Downloads page. |
+| `iso/`, `drivers/`, `software/`, `updates/` | Extracted/uploaded payload blobs by category (ISO trees + source ISO, driver packages, software installers, Windows Update packages). |
 
 Back up the entire data directory to protect both the database and the payloads — see
 [Backup & retention](../operations/backup-and-retention.md).

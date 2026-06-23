@@ -5,7 +5,7 @@ sequence. When a package is not [detected](detection-rules.md) on a machine, the
 [agent](../introduction.md#agent-autodeploy-agent) runs the package's steps **in order**.
 
 Steps are stored as a JSON **array**; each element has a `type` field — one of `copy`, `unzip`,
-`msi`, `appx`, `cmd`, `powershell`, `exe` — that selects which other fields apply.
+`msi`, `appx`, `cmd`, `powershell`, `exe`, `winget` — that selects which other fields apply.
 
 ```json
 [
@@ -44,12 +44,13 @@ Extract a `.zip` archive. Entries that would escape the destination are refused 
 
 ### `msi`
 
-Run an MSI installer (always with `/quiet /norestart`).
+Run an MSI installer. The agent invokes `msiexec /i <msi_path> /quiet /norestart`, with any
+`msi_args` appended after `/norestart`.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `msi_path` | yes | The `.msi` file. |
-| `msi_args` | no | Extra arguments appended after `/quiet /norestart`. |
+| `msi_args` | no | Extra arguments appended after `/i <msi_path> /quiet /norestart` (e.g. `TRANSFORMS=…`, public properties). |
 
 ```json
 { "type": "msi", "msi_path": "app.msi", "msi_args": ["INSTALLDIR=C:\\Acme"], "success_codes": [3010] }
@@ -89,6 +90,22 @@ Run an executable installer.
 
 ```json
 { "type": "exe", "exe_path": "setup.exe", "exe_args": ["/S"] }
+```
+
+### `winget`
+
+Install a package with the Windows Package Manager. The agent runs
+`winget install --id <winget_id> --silent --accept-package-agreements --accept-source-agreements
+--disable-interactivity`, with any `winget_args` appended after `--silent`. Requires `winget` to be
+available on the target.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `winget_id` | yes | The exact winget package identifier, e.g. `Microsoft.VisualStudioCode`. |
+| `winget_args` | no | Extra arguments appended after `--silent` (array of strings, e.g. `["--scope", "machine"]`). |
+
+```json
+{ "type": "winget", "winget_id": "Microsoft.VisualStudioCode", "winget_args": ["--scope", "machine"] }
 ```
 
 ## Notes

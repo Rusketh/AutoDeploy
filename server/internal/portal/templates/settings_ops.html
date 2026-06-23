@@ -38,7 +38,7 @@
       <input type="number" name="payload_max_in_flight" value="{{.Data.Throttle}}" min="0" max="65535">
       <span class="hint">
         Caps concurrent payload (WIM / driver / software) downloads so a thundering herd queues rather than thrashing file descriptors.
-        0 = unlimited (don't pick this on production). The default is 64; raise for hosts with bigger fd budgets, lower if mirrors are absorbing most of the load.
+        0 = unlimited (don't pick this on production). The default is 128; raise for hosts with bigger fd budgets, lower if mirrors are absorbing most of the load.
         <strong>Takes effect on next server restart.</strong>
       </span>
     </label>

@@ -68,8 +68,9 @@ Click **Queue operation** to start it.
 ## Tracking results
 
 Open an operation from the list to see its **summary** (action, target, creator, payload) and its
-**jobs** — one per targeted machine, each with a **status** (running / ok / failed), when it was
-claimed and completed, and a result. Results fill in as agents pick up and report their jobs.
+**jobs** — one per targeted machine, each with a **status** (queued / running / ok / failed /
+cancelled), when it was claimed and completed, and a result. Results fill in as agents pick up and
+report their jobs.
 
 ## Notes
 
@@ -80,7 +81,10 @@ claimed and completed, and a result. Results fill in as agents pick up and repor
   AutoDeploy, and re-images without operator interaction, so the machines must be configured to
   network-boot.
 - Renames coordinate with Active Directory server-side before the local job is queued.
-- Every bulk operation, and every script run, is recorded in the [activity log](logs.md).
+- Bulk operations aren't written to the portal [activity log](logs.md); track them on the
+  operation's [detail page](#tracking-results) (the per-machine job rows) and via the `deploy.*` /
+  `bulk.*` [notifications](notifications.md). An agent's own actions appear in the activity log only
+  if the agent reports them.
 - Creating an operation fires a `bulk.created` [notification](notifications.md); when its last job
   finishes the matching `bulk.completed` / `bulk.partial` / `bulk.failed` event fires (jobs
   cancelled by the cancel-after window count toward *partial*).

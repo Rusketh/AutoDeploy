@@ -415,6 +415,10 @@ Exit criteria
 PHASE 12 - BITLOCKER MANAGEMENT
 ================================================================================
 
+NOTE (2026-06-23): BitLocker management was later REMOVED (migration
+0029_drop_bitlocker.sql) — the agent clobbered GPO/AD-managed encryption and did
+not reliably encrypt. This phase is retained for historical context only.
+
 Purpose
   Optionally encrypt the OS volume, preserving the user's pre-boot PIN across
   re-imaging and never losing a recovery key.

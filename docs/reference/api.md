@@ -214,7 +214,7 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 
 | Method & path | Purpose |
 |---------------|---------|
-| `GET /api/v1/branding` | Get branding settings. |
+| `GET /api/v1/branding` | Get branding settings. Readable without a session (the login screen and boot menu render branding before sign-in); `PUT` still requires one. |
 | `PUT /api/v1/branding` | Update branding. |
 
 Fields (all optional): `product_name` (defaults to `AutoDeploy`), `organisation_name`,
@@ -286,6 +286,7 @@ information).
 | `GET /api/v1/version` | The server's build version (used by the Updates page). |
 | `POST /api/v1/server/update` | Trigger an in-place server update. Requires the update helper and sudoers rule to be installed (see [Updates](../operations/updates.md)). Returns `503` if the helper is not available. |
 | `GET /api/v1/server/update-log` | Retrieve the last 64 KB of the update log for diagnostics. Accepts an optional `?lines=N` query parameter to limit output. |
+| `POST /api/v1/server/install-agent` | Fetch a matching agent binary (and the credential-provider sidecar) from the GitHub release into the downloads area, so it can be handed to deployed machines. Body `{ "os", "arch", "tag" }` — defaults to `windows`/`amd64`/latest release. Returns the resolved `tag`, `filename`, `sha256` and `path`. `503` if the downloads area is not configured. Driven by the **Settings → Updates** page. |
 
 ## Client & agent endpoints
 
