@@ -80,8 +80,8 @@ OEM info written to deployed machines.
 | Organisation name | Shown alongside the product name |
 | Support URL / Support phone | Contact details |
 | OEM Manufacturer | Written to the deployed machine's OEM information by the agent (defaults to the organisation name) |
-| Primary colour | Accent colour for buttons, badges, and the active nav highlight |
-| Logo | A data URL, or upload an image to embed it |
+| Primary colour | Accent colour for buttons, badges, and the active nav highlight. Applied in the portal, the boot menu, and the setup-lock screen |
+| Logo | A data URL, or upload an image to embed it (capped at 1 MB). A **PNG** or JPEG is shown in the portal header, on the boot menu, and on the setup-lock screen; an SVG renders in the portal only |
 
 ## Active Directory
 

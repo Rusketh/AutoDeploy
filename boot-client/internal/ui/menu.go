@@ -55,17 +55,27 @@ func (m *MenuScreen) Selected() int { return m.sel }
 func (m *MenuScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 	fillRect(img, b, th.Bg)
 	cx := b.Dx() / 2
-	// Header band.
-	drawCentered(img, th.Title, th.Text, cx, b.Min.Y+90, m.Title)
+	// Header band. Default offsets; an operator logo, when present, sits above
+	// the title and pushes the title/subtitle/rows down so nothing overlaps.
+	titleY := b.Min.Y + 90
+	subY := b.Min.Y + 130
+	rowsY := b.Min.Y + 190
+	if th.Logo != nil {
+		logoBottom := drawLogo(img, th.Logo, cx, b.Min.Y+28, minInt(420, b.Dx()-160), 72)
+		titleY = logoBottom + 46
+		subY = titleY + 34
+		rowsY = titleY + 96
+	}
+	drawCentered(img, th.Title, th.Text, cx, titleY, m.Title)
 	if m.Subtitle != "" {
-		drawCentered(img, th.Body, th.Muted, cx, b.Min.Y+130, m.Subtitle)
+		drawCentered(img, th.Body, th.Muted, cx, subY, m.Subtitle)
 	}
 	// Rows.
 	rowW := minInt(720, b.Dx()-120)
 	rowH := 64
 	gap := 14
 	x0 := b.Min.X + (b.Dx()-rowW)/2
-	y := b.Min.Y + 190
+	y := rowsY
 	m.rowRects = m.rowRects[:0]
 	for i, it := range m.Items {
 		r := image.Rect(x0, y, x0+rowW, y+rowH)

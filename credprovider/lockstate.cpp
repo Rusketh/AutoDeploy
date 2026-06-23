@@ -150,6 +150,7 @@ Branding ReadBranding() {
     if (jsonString(j, "support_url", s)) b.supportURL = toW(s);
     if (jsonString(j, "support_phone", s)) b.supportPhone = toW(s);
     if (jsonString(j, "primary_color", s)) b.primary = parseColor(s, b.primary);
+    if (jsonString(j, "logo_data_url", s)) b.logoDataURL = s;
     return b;
 }
 

@@ -14,7 +14,7 @@ CXXFLAGS := -std=c++17 -DUNICODE -D_UNICODE -O2 -Wall
 # Static libgcc/libstdc++ so the DLL has no MinGW runtime dependency on the
 # target machine (a freshly imaged Windows box has none of those DLLs).
 LDFLAGS  := -shared -static -static-libgcc -static-libstdc++
-LIBS     := -lole32 -loleaut32 -luuid -lgdi32 -luser32 -ladvapi32
+LIBS     := -lole32 -loleaut32 -luuid -lgdi32 -lgdiplus -luser32 -ladvapi32
 
 .PHONY: build clean
 build: $(OUT)

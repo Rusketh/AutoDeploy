@@ -107,12 +107,18 @@ func brandingSubmit(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		logo, ok := branding.SafeLogoURL(req.FormValue("logo_data_url"))
+		if !ok {
+			flash(w, "err", "Logo must be an image data URL (data:image/…) or an http(s) URL, under 1 MB. Tip: a small PNG or SVG works best.")
+			http.Redirect(w, req, "/portal/settings/branding", http.StatusFound)
+			return
+		}
 		b := branding.Brand{
 			ProductName:      strings.TrimSpace(req.FormValue("product_name")),
 			OrganisationName: strings.TrimSpace(req.FormValue("organisation_name")),
 			SupportURL:       strings.TrimSpace(req.FormValue("support_url")),
 			SupportPhone:     strings.TrimSpace(req.FormValue("support_phone")),
-			LogoDataURL:      strings.TrimSpace(req.FormValue("logo_data_url")),
+			LogoDataURL:      logo,
 			PrimaryColor:     strings.TrimSpace(req.FormValue("primary_color")),
 			OEMManufacturer:  strings.TrimSpace(req.FormValue("oem_manufacturer")),
 		}

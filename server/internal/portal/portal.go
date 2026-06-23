@@ -469,6 +469,18 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return *t
 		},
+		// brandLogo emits a validated logo reference as a trusted URL so an
+		// <img src> can carry a data:image/... URL. html/template otherwise
+		// rewrites any non-http(s)/mailto scheme (including data:) to
+		// "#ZgotmplZ", which is why a pasted/uploaded logo never displayed.
+		// branding.SafeLogoURL gates the value to image data URLs / http(s),
+		// so this cannot smuggle a javascript: or other unsafe scheme.
+		"brandLogo": func(s string) template.URL {
+			if v, ok := branding.SafeLogoURL(s); ok {
+				return template.URL(v)
+			}
+			return template.URL("")
+		},
 		"join": strings.Join,
 		"hasItems": func(s any) bool {
 			switch v := s.(type) {

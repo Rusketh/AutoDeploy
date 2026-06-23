@@ -17,7 +17,7 @@
 <a href="#main" class="skip-link">Skip to main content</a>
 {{if .User.ID}}
 <header class="app">
-  <h1 class="brand"><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="" class="logo" aria-hidden="true">{{end}}{{.Brand.ProductName}}</a></h1>
+  <h1 class="brand"><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{brandLogo .Brand.LogoDataURL}}" alt="" class="logo" aria-hidden="true">{{end}}{{.Brand.ProductName}}</a></h1>
   <nav class="main" aria-label="Primary">
     <a href="/portal/images"    class="{{if eq .Path "/portal/images"}}on{{end}}"   ><svg aria-hidden="true"><use href="#i-image"/></svg>Images</a>
     <a href="/portal/isos"      class="{{if eq .Path "/portal/isos"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-disc"/></svg>ISOs</a>

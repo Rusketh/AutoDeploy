@@ -11,11 +11,42 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
 const settingKey = "branding"
+
+// maxLogoBytes caps the stored logo. The data URL is inlined into every portal
+// page (the nav) and shipped to clients, so an oversized image would bloat
+// every render — keep it small.
+const maxLogoBytes = 1 << 20 // 1 MiB
+
+// SafeLogoURL trims s and reports whether it is an acceptable logo reference:
+// empty, an image data URL (data:image/...), or an http(s) URL, and within the
+// size cap. The portal validates uploads with it and the templates gate the
+// <img src> on it, so a stored brand can never carry a non-image or unsafe URL
+// (e.g. a javascript: scheme) into a rendered page. Returns the trimmed value
+// when acceptable.
+func SafeLogoURL(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", true
+	}
+	if len(s) > maxLogoBytes {
+		return "", false
+	}
+	low := strings.ToLower(s)
+	switch {
+	case strings.HasPrefix(low, "data:image/"),
+		strings.HasPrefix(low, "https://"),
+		strings.HasPrefix(low, "http://"):
+		return s, true
+	default:
+		return "", false
+	}
+}
 
 // Brand is the operator-configured identity.
 type Brand struct {
@@ -71,6 +102,10 @@ func (r *Repo) Set(ctx context.Context, b Brand) error {
 	if b.ProductName == "" {
 		b.ProductName = "AutoDeploy"
 	}
+	// Defence in depth: never persist a logo the templates would refuse to
+	// render (or an oversized one). An unacceptable value is dropped rather
+	// than stored; the portal validates up front and surfaces a clear error.
+	b.LogoDataURL, _ = SafeLogoURL(b.LogoDataURL)
 	raw, err := json.Marshal(b)
 	if err != nil {
 		return err

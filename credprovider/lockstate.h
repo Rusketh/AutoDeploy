@@ -14,6 +14,9 @@
 #include <windows.h>
 #include <string>
 
+// std::string is used for the logo data URL (ASCII base64), kept as UTF-8 bytes
+// rather than wide so the credential provider can base64-decode it directly.
+
 namespace lockstate {
 
 // Dir is the fixed lock-state directory (%ProgramData%\AutoDeploy\lock).
@@ -43,6 +46,10 @@ struct Branding {
     std::wstring supportURL;
     std::wstring supportPhone;
     COLORREF primary = RGB(0x0b, 0x65, 0xc2);
+    // logoDataURL is the operator's logo as a data: URL (e.g.
+    // "data:image/png;base64,…"), empty when unset. The full-screen painter
+    // decodes and draws it; empty or undecodable values simply show no logo.
+    std::string logoDataURL;
 };
 // ReadBranding returns operator branding, or defaults when absent.
 Branding ReadBranding();

@@ -1584,6 +1584,7 @@ type brandResp struct {
 	ProductName      string `json:"product_name"`
 	OrganisationName string `json:"organisation_name"`
 	PrimaryColor     string `json:"primary_color"`
+	LogoDataURL      string `json:"logo_data_url"`
 }
 
 // fetchBrand reads the operator's branding from the server so the
