@@ -44,7 +44,7 @@ checkboxes and **delete** them in bulk — the selection covers the current page
 
 ### Exporting to CSV
 
-Click **Export CSV** to download the inventory as `machines.csv` for reporting or to feed into
+Click **Export CSV** to download the inventory as `autodeploy-inventory.csv` for reporting or to feed into
 other tools. The export honours the active filter and sort order, so it matches what's on
 screen; visit the page unfiltered to export the whole fleet.
 

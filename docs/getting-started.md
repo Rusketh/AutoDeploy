@@ -27,9 +27,9 @@ Then log in:
 sudo cat /var/lib/autodeploy/admin-bootstrap.txt   # one-time admin password
 ```
 
-Open `https://<your-server>/portal/`, sign in as `admin`, change the password in
-[Settings → Accounts](portal/settings.md#accounts), and delete the bootstrap file. You'll land on
-the dashboard:
+Open `http://<your-server>:8080/portal/` (the default; enable HTTPS later if you want it), sign in
+as `admin`, change the password in [Settings → Accounts](portal/settings.md#accounts), and delete
+the bootstrap file. You'll land on the dashboard:
 
 ![Dashboard](images/dashboard.png)
 

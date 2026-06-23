@@ -31,12 +31,10 @@
 #   with no embedding and no per-install bake-in.
 #
 #   NOTE: a signed iPXE will, under Secure Boot, only go on to boot a
-#   signed next stage. The AutoDeploy boot image (autodeploy-kernel) is
-#   not yet signed, so an end-to-end Secure Boot deployment still needs
-#   the kernel handled separately (signed kernel / shim+MOK). Until then,
-#   the signed shim gets you a verified bootloader; Secure Boot must be
-#   off (or the kernel enrolled) for the kernel stage to load. See
-#   docs/install/pxe-and-boot.md.
+#   signed next stage. AutoDeploy serves a signed shim (autodeploy-shim.efi)
+#   ahead of the boot kernel, so the kernel stage is verified too and an
+#   end-to-end Secure Boot deployment works without disabling Secure Boot.
+#   See docs/install/pxe-and-boot.md.
 #
 # Source:
 #   iPXE GitHub release asset ipxeboot.tar.gz (default: latest).

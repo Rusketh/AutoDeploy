@@ -79,7 +79,7 @@ chain. Deleting a group quietly removes it from any parent that nested it.
 - **Logs** — the [Logs](logs.md) search has a **Machine group** selector that
   restricts events to that group's member machines.
 
-Group creation, edits, deletion, and membership changes are recorded in the
+Group creation, edits, and deletion are recorded in the
 [activity log](logs.md) under the `groups` component.
 
 ## Removing a group

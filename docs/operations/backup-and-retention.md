@@ -21,9 +21,12 @@ breakdown.
 
 ## Backing up
 
-The repository ships `scripts/backup.sh`, which backs up the data directory (database and
-payloads). Run it on a schedule (for example via `cron` or a systemd timer) and store the output
-off-host.
+The repository ships `scripts/backup.sh`, which takes a consistent online snapshot of the
+**SQLite database** (via `.backup`), the **secrets key** (`secrets-key.bin`), the **TLS material**
+(`tls/`), and `admin-bootstrap.txt` if present. It deliberately **excludes payload blobs**
+(`iso/`, `drivers/`, `software/`, `ipxe/`, …) — these are large and typically re-uploadable from
+your source-of-truth installer library. Run it on a schedule (for example via `cron` or a systemd
+timer) and store the output off-host.
 
 A simple manual backup is also possible by archiving the data directory while the service is
 stopped (or using a filesystem snapshot for a consistent copy while it runs).
@@ -32,6 +35,12 @@ stopped (or using a filesystem snapshot for a consistent copy while it runs).
 
 To restore, install the server as usual, stop the service, replace the data directory with your
 backup (including the secrets key), and start the service again.
+
+Restoring a `scripts/backup.sh` archive brings back the database, the secrets key, and the TLS
+material — but **not** the payload blobs, which the archive does not contain. Restore payloads from
+their own snapshot or re-upload them. To protect payloads, separately snapshot the whole
+`$AUTODEPLOY_DATA_DIR` (or at least its payload category directories: `iso/`, `drivers/`,
+`software/`, `ipxe/`, `downloads/`, `updates/`).
 
 ## Log retention
 

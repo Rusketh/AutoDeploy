@@ -85,7 +85,6 @@ autodeploy-agent [flags] [subcommand]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-server <url>` | *(empty)* | AutoDeploy server base URL. |
-| `-agent-id <uuid>` | *(empty)* | Server-minted agent UUID (resident mode). |
 | `-image-id <id>` | `0` | Image ID to deploy now (deployment-time mode), then converge to resident mode. |
 | `-uuid <uuid>` | *(empty)* | Machine SMBIOS UUID override (defaults to firmware value). |
 | `-check-in <duration>` | `0` | Resident check-in interval, e.g. `5m`. Zero means run once and exit. |
@@ -95,10 +94,11 @@ autodeploy-agent [flags] [subcommand]
 | `-dry-run` | `false` | Log steps without executing them. |
 | `-version` | `false` | Print version and exit. |
 
-When run with `-server` and no agent identity (no `-agent-id`, no registry config), the agent
+When run with `-server` and no stored agent identity (no registry config yet), the agent
 **enrolls itself**: the server registers the machine by SMBIOS identity and returns its minted
 agent id, which the agent persists to `HKLM\SOFTWARE\AutoDeploy` — the same provisioning the PXE
-flow performs. The machine is fully inventoried (hardware, computer name, AD path) on that first
+flow performs. (Agent identity always comes from enrollment or the registry; there is no flag to
+set it.) The machine is fully inventoried (hardware, computer name, AD path) on that first
 run, so bringing an existing Windows machine under management is just:
 
 ```bash

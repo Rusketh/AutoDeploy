@@ -14,8 +14,8 @@ The Updates page shows the running server version and can drive an in-place upgr
 installer sets this up by:
 
 1. installing the self-update helper script at `/usr/local/sbin/autodeploy-update`,
-2. adding a narrowly-scoped sudoers rule at `/etc/sudoers.d/autodeploy` that lets the `autodeploy`
-   service user run **only** that helper without a password.
+2. adding a narrowly-scoped sudoers rule at `/etc/sudoers.d/autodeploy-update` that lets the
+   `autodeploy` service user run **only** that helper without a password.
 
 Before triggering the update the server verifies the sudoers entry is in place. If it is missing
 (for example, after a manual install that skipped the installer), the Updates page shows a

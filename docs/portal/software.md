@@ -54,6 +54,7 @@ rules means re-install on every deployment. Rule types:
 | registry | A registry key/value (optionally equals a value) |
 | msi | An MSI product code is installed |
 | script | A PowerShell or cmd script exits 0 |
+| winget | A `winget_id` (e.g. `Microsoft.VisualStudioCode`) is reported present by `winget list --id <winget_id> --exact`; requires winget on the target |
 
 **Install steps.** Steps run in order; a failed step aborts the package unless its *On failure* is
 set to continue. You can set per-step **success exit codes** (e.g. add `3010` for installers that
@@ -68,6 +69,7 @@ request a reboot). Step types:
 | exe | Run an EXE installer with arguments |
 | cmd | Run a cmd.exe script |
 | powershell | Run a PowerShell script |
+| winget | Install a `winget_id` (required), with optional `winget_args` appended after `--silent`: runs `winget install --id <winget_id> --silent --accept-package-agreements --accept-source-agreements --disable-interactivity [winget_args]` |
 
 Paths (and args) accept a bare uploaded filename, an absolute path, Windows environment variables
 like `%ProgramFiles%`, or `%pkgdir%` (the package work directory). Environment variables are
@@ -91,7 +93,8 @@ time, which keeps images tidy and consistent.
 
 ![Loadout list](../images/loadouts-list.png)
 
-The list shows each loadout's **name**, **description**, and its **parent**, if any.
+The list shows each loadout's **name**, **description**, its **parent** (rendered as a numeric ID,
+if any), a **Packages** count, and a **Used by** count.
 
 ### Creating a loadout
 

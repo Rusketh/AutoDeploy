@@ -107,7 +107,7 @@ try {
     [IO.Compression.ZipFile]::CreateFromDirectory($work, $out)
 
     # Tighten ACL: the archive contains secrets-key.bin which decrypts
-    # every escrowed BitLocker PIN and recovery key. Strip inherited
+    # the domain-join and webhook secrets in the database. Strip inherited
     # ACEs and grant only Administrators + SYSTEM.
     $acl = Get-Acl -LiteralPath $out
     $acl.SetAccessRuleProtection($true, $false)

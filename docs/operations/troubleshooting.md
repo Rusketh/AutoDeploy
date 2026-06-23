@@ -5,11 +5,13 @@ first stop for almost everything — all components ship structured events to th
 
 ## The server won't start
 
-- **No listener configured.** At least one of `AUTODEPLOY_HTTP_ADDR` or `AUTODEPLOY_HTTPS_ADDR`
-  must be set. Check `/etc/default/autodeploy`.
-- **HTTPS without a certificate in production.** With `AUTODEPLOY_DEV=false`, enabling
-  `AUTODEPLOY_HTTPS_ADDR` requires both `AUTODEPLOY_TLS_CERT` and `AUTODEPLOY_TLS_KEY`.
 - **Check the logs:** `journalctl -u autodeploy -f`.
+
+> **HTTPS without a real certificate in production isn't a startup failure.** With
+> `AUTODEPLOY_DEV=false`, enabling `AUTODEPLOY_HTTPS_ADDR` without `AUTODEPLOY_TLS_CERT` and
+> `AUTODEPLOY_TLS_KEY` still starts: the server auto-generates a self-signed certificate under
+> `<data-dir>/tls/` and logs a warning. Browsers and clients will fail TLS verification against
+> that cert — supply a real `AUTODEPLOY_TLS_CERT`/`AUTODEPLOY_TLS_KEY` for a trusted certificate.
 
 See the [configuration reference](../reference/configuration.md) for valid values.
 

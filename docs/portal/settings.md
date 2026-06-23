@@ -154,13 +154,15 @@ shows the current cert's CN, SANs, and expiry.
 
 ## Operational
 
-Log retention and payload concurrency.
+Log retention, display time zone, agent check-in interval, and payload concurrency.
 
 ![Operational settings](../images/settings-operational.png)
 
 | Field | Notes |
 |-------|-------|
 | Log retention (days) | How long [activity log](logs.md) entries are kept; `0` disables pruning |
+| Display time zone | IANA timezone name (e.g. `Europe/London`) used to render all timestamps shown in the portal; blank = UTC. Applies immediately on save |
+| Agent check-in interval (seconds) | How often resident agents poll `/api/v1/agent/self` for jobs; default `300`, minimum `5` |
 | Maximum concurrent `/payload/*` streams | Caps simultaneous payload downloads so a rush queues instead of thrashing the server (default 128); excess requests queue for up to 2 minutes. `0` = unlimited. Takes effect on next restart |
 
 ## Storage

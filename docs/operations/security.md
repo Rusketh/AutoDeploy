@@ -76,7 +76,10 @@ openssl rand -hex 32
 > webhook secrets become unrecoverable. Include it (or the key file) in your
 > [backup plan](backup-and-retention.md).
 
-The repository includes `scripts/check-secrets.sh` to validate a secrets file's format.
+The repository includes `scripts/check-secrets.sh`, a CI source-code tripwire (not a key
+validator). It greps the Go source (`server/`, `boot-client/`, `agent/`) for secret-named values
+(`pin`, `password`, `recoveryKey`, …) passed to `slog`/`fmt` logging or print calls, and for stray
+`.Reveal()` usage, failing the build if a secret could leak into logs or HTTP responses.
 
 ## The PXE access PIN
 

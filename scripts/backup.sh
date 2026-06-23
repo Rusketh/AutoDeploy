@@ -43,5 +43,5 @@ tar -C "$work" -czf "$out" .
 echo "wrote $out"
 
 # Permissions: 0600 because the archive contains the secrets-key, which
-# decrypts every escrowed PIN and recovery key.
+# decrypts the domain-join and webhook secrets stored in the database.
 chmod 0600 "$out"

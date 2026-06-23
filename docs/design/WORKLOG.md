@@ -3082,3 +3082,49 @@ with `x86_64-w64-mingw32-g++` + `-lgdiplus`.
 **NEXT.** Optional follow-ups: OEM System Properties logo (120×120 BMP →
 `OEMInformation\Logo`); logo on the boot progress/PIN screens; server-side
 raster transcode so an SVG logo could also reach the clients.
+
+## 2026-06-23 — Documentation audit pass + machine-API auth fix
+
+**WHAT.** Reviewed all of `docs/` against the codebase and corrected the drift:
+
+- Reference: documented the `winget` detection rule and install step (implemented in
+  `swspec`/agent but undocumented); fixed `configuration.md`'s data-dir layout (`iso/`
+  not `isos/`, dropped non-existent `unattends/`/`payloads/`, added `updates/`);
+  replaced the fabricated startup "validation" rules with the real warn-and-self-sign
+  behaviour; removed the non-existent `-agent-id` agent flag; added
+  `POST /api/v1/server/install-agent` and a branding-GET-is-public note to `api.md`;
+  corrected the `msi` step command to `msiexec /i <path> /quiet /norestart`.
+- Portal/ops: Operational settings now list Display time zone + Agent check-in
+  interval; dashboard documents the "stalled" rollup; CSV filename
+  (`autodeploy-inventory.csv`); bulk-operations activity-log overclaim + full job
+  status set; `backup.sh` scope (DB/secrets/TLS, not payloads); sudoers path
+  `/etc/sudoers.d/autodeploy-update`; `check-secrets.sh` description; payload-throttle
+  503; catalog hostname `www.`. Documented the per-image Setup-lockout screen.
+- Narrative: dropped the bogus "chassis type" driver-match key; install +
+  getting-started show the real default (HTTP `0.0.0.0:8080`, HTTPS disabled) and the
+  `http://<host>:8080/portal/` first-login URL, plus a secrets-key step. README
+  rewritten with a short quick-start and install / configure / DNS section.
+
+**BitLocker note.** Phase 12 (BitLocker management) was removed in migration
+`0029_drop_bitlocker.sql` — the agent no longer manages drive encryption (it clobbered
+GPO/AD-managed BitLocker and didn't reliably encrypt). The env-example and backup-script
+comments that still said the secrets key protects "escrowed BitLocker PINs and recovery
+keys" now correctly say it protects the **domain-join and webhook secrets**. Stale
+"default 64" payload-throttle comments corrected to **128**; `fetch-ipxe.sh`'s
+Secure-Boot note updated now that the kernel stage is verified via the signed
+`autodeploy-shim.efi`.
+
+**WHY (the one code change).** `GET/PUT/DELETE /api/v1/machines/*` (including binding and
+delete) were registered **without** `requireAuth`, while `api.md` stated operator
+endpoints require a session — a real auth gap. Those JSON routes are operator/API-only
+(the portal renders machines through its own `/portal/machines/*` handlers; agents and
+boot clients never call them), so all seven were wrapped in `requireAuth`.
+`reimage_test.go` now drives the binding over an authenticated client.
+
+**STATE.** Server `go build ./...` + `go test ./...` green (21 packages),
+`gofmt`/`vet` clean. Two screenshots are now visually stale and need re-capture from a
+live portal: `settings-operational.png` (4 fields, not 2) and `dashboard.png` (now has
+the "stalled" tile). Removed three orphaned screenshots (`login.png`, `settings.png`,
+`windowsupdate-edit.png`).
+
+**NEXT.** Re-capture the two stale screenshots.

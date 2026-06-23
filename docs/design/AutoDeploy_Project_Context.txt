@@ -184,6 +184,10 @@ binding's name and group memberships. This is server-side via a service account.
     AutoDeploy escrows recovery keys in its own inventory keyed on hardware
     identity, not on the AD object. Keys survive the object's deletion.
 
+NOTE (2026-06-23): BitLocker management was REMOVED (migration
+0029_drop_bitlocker.sql); the agent no longer manages drive encryption. The
+description below is retained for historical context only.
+
 BITLOCKER is opt-in per machine and applies to the OS volume (C:) using TPM+PIN.
 The control point is the inventory record:
   - If the record defines a BitLocker PIN, the agent enables encryption with it.

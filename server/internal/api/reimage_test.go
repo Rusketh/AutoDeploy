@@ -85,16 +85,18 @@ func TestReimageFlowResolvesLatestDefinitions(t *testing.T) {
 	bindBody, _ := json.Marshal(model.MachineBinding{
 		ImageID: &imgID, MachineName: "LAB-01",
 	})
-	resp, _ = http.Post(srv.URL+"/api/v1/machines/"+itoa(machine.ID)+"/binding",
-		"application/json", bytes.NewReader(bindBody))
-	resp.Body.Close()
-	// Note: route requires PUT, but we want to update — recreate via PUT.
+	// PUT the binding over the authenticated client — this is an operator
+	// endpoint, so it requires a session plus the CSRF header.
 	req, _ := http.NewRequest(http.MethodPut,
 		srv.URL+"/api/v1/machines/"+itoa(machine.ID)+"/binding", bytes.NewReader(bindBody))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT binding status = %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 
