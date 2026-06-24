@@ -47,6 +47,14 @@ type ManifestItem struct {
 	Size int64  `json:"size_bytes,omitempty"`
 	OS   string `json:"os_type,omitempty"`
 	Name string `json:"name,omitempty"`
+	// WinPEDirs (driver role) lists package-relative directories whose INFs
+	// are boot-critical (storage/system/network) and must be copied into
+	// $WinPEDriver$ so WinPE can reach the disk/NIC. The boot client stages
+	// the whole package into the OS $OEM$ tree regardless; these are the
+	// subset ALSO placed in WinPE. ["."] means the whole package. Empty =>
+	// nothing in WinPE (device drivers like Bluetooth install online, where a
+	// bad INF is non-fatal instead of aborting Setup).
+	WinPEDirs []string `json:"winpe_dirs,omitempty"`
 }
 
 // ManifestHandler returns the resolver-backed manifest for a given image,
@@ -252,12 +260,29 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 				size = n
 			}
 		}
-		m.Items = append(m.Items, ManifestItem{
+		item := ManifestItem{
 			Role: "driver",
 			URL:  fmt.Sprintf("%s/payload/drivers/%d", payloadBase, int64(d.ID)),
 			Size: size,
 			Name: d.Name,
-		})
+		}
+		// Split the package: storage/system/network INFs are flagged for
+		// $WinPEDriver$ (WinPE needs them to see the disk/NIC); the boot client
+		// stages everything else into the OS $OEM$ tree to install online,
+		// where inbox INFs exist and a bad driver can't abort Setup. Computed
+		// from the extract's metadata.json -- absent (un-extracted) leaves
+		// WinPEDirs empty so the whole package installs online, and we warn so
+		// the operator can re-extract to recover WinPE coverage for storage.
+		if h.Blobs != nil {
+			if meta, ok, _ := ReadDriverMetadata(h.Blobs, d.ID); ok {
+				item.WinPEDirs = bootCriticalDirs(meta)
+			} else {
+				m.Warnings = append(m.Warnings, fmt.Sprintf(
+					"driver package %q not extracted; staged to OS only -- re-extract to load its storage/network drivers in WinPE",
+					d.Name))
+			}
+		}
+		m.Items = append(m.Items, item)
 	}
 	// Software items. Loadout resolution (Phase 7) extends res.Software;
 	// the manifest turns the resolved list into URLs -- but only for

@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -114,5 +115,77 @@ func TestManifestIncludesMatchedDrivers(t *testing.T) {
 	}
 	if sawHP {
 		t.Errorf("HP driver should not match a Dell machine, items=%+v", m.Items)
+	}
+}
+
+// TestManifestFlagsBootCriticalDriverDirs is the server-side half of the
+// Win11 24H2 fix: after extracting a mixed vendor pack (one storage controller
+// + one Bluetooth driver), the manifest's driver item flags ONLY the storage
+// subtree for $WinPEDriver$. The boot client stages the whole package into the
+// OS tree; Bluetooth must not be flagged for WinPE.
+func TestManifestFlagsBootCriticalDriverDirs(t *testing.T) {
+	ctx := context.Background()
+	blobs, drivers, isos, images, resolver := newDriverEnv(t)
+
+	pkg, err := drivers.Create(ctx, model.DriverPackage{
+		Name:    "Dell",
+		Filters: []model.DriverFilter{{FilterJSON: `{"system_manufacturer":"Dell Inc."}`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A mixed pack: storage (boot-critical) + Bluetooth (must NOT go to WinPE).
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	for name, body := range map[string]string{
+		"Storage/RST/iaStorAC.inf": "[Version]\nClass=SCSIAdapter\nProvider=Intel\n",
+		"Bluetooth/ibt/oem43.inf":  "[Version]\nClass=Bluetooth\nProvider=Intel\n",
+	} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte(body))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rel := "drivers/" + itoa(pkg.ID) + "/payload.bin"
+	if _, err := blobs.WriteStream(rel, bytes.NewReader(zb.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+	pkg.StoragePath = rel
+	if err := drivers.Update(ctx, pkg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExtractDriverPackage(ctx, drivers, blobs, pkg.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	iso, _ := isos.Create(ctx, model.ISO{Name: "Win11", OSType: "windows-11"})
+	iso.StoragePath = "iso/" + itoa(iso.ID) + "/files/sources/install.wim"
+	_ = isos.Update(ctx, iso)
+	isoID := iso.ID
+	img, _ := images.Create(ctx, model.Image{Name: "win11", ISOID: &isoID})
+
+	mh := &ManifestHandler{Resolver: resolver, Blobs: blobs}
+	m, err := mh.BuildForSite(ctx, img.ID, "http://server", match.Identity{
+		SystemManufacturer: "Dell Inc.",
+		SystemUUID:         "uuid-1",
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, it := range m.Items {
+		if it.Role != "driver" {
+			continue
+		}
+		found = true
+		if len(it.WinPEDirs) != 1 || it.WinPEDirs[0] != "Storage/RST" {
+			t.Errorf("WinPEDirs = %v, want [Storage/RST] (storage in WinPE, Bluetooth excluded)", it.WinPEDirs)
+		}
+	}
+	if !found {
+		t.Fatal("expected a driver item in manifest")
 	}
 }

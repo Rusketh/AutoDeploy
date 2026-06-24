@@ -170,6 +170,10 @@ type manifestItem struct {
 	Base string `json:"base,omitempty"`       // iso-media: prefix for index paths
 	Size int64  `json:"size_bytes,omitempty"` // iso-media: total media size
 	Name string `json:"name,omitempty"`
+	// WinPEDirs (driver role) are package-relative dirs the server flagged as
+	// boot-critical (storage/system/network) to ALSO stage into $WinPEDriver$.
+	// Everything in the package goes to the OS $OEM$ tree regardless.
+	WinPEDirs []string `json:"winpe_dirs,omitempty"`
 }
 
 // mediaIndex mirrors the server's /payload/iso/{id}/index.json: every file
@@ -579,7 +583,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// the RAM-backed work dir (which a full Windows media would exhaust).
 	var mediaItem *manifestItem
 	var unattendPath string
-	var driverPaths []string
+	var drivers []imaging.MediaDriver
 	for i := range m.Items {
 		it := m.Items[i]
 		switch it.Role {
@@ -600,7 +604,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
 				os.Exit(0)
 			}
-			driverPaths = append(driverPaths, dst)
+			drivers = append(drivers, imaging.MediaDriver{BlobPath: dst, WinPEDirs: it.WinPEDirs})
 		case "software":
 			// Software is installed post-OS by the agent, not staged onto
 			// the boot media. Skip it here -- no need to pull it pre-OS.
@@ -656,7 +660,7 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		TargetDisk:         f.disk,
 		MediaBytes:         mediaItem.Size,
 		UnattendPath:       unattendPath,
-		DriverPaths:        driverPaths,
+		Drivers:            drivers,
 		AgentPath:          agentPath,
 		CredProviderPath:   credProviderPath,
 		SetupCompletePath:  setupCompletePath,

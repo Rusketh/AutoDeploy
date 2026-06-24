@@ -1,8 +1,11 @@
 package imaging
 
 import (
+	"archive/zip"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,7 +33,7 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		TargetDisk:         "/dev/sda",
 		MediaBytes:         6 * 1024 * 1024 * 1024, // 6 GiB media
 		UnattendPath:       "/tmp/unattend.xml",
-		DriverPaths:        []string{"/tmp/drv1", "/tmp/drv2"}, // non-zip -> cp path
+		Drivers:            []MediaDriver{{BlobPath: "/tmp/drv1"}, {BlobPath: "/tmp/drv2"}}, // non-zip -> OS-bucket cp path
 		AgentPath:          "/tmp/payload-agent.exe",
 		CredProviderPath:   "/tmp/payload-credprovider.dll",
 		SetupCompletePath:  "/tmp/SetupComplete.cmd",
@@ -65,11 +68,12 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		"mount /dev/sda1 /tmp/work/media",
 		// Answer file at the media root where Setup auto-detects it.
 		"cp /tmp/unattend.xml /tmp/work/media/autounattend.xml",
-		// Drivers under $WinPEDriver$ (cp path for non-zip fixtures).
-		"mkdir -p /tmp/work/media/$WinPEDriver$/drv1",
-		"cp /tmp/drv1 /tmp/work/media/$WinPEDriver$/drv1",
-		"mkdir -p /tmp/work/media/$WinPEDriver$/drv2",
-		"cp /tmp/drv2 /tmp/work/media/$WinPEDriver$/drv2",
+		// Non-zip drivers go to the OS bucket (sources\$OEM$\$1\Drivers =
+		// C:\Drivers); they no longer touch WinPE (the Win11 24H2 abort fix).
+		"mkdir -p /tmp/work/media/sources/$OEM$/$1/Drivers/drv1",
+		"cp /tmp/drv1 /tmp/work/media/sources/$OEM$/$1/Drivers/drv1",
+		"mkdir -p /tmp/work/media/sources/$OEM$/$1/Drivers/drv2",
+		"cp /tmp/drv2 /tmp/work/media/sources/$OEM$/$1/Drivers/drv2",
 		// Agent + SetupComplete.cmd injected via the $OEM$ tree ($$=%WINDIR%).
 		"mkdir -p /tmp/work/media/sources/$OEM$/$$/AutoDeploy",
 		"cp /tmp/payload-agent.exe /tmp/work/media/sources/$OEM$/$$/AutoDeploy/autodeploy-agent.exe",
@@ -89,8 +93,9 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 			t.Errorf("missing call containing %q\n%s", want, rec.Dump())
 		}
 	}
-	// No RAM staging copy, and the old capture/apply model must be gone.
-	for _, gone := range []string{"media-src", "cp -a", "wimlib-imagex", "mkfs.ntfs", "Windows/Panther"} {
+	// No RAM staging copy, the old capture/apply model must be gone, and with
+	// no zip (boot-critical) drivers in this plan, nothing touches WinPE.
+	for _, gone := range []string{"media-src", "cp -a", "wimlib-imagex", "mkfs.ntfs", "Windows/Panther", "$WinPEDriver$"} {
 		if rec.Has(gone) {
 			t.Errorf("unexpected leftover %q\n%s", gone, rec.Dump())
 		}
@@ -187,3 +192,70 @@ type sentinelError string
 func (s sentinelError) Error() string { return string(s) }
 
 const errSentinel = sentinelError("forced failure")
+
+// writeTestZip writes a real zip on disk so isZip() sees it and stageDrivers
+// takes the unzip+split path (the Recorder records commands but never runs
+// them, so the unzip output need not exist).
+func writeTestZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	for name, body := range files {
+		w, werr := zw.Create(name)
+		if werr != nil {
+			t.Fatal(werr)
+		}
+		if _, werr := w.Write([]byte(body)); werr != nil {
+			t.Fatal(werr)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStageDriversSplitsBootCriticalToWinPE locks in the Win11 24H2 fix: the
+// whole package is staged into the OS $OEM$\$1\Drivers tree (installed online,
+// where a bad INF is non-fatal), while ONLY the server-flagged boot-critical
+// subtree is additionally copied into $WinPEDriver$. A Bluetooth driver must
+// never reach WinPE -- that is what aborted Setup with 0xE0000219.
+func TestStageDriversSplitsBootCriticalToWinPE(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "payload-driver-pkg.zip")
+	writeTestZip(t, zipPath, map[string]string{
+		"Storage/iaStorAC/iaStorAC.inf": "[Version]\nClass=SCSIAdapter\n",
+		"Bluetooth/ibt/oem43.inf":       "[Version]\nClass=Bluetooth\n",
+	})
+	rec := &Recorder{}
+	plan := MediaPlan{
+		Drivers: []MediaDriver{{
+			BlobPath:  zipPath,
+			WinPEDirs: []string{"Storage/iaStorAC"}, // the server's verdict
+		}},
+		WorkDir: "/tmp/work",
+	}
+	if err := stageDrivers(context.Background(), plan, rec, "/mnt"); err != nil {
+		t.Fatal(err)
+	}
+	const name = "payload-driver-pkg" // base minus .zip
+	want := []string{
+		// Whole package -> OS bucket (C:\Drivers via $OEM$\$1), installed online.
+		"unzip -o -q " + zipPath + " -d /mnt/sources/$OEM$/$1/Drivers/" + name,
+		// Boot-critical storage subtree ALSO copied into WinPE so Setup sees the disk.
+		"mkdir -p /mnt/$WinPEDriver$/" + name + "/Storage",
+		"cp -r /mnt/sources/$OEM$/$1/Drivers/" + name + "/Storage/iaStorAC /mnt/$WinPEDriver$/" + name + "/Storage/iaStorAC",
+	}
+	for _, w := range want {
+		if !rec.Has(w) {
+			t.Errorf("missing call containing %q\n%s", w, rec.Dump())
+		}
+	}
+	// The Bluetooth driver must NEVER be copied into WinPE.
+	if rec.Has("$WinPEDriver$/" + name + "/Bluetooth") {
+		t.Errorf("Bluetooth driver leaked into $WinPEDriver$ -- this is the 0xE0000219 abort\n%s", rec.Dump())
+	}
+}
