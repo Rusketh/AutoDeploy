@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -106,6 +109,59 @@ func TestExtractDriverDoesNotInflateSizeBytes(t *testing.T) {
 	if reloaded.SizeBytes != n {
 		t.Errorf("SizeBytes after extract = %d, want the served zip size %d (not the %d extract total)",
 			reloaded.SizeBytes, n, res.Bytes)
+	}
+}
+
+// TestBootCriticalDirsClassifiesINFs proves only storage/system/network INFs
+// are flagged for WinPE; device drivers like Bluetooth and Display are
+// excluded so they can't abort Win11 24H2 Setup from $WinPEDriver$.
+func TestBootCriticalDirsClassifiesINFs(t *testing.T) {
+	meta := DriverExtractResult{INFs: []INFEntry{
+		{Path: "Storage/RST/iaStorAC.inf", Class: "SCSIAdapter"},
+		{Path: "Net/e1d/e1d.inf", Class: "Net"},
+		{Path: "Bluetooth/ibt/oem43.inf", Class: "Bluetooth"},
+		// System by ClassGuid only (no friendly Class=).
+		{Path: "Chipset/x/foo.inf", ClassGUID: "{4D36E97D-E325-11CE-BFC1-08002BE10318}"},
+		{Path: "Display/gpu/nv.inf", Class: "Display"},
+	}}
+	got := bootCriticalDirs(meta)
+	want := map[string]bool{"Storage/RST": true, "Net/e1d": true, "Chipset/x": true}
+	if len(got) != len(want) {
+		t.Fatalf("bootCriticalDirs = %v, want exactly the keys of %v", got, want)
+	}
+	for _, d := range got {
+		if !want[d] {
+			t.Errorf("unexpected boot-critical dir %q (Bluetooth/Display must be excluded): %v", d, got)
+		}
+	}
+}
+
+// TestBootCriticalDirsRootINF: a boot-critical INF sitting at the package root
+// (no folder to isolate) means the whole package is one boot driver -> ".".
+func TestBootCriticalDirsRootINF(t *testing.T) {
+	meta := DriverExtractResult{INFs: []INFEntry{{Path: "iaStorAC.inf", Class: "SCSIAdapter"}}}
+	got := bootCriticalDirs(meta)
+	if len(got) != 1 || got[0] != "." {
+		t.Errorf(`root boot-critical INF => %v, want ["."]`, got)
+	}
+}
+
+// TestParseINFReadsClassGuid confirms the new ClassGuid fallback parses and
+// drives classification when an INF omits the friendly Class= name.
+func TestParseINFReadsClassGuid(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "test.inf")
+	if err := os.WriteFile(p, []byte("[Version]\nClassGuid={4d36e972-e325-11ce-bfc1-08002be10318}\nProvider=Acme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := parseINF(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(e.ClassGUID, "{4d36e972-e325-11ce-bfc1-08002be10318}") {
+		t.Errorf("ClassGUID = %q, want the Net GUID", e.ClassGUID)
+	}
+	if !isBootCriticalINF(e) {
+		t.Error("a Net-by-GUID INF should be boot-critical")
 	}
 }
 

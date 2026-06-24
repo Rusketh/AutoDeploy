@@ -8,9 +8,11 @@
 // media (an oversized install.wim was already split into <4 GiB .swm
 // parts server-side at ISO ingest, so it fits FAT32 -- no NTSF/GRUB/shim
 // needed). autounattend.xml is dropped at the media root where Setup
-// auto-detects it; driver packages go under $WinPEDriver$\ where WinPE
-// auto-loads them. The partition is registered with the firmware
-// (efibootmgr) and the caller reboots into Setup.
+// auto-detects it; driver packages are split -- boot-critical storage/NIC
+// drivers go under $WinPEDriver$\ for WinPE to auto-load, while the rest go to
+// the installed OS via sources\$OEM$\$1\Drivers (PnP installs them online).
+// The partition is registered with the firmware (efibootmgr) and the caller
+// reboots into Setup.
 //
 // Real hardware work runs external tools (sgdisk, mkfs.fat, cp,
 // efibootmgr) via os/exec. To keep this package testable without a
@@ -111,17 +113,30 @@ func (w stderrWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// MediaDriver is one downloaded driver package plus the server's verdict on
+// which of its subdirectories are boot-critical. BlobPath is the downloaded
+// zip (or, legacy, an opaque file). WinPEDirs are package-relative dirs
+// (forward-slash) whose INFs are storage/system/network -- the only drivers
+// WinPE needs to reach the disk/NIC; ["."] means the whole package. The whole
+// package is always staged into the OS $OEM$ tree; WinPEDirs are ADDITIONALLY
+// copied into $WinPEDriver$ for WinPE to auto-load.
+type MediaDriver struct {
+	BlobPath  string
+	WinPEDirs []string
+}
+
 // MediaPlan describes one boot-media deployment. The media tree is
 // downloaded directly onto the mounted boot partition by the caller
 // (between PreparePartition and FinalizeMedia), so there is no local
 // staging dir. UnattendPath is the generated autounattend.xml;
-// DriverPaths are downloaded driver payloads. TargetDisk is the device
-// node (e.g. /dev/sda); MediaBytes sizes the boot partition.
+// Drivers are downloaded driver payloads with their per-package WinPE split.
+// TargetDisk is the device node (e.g. /dev/sda); MediaBytes sizes the boot
+// partition.
 type MediaPlan struct {
 	TargetDisk   string
 	MediaBytes   int64
 	UnattendPath string
-	DriverPaths  []string
+	Drivers      []MediaDriver
 	// AgentPath is the AutoDeploy agent binary to inject into the
 	// installed OS via the media's $OEM$ tree (empty = no agent).
 	// SetupCompletePath is the generated SetupComplete.cmd that installs
@@ -313,23 +328,64 @@ func placeUnattend(ctx context.Context, plan MediaPlan, r Runner, mount string) 
 	return r.Exec(ctx, "cp", plan.UnattendPath, filepath.Join(mount, "autounattend.xml"))
 }
 
-// stageDrivers places each downloaded driver package under
-// <mount>\$WinPEDriver$\<name>\, the folder WinPE auto-loads during
-// Setup. Each blob is a zip (SCCM-style export the server validates) or,
-// as a legacy fallback, a single opaque file.
+// stageDrivers distributes each downloaded driver package between two
+// destinations:
+//
+//   - sources\$OEM$\$1\Drivers\<name>\ -- the WHOLE package, which Setup
+//     copies to C:\Drivers in the installed OS. The generated unattend points
+//     DevicePath there, so PnP installs these ONLINE during specialize/OOBE,
+//     where the inbox INFs they depend on (bth.inf, ...) exist and a failed
+//     driver is non-fatal (a yellow-bang, not a rolled-back install).
+//   - $WinPEDriver$\<name>\<dir>\ -- only the subdirectories the server
+//     flagged boot-critical (storage/system/network), which WinPE auto-loads
+//     so Setup can reach the disk and NIC.
+//
+// This split is the fix for Win11 24H2: dumping every driver (Bluetooth,
+// GPU, ...) into $WinPEDriver$ made Setup try to install them all into WinPE,
+// and one driver with an unresolved inbox dependency aborted the whole install
+// (0xE0000219). Non-boot drivers now never touch WinPE.
+//
+// Each blob is a zip (SCCM-style export the server validates); a legacy
+// opaque file has no tree to split and goes to the OS bucket whole.
 func stageDrivers(ctx context.Context, plan MediaPlan, r Runner, mount string) error {
-	for _, p := range plan.DriverPaths {
-		base := filepath.Base(p)
-		dst := filepath.Join(mount, "$WinPEDriver$", strings.TrimSuffix(base, filepath.Ext(base)))
-		if err := r.Exec(ctx, "mkdir", "-p", dst); err != nil {
+	for _, d := range plan.Drivers {
+		base := filepath.Base(d.BlobPath)
+		name := strings.TrimSuffix(base, filepath.Ext(base))
+		// $1 maps to %SystemDrive% (C:\), so this lands at C:\Drivers\<name>.
+		// The literal "$OEM$"/"$1" names are exec args (no shell), so the
+		// dollar signs are not expanded here.
+		osDst := filepath.Join(mount, "sources", "$OEM$", "$1", "Drivers", name)
+		if err := r.Exec(ctx, "mkdir", "-p", osDst); err != nil {
 			return err
 		}
-		if isZip(p) {
-			if err := r.Exec(ctx, "unzip", "-o", "-q", p, "-d", dst); err != nil {
+		if !isZip(d.BlobPath) {
+			// Opaque single file -> OS bucket, nothing to split.
+			if err := r.Exec(ctx, "cp", d.BlobPath, osDst); err != nil {
 				return err
 			}
-		} else {
-			if err := r.Exec(ctx, "cp", p, dst); err != nil {
+			continue
+		}
+		if err := r.Exec(ctx, "unzip", "-o", "-q", d.BlobPath, "-d", osDst); err != nil {
+			return err
+		}
+		// Copy the boot-critical subtrees into $WinPEDriver$ so WinPE loads
+		// them. They also remain in the OS bucket (a harmless re-install).
+		for _, sub := range d.WinPEDirs {
+			rel := strings.Trim(strings.ReplaceAll(sub, `\`, "/"), "/")
+			var src, dst string
+			if rel == "" || rel == "." {
+				// Whole package is a single boot driver.
+				src = osDst
+				dst = filepath.Join(mount, "$WinPEDriver$", name)
+			} else {
+				relOS := filepath.FromSlash(rel)
+				src = filepath.Join(osDst, relOS)
+				dst = filepath.Join(mount, "$WinPEDriver$", name, relOS)
+			}
+			if err := r.Exec(ctx, "mkdir", "-p", filepath.Dir(dst)); err != nil {
+				return err
+			}
+			if err := r.Exec(ctx, "cp", "-r", src, dst); err != nil {
 				return err
 			}
 		}

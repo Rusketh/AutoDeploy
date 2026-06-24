@@ -3128,3 +3128,61 @@ the "stalled" tile). Removed three orphaned screenshots (`login.png`, `settings.
 `windowsupdate-edit.png`).
 
 **NEXT.** Re-capture the two stale screenshots.
+
+---
+
+## 2026-06-24 — Win11 24H2 driver-staging split (0xE0000219 fix)
+
+**WHAT.** Windows 11 24H2 deploys aborted at second boot with
+`0xE0000219 - 0x40031` ("a function driver was not specified for this device
+instance"). Root cause, from a target's `setupapi.dev.log`: the boot client
+staged *every* matched driver into `$WinPEDriver$`, so Setup tried to install
+them all into WinPE. An Intel Wireless Bluetooth INF (`ibtusb`/`oem43.inf`)
+uses `Include=bth.inf`/`Needs=BthUsb.NT` to pull its service from the inbox
+`bth.inf`, which does not exist in WinPE — the include fails, no
+`SPSVCINST_ASSOCSERVICE`, and 24H2's stricter `SetupHost.exe` treats that as
+fatal (Win10's setup only warned). Fix: split driver staging by INF class.
+- `server/internal/payload/driver_extract.go`: `parseINF` now also reads
+  `ClassGuid`; added `bootCriticalDirs()`, which from the extract's
+  `metadata.json` returns the package-relative dirs whose INFs are
+  storage/system/network (`SCSIAdapter`/`HDC`/`System`/`Net`, by friendly Class
+  or GUID).
+- `server/internal/payload/manifest.go`: the driver `ManifestItem` now carries
+  `winpe_dirs`; an un-extracted package stages OS-only with a warning.
+- boot-client (`imaging.go`, `main.go`): `MediaPlan.DriverPaths []string` →
+  `Drivers []MediaDriver{BlobPath, WinPEDirs}`. `stageDrivers` extracts the
+  *whole* package into `sources\$OEM$\$1\Drivers\<name>` (→ `C:\Drivers`) and
+  *additionally* copies only the boot-critical subtrees into `$WinPEDriver$`
+  (`["."]` = whole package, for a single root-level boot driver).
+- `server/internal/unattend/generate.go`: specialize now sets
+  `DevicePath = %SystemRoot%\inf;%SystemDrive%\Drivers` so PnP installs the
+  OS-bucket drivers ONLINE, where inbox INFs exist and a bad driver is a
+  yellow-bang rather than a rolled-back install.
+
+**WHY (decisions).**
+- DECISION: boot-critical = storage/system/network only. Those classes are
+  self-contained (no inbox `Include=`/`Needs=`), install cleanly in WinPE, and
+  are the only drivers WinPE needs to reach the disk/NIC. Everything else
+  (Bluetooth, GPU, audio, …) installs online, non-fatally.
+- DECISION: classification is server-side from `metadata.json` (the boot client
+  stays a step-executor). Existing packages need NO re-import — `metadata.json`
+  already records the friendly `Class`, which the classifier keys on first. The
+  new `ClassGuid` is a fallback that only fills in on a (one-click) re-extract;
+  its absence fails safe (driver installs online instead of in WinPE).
+- DECISION: `DevicePath` is emitted unconditionally — harmless when `C:\Drivers`
+  is empty, and keeps the portal's unattend preview in lockstep with the served
+  file.
+- ASSUMPTION: driver packs keep each driver in its own folder (SCCM/vendor
+  layout), so per-directory granularity is correct; a folder mixing a
+  boot-critical and a non-boot INF (unrealistic) is treated as boot-critical.
+
+**STATE.** Both modules `go build`/`vet`/`gofmt` clean; `go test ./...` green
+(server 24 pkgs, boot-client 8 pkgs). `scripts/check-secrets.sh` OK. New tests:
+`bootCriticalDirs`/`ClassGuid` parsing; manifest `winpe_dirs` from an extracted
+mixed pack; and the boot-client split (storage → `$WinPEDriver$`, Bluetooth →
+OS only).
+
+**NEXT.** On a real 24H2 box, confirm the previously-failing machine now
+completes and Bluetooth installs online post-OOBE. Operators whose storage
+drivers omit a friendly `Class=` should re-extract those packs to populate the
+`ClassGuid` fallback.

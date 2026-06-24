@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -36,11 +37,12 @@ import (
 
 // INFEntry describes one discovered .inf file inside a driver package.
 type INFEntry struct {
-	Path     string `json:"path"` // relative path inside the package
-	Class    string `json:"class"`
-	Provider string `json:"provider"`
-	Version  string `json:"version"`
-	Date     string `json:"date"`
+	Path      string `json:"path"` // relative path inside the package
+	Class     string `json:"class"`
+	ClassGUID string `json:"class_guid,omitempty"`
+	Provider  string `json:"provider"`
+	Version   string `json:"version"`
+	Date      string `json:"date"`
 }
 
 // DriverExtractResult is the response from POST /api/v1/drivers/{id}/extract.
@@ -291,6 +293,8 @@ func parseINF(path string) (INFEntry, error) {
 		switch strings.ToLower(k) {
 		case "class":
 			out.Class = v
+		case "classguid":
+			out.ClassGUID = v
 		case "provider":
 			out.Provider = v
 		case "driverver":
@@ -311,4 +315,66 @@ func splitKV(s string) (k, v string) {
 		return strings.TrimSpace(s[:eq]), strings.TrimSpace(s[eq+1:])
 	}
 	return s, ""
+}
+
+// bootCriticalClasses are the INF setup-class names WinPE must have loaded to
+// reach the install target: storage controllers (incl. Intel VMD/RST), ATA/
+// ATAPI controllers, low-level system/chipset, and NICs. These classes are
+// self-contained (no inbox Include=/Needs=), so they install cleanly in WinPE
+// -- unlike device drivers such as Bluetooth, whose INFs pull in inbox INFs
+// (bth.inf, ...) that don't exist in WinPE and abort Win11 24H2 Setup with
+// 0xE0000219 if forced in. Everything outside this set installs ONLINE from
+// C:\Drivers instead (see bootCriticalDirs).
+var bootCriticalClasses = map[string]bool{
+	"scsiadapter": true,
+	"hdc":         true,
+	"system":      true,
+	"net":         true,
+}
+
+// bootCriticalClassGUIDs mirrors bootCriticalClasses for INFs that declare
+// only ClassGuid= and omit the friendly Class= name.
+var bootCriticalClassGUIDs = map[string]bool{
+	"{4d36e97b-e325-11ce-bfc1-08002be10318}": true, // SCSIAdapter
+	"{4d36e96a-e325-11ce-bfc1-08002be10318}": true, // HDC
+	"{4d36e97d-e325-11ce-bfc1-08002be10318}": true, // System
+	"{4d36e972-e325-11ce-bfc1-08002be10318}": true, // Net
+}
+
+// isBootCriticalINF reports whether an INF's class is one WinPE needs loaded
+// to see the disk/NIC. Matches the friendly Class first, then the ClassGuid
+// fallback for INFs that omit Class=.
+func isBootCriticalINF(e INFEntry) bool {
+	if bootCriticalClasses[strings.ToLower(strings.TrimSpace(e.Class))] {
+		return true
+	}
+	return bootCriticalClassGUIDs[strings.ToLower(strings.TrimSpace(e.ClassGUID))]
+}
+
+// bootCriticalDirs returns the package-relative directories (forward-slash)
+// that hold at least one boot-critical INF. The boot client additionally
+// copies these into $WinPEDriver$ for WinPE to auto-load; everything else in
+// the package installs online from C:\Drivers, where a failed driver is
+// non-fatal. A dir is included if ANY of its INFs is boot-critical -- driver
+// packages keep each driver in its own folder, so this is the right
+// granularity. A boot-critical INF at the package root (no folder to isolate)
+// returns ["."], meaning "stage the whole package into WinPE": such a package
+// is a single boot driver.
+func bootCriticalDirs(meta DriverExtractResult) []string {
+	seen := map[string]bool{}
+	var dirs []string
+	for _, inf := range meta.INFs {
+		if !isBootCriticalINF(inf) {
+			continue
+		}
+		dir := path.Dir(strings.ReplaceAll(inf.Path, `\`, "/"))
+		if dir == "." || dir == "/" || dir == "" {
+			return []string{"."}
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }

@@ -240,6 +240,16 @@ func buildSpecializeCommands(s Settings) []rsCmd {
 			`reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f`)
 	}
 
+	// Point PnP's driver search at C:\Drivers, where the boot client stages
+	// non-boot drivers (Bluetooth, GPU, ...) via the $OEM$\$1\Drivers tree, so
+	// they install ONLINE during specialize/OOBE -- where the inbox INFs they
+	// depend on exist and a failed driver is non-fatal (a yellow-bang, not a
+	// rolled-back install). Boot-critical storage/NIC drivers are loaded
+	// earlier by WinPE from $WinPEDriver$. Emitted unconditionally; harmless
+	// when C:\Drivers is empty.
+	push("Drivers: add C:\\Drivers to the PnP search path",
+		`reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion" /v DevicePath /t REG_EXPAND_SZ /d "%SystemRoot%\inf;%SystemDrive%\Drivers" /f`)
+
 	// Licensing.
 	if s.KMSServer != "" && isHostnameSafe(s.KMSServer) {
 		port := s.KMSPort
