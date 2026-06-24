@@ -112,26 +112,31 @@ func TestExtractDriverDoesNotInflateSizeBytes(t *testing.T) {
 	}
 }
 
-// TestBootCriticalDirsClassifiesINFs proves only storage/system/network INFs
-// are flagged for WinPE; device drivers like Bluetooth and Display are
-// excluded so they can't abort Win11 24H2 Setup from $WinPEDriver$.
+// TestBootCriticalDirsClassifiesINFs proves only storage-controller INFs are
+// flagged for WinPE. WinPE only needs to see the target disk, so System/chipset,
+// Net (wired AND Wi-Fi), Bluetooth and Display are all excluded -- forcing any
+// of those into $WinPEDriver$ aborts Win11 24H2 Setup: chipset INFs with a
+// benign ERROR_NO_MORE_ITEMS (0x80070103) once already imported, Wi-Fi/Bluetooth
+// with a missing inbox include (0xE0000219).
 func TestBootCriticalDirsClassifiesINFs(t *testing.T) {
 	meta := DriverExtractResult{INFs: []INFEntry{
 		{Path: "Storage/RST/iaStorAC.inf", Class: "SCSIAdapter"},
-		{Path: "Net/e1d/e1d.inf", Class: "Net"},
+		{Path: "Sata/ahci/ahci.inf", Class: "hdc"},             // case-insensitive
+		{Path: "Net/e1d/e1d.inf", Class: "Net"},                // wired NIC
+		{Path: "Net/Wireless-AC-8265/oem52.inf", Class: "Net"}, // Wi-Fi (the VWiFiBus case)
 		{Path: "Bluetooth/ibt/oem43.inf", Class: "Bluetooth"},
-		// System by ClassGuid only (no friendly Class=).
-		{Path: "Chipset/x/foo.inf", ClassGUID: "{4D36E97D-E325-11CE-BFC1-08002BE10318}"},
+		// System/chipset "Host Bridge" by ClassGuid only -- the 0x80070103 culprit.
+		{Path: "System/HostBridge/oem16.inf", ClassGUID: "{4D36E97D-E325-11CE-BFC1-08002BE10318}"},
 		{Path: "Display/gpu/nv.inf", Class: "Display"},
 	}}
 	got := bootCriticalDirs(meta)
-	want := map[string]bool{"Storage/RST": true, "Net/e1d": true, "Chipset/x": true}
+	want := map[string]bool{"Storage/RST": true, "Sata/ahci": true}
 	if len(got) != len(want) {
-		t.Fatalf("bootCriticalDirs = %v, want exactly the keys of %v", got, want)
+		t.Fatalf("bootCriticalDirs = %v, want exactly %v (storage controllers only)", got, want)
 	}
 	for _, d := range got {
 		if !want[d] {
-			t.Errorf("unexpected boot-critical dir %q (Bluetooth/Display must be excluded): %v", d, got)
+			t.Errorf("non-storage dir %q leaked into the WinPE set %v (System/Net/Wi-Fi/Bluetooth/Display must be excluded)", d, got)
 		}
 	}
 }
@@ -146,22 +151,23 @@ func TestBootCriticalDirsRootINF(t *testing.T) {
 	}
 }
 
-// TestParseINFReadsClassGuid confirms the new ClassGuid fallback parses and
-// drives classification when an INF omits the friendly Class= name.
+// TestParseINFReadsClassGuid confirms the ClassGuid fallback parses and drives
+// classification when an INF omits the friendly Class= name -- here a storage
+// controller (SCSIAdapter) by GUID, which must be boot-critical.
 func TestParseINFReadsClassGuid(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "test.inf")
-	if err := os.WriteFile(p, []byte("[Version]\nClassGuid={4d36e972-e325-11ce-bfc1-08002be10318}\nProvider=Acme\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("[Version]\nClassGuid={4d36e97b-e325-11ce-bfc1-08002be10318}\nProvider=Acme\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e, err := parseINF(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(e.ClassGUID, "{4d36e972-e325-11ce-bfc1-08002be10318}") {
-		t.Errorf("ClassGUID = %q, want the Net GUID", e.ClassGUID)
+	if !strings.EqualFold(e.ClassGUID, "{4d36e97b-e325-11ce-bfc1-08002be10318}") {
+		t.Errorf("ClassGUID = %q, want the SCSIAdapter GUID", e.ClassGUID)
 	}
 	if !isBootCriticalINF(e) {
-		t.Error("a Net-by-GUID INF should be boot-critical")
+		t.Error("a SCSIAdapter-by-GUID INF should be boot-critical")
 	}
 }
 

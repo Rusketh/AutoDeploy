@@ -318,18 +318,26 @@ func splitKV(s string) (k, v string) {
 }
 
 // bootCriticalClasses are the INF setup-class names WinPE must have loaded to
-// reach the install target: storage controllers (incl. Intel VMD/RST), ATA/
-// ATAPI controllers, low-level system/chipset, and NICs. These classes are
-// self-contained (no inbox Include=/Needs=), so they install cleanly in WinPE
-// -- unlike device drivers such as Bluetooth, whose INFs pull in inbox INFs
-// (bth.inf, ...) that don't exist in WinPE and abort Win11 24H2 Setup with
-// 0xE0000219 if forced in. Everything outside this set installs ONLINE from
-// C:\Drivers instead (see bootCriticalDirs).
+// reach the install target: storage controllers (SCSIAdapter, incl. Intel
+// VMD/RST) and ATA/ATAPI controllers (HDC). These are the ONLY drivers WinPE
+// needs -- its sole job is to make the target disk visible so Setup can apply
+// the image; the install source is local boot media, so no NIC is ever needed.
+//
+// Everything else installs ONLINE from C:\Drivers (see bootCriticalDirs).
+// Crucially, this list must stay minimal because Win11 24H2's
+// "SetupHost.exe /Install /Boot" treats ANY hiccup installing a $WinPEDriver$
+// driver as a FATAL deploy error, even ones that are benign online:
+//   - System/chipset INFs (Host Bridge, GMM, ...) match many [NO_DRV] devices
+//     and return ERROR_NO_MORE_ITEMS / "no devices were updated" (0x80070103)
+//     once already imported -- a no-op online, fatal in WinPE.
+//   - Bluetooth/Wi-Fi INFs pull in inbox INFs (bth.inf, netvwifibus.inf) that
+//     don't exist in WinPE (0xE0000219).
+//
+// So System and Net are deliberately NOT here: they are not needed for disk
+// access and only add fatal failure modes to the WinPE pass.
 var bootCriticalClasses = map[string]bool{
 	"scsiadapter": true,
 	"hdc":         true,
-	"system":      true,
-	"net":         true,
 }
 
 // bootCriticalClassGUIDs mirrors bootCriticalClasses for INFs that declare
@@ -337,12 +345,10 @@ var bootCriticalClasses = map[string]bool{
 var bootCriticalClassGUIDs = map[string]bool{
 	"{4d36e97b-e325-11ce-bfc1-08002be10318}": true, // SCSIAdapter
 	"{4d36e96a-e325-11ce-bfc1-08002be10318}": true, // HDC
-	"{4d36e97d-e325-11ce-bfc1-08002be10318}": true, // System
-	"{4d36e972-e325-11ce-bfc1-08002be10318}": true, // Net
 }
 
 // isBootCriticalINF reports whether an INF's class is one WinPE needs loaded
-// to see the disk/NIC. Matches the friendly Class first, then the ClassGuid
+// to see the target disk. Matches the friendly Class first, then the ClassGuid
 // fallback for INFs that omit Class=.
 func isBootCriticalINF(e INFEntry) bool {
 	if bootCriticalClasses[strings.ToLower(strings.TrimSpace(e.Class))] {

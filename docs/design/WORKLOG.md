@@ -3186,3 +3186,42 @@ OS only).
 completes and Bluetooth installs online post-OOBE. Operators whose storage
 drivers omit a friendly `Class=` should re-extract those packs to populate the
 `ClassGuid` fallback.
+
+---
+
+## 2026-06-24 — Narrow WinPE driver staging to storage controllers only
+
+**WHAT.** Follow-up to the PR #126 split. On a real 24H2 test deploy the
+machine still rolled back, now with `0x80070103 - 0x40031`. The first split
+put four classes in `$WinPEDriver$` (`SCSIAdapter`/`HDC`/`System`/`Net`).
+`setupapi.dev.log` showed the staged Wi-Fi (`Net`) driver actually *succeeded*;
+the fatal entry was the **last** one — an Intel chipset `System` INF
+(`oem16.inf`, "Host Bridge", ClassGuid `{4d36e97d}`) that matches several
+`[NO_DRV]` PCI devices and, already imported, returned `ERROR_NO_MORE_ITEMS`
+("No devices were updated", `0x103`). That is a benign no-op online, but
+24H2's `SetupHost.exe /Install /Boot` treats any `$WinPEDriver$` install hiccup
+as fatal. Fix: `bootCriticalClasses` (and the GUID fallback) trimmed to storage
+controllers only — `SCSIAdapter` + `HDC`. `System` and `Net` removed.
+
+**WHY (decision).** WinPE's only job here is to make the **target disk** visible
+so Setup can apply the image; the install source is local boot media, so a NIC
+is never needed in WinPE, and chipset/`System` INFs aren't needed for disk
+access either. Both classes only added fatal failure modes to the WinPE pass
+(chipset → `0x80070103` no-op-treated-as-fatal; Wi-Fi/BT → `0xE0000219` missing
+inbox include). Storage controllers, incl. Intel VMD/RST (`iaStorVD` =
+`SCSIAdapter`), stay — they are self-contained and the one thing WinPE must
+have. Everything else installs online from `C:\Drivers` via `DevicePath`, where
+these results are non-fatal. Comments in `manifest.go`, `imaging.go`,
+`main.go` updated from "storage/system/network" to "storage controllers".
+
+**STATE.** Both modules `go build`/`vet`/`gofmt` clean; `go test ./...` green;
+`scripts/check-secrets.sh` OK. `TestBootCriticalDirsClassifiesINFs` rewritten as
+a regression test — asserts a `System` Host Bridge (by GUID) and a `Net` Wi-Fi
+INF are BOTH excluded, only storage dirs remain; `TestParseINFReadsClassGuid`
+now uses the `SCSIAdapter` GUID. Branch resynced onto merged `main` before the
+change.
+
+**NEXT.** Re-test on the 24H2 box that hit `0x80070103`; expect it to complete
+with chipset + Wi-Fi installing online. Residual risk: a storage controller
+that is somehow not `SCSIAdapter`/`HDC` would miss WinPE (surfaces as
+disk-not-found, recoverable) — none known.
