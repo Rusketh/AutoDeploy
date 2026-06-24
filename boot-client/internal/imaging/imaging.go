@@ -116,10 +116,10 @@ func (w stderrWriter) Write(p []byte) (int, error) {
 // MediaDriver is one downloaded driver package plus the server's verdict on
 // which of its subdirectories are boot-critical. BlobPath is the downloaded
 // zip (or, legacy, an opaque file). WinPEDirs are package-relative dirs
-// (forward-slash) whose INFs are storage/system/network -- the only drivers
-// WinPE needs to reach the disk/NIC; ["."] means the whole package. The whole
-// package is always staged into the OS $OEM$ tree; WinPEDirs are ADDITIONALLY
-// copied into $WinPEDriver$ for WinPE to auto-load.
+// (forward-slash) whose INFs are storage controllers -- the only drivers
+// WinPE needs to reach the target disk; ["."] means the whole package. The
+// whole package is always staged into the OS $OEM$ tree; WinPEDirs are
+// ADDITIONALLY copied into $WinPEDriver$ for WinPE to auto-load.
 type MediaDriver struct {
 	BlobPath  string
 	WinPEDirs []string
@@ -337,8 +337,8 @@ func placeUnattend(ctx context.Context, plan MediaPlan, r Runner, mount string) 
 //     where the inbox INFs they depend on (bth.inf, ...) exist and a failed
 //     driver is non-fatal (a yellow-bang, not a rolled-back install).
 //   - $WinPEDriver$\<name>\<dir>\ -- only the subdirectories the server
-//     flagged boot-critical (storage/system/network), which WinPE auto-loads
-//     so Setup can reach the disk and NIC.
+//     flagged boot-critical (storage controllers), which WinPE auto-loads
+//     so Setup can reach the target disk.
 //
 // This split is the fix for Win11 24H2: dumping every driver (Bluetooth,
 // GPU, ...) into $WinPEDriver$ made Setup try to install them all into WinPE,

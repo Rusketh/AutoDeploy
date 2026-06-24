@@ -171,7 +171,7 @@ type manifestItem struct {
 	Size int64  `json:"size_bytes,omitempty"` // iso-media: total media size
 	Name string `json:"name,omitempty"`
 	// WinPEDirs (driver role) are package-relative dirs the server flagged as
-	// boot-critical (storage/system/network) to ALSO stage into $WinPEDriver$.
+	// boot-critical (storage controllers) to ALSO stage into $WinPEDriver$.
 	// Everything in the package goes to the OS $OEM$ tree regardless.
 	WinPEDirs []string `json:"winpe_dirs,omitempty"`
 }

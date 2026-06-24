@@ -48,12 +48,12 @@ type ManifestItem struct {
 	OS   string `json:"os_type,omitempty"`
 	Name string `json:"name,omitempty"`
 	// WinPEDirs (driver role) lists package-relative directories whose INFs
-	// are boot-critical (storage/system/network) and must be copied into
-	// $WinPEDriver$ so WinPE can reach the disk/NIC. The boot client stages
+	// are boot-critical (storage controllers) and must be copied into
+	// $WinPEDriver$ so WinPE can reach the target disk. The boot client stages
 	// the whole package into the OS $OEM$ tree regardless; these are the
 	// subset ALSO placed in WinPE. ["."] means the whole package. Empty =>
-	// nothing in WinPE (device drivers like Bluetooth install online, where a
-	// bad INF is non-fatal instead of aborting Setup).
+	// nothing in WinPE (device, chipset and network drivers install online,
+	// where a bad/no-op INF is non-fatal instead of aborting Setup).
 	WinPEDirs []string `json:"winpe_dirs,omitempty"`
 }
 
@@ -266,19 +266,20 @@ func (h *ManifestHandler) BuildForSite(ctx context.Context, id model.ID, base st
 			Size: size,
 			Name: d.Name,
 		}
-		// Split the package: storage/system/network INFs are flagged for
-		// $WinPEDriver$ (WinPE needs them to see the disk/NIC); the boot client
-		// stages everything else into the OS $OEM$ tree to install online,
-		// where inbox INFs exist and a bad driver can't abort Setup. Computed
-		// from the extract's metadata.json -- absent (un-extracted) leaves
-		// WinPEDirs empty so the whole package installs online, and we warn so
-		// the operator can re-extract to recover WinPE coverage for storage.
+		// Split the package: storage-controller INFs are flagged for
+		// $WinPEDriver$ (WinPE needs them to see the target disk); the boot
+		// client stages everything else into the OS $OEM$ tree to install
+		// online, where inbox INFs exist and a benign/no-op driver result
+		// can't abort Setup. Computed from the extract's metadata.json --
+		// absent (un-extracted) leaves WinPEDirs empty so the whole package
+		// installs online, and we warn so the operator can re-extract to
+		// recover WinPE coverage for storage.
 		if h.Blobs != nil {
 			if meta, ok, _ := ReadDriverMetadata(h.Blobs, d.ID); ok {
 				item.WinPEDirs = bootCriticalDirs(meta)
 			} else {
 				m.Warnings = append(m.Warnings, fmt.Sprintf(
-					"driver package %q not extracted; staged to OS only -- re-extract to load its storage/network drivers in WinPE",
+					"driver package %q not extracted; staged to OS only -- re-extract to load its storage drivers in WinPE",
 					d.Name))
 			}
 		}
