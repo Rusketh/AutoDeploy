@@ -6,6 +6,7 @@
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
   <div class="right">
+    <a class="btn ghost" href="/portal/images/groups"><svg><use href="#i-stack"/></svg>Manage groups</a>
     <a class="btn" href="/portal/images/new"><svg><use href="#i-plus"/></svg>New image</a>
   </div>
 </div>
@@ -14,6 +15,7 @@
 <table id="tbl" data-sortable>
   <thead><tr>
     <th>Name</th>
+    <th>Group</th>
     <th>Parent</th>
     <th>ISO</th>
     <th>Unattend</th>
@@ -28,6 +30,7 @@
         <a href="/portal/images/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a>
         {{if .Description}}<br><span class="small muted">{{.Description}}</span>{{end}}
       </td>
+      <td>{{if .GroupID}}<span class="badge">{{index $.Data.GroupNames (derefIDtoID .GroupID)}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .ParentID}}{{index $.Data.ImageNames (derefIDtoID .ParentID)}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .ISOID}}<span class="badge accent">{{index $.Data.ISONames (derefIDtoID .ISOID)}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .UnattendID}}<span class="badge accent">{{index $.Data.UnattendNames (derefIDtoID .UnattendID)}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
@@ -56,4 +59,5 @@
   <a class="btn" href="/portal/images/new"><svg><use href="#i-plus"/></svg>Create image</a>
 </div>
 {{end}}
+
 {{end}}

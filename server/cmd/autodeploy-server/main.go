@@ -222,7 +222,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	apiRepos := api.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
-		Images: r.Images, Inventory: r.Inventory,
+		Images: r.Images, ImageGroups: r.ImageGroups, Inventory: r.Inventory,
 		Resolver: r.Resolver,
 		Users:    r.Users, Settings: r.Settings,
 		Bulk: r.Bulk,
@@ -294,7 +294,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err := portal.Register(mux, portal.Repos{
 		ISOs: r.ISOs, Unattend: r.Unattend, Drivers: r.Drivers,
 		Software: r.Software, Loadouts: r.Loadouts,
-		Images: r.Images, Inventory: r.Inventory,
+		Images: r.Images, ImageGroups: r.ImageGroups, Inventory: r.Inventory,
 		Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
 		Mirrors:       r.Mirrors,
@@ -471,6 +471,7 @@ type appRepos struct {
 	Notifications *model.NotificationRepo
 	Webhooks      *model.WebhookRepo
 	Groups        *model.MachineGroupRepo
+	ImageGroups   *model.ImageGroupRepo
 	Emitter       *notify.Emitter
 }
 
@@ -483,6 +484,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	images := model.NewImageRepo(db)
 	inventory := model.NewInventoryRepo(db)
 	groups := model.NewMachineGroupRepo(db, inventory)
+	imageGroups := model.NewImageGroupRepo(db)
 	users := auth.New(db)
 	settings := auth.MustNewSettingsRepo(users)
 	bulk := model.NewBulkRepo(db, inventory)
@@ -509,7 +511,8 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Updates:       updates,
 		Notifications: notifications,
 		Webhooks:      webhooks,
-		Groups:        groups,
+		Groups:      groups,
+		ImageGroups: imageGroups,
 	}
 }
 

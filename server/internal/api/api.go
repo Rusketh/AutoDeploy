@@ -30,9 +30,10 @@ type Repos struct {
 	Unattend  *model.UnattendRepo
 	Drivers   *model.DriverPackageRepo
 	Software  *model.SoftwarePackageRepo
-	Loadouts  *model.SoftwareLoadoutRepo
-	Images    *model.ImageRepo
-	Inventory *model.InventoryRepo
+	Loadouts    *model.SoftwareLoadoutRepo
+	Images      *model.ImageRepo
+	ImageGroups *model.ImageGroupRepo
+	Inventory   *model.InventoryRepo
 	Resolver  *resolve.Resolver
 	// Phase 11.
 	Users    *auth.Repo
