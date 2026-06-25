@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -33,28 +34,58 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 	}
 
 	title := brandTitle(brand)
-	items := make([]ui.MenuItem, 0, len(resp.Items)+1)
+
+	// topEntry maps a menu position to either a direct image or a group.
+	type topEntry struct {
+		imageID  int64 // -1 means this entry is a group
+		groupIdx int   // only valid when imageID == -1
+	}
+
+	items := make([]ui.MenuItem, 0, 1+len(resp.Items)+len(resp.Groups))
+	entries := make([]topEntry, 0, 1+len(resp.Items)+len(resp.Groups))
+
 	// Re-image first, if offered.
 	reimageIdx := -1
 	if resp.Reimage != nil {
 		items = append(items, ui.MenuItem{Title: resp.Reimage.Name, Desc: "Re-image this machine"})
+		entries = append(entries, topEntry{imageID: resp.Reimage.ImageID, groupIdx: -1})
 		reimageIdx = 0
 	}
-	base := len(items)
 	for _, it := range resp.Items {
 		items = append(items, ui.MenuItem{Title: it.Name, Desc: it.Description})
+		entries = append(entries, topEntry{imageID: it.ImageID, groupIdx: -1})
 	}
+	for i, g := range resp.Groups {
+		label := fmt.Sprintf("%s  (%d images)", g.Name, len(g.Items))
+		items = append(items, ui.MenuItem{Title: label, Desc: "Select an image from this group"})
+		entries = append(entries, topEntry{imageID: -1, groupIdx: i})
+	}
+	_ = reimageIdx // used below
+
 	choice, showProgress := g.menu(title, "Select a configuration to deploy", items)
 	if choice < 0 {
 		log.Info("gui.cancel", slog.String("reason", "menu cancelled"))
 		return true
 	}
 
+	ent := entries[choice]
 	var imageID int64
-	if choice == reimageIdx && resp.Reimage != nil {
-		imageID = resp.Reimage.ImageID
+	if ent.groupIdx >= 0 {
+		// User selected a group — drill into its images.
+		grp := resp.Groups[ent.groupIdx]
+		subItems := make([]ui.MenuItem, len(grp.Items))
+		for i, it := range grp.Items {
+			subItems[i] = ui.MenuItem{Title: it.Name, Desc: it.Description}
+		}
+		sub, sp := g.menu(grp.Name, "Select a configuration to deploy", subItems)
+		if sub < 0 {
+			log.Info("gui.cancel", slog.String("reason", "group menu cancelled"))
+			return true
+		}
+		imageID = grp.Items[sub].ImageID
+		showProgress = sp
 	} else {
-		imageID = resp.Items[choice-base].ImageID
+		imageID = ent.imageID
 	}
 
 	// Operator unticked "Show imaging progress": hand the screen back to the

@@ -118,6 +118,17 @@ type SoftwarePackage struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ImageGroup is a named bucket for organising images on the PXE boot menu.
+// Each image may belong to at most one group. Groups are purely presentational
+// — no inheritance or filtering — and are managed from the Images portal page.
+type ImageGroup struct {
+	ID          ID        `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // Image is a composition object linking an ISO, an unattend and software,
 // with an optional parent pointer for arbitrary-depth inheritance. Resolution
 // rules (nearest-wins for ISO and unattend, additive union for software) are
@@ -130,6 +141,7 @@ type Image struct {
 	ISOID         *ID                 `json:"iso_id,omitempty"`
 	UnattendID    *ID                 `json:"unattend_id,omitempty"`
 	LoadoutID     *ID                 `json:"loadout_id,omitempty"`
+	GroupID       *ID                 `json:"group_id,omitempty"`
 	SoftwareLinks []ImageSoftwareLink `json:"software_links"`
 	CreatedAt     time.Time           `json:"created_at"`
 	UpdatedAt     time.Time           `json:"updated_at"`

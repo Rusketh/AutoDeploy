@@ -46,8 +46,9 @@ type Repos struct {
 	Unattend  *model.UnattendRepo
 	Drivers   *model.DriverPackageRepo
 	Software  *model.SoftwarePackageRepo
-	Loadouts  *model.SoftwareLoadoutRepo
-	Images    *model.ImageRepo
+	Loadouts    *model.SoftwareLoadoutRepo
+	Images      *model.ImageRepo
+	ImageGroups *model.ImageGroupRepo
 	Inventory *model.InventoryRepo
 	Bulk      *model.BulkRepo
 	Logs      *model.LogRepo

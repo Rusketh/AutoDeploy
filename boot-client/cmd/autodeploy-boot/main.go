@@ -156,9 +156,18 @@ type MenuItem struct {
 	Description string `json:"description"`
 }
 
+// bootMenuGroup is a named group of images from the server. Selecting a
+// group in the menu drills into a sub-list of that group's images.
+type bootMenuGroup struct {
+	Name  string     `json:"name"`
+	Items []MenuItem `json:"items"`
+}
+
 type menuResponse struct {
-	Items   []MenuItem `json:"items"`
-	Reimage *MenuItem  `json:"reimage,omitempty"`
+	Items  []MenuItem      `json:"items"`
+	Groups []bootMenuGroup `json:"groups,omitempty"`
+	// Reimage is offered when the machine has a bound image.
+	Reimage *MenuItem `json:"reimage,omitempty"`
 	// AutoDeployImageID is set when the server has flagged this machine for
 	// remote re-image. Non-zero means deploy it immediately, no menu.
 	AutoDeployImageID int64 `json:"auto_deploy_image_id,omitempty"`
@@ -225,7 +234,7 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 		return
 	}
 
-	if len(resp.Items) == 0 && resp.Reimage == nil {
+	if len(resp.Items) == 0 && len(resp.Groups) == 0 && resp.Reimage == nil {
 		log.Info("menu.empty", slog.String("reason", "no deployable images; fail-safe to normal boot"))
 		return
 	}
@@ -244,31 +253,42 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 }
 
 // runConsoleMenu is the text-console fallback: PIN gate, then the numbered
-// menu. Unchanged behaviour from the original boot client.
+// menu with optional group drill-down.
+// Ungrouped images are numbered 1, 2, 3, …; groups are shown as G1, G2, …
+// Selecting a group key prints that group's images and asks for a second choice.
 func runConsoleMenu(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc.Client, id smbios.Identity, resp menuResponse, brand brandResp, shipper *logging.Shipper) {
 	if !runAccessPIN(ctx, log, c, id) {
 		return
 	}
-	fmt.Println()
-	fmt.Printf("=== %s ===\n", brandTitle(brand))
-	if resp.Reimage != nil {
-		fmt.Printf("  R) Re-image this machine: %s\n", resp.Reimage.Name)
+
+	printTopMenu := func() {
+		fmt.Println()
+		fmt.Printf("=== %s ===\n", brandTitle(brand))
+		if resp.Reimage != nil {
+			fmt.Printf("  R) Re-image this machine: %s\n", resp.Reimage.Name)
+		}
+		for i, it := range resp.Items {
+			fmt.Printf("  %d) %s\n", i+1, it.Name)
+		}
+		for i, g := range resp.Groups {
+			fmt.Printf("  G%d) %s\n", i+1, g.Name)
+		}
+		fmt.Println("  0) Cancel and boot normally")
+		fmt.Print("\nSelect: ")
 	}
-	for i, it := range resp.Items {
-		fmt.Printf("  %d) %s — %s\n", i+1, it.Name, it.Description)
-	}
-	fmt.Println("  0) Cancel and boot normally")
-	fmt.Print("\nSelect: ")
+
+	printTopMenu()
 	var choice string
 	if _, err := fmt.Scanln(&choice); err != nil {
 		log.Info("menu.cancel", slog.String("reason", "no input; fail-safe"))
 		return
 	}
+	choice = strings.ToUpper(strings.TrimSpace(choice))
 	if choice == "0" || choice == "" {
 		log.Info("menu.cancel", slog.String("reason", "operator cancelled"))
 		return
 	}
-	if choice == "R" || choice == "r" {
+	if choice == "R" {
 		if resp.Reimage == nil {
 			log.Info("menu.cancel", slog.String("reason", "no re-image option"))
 			return
@@ -276,6 +296,40 @@ func runConsoleMenu(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc
 		runDeploy(log, f, id, resp.Reimage.ImageID, shipper)
 		return
 	}
+	// Group selection: "G1", "G2", ...
+	if strings.HasPrefix(choice, "G") {
+		gn, err := strconv.Atoi(choice[1:])
+		if err != nil || gn < 1 || gn > len(resp.Groups) {
+			log.Info("menu.cancel", slog.String("reason", "invalid group choice"))
+			return
+		}
+		grp := resp.Groups[gn-1]
+		fmt.Println()
+		fmt.Printf("=== %s ===\n", grp.Name)
+		for i, it := range grp.Items {
+			fmt.Printf("  %d) %s\n", i+1, it.Name)
+		}
+		fmt.Println("  0) Back")
+		fmt.Print("\nSelect: ")
+		var sub string
+		if _, err := fmt.Scanln(&sub); err != nil {
+			log.Info("menu.cancel", slog.String("reason", "no input; fail-safe"))
+			return
+		}
+		sub = strings.TrimSpace(sub)
+		if sub == "0" || sub == "" {
+			log.Info("menu.cancel", slog.String("reason", "operator went back"))
+			return
+		}
+		sn, err := strconv.Atoi(sub)
+		if err != nil || sn < 1 || sn > len(grp.Items) {
+			log.Info("menu.cancel", slog.String("reason", "invalid choice in group"))
+			return
+		}
+		runDeploy(log, f, id, grp.Items[sn-1].ImageID, shipper)
+		return
+	}
+	// Direct image selection.
 	n, err := strconv.Atoi(choice)
 	if err != nil || n < 1 || n > len(resp.Items) {
 		log.Info("menu.cancel", slog.String("reason", "invalid choice"))

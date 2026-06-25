@@ -42,6 +42,13 @@
       </select>
       <span class="hint">The nearest loadout up the image chain applies; descendants override entries by package id, opt-outs remove them.</span>
     </label>
+    <label><span class="lbl">Group</span>
+      <select name="group_id">
+        <option value="">(none)</option>
+        {{range .Data.Groups}}<option value="{{int64 .ID}}" {{if idEq $im.GroupID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <span class="hint">Organisational group for the PXE boot menu. Groups are created and managed on the Images list page.</span>
+    </label>
   </fieldset>
 
   <fieldset><legend>Direct software links (override loadout for these packages)</legend>

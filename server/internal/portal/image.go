@@ -19,6 +19,10 @@ func init() {
 		post("/portal/images/{id}/delete", imageDelete(r))
 		post("/portal/images/{id}/clone", imageClone(r))
 		get("/portal/images/{id}/resolved", imageResolved(r))
+		// Image group management (rendered inline on the images list page).
+		post("/portal/images/groups", imageGroupCreate(r))
+		post("/portal/images/groups/{id}", imageGroupUpdate(r))
+		post("/portal/images/groups/{id}/delete", imageGroupDelete(r))
 	}
 }
 
@@ -49,10 +53,21 @@ func imageList(r Repos) http.HandlerFunc {
 		for _, im := range images {
 			imgNames[im.ID] = im.Name
 		}
+		groups, _ := mustListImageGroups(r, req)
+		grpNames := map[model.ID]string{}
+		grpRefs := map[model.ID]int{}
+		for _, g := range groups {
+			grpNames[g.ID] = g.Name
+			if r.ImageGroups != nil {
+				n, _ := r.ImageGroups.RefCount(req.Context(), g.ID)
+				grpRefs[g.ID] = n
+			}
+		}
 		render(w, req, r, "image_list.html", "Images", map[string]any{
 			"Images":   images,
 			"ISONames": isoNames, "UnattendNames": uaNames,
 			"LoadoutNames": ldNames, "ImageNames": imgNames,
+			"Groups": groups, "GroupNames": grpNames, "GroupRefs": grpRefs,
 		})
 	}
 }
@@ -64,6 +79,12 @@ func mustListUnattend(r Repos, req *http.Request) []model.Unattend {
 func mustListLoadout(r Repos, req *http.Request) []model.SoftwareLoadout {
 	v, _ := r.Loadouts.List(req.Context())
 	return v
+}
+func mustListImageGroups(r Repos, req *http.Request) ([]model.ImageGroup, error) {
+	if r.ImageGroups == nil {
+		return nil, nil
+	}
+	return r.ImageGroups.List(req.Context())
 }
 
 func imageFormNew(r Repos) http.HandlerFunc {
@@ -89,12 +110,14 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 		if !isNew && r.SetupLock != nil {
 			sl, _ = r.SetupLock.Get(req.Context(), im.ID)
 		}
+		groups, _ := mustListImageGroups(r, req)
 		render(w, req, r, "image_form.html", title, map[string]any{
 			"Im": im, "IsNew": isNew,
 			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
 			"Images": images, "Packages": packages,
 			"DomainJoin": dj,
 			"SetupLock":  sl,
+			"Groups":     groups,
 		})
 	}
 }
@@ -135,6 +158,7 @@ func buildImageFromForm(req *http.Request) (model.Image, error) {
 	setIDPtr("iso_id", &im.ISOID)
 	setIDPtr("unattend_id", &im.UnattendID)
 	setIDPtr("loadout_id", &im.LoadoutID)
+	setIDPtr("group_id", &im.GroupID)
 	ids := req.Form["sw_id[]"]
 	orders := req.Form["sw_order[]"]
 	for i, raw := range ids {
@@ -298,5 +322,71 @@ func imageResolved(r Repos) http.HandlerFunc {
 		render(w, req, r, "image_resolved.html", "Resolved configuration", map[string]any{
 			"R": res,
 		})
+	}
+}
+
+func imageGroupCreate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if r.ImageGroups == nil {
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		if err := req.ParseForm(); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		g := model.ImageGroup{
+			Name:        strings.TrimSpace(req.FormValue("name")),
+			Description: strings.TrimSpace(req.FormValue("description")),
+		}
+		if _, err := r.ImageGroups.Create(req.Context(), g); err != nil {
+			flash(w, "err", "Create group failed: "+err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("Group %q created.", g.Name))
+		}
+		http.Redirect(w, req, "/portal/images", http.StatusFound)
+	}
+}
+
+func imageGroupUpdate(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if r.ImageGroups == nil {
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		id, _ := pathID(req)
+		if err := req.ParseForm(); err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		g := model.ImageGroup{
+			ID:          id,
+			Name:        strings.TrimSpace(req.FormValue("name")),
+			Description: strings.TrimSpace(req.FormValue("description")),
+		}
+		if err := r.ImageGroups.Update(req.Context(), g); err != nil {
+			flash(w, "err", "Update group failed: "+err.Error())
+		} else {
+			flash(w, "ok", fmt.Sprintf("Group %q saved.", g.Name))
+		}
+		http.Redirect(w, req, "/portal/images", http.StatusFound)
+	}
+}
+
+func imageGroupDelete(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if r.ImageGroups == nil {
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		id, _ := pathID(req)
+		if err := r.ImageGroups.Delete(req.Context(), id); err != nil {
+			flash(w, "err", "Delete group failed: "+err.Error())
+		} else {
+			flash(w, "ok", "Group deleted.")
+		}
+		http.Redirect(w, req, "/portal/images", http.StatusFound)
 	}
 }

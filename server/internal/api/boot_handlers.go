@@ -26,8 +26,10 @@ type BootMenuRequest struct {
 // images. Reimage (Phase 9) will be set on a future revision when the
 // machine matches an inventory record.
 type BootMenuResponse struct {
-	Items   []BootMenuItem `json:"items"`
-	Reimage *BootMenuItem  `json:"reimage,omitempty"`
+	Items  []BootMenuItem  `json:"items"`
+	Groups []BootMenuGroup `json:"groups,omitempty"`
+	// Reimage is set when the machine has an image binding.
+	Reimage *BootMenuItem `json:"reimage,omitempty"`
 	// AutoDeployImageID is set (non-zero) when the machine has been flagged
 	// for remote re-image. The boot client deploys this image immediately,
 	// skipping the interactive menu. Zero means show the menu as usual.
@@ -40,6 +42,13 @@ type BootMenuItem struct {
 	ImageID     model.ID `json:"image_id"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
+}
+
+// BootMenuGroup is a named group of images presented as a sub-menu in the
+// PXE boot client. Only groups that have at least one image are included.
+type BootMenuGroup struct {
+	Name  string         `json:"name"`
+	Items []BootMenuItem `json:"items"`
 }
 
 // RegisterBoot mounts the Boot Client endpoints. Wired here so that the
@@ -218,12 +227,58 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 			return
 		}
 		resp := BootMenuResponse{Identity: in}
-		for _, im := range images {
-			resp.Items = append(resp.Items, BootMenuItem{
-				ImageID:     im.ID,
-				Name:        im.Name,
-				Description: im.Description,
-			})
+
+		// Partition images: ungrouped → resp.Items; grouped → resp.Groups.
+		if r.ImageGroups != nil {
+			groups, _ := r.ImageGroups.List(req.Context())
+			// Build an ordered map: group ID → index in resp.Groups.
+			groupIdx := make(map[model.ID]int, len(groups))
+			for _, g := range groups {
+				groupIdx[g.ID] = -1 // will be set when first image added
+			}
+			for _, im := range images {
+				item := BootMenuItem{ImageID: im.ID, Name: im.Name, Description: im.Description}
+				if im.GroupID == nil {
+					resp.Items = append(resp.Items, item)
+					continue
+				}
+				idx, known := groupIdx[*im.GroupID]
+				if !known {
+					// group not in list (stale FK) — treat as ungrouped
+					resp.Items = append(resp.Items, item)
+					continue
+				}
+				if idx == -1 {
+					// first image for this group — create the entry
+					var groupName string
+					for _, g := range groups {
+						if g.ID == *im.GroupID {
+							groupName = g.Name
+							break
+						}
+					}
+					resp.Groups = append(resp.Groups, BootMenuGroup{Name: groupName})
+					idx = len(resp.Groups) - 1
+					groupIdx[*im.GroupID] = idx
+				}
+				resp.Groups[idx].Items = append(resp.Groups[idx].Items, item)
+			}
+			// Remove groups that ended up with no images (shouldn't happen but guard it).
+			filtered := resp.Groups[:0]
+			for _, g := range resp.Groups {
+				if len(g.Items) > 0 {
+					filtered = append(filtered, g)
+				}
+			}
+			resp.Groups = filtered
+		} else {
+			for _, im := range images {
+				resp.Items = append(resp.Items, BootMenuItem{
+					ImageID:     im.ID,
+					Name:        im.Name,
+					Description: im.Description,
+				})
+			}
 		}
 		// Re-image option: present when the machine is in inventory AND
 		// has a binding with an image.
