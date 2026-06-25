@@ -6,6 +6,7 @@
     <input type="search" placeholder="Filter — press /" data-filter="#tbl">
   </div>
   <div class="right">
+    <a class="btn ghost" href="/portal/images/groups"><svg><use href="#i-stack"/></svg>Manage groups</a>
     <a class="btn" href="/portal/images/new"><svg><use href="#i-plus"/></svg>New image</a>
   </div>
 </div>
@@ -59,44 +60,4 @@
 </div>
 {{end}}
 
-<details class="section-details">
-  <summary><strong>Image Groups</strong> <span class="muted small">({{len .Data.Groups}} groups)</span></summary>
-  <div class="section-body">
-    {{if .Data.Groups}}
-    <div class="tablewrap">
-    <table>
-      <thead><tr>
-        <th>Name</th>
-        <th>Description</th>
-        <th class="num">Images</th>
-        <th data-nosort></th>
-      </tr></thead>
-      <tbody>
-        {{range .Data.Groups}}
-        <tr>
-          <form method="POST" action="/portal/images/groups/{{int64 .ID}}">
-          <td><input class="inline-input" type="text" name="name" value="{{.Name}}" required maxlength="128"></td>
-          <td><input class="inline-input" type="text" name="description" value="{{.Description}}" maxlength="200"></td>
-          <td class="num">{{index $.Data.GroupRefs .ID}}</td>
-          <td class="actions">
-            <button class="secondary sm" type="submit"><svg><use href="#i-check"/></svg>Save</button>
-          </td>
-          </form>
-          <form method="POST" action="/portal/images/groups/{{int64 .ID}}/delete" data-confirm="Delete group &ldquo;{{.Name}}&rdquo;? Images in this group will become ungrouped.">
-            <td><button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button></td>
-          </form>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-    </div>
-    {{end}}
-    <form class="std inline-form" method="POST" action="/portal/images/groups">
-      <h4>New group</h4>
-      <label><span class="lbl">Name</span><input type="text" name="name" required maxlength="128" placeholder="e.g. Servers"></label>
-      <label><span class="lbl">Description</span><input type="text" name="description" maxlength="200" placeholder="Optional description"></label>
-      <button type="submit"><svg><use href="#i-plus"/></svg>Create group</button>
-    </form>
-  </div>
-</details>
 {{end}}

@@ -19,7 +19,8 @@ func init() {
 		post("/portal/images/{id}/delete", imageDelete(r))
 		post("/portal/images/{id}/clone", imageClone(r))
 		get("/portal/images/{id}/resolved", imageResolved(r))
-		// Image group management (rendered inline on the images list page).
+		// Image group management — sub-page linked from the images list.
+		get("/portal/images/groups", imageGroupList(r))
 		post("/portal/images/groups", imageGroupCreate(r))
 		post("/portal/images/groups/{id}", imageGroupUpdate(r))
 		post("/portal/images/groups/{id}/delete", imageGroupDelete(r))
@@ -325,15 +326,32 @@ func imageResolved(r Repos) http.HandlerFunc {
 	}
 }
 
+func imageGroupList(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		groups, _ := mustListImageGroups(r, req)
+		grpRefs := map[model.ID]int{}
+		if r.ImageGroups != nil {
+			for _, g := range groups {
+				n, _ := r.ImageGroups.RefCount(req.Context(), g.ID)
+				grpRefs[g.ID] = n
+			}
+		}
+		render(w, req, r, "image_group_list.html", "Image Groups", map[string]any{
+			"Groups":   groups,
+			"GroupRefs": grpRefs,
+		})
+	}
+}
+
 func imageGroupCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.ImageGroups == nil {
-			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 			return
 		}
 		if err := req.ParseForm(); err != nil {
 			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 			return
 		}
 		g := model.ImageGroup{
@@ -345,20 +363,20 @@ func imageGroupCreate(r Repos) http.HandlerFunc {
 		} else {
 			flash(w, "ok", fmt.Sprintf("Group %q created.", g.Name))
 		}
-		http.Redirect(w, req, "/portal/images", http.StatusFound)
+		http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 	}
 }
 
 func imageGroupUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.ImageGroups == nil {
-			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 			return
 		}
 		id, _ := pathID(req)
 		if err := req.ParseForm(); err != nil {
 			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 			return
 		}
 		g := model.ImageGroup{
@@ -371,14 +389,14 @@ func imageGroupUpdate(r Repos) http.HandlerFunc {
 		} else {
 			flash(w, "ok", fmt.Sprintf("Group %q saved.", g.Name))
 		}
-		http.Redirect(w, req, "/portal/images", http.StatusFound)
+		http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 	}
 }
 
 func imageGroupDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.ImageGroups == nil {
-			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 			return
 		}
 		id, _ := pathID(req)
@@ -387,6 +405,6 @@ func imageGroupDelete(r Repos) http.HandlerFunc {
 		} else {
 			flash(w, "ok", "Group deleted.")
 		}
-		http.Redirect(w, req, "/portal/images", http.StatusFound)
+		http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 	}
 }
