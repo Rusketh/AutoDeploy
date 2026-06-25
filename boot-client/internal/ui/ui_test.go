@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"testing"
@@ -118,6 +119,64 @@ func TestMenuShowProgressToggle(t *testing.T) {
 	}
 	if m.Chosen != -1 {
 		t.Errorf("checkbox click must not choose an image; Chosen=%d", m.Chosen)
+	}
+}
+
+// TestMenuScrollsAndPinsFooter guards the deploy-menu layout: a list longer
+// than the screen must window (scroll) to keep the selection visible, never
+// render rows off the bottom, and never let the row list cover the pinned
+// "Show imaging progress" checkbox.
+func TestMenuScrollsAndPinsFooter(t *testing.T) {
+	th := testTheme(t)
+	items := make([]MenuItem, 40)
+	for i := range items {
+		items[i] = MenuItem{Title: fmt.Sprintf("Image %d", i), Desc: "role"}
+	}
+	m := NewMenuScreen("Deploy", "pick one", items)
+	bounds := image.Rect(0, 0, 1024, 768)
+	img := image.NewRGBA(bounds)
+	m.Draw(img, th, bounds)
+
+	// The list is windowed, not drawn in full.
+	if n := len(m.rowRects); n == 0 || n >= len(items) {
+		t.Fatalf("expected a windowed subset of rows, got %d of %d", n, len(items))
+	}
+	// Footer checkbox stays on screen and no row overlaps it.
+	if m.cbRect.Max.Y > bounds.Max.Y {
+		t.Errorf("checkbox runs off the bottom: cbRect=%v screen=%v", m.cbRect, bounds)
+	}
+	for _, r := range m.rowRects {
+		if r.Max.Y > bounds.Max.Y {
+			t.Errorf("row runs off the bottom of the screen: %v", r)
+		}
+		if r.Overlaps(m.cbRect) {
+			t.Errorf("row %v covers the progress checkbox %v", r, m.cbRect)
+		}
+	}
+
+	// Navigating far down scrolls the window so the selection stays visible.
+	for i := 0; i < 30; i++ {
+		m.Handle(input.Event{Type: input.KeyPress, Key: input.KeyDown})
+	}
+	m.Draw(img, th, bounds) // recompute scroll + visible rows
+	if m.Selected() != 30 {
+		t.Fatalf("after 30 downs sel=%d, want 30", m.Selected())
+	}
+	if m.sel < m.rowFirst || m.sel >= m.rowFirst+len(m.rowRects) {
+		t.Errorf("selected row %d not in visible window [%d,%d)", m.sel, m.rowFirst, m.rowFirst+len(m.rowRects))
+	}
+	for _, r := range m.rowRects {
+		if r.Max.Y > bounds.Max.Y || r.Overlaps(m.cbRect) {
+			t.Errorf("after scroll, row %v off-screen or over the checkbox %v", r, m.cbRect)
+		}
+	}
+
+	// Mouse hit-testing maps a visible row back to its true item index.
+	lastLocal := len(m.rowRects) - 1
+	r := m.rowRects[lastLocal]
+	m.Handle(input.Event{Type: input.PointerDown, X: (r.Min.X + r.Max.X) / 2, Y: (r.Min.Y + r.Max.Y) / 2})
+	if want := m.rowFirst + lastLocal; m.Chosen != want {
+		t.Errorf("click last visible row: Chosen=%d, want %d", m.Chosen, want)
 	}
 }
 

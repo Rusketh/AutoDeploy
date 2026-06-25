@@ -8,32 +8,35 @@
 
 {{if .Data.Groups}}
 <div class="tablewrap">
-<table id="tbl" data-sortable>
+<table>
   <thead><tr>
     <th>Name</th>
     <th>Description</th>
-    <th class="num" data-sort="num">Images</th>
+    <th class="num">Images</th>
     <th data-nosort></th>
   </tr></thead>
   <tbody>
     {{range .Data.Groups}}
     <tr>
-      <form method="POST" action="/portal/images/groups/{{int64 .ID}}/save">
-      <td><input class="inline-input" type="text" name="name" value="{{.Name}}" required maxlength="128"></td>
-      <td><input class="inline-input" type="text" name="description" value="{{.Description}}" maxlength="200"></td>
+      <td><input class="inline-input" form="grp{{int64 .ID}}" type="text" name="name" value="{{.Name}}" required maxlength="128"></td>
+      <td><input class="inline-input" form="grp{{int64 .ID}}" type="text" name="description" value="{{.Description}}" maxlength="200" placeholder="No description"></td>
       <td class="num">{{index $.Data.GroupRefs .ID}}</td>
       <td class="actions">
-        <button class="secondary sm" type="submit"><svg><use href="#i-check"/></svg>Save</button>
+        <button class="secondary sm" form="grp{{int64 .ID}}" type="submit"><svg><use href="#i-check"/></svg>Save</button>
+        <button class="danger sm" form="grpdel{{int64 .ID}}" type="submit" data-confirm="Delete group &ldquo;{{.Name}}&rdquo;? Images in this group become ungrouped.">
+          <svg><use href="#i-trash"/></svg>Delete</button>
       </td>
-      </form>
-      <form method="POST" action="/portal/images/groups/{{int64 .ID}}/delete" data-confirm="Delete group &ldquo;{{.Name}}&rdquo;? Images in this group will become ungrouped.">
-        <td><button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button></td>
-      </form>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
+{{/* Off-table forms keep the markup valid: the inputs and buttons above are
+     bound to these via the HTML form attribute, so one form can span a row. */}}
+{{range .Data.Groups}}
+<form id="grp{{int64 .ID}}" method="POST" action="/portal/images/groups/{{int64 .ID}}/save" hidden></form>
+<form id="grpdel{{int64 .ID}}" method="POST" action="/portal/images/groups/{{int64 .ID}}/delete" hidden></form>
+{{end}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-stack"/></svg>
@@ -42,7 +45,7 @@
 </div>
 {{end}}
 
-<form class="std" method="POST" action="/portal/images/groups" style="max-width:40rem;margin-top:2rem">
+<form class="std" method="POST" action="/portal/images/groups">
   <fieldset><legend>New group</legend>
     <label><span class="lbl">Name</span><input type="text" name="name" required maxlength="128" placeholder="e.g. Servers"></label>
     <label><span class="lbl">Description</span><input type="text" name="description" maxlength="200" placeholder="Optional description"></label>
