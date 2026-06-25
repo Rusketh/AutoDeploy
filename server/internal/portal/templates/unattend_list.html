@@ -27,6 +27,9 @@
       <td class="actions">
         <a class="btn ghost sm" href="/portal/unattends/{{int64 .ID}}/preview" title="Preview generated XML"><svg><use href="#i-eye"/></svg>Preview</a>
         <a class="btn secondary sm" href="/portal/unattends/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/unattends/{{int64 .ID}}/clone">
+          <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
+        </form>
         <form method="POST" action="/portal/unattends/{{int64 .ID}}/delete" data-confirm="Delete this unattend? Will fail if images still link it.">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
         </form>

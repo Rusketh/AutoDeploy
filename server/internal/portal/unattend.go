@@ -19,6 +19,7 @@ func init() {
 		get("/portal/unattends/{id}/edit", unattendEdit(r))
 		post("/portal/unattends/{id}", unattendUpdate(r))
 		post("/portal/unattends/{id}/delete", unattendDelete(r))
+		post("/portal/unattends/{id}/clone", unattendClone(r))
 		get("/portal/unattends/{id}/preview", unattendPreview(r))
 	}
 }
@@ -135,6 +136,27 @@ func unattendDelete(r Repos) http.HandlerFunc {
 			flash(w, "ok", "Deleted.")
 		}
 		http.Redirect(w, req, "/portal/unattends", http.StatusFound)
+	}
+}
+
+func unattendClone(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		src, err := r.Unattend.Get(req.Context(), id)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/unattends", http.StatusFound)
+			return
+		}
+		newName := "Copy of " + src.Name
+		out, err := r.Unattend.Clone(req.Context(), id, newName)
+		if err != nil {
+			flash(w, "err", "Clone failed: "+err.Error())
+			http.Redirect(w, req, "/portal/unattends", http.StatusFound)
+			return
+		}
+		flash(w, "ok", fmt.Sprintf("Cloned %q — rename and adjust as needed.", src.Name))
+		http.Redirect(w, req, fmt.Sprintf("/portal/unattends/%d/edit", out.ID), http.StatusFound)
 	}
 }
 

@@ -285,6 +285,18 @@ func (r *ImageRepo) parentChainContains(ctx context.Context, start, target ID) (
 	return false, fmt.Errorf("parent chain depth exceeded %d (data may already have a cycle)", maxDepth)
 }
 
+// Clone creates a copy of the image with the given name, preserving all
+// composition fields (parent, ISO, unattend, loadout) and direct software links.
+func (r *ImageRepo) Clone(ctx context.Context, id ID, newName string) (Image, error) {
+	src, err := r.Get(ctx, id)
+	if err != nil {
+		return Image{}, err
+	}
+	src.ID = 0
+	src.Name = newName
+	return r.Create(ctx, src)
+}
+
 func upsertSoftwareLinks(ctx context.Context, tx *sql.Tx, imageID ID, links []ImageSoftwareLink) error {
 	for _, l := range links {
 		if _, err := tx.ExecContext(ctx, `

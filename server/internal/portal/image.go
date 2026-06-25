@@ -17,6 +17,7 @@ func init() {
 		get("/portal/images/{id}/edit", imageEdit(r))
 		post("/portal/images/{id}", imageUpdate(r))
 		post("/portal/images/{id}/delete", imageDelete(r))
+		post("/portal/images/{id}/clone", imageClone(r))
 		get("/portal/images/{id}/resolved", imageResolved(r))
 	}
 }
@@ -244,6 +245,27 @@ func imageDelete(r Repos) http.HandlerFunc {
 			flash(w, "ok", "Deleted.")
 		}
 		http.Redirect(w, req, "/portal/images", http.StatusFound)
+	}
+}
+
+func imageClone(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		src, err := r.Images.Get(req.Context(), id)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		newName := "Copy of " + src.Name
+		out, err := r.Images.Clone(req.Context(), id, newName)
+		if err != nil {
+			flash(w, "err", "Clone failed: "+err.Error())
+			http.Redirect(w, req, "/portal/images", http.StatusFound)
+			return
+		}
+		flash(w, "ok", fmt.Sprintf("Cloned %q — rename and adjust as needed.", src.Name))
+		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 	}
 }
 
