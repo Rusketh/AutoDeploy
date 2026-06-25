@@ -22,7 +22,7 @@ func init() {
 		// Image group management — sub-page linked from the images list.
 		get("/portal/images/groups", imageGroupList(r))
 		post("/portal/images/groups", imageGroupCreate(r))
-		post("/portal/images/groups/{id}", imageGroupUpdate(r))
+		post("/portal/images/groups/{id}/save", imageGroupUpdate(r))
 		post("/portal/images/groups/{id}/delete", imageGroupDelete(r))
 	}
 }

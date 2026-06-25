@@ -18,7 +18,7 @@
   <tbody>
     {{range .Data.Groups}}
     <tr>
-      <form method="POST" action="/portal/images/groups/{{int64 .ID}}">
+      <form method="POST" action="/portal/images/groups/{{int64 .ID}}/save">
       <td><input class="inline-input" type="text" name="name" value="{{.Name}}" required maxlength="128"></td>
       <td><input class="inline-input" type="text" name="description" value="{{.Description}}" maxlength="200"></td>
       <td class="num">{{index $.Data.GroupRefs .ID}}</td>
