@@ -23,6 +23,7 @@ type DetectionRule struct {
 type InstallStep struct {
 	Type              string   `json:"type"`
 	Description       string   `json:"description,omitempty"`
+	FilterOS          string   `json:"filter_os,omitempty"`
 	SuccessCodes      []int    `json:"success_codes,omitempty"`
 	ContinueOnFailure bool     `json:"continue_on_failure,omitempty"`
 	SourcePath        string   `json:"source_path,omitempty"`

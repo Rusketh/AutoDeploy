@@ -284,20 +284,54 @@ func parent(p string) string {
 	return "."
 }
 
+// HostFacts are the target-machine facts a step's filter is matched against.
+// The agent gathers them once per install run (an OS query isn't free) and
+// passes them to Execute; tests pass them explicitly. The zero value matches
+// only steps that carry no filter.
+type HostFacts struct {
+	OSCaption string // Win32_OperatingSystem.Caption, e.g. "Microsoft Windows 11 Pro"
+	OSVersion string // Win32_OperatingSystem.Version, e.g. "10.0.22631"
+}
+
+// stepApplies reports whether s should run on a machine described by facts. A
+// step with no filter always applies. The OS filter is a case-insensitive
+// substring match against the OS caption, so FilterOS "Windows 11" applies on
+// "Microsoft Windows 11 Pro" but not on "...Windows 10 Pro" -- which is how one
+// package can carry both a Windows 11 and a Windows 10 step and run only the
+// matching one.
+func stepApplies(s swspec.InstallStep, facts HostFacts) bool {
+	if s.FilterOS == "" {
+		return true
+	}
+	return strings.Contains(
+		strings.ToLower(facts.OSCaption),
+		strings.ToLower(s.FilterOS))
+}
+
 // Result is the outcome of executing one step.
 type Result struct {
 	Step     swspec.InstallStep
 	ExitCode int
 	Error    error
 	Aborted  bool
+	// Skipped is set when the step's filter (e.g. FilterOS) didn't match the
+	// target, so the step was passed over without running. A skipped step is
+	// not a failure: execution continues and the package is not aborted.
+	Skipped bool
 }
 
-// Execute runs the ordered list of steps and returns one Result per step
-// actually attempted. If a non-success-coded step has ContinueOnFailure
-// false, execution stops and the last Result has Aborted = true.
-func Execute(ctx context.Context, list []swspec.InstallStep, r Runner) []Result {
+// Execute runs the ordered list of steps against a machine described by facts
+// and returns one Result per step. A step whose filter doesn't match the host
+// is recorded as Skipped and passed over (it neither runs nor aborts the
+// package). If a non-success-coded step has ContinueOnFailure false, execution
+// stops and the last Result has Aborted = true.
+func Execute(ctx context.Context, list []swspec.InstallStep, r Runner, facts HostFacts) []Result {
 	results := make([]Result, 0, len(list))
 	for _, s := range list {
+		if !stepApplies(s, facts) {
+			results = append(results, Result{Step: s, Skipped: true})
+			continue
+		}
 		res := runOne(ctx, s, r)
 		results = append(results, res)
 		if res.Aborted {

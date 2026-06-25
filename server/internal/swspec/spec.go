@@ -82,6 +82,15 @@ type InstallStep struct {
 	Type        string `json:"type"` // "copy" | "unzip" | "msi" | "appx" | "cmd" | "powershell" | "exe"
 	Description string `json:"description,omitempty"`
 
+	// FilterOS gates the step by operating system: when non-empty, the agent
+	// runs the step only on a target whose OS caption contains this string
+	// (case-insensitive substring, e.g. "Windows 11" matches "Microsoft
+	// Windows 11 Pro"). Empty -- the common case -- means the step runs on
+	// every OS. This is what lets one package carry, say, a Windows 11 zip and
+	// a Windows 10 zip as two unzip steps that each apply only on the matching
+	// edition; a step whose filter doesn't match is skipped, not failed.
+	FilterOS string `json:"filter_os,omitempty"`
+
 	// Per-step result handling.
 	SuccessCodes      []int `json:"success_codes,omitempty"`       // default [0]
 	ContinueOnFailure bool  `json:"continue_on_failure,omitempty"` // default false (abort)

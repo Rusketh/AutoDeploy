@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rusketh/autodeploy/agent/internal/detect"
@@ -838,6 +839,39 @@ type pkgReport struct {
 	Message   string `json:"message,omitempty"`
 }
 
+// osFacts memoises the host's OS caption/version so the (PowerShell) query
+// behind collectOSFacts runs at most once per agent process -- the OS doesn't
+// change under a running agent. Guarded by a mutex because installs from the
+// deploy flow and the resident loop could in principle overlap.
+var (
+	osFactsMu     sync.Mutex
+	osFactsCached steps.HostFacts
+)
+
+// hostFacts returns the target's OS facts, querying once and caching the
+// result. A failed query (empty caption) is not cached, so a transient
+// PowerShell hiccup is retried on the next install run rather than disabling
+// OS filtering for the life of the process.
+func hostFacts(log *slog.Logger) steps.HostFacts {
+	osFactsMu.Lock()
+	defer osFactsMu.Unlock()
+	if osFactsCached.OSCaption != "" {
+		return osFactsCached
+	}
+	caption, version := collectOSFacts()
+	facts := steps.HostFacts{OSCaption: caption, OSVersion: version}
+	if caption != "" {
+		osFactsCached = facts
+		if log != nil {
+			log.Info("install.host_os",
+				slog.String("actor", "agent"),
+				slog.String("os_caption", caption),
+				slog.String("os_version", version))
+		}
+	}
+	return facts
+}
+
 // installPackages evaluates detection, downloads files, and runs install
 // steps for each package not already present. Shared by the legacy
 // deploy-time flow and the resident /self loop. Returns per-package
@@ -851,6 +885,9 @@ type pkgReport struct {
 func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, items []softwareItem, progress func(done, total int, name string)) ([]pkgReport, bool) {
 	eval := &detect.Evaluator{Backend: detect.DefaultBackend(), Log: log}
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+	// Gather the host's OS facts once (an OS query isn't free) so per-step
+	// FilterOS can be evaluated without re-querying for every package.
+	facts := hostFacts(log)
 	var packageReports []pkgReport
 	failed := false
 
@@ -858,7 +895,7 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		if progress != nil {
 			progress(i, len(items), pkg.Name)
 		}
-		rep, didFail := installOnePackage(ctx, log, c, f, eval, runner, pkg)
+		rep, didFail := installOnePackage(ctx, log, c, f, eval, runner, pkg, facts)
 		if rep != nil {
 			packageReports = append(packageReports, *rep)
 		}
@@ -878,7 +915,7 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 // whether it failed. The downloaded payload (the per-package work dir and any
 // legacy single-file pkg-N.bin) is removed on the way out: once the steps have
 // run, leaving it on disk just wastes space on the target.
-func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, eval *detect.Evaluator, runner *steps.OSRunner, pkg softwareItem) (*pkgReport, bool) {
+func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, eval *detect.Evaluator, runner *steps.OSRunner, pkg softwareItem, facts steps.HostFacts) (*pkgReport, bool) {
 	pkgDir := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d", pkg.PackageID))
 	filesDir := filepath.Join(pkgDir, "files")
 	legacyBinPath := filepath.Join(f.workDir, fmt.Sprintf("pkg-%d.bin", pkg.PackageID))
@@ -1041,6 +1078,7 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	log.Info("package.install.start",
 		slog.String("actor", f.uuid),
 		slog.String("target", pkg.Name),
+		slog.String("host_os", facts.OSCaption),
 		slog.Int("steps", len(rewritten)))
 	// Run steps from the package work dir so an installer's relative args
 	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
@@ -1050,7 +1088,7 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	} else {
 		runner.WorkDir = f.workDir
 	}
-	results := steps.Execute(ctx, rewritten, runner)
+	results := steps.Execute(ctx, rewritten, runner, facts)
 	ok := true
 	for i, r := range results {
 		lvl := slog.LevelInfo
@@ -1064,6 +1102,12 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			slog.String("type", r.Step.Type),
 			slog.Int("exit_code", r.ExitCode),
 			slog.Bool("aborted", r.Aborted),
+			// A step skipped because its FilterOS didn't match the host is
+			// recorded so an operator can see WHY a step didn't run (e.g. the
+			// Windows 10 zip step was passed over on a Windows 11 machine)
+			// rather than wondering whether it silently failed.
+			slog.Bool("skipped", r.Skipped),
+			slog.String("filter_os", r.Step.FilterOS),
 			slog.Any("error", r.Error),
 		)
 	}

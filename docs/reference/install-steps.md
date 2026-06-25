@@ -19,8 +19,35 @@ Steps are stored as a JSON **array**; each element has a `type` field — one of
 |-------|----------|-------------|
 | `type` | yes | The step type (see below). |
 | `description` | no | A human-readable label for the step. |
+| `filter_os` | no | Run the step only on a matching OS — see [OS filters](#os-filters). |
 | `success_codes` | no | Exit codes treated as success in addition to `0` (array of integers). |
 | `continue_on_failure` | no | If `true`, a failure doesn't abort the rest of the package (default `false`). |
+
+## OS filters
+
+A step's optional `filter_os` gates it by operating system. When set, the agent runs the step only
+on a target whose **OS name contains `filter_os`** as a **case-insensitive substring**; on any other
+OS the step is **skipped** — passed over without running, which (unlike a failure) does **not** abort
+the package. When `filter_os` is empty or absent (the common case) the step runs on every OS.
+
+The OS name compared against is the machine's `Win32_OperatingSystem.Caption` — the same value shown
+in the portal inventory, e.g. `Microsoft Windows 11 Pro` or `Microsoft Windows 10 Pro` — so
+`"Windows 11"` matches only Windows 11, `"Windows 10"` only Windows 10, and `"Server"` matches the
+Server editions.
+
+This lets a single package carry steps for several editions and apply only the matching ones. For
+example, ship a Windows 11 zip and a Windows 10 zip and extract whichever fits the target:
+
+```json
+[
+  { "type": "unzip", "filter_os": "Windows 11", "source_path": "app-win11.zip", "destination_path": "C:\\Program Files\\App" },
+  { "type": "unzip", "filter_os": "Windows 10", "source_path": "app-win10.zip", "destination_path": "C:\\Program Files\\App" }
+]
+```
+
+On a Windows 11 machine the first step extracts and the second is skipped; on Windows 10 it's the
+other way round. The deploy log records each skipped step (with its `filter_os`) so it's clear *why*
+a step didn't run.
 
 ## Step types
 
