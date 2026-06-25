@@ -25,6 +25,8 @@ type MenuScreen struct {
 	Subtitle string
 	Items    []MenuItem
 	sel      int
+	scroll   int               // index of the first visible row (windowed list)
+	rowFirst int               // item index of rowRects[0], for hit-testing
 	rowRects []image.Rectangle // computed each Draw, used for hit-testing
 	cbRect   image.Rectangle   // checkbox hit area (box + label), computed each Draw
 
@@ -74,10 +76,41 @@ func (m *MenuScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 	rowW := minInt(720, b.Dx()-120)
 	rowH := 64
 	gap := 14
+	perRow := rowH + gap
 	x0 := b.Min.X + (b.Dx()-rowW)/2
-	y := rowsY
+
+	// Footer band pinned to the bottom: the progress checkbox and keyboard
+	// help live here at a FIXED position so a long list can never push them
+	// off the screen or paint over them. The row list is confined to the
+	// space above this band.
+	const footerH = 120
+	footerTop := b.Max.Y - footerH
+
+	// Window the list to the rows band, reserving one line at the top and
+	// bottom for the "more above / more below" scroll hints. maxVisible is how
+	// many rows fit; a list longer than that scrolls to keep the selection in
+	// view rather than overflowing the screen.
+	const hintH = 22
+	bandTop := rowsY
+	bandBottom := footerTop - 8
+	maxVisible := (bandBottom - bandTop - 2*hintH) / perRow
+	if maxVisible < 1 {
+		maxVisible = 1
+	}
+	m.scroll = clampScroll(m.scroll, m.sel, maxVisible, len(m.Items))
+
+	first := m.scroll
+	last := minInt(first+maxVisible, len(m.Items))
+	m.rowFirst = first
+
+	if first > 0 {
+		drawCentered(img, th.Small, th.Muted, cx, bandTop+hintH-8, "↑ more above")
+	}
+
+	y := bandTop + hintH
 	m.rowRects = m.rowRects[:0]
-	for i, it := range m.Items {
+	for i := first; i < last; i++ {
+		it := m.Items[i]
 		r := image.Rect(x0, y, x0+rowW, y+rowH)
 		m.rowRects = append(m.rowRects, r)
 		bg := th.Panel
@@ -95,17 +128,44 @@ func (m *MenuScreen) Draw(img *image.RGBA, th *Theme, b image.Rectangle) {
 		if it.Desc != "" {
 			drawText(img, th.Small, descCol, r.Min.X+20, r.Min.Y+50, it.Desc)
 		}
-		y += rowH + gap
+		y += perRow
 	}
 
-	// "Show imaging progress" checkbox, left-aligned under the rows. Ticked
+	if last < len(m.Items) {
+		drawCentered(img, th.Small, th.Muted, cx, y+hintH-8, "↓ more below")
+	}
+
+	// "Show imaging progress" checkbox, pinned to the footer band. Ticked
 	// (default) keeps the graphical progress screen; unticking it hands the
 	// screen to the console during imaging so logs are visible for debugging.
-	m.drawCheckbox(img, th, x0, y+6)
+	m.drawCheckbox(img, th, x0, footerTop+10)
 
 	drawCentered(img, th.Small, th.Muted, cx, b.Max.Y-40,
 		"↑/↓ select · Enter deploy · Space toggle progress · Esc cancel")
 	drawVersion(img, th, b, m.Version)
+}
+
+// clampScroll returns a scroll offset (index of the first visible row) that
+// keeps the selected row within a window of maxVisible rows, and never scrolls
+// past the end of an n-item list.
+func clampScroll(scroll, sel, maxVisible, n int) int {
+	if sel < scroll {
+		scroll = sel
+	}
+	if sel >= scroll+maxVisible {
+		scroll = sel - maxVisible + 1
+	}
+	maxScroll := n - maxVisible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	return scroll
 }
 
 // drawCheckbox renders the "Show imaging progress" toggle at (x,y) and records
@@ -180,7 +240,7 @@ func (m *MenuScreen) Handle(ev input.Event) Action {
 func (m *MenuScreen) hit(x, y int) int {
 	for i, r := range m.rowRects {
 		if x >= r.Min.X && x < r.Max.X && y >= r.Min.Y && y < r.Max.Y {
-			return i
+			return m.rowFirst + i
 		}
 	}
 	return -1
