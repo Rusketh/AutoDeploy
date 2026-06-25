@@ -125,6 +125,17 @@ func (r *UnattendRepo) Delete(ctx context.Context, id ID) error {
 	return tx.Commit()
 }
 
+// Clone creates a copy of the unattend with the given name, preserving all settings.
+func (r *UnattendRepo) Clone(ctx context.Context, id ID, newName string) (Unattend, error) {
+	src, err := r.Get(ctx, id)
+	if err != nil {
+		return Unattend{}, err
+	}
+	src.ID = 0
+	src.Name = newName
+	return r.Create(ctx, src)
+}
+
 func (r *UnattendRepo) RefCount(ctx context.Context, id ID) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx,

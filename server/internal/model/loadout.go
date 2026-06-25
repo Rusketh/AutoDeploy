@@ -203,6 +203,18 @@ func (r *SoftwareLoadoutRepo) Delete(ctx context.Context, id ID) error {
 	return tx.Commit()
 }
 
+// Clone creates a copy of the loadout with the given name, preserving all
+// packages and parent references.
+func (r *SoftwareLoadoutRepo) Clone(ctx context.Context, id ID, newName string) (SoftwareLoadout, error) {
+	src, err := r.Get(ctx, id)
+	if err != nil {
+		return SoftwareLoadout{}, err
+	}
+	src.ID = 0
+	src.Name = newName
+	return r.Create(ctx, src)
+}
+
 // RefCount returns the number of images that link this loadout plus the
 // number of child loadouts that point to it.
 func (r *SoftwareLoadoutRepo) RefCount(ctx context.Context, id ID) (int, error) {

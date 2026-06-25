@@ -37,7 +37,7 @@
     </label>
     <label><span class="lbl">Software loadout</span>
       <select name="loadout_id">
-        <option value="">(none)</option>
+        <option value="">(inherit / none)</option>
         {{range .Data.Loadouts}}<option value="{{int64 .ID}}" {{if idEq $im.LoadoutID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
       <span class="hint">The nearest loadout up the image chain applies; descendants override entries by package id, opt-outs remove them.</span>

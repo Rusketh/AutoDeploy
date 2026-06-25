@@ -17,6 +17,7 @@ func init() {
 		get("/portal/loadouts/{id}/edit", loadoutEdit(r))
 		post("/portal/loadouts/{id}", loadoutUpdate(r))
 		post("/portal/loadouts/{id}/delete", loadoutDelete(r))
+		post("/portal/loadouts/{id}/clone", loadoutClone(r))
 	}
 }
 
@@ -151,6 +152,27 @@ func loadoutUpdate(r Repos) http.HandlerFunc {
 			flash(w, "ok", "Saved.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/loadouts/%d/edit", id), http.StatusFound)
+	}
+}
+
+func loadoutClone(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		src, err := r.Loadouts.Get(req.Context(), id)
+		if err != nil {
+			flash(w, "err", err.Error())
+			http.Redirect(w, req, "/portal/loadouts", http.StatusFound)
+			return
+		}
+		newName := "Copy of " + src.Name
+		out, err := r.Loadouts.Clone(req.Context(), id, newName)
+		if err != nil {
+			flash(w, "err", "Clone failed: "+err.Error())
+			http.Redirect(w, req, "/portal/loadouts", http.StatusFound)
+			return
+		}
+		flash(w, "ok", fmt.Sprintf("Cloned %q — rename and adjust as needed.", src.Name))
+		http.Redirect(w, req, fmt.Sprintf("/portal/loadouts/%d/edit", out.ID), http.StatusFound)
 	}
 }
 
