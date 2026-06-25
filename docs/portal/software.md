@@ -77,6 +77,13 @@ expanded by the agent in **all** step paths, including **copy/unzip destinations
 directory**, so a relative installer arg like `OfficeSetup.exe /configure NoTeams.xml` finds its
 sibling file; use `%pkgdir%\NoTeams.xml` when you need the absolute path.
 
+**Only run on this OS.** Each step has an optional *Only run on this OS* field. Leave it blank to run
+on every OS, or enter part of the OS name (e.g. `Windows 11` or `Windows 10`) to run the step only on
+machines whose OS matches — the match is a case-insensitive substring of the OS caption. On a
+non-matching machine the step is **skipped**, not failed, so the rest of the package still runs. This
+lets one package hold, say, a Windows 11 zip and a Windows 10 zip as two `unzip` steps and apply only
+the one that fits each target.
+
 ![Editing a software package](../images/software-edit.png)
 
 For the full set of options and examples, see the references on

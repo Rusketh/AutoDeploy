@@ -144,6 +144,14 @@
       </p>
       {{end}}
     </div>
+    {{/* Suggestions for the per-step "Only run on this OS" filter. The match is
+         a case-insensitive substring of the OS caption, so these are hints, not
+         an exhaustive list -- an operator can type any substring (e.g. an
+         edition or "Server 2022"). */}}
+    <datalist id="os-filter-options">
+      <option value="Windows 11"></option>
+      <option value="Windows 10"></option>
+    </datalist>
     <div id="steps">
       {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s}}{{end}}
     </div>
@@ -230,6 +238,9 @@ function addStep(){
     '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step" style="align-self:flex-end"><svg><use href="#i-trash"/></svg></button></div>' +
     '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
     '<label><span class="lbl">If this step fails…</span><select name="step_' + idx + '_continue"><option value="">Abort the whole package</option><option value="1">Continue with the next step</option></select></label></div>' +
+    '<div class="row"><label><span class="lbl">Only run on this OS <span class="muted small">(blank = every OS)</span></span>' +
+    '<input type="text" name="step_' + idx + '_filter_os" list="os-filter-options" placeholder="e.g. Windows 11">' +
+    '<span class="hint">Matches the target\'s OS name as a case-insensitive substring (e.g. <code>Windows 11</code> matches <code>Microsoft Windows 11 Pro</code>). Blank = every OS. A step whose filter doesn\'t match is skipped, not failed.</span></label></div>' +
     '<div class="step-srcdst"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="config.json"></label>' +
     '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path" placeholder="C:\\Program Files\\…"></label>' +
     '<span class="hint step-srcdst-hint">Copy from <strong>Source</strong> to <strong>Destination</strong>. Write a bare filename to refer to a file you uploaded above; absolute paths and <code>%ProgramFiles%</code>-style env vars also work.</span></div>' +
@@ -343,6 +354,12 @@ function addStep(){
         <option value=""  {{if not $s.ContinueOnFailure}}selected{{end}}>Abort the whole package</option>
         <option value="1" {{if $s.ContinueOnFailure}}selected{{end}}>Continue with the next step</option>
       </select>
+    </label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">Only run on this OS <span class="muted small">(blank = every OS)</span></span>
+      <input type="text" name="step_{{$i}}_filter_os" value="{{$s.FilterOS}}" list="os-filter-options" placeholder="e.g. Windows 11">
+      <span class="hint">Matches the target's OS name as a case-insensitive <strong>substring</strong> -- e.g. <code>Windows 11</code> matches <code>Microsoft Windows 11 Pro</code>. Leave blank to run on every OS. Use this to put a Windows 11 step and a Windows 10 step in one package and have each apply only on the matching edition; a step whose filter doesn't match is skipped, not failed.</span>
     </label>
   </div>
   <div class="step-srcdst" {{if and (ne $s.Type "copy") (ne $s.Type "unzip")}}style="display:none"{{end}}>

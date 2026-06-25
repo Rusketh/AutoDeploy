@@ -46,6 +46,32 @@ func TestParseStepsAllTypes(t *testing.T) {
 	}
 }
 
+// A per-step filter_os parses, survives a round-trip, and doesn't interfere
+// with the step's own required-field validation.
+func TestParseStepsCarriesFilterOS(t *testing.T) {
+	raw := `[
+		{"type":"unzip","filter_os":"Windows 11","source_path":"win11.zip","destination_path":"C:\\App"},
+		{"type":"unzip","filter_os":"Windows 10","source_path":"win10.zip","destination_path":"C:\\App"},
+		{"type":"cmd","script_body":"echo done"}
+	]`
+	steps, err := ParseSteps(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 3 {
+		t.Fatalf("got %d steps", len(steps))
+	}
+	if steps[0].FilterOS != "Windows 11" {
+		t.Errorf("step 0 filter_os = %q, want %q", steps[0].FilterOS, "Windows 11")
+	}
+	if steps[1].FilterOS != "Windows 10" {
+		t.Errorf("step 1 filter_os = %q, want %q", steps[1].FilterOS, "Windows 10")
+	}
+	if steps[2].FilterOS != "" {
+		t.Errorf("step 2 filter_os = %q, want empty", steps[2].FilterOS)
+	}
+}
+
 func TestStepValidationRequiresFields(t *testing.T) {
 	cases := []struct {
 		name, raw string

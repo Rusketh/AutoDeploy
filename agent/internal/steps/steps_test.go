@@ -22,7 +22,7 @@ func TestExecuteAllStepTypes(t *testing.T) {
 		{Type: "powershell", ScriptBody: `Write-Host hi`},
 		{Type: "exe", ExePath: `C:\pkg\a.exe`, ExeArgs: []string{"/S"}},
 	}
-	res := Execute(context.Background(), list, rec)
+	res := Execute(context.Background(), list, rec, HostFacts{})
 	if len(res) != 6 {
 		t.Fatalf("expected 6 results, got %d", len(res))
 	}
@@ -125,7 +125,7 @@ func TestExecuteAbortsOnFailureByDefault(t *testing.T) {
 		{Type: "cmd", ScriptBody: "fail"},
 		{Type: "cmd", ScriptBody: "should-not-run"},
 	}
-	res := Execute(context.Background(), list, rec)
+	res := Execute(context.Background(), list, rec, HostFacts{})
 	if len(res) != 1 {
 		t.Fatalf("expected execution to stop after first failure, got %d results", len(res))
 	}
@@ -140,7 +140,7 @@ func TestContinueOnFailureKeepsGoing(t *testing.T) {
 		{Type: "cmd", ScriptBody: "fail", ContinueOnFailure: true},
 		{Type: "cmd", ScriptBody: "ok"},
 	}
-	res := Execute(context.Background(), list, rec)
+	res := Execute(context.Background(), list, rec, HostFacts{})
 	if len(res) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(res))
 	}
@@ -151,7 +151,7 @@ func TestSuccessCodesAcceptNonZero(t *testing.T) {
 	list := []swspec.InstallStep{
 		{Type: "msi", MSIPath: `C:\pkg\a.msi`, SuccessCodes: []int{0, 3010}},
 	}
-	res := Execute(context.Background(), list, rec)
+	res := Execute(context.Background(), list, rec, HostFacts{})
 	if len(res) != 1 || res[0].Aborted {
 		t.Errorf("3010 (reboot required) should be a success: %+v", res)
 	}
@@ -248,7 +248,7 @@ func TestExecuteUnzipStep(t *testing.T) {
 	out := Execute(context.Background(), []swspec.InstallStep{
 		{Type: "unzip", SourcePath: `C:\src\bundle.zip`, DestinationPath: `C:\Program Files\App`},
 		{Type: "cmd", ScriptBody: "echo done"},
-	}, rec)
+	}, rec, HostFacts{})
 	if len(out) != 2 {
 		t.Fatalf("want 2 results, got %d", len(out))
 	}
@@ -261,6 +261,90 @@ func TestExecuteUnzipStep(t *testing.T) {
 	}
 }
 
+// The motivating case: a single package carries a Windows 11 zip and a
+// Windows 10 zip as two unzip steps, each gated by FilterOS. On a Windows 11
+// host only the Windows 11 step extracts; the Windows 10 step is recorded as
+// skipped (not run, not aborted) and a following unfiltered step still runs.
+func TestExecuteFiltersStepsByOS(t *testing.T) {
+	rec := &Recorder{}
+	list := []swspec.InstallStep{
+		{Type: "unzip", FilterOS: "Windows 11", SourcePath: "win11.zip", DestinationPath: `C:\App`},
+		{Type: "unzip", FilterOS: "Windows 10", SourcePath: "win10.zip", DestinationPath: `C:\App`},
+		{Type: "cmd", ScriptBody: "echo done"}, // no filter: always runs
+	}
+	out := Execute(context.Background(), list, rec, HostFacts{OSCaption: "Microsoft Windows 11 Pro"})
+	if len(out) != 3 {
+		t.Fatalf("want 3 results (one per step), got %d", len(out))
+	}
+	if out[0].Skipped || out[0].Aborted {
+		t.Errorf("Windows 11 step should have run on a Win11 host: %+v", out[0])
+	}
+	if !out[1].Skipped {
+		t.Errorf("Windows 10 step should have been skipped on a Win11 host: %+v", out[1])
+	}
+	if out[1].Aborted {
+		t.Error("a filtered-out step must not abort the package")
+	}
+	if out[2].Skipped {
+		t.Errorf("the unfiltered cmd step should still run: %+v", out[2])
+	}
+	// Only the Win11 zip should have been extracted.
+	if len(rec.Unzips) != 1 || !strings.Contains(rec.Unzips[0], "win11.zip") {
+		t.Errorf("expected only win11.zip extracted, got %v", rec.Unzips)
+	}
+}
+
+// FilterOS matching is a case-insensitive substring of the OS caption, so an
+// operator can type "windows 11" and it still matches "Microsoft Windows 11
+// Pro". An empty caption (e.g. the OS query failed) matches no filter.
+func TestStepAppliesOSMatching(t *testing.T) {
+	cases := []struct {
+		name    string
+		filter  string
+		caption string
+		want    bool
+	}{
+		{"no filter always applies", "", "Microsoft Windows 11 Pro", true},
+		{"no filter applies even with empty caption", "", "", true},
+		{"win11 matches win11 caption", "Windows 11", "Microsoft Windows 11 Pro", true},
+		{"win11 does not match win10 caption", "Windows 11", "Microsoft Windows 10 Pro", false},
+		{"win10 matches win10 caption", "Windows 10", "Microsoft Windows 10 Pro", true},
+		{"case-insensitive", "windows 11", "Microsoft Windows 11 Pro", true},
+		{"server edition", "Server", "Microsoft Windows Server 2022 Standard", true},
+		{"filter set but caption empty does not match", "Windows 11", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := swspec.InstallStep{Type: "cmd", FilterOS: tc.filter}
+			if got := stepApplies(s, HostFacts{OSCaption: tc.caption}); got != tc.want {
+				t.Errorf("stepApplies(filter=%q, caption=%q) = %v, want %v",
+					tc.filter, tc.caption, got, tc.want)
+			}
+		})
+	}
+}
+
+// A filtered-out step that sits before a failing step must not absorb the
+// abort: skipping is transparent to the success/failure sequencing.
+func TestExecuteSkippedStepDoesNotMaskLaterAbort(t *testing.T) {
+	rec := &Recorder{ExitMap: map[string]int{"cmd": 5}}
+	list := []swspec.InstallStep{
+		{Type: "unzip", FilterOS: "Windows 10", SourcePath: "win10.zip", DestinationPath: `C:\App`},
+		{Type: "cmd", ScriptBody: "fail"},
+		{Type: "cmd", ScriptBody: "should-not-run"},
+	}
+	out := Execute(context.Background(), list, rec, HostFacts{OSCaption: "Microsoft Windows 11 Pro"})
+	if len(out) != 2 {
+		t.Fatalf("want 2 results (skipped + aborted), got %d", len(out))
+	}
+	if !out[0].Skipped {
+		t.Errorf("first step should be skipped: %+v", out[0])
+	}
+	if !out[1].Aborted {
+		t.Errorf("failing cmd step should abort: %+v", out[1])
+	}
+}
+
 // If Unzip returns an error the result records the error and the
 // abort flag fires -- subsequent steps don't run.
 func TestExecuteUnzipStepAbortsOnError(t *testing.T) {
@@ -268,7 +352,7 @@ func TestExecuteUnzipStepAbortsOnError(t *testing.T) {
 	out := Execute(context.Background(), []swspec.InstallStep{
 		{Type: "unzip", SourcePath: "a.zip", DestinationPath: "b"},
 		{Type: "cmd", ScriptBody: "should not run"},
-	}, rec)
+	}, rec, HostFacts{})
 	if len(out) != 1 || !out[0].Aborted || out[0].Error == nil {
 		t.Errorf("expected abort with error, got results=%+v", out)
 	}

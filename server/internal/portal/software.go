@@ -250,6 +250,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 		s := swspec.InstallStep{
 			Type:              req.FormValue("step_" + idx + "_type"),
 			Description:       req.FormValue("step_" + idx + "_desc"),
+			FilterOS:          strings.TrimSpace(req.FormValue("step_" + idx + "_filter_os")),
 			SourcePath:        req.FormValue("step_" + idx + "_source_path"),
 			DestinationPath:   req.FormValue("step_" + idx + "_destination_path"),
 			MSIPath:           req.FormValue("step_" + idx + "_msi_path"),
