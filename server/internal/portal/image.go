@@ -264,6 +264,24 @@ func imageClone(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/images", http.StatusFound)
 			return
 		}
+
+		// Copy domain-join config (including the encrypted password).
+		if r.DomainJoin != nil {
+			if dj, err := r.DomainJoin.Get(req.Context(), id); err == nil {
+				pw, _ := r.DomainJoin.RetrievePassword(req.Context(), id)
+				dj.ImageID = out.ID
+				_ = r.DomainJoin.Set(req.Context(), dj, pw)
+			}
+		}
+
+		// Copy setup-lock toggle.
+		if r.SetupLock != nil {
+			if sl, err := r.SetupLock.Get(req.Context(), id); err == nil {
+				sl.ImageID = out.ID
+				_ = r.SetupLock.Set(req.Context(), sl)
+			}
+		}
+
 		flash(w, "ok", fmt.Sprintf("Cloned %q — rename and adjust as needed.", src.Name))
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 	}
