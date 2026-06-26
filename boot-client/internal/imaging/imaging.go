@@ -515,6 +515,58 @@ func sameOrder(a, b []string) bool {
 	return true
 }
 
+// windowsBootManagerLabel is the description Windows Setup gives the firmware
+// boot entry it creates for the installed OS. AutoDeploy looks for it to tell a
+// machine that is mid-install (Windows laid down) from a fresh one.
+const windowsBootManagerLabel = "Windows Boot Manager"
+
+// HasWindowsBootManager reports whether a verbose efibootmgr listing contains a
+// Windows Boot Manager entry -- i.e. Windows Setup has already created a
+// bootable Windows on this machine.
+func HasWindowsBootManager(efibootmgrOutput string) bool {
+	return parseBootNumByLabel(efibootmgrOutput, windowsBootManagerLabel) != ""
+}
+
+// BootWindowsBootManager points the firmware at the installed Windows boot
+// manager so a machine that PXE-looped back into AutoDeploy mid-install hands
+// control straight back to Windows Setup. It sets BootNext (one-shot, the most
+// widely honoured NVRAM var) AND moves Windows Boot Manager to the front of
+// BootOrder while demoting the network entries -- belt and braces for firmware
+// that prefers one mechanism over the other. It takes an already-read verbose
+// efibootmgr listing to avoid a second exec. Returns false (a no-op) when there
+// is no Windows Boot Manager entry yet. The caller reboots.
+func BootWindowsBootManager(ctx context.Context, r Runner, efibootmgrVerboseOut string) (bool, error) {
+	num := parseBootNumByLabel(efibootmgrVerboseOut, windowsBootManagerLabel)
+	if num == "" {
+		return false, nil
+	}
+	if err := r.Exec(ctx, "efibootmgr", "--bootnext", num); err != nil {
+		return false, err
+	}
+	order := promoteToFront(parseBootOrder(efibootmgrVerboseOut), num)
+	order = demoteToEnd(order, parseNetworkBootNums(efibootmgrVerboseOut))
+	if len(order) > 0 {
+		_ = r.Exec(ctx, "efibootmgr", "-o", strings.Join(order, ","))
+	}
+	return true, nil
+}
+
+// promoteToFront returns order with num moved to the front (prepended if it was
+// absent), preserving the relative order of the remaining entries.
+func promoteToFront(order []string, num string) []string {
+	if num == "" {
+		return order
+	}
+	out := make([]string, 0, len(order)+1)
+	out = append(out, num)
+	for _, n := range order {
+		if n != num {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // parseAutoDeployBootNums extracts the 4-hex bootnums of every existing
 // AutoDeploy entry from efibootmgr's listing, e.g. a line
 // "Boot0003* AutoDeploy Setup\tHD(...)" yields "0003".

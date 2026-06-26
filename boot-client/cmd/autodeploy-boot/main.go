@@ -207,6 +207,14 @@ type manifest struct {
 }
 
 func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging.Shipper) {
+	// Loop-breaker: if a deploy is already in progress and the firmware looped
+	// us back into PXE between Windows Setup's reboots, hand control back to
+	// Windows instead of re-running the menu. Runs BEFORE any server contact so
+	// a mid-install machine recovers even when the AutoDeploy server is
+	// unreachable.
+	if maybeBootIntoActiveInstall(log, f, shipper) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
@@ -542,6 +550,188 @@ func disableUSBAutosuspend(devPath string) int {
 // a missing or read-only attribute is not an error worth surfacing.
 func writeSysfs(path, val string) bool {
 	return os.WriteFile(path, []byte(val), 0o644) == nil
+}
+
+// maxBootBounces caps how many times AutoDeploy hands a looping machine back to
+// Windows before giving up and showing the menu, so a broken or non-booting
+// install can't trap the machine in a reboot loop forever. A normal Windows
+// install reboots only a handful of times, so 5 is ample headroom.
+const maxBootBounces = 5
+
+// bounceCountFile is the per-deploy bounce counter the boot client keeps on the
+// ADBOOT media partition. It is created on the first hand-off and disappears
+// with the partition when the agent reclaims it after a successful install.
+const bounceCountFile = "autodeploy-bounce.txt"
+
+// maybeBootIntoActiveInstall handles the machine PXE-booting back into AutoDeploy
+// while a deploy is still in progress -- the firmware boots the network entry
+// before the half-installed Windows, so Windows Setup's reboot lands here
+// instead of in Windows (and loops). It is detected purely from on-machine
+// STATE, never timing (Setup's file-copy phase can take 30+ minutes): the ADBOOT
+// media partition is still present (the agent removes it only after a successful
+// install) AND Windows Setup has already created a Windows Boot Manager entry.
+// On detection it warns the operator with a 10s countdown (Enter to stay in
+// AutoDeploy) and otherwise points the firmware at the Windows Boot Manager and
+// reboots so Setup continues. After maxBootBounces hand-offs without the install
+// finishing it gives up and returns to the menu. Returns true when it has taken
+// over the boot (a reboot is in flight); false to proceed with the normal menu.
+func maybeBootIntoActiveInstall(log *slog.Logger, f bootFlags, shipper *logging.Shipper) bool {
+	ctx := context.Background()
+	disk := resolveTargetDisk(f.disk, "/sys", "/dev", log)
+	if disk == "" {
+		return false // no internal disk -> nothing staged here
+	}
+	runner := &imaging.OSRunner{Log: log, DryRun: f.dryRun}
+	adboot := findADBOOTPartition(ctx, runner, disk)
+	if adboot == "" {
+		return false // no in-progress AutoDeploy media -> normal boot
+	}
+	out, err := runner.Output(ctx, "efibootmgr", "-v")
+	if err != nil || !imaging.HasWindowsBootManager(out) {
+		return false // Windows not laid down yet -> let the normal flow run
+	}
+	// A deploy is in progress AND Windows is bootable: we looped back into PXE
+	// between Setup's reboots.
+	count := readBounceCount(ctx, runner, adboot, f.work)
+	if count >= maxBootBounces {
+		log.Warn("boot.active_install.giveup",
+			slog.Int("bounces", count),
+			slog.String("note", "install not completing after repeated reboots; showing the AutoDeploy menu"))
+		return false
+	}
+	log.Info("boot.active_install.detected", slog.Int("bounces", count))
+	if stay := bootCountdown(log, brandResp{ProductName: "AutoDeploy"}, 10); stay {
+		log.Info("boot.active_install.override",
+			slog.String("note", "operator chose to stay in AutoDeploy"))
+		return false
+	}
+	writeBounceCount(ctx, runner, adboot, f.work, count+1)
+	ok, berr := imaging.BootWindowsBootManager(ctx, runner, out)
+	if berr != nil || !ok {
+		log.Warn("boot.active_install.bounce_failed", slog.Any("error", berr))
+		return false
+	}
+	log.Info("boot.active_install.bounce",
+		slog.Int("attempt", count+1),
+		slog.String("note", "handing control back to Windows Boot Manager"))
+	// Flush logs before the reboot takes the network down.
+	shipLogs(log, shipper, f.server, f.insecureTLS)
+	if f.dryRun {
+		return true
+	}
+	if err := runner.Exec(ctx, "reboot", "-f"); err != nil {
+		log.Error("boot.active_install.reboot", slog.String("error", err.Error()))
+		return false
+	}
+	return true
+}
+
+// findADBOOTPartition returns the device node of the ADBOOT media partition on
+// disk (created by PreparePartition with the GPT name ADBOOT), or "" if there is
+// none. It reads the GPT partition NAME via sgdisk -- robust across the
+// renumbering Windows Setup does when it adds its own partitions -- so no mount
+// is needed just to detect it.
+func findADBOOTPartition(ctx context.Context, runner *imaging.OSRunner, disk string) string {
+	out, err := runner.Output(ctx, "sgdisk", "-p", disk)
+	if err != nil {
+		return ""
+	}
+	n := parseADBOOTPartNum(out)
+	if n == 0 {
+		return ""
+	}
+	return partitionDevice(disk, n)
+}
+
+// parseADBOOTPartNum returns the partition number whose GPT name is ADBOOT in
+// `sgdisk -p` output, or 0 if absent. Table rows are
+// "Number Start End Size Code Name"; the name is the final field.
+func parseADBOOTPartNum(sgdiskOutput string) int {
+	for _, line := range strings.Split(sgdiskOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 6 && fields[len(fields)-1] == "ADBOOT" {
+			if n, err := strconv.Atoi(fields[0]); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// partitionDevice builds the partition device node for partition n on disk:
+// /dev/sda -> /dev/sda{n}; /dev/nvme0n1 -> /dev/nvme0n1p{n}.
+func partitionDevice(disk string, n int) string {
+	if disk == "" {
+		return ""
+	}
+	last := disk[len(disk)-1]
+	if last >= '0' && last <= '9' {
+		return fmt.Sprintf("%sp%d", disk, n)
+	}
+	return fmt.Sprintf("%s%d", disk, n)
+}
+
+// readBounceCount returns the bounce counter stored on the ADBOOT partition (0
+// if absent/unreadable). Best-effort: a mount failure just yields 0, which only
+// forgoes the safety cap, never blocks the hand-off.
+func readBounceCount(ctx context.Context, runner *imaging.OSRunner, adbootDev, work string) int {
+	n := 0
+	withADBOOTMounted(ctx, runner, adbootDev, work, func(mnt string) {
+		if b, err := os.ReadFile(filepath.Join(mnt, bounceCountFile)); err == nil {
+			n, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+	})
+	return n
+}
+
+// writeBounceCount persists the bounce counter to the ADBOOT partition.
+func writeBounceCount(ctx context.Context, runner *imaging.OSRunner, adbootDev, work string, n int) {
+	withADBOOTMounted(ctx, runner, adbootDev, work, func(mnt string) {
+		if err := os.WriteFile(filepath.Join(mnt, bounceCountFile), []byte(strconv.Itoa(n)), 0o644); err == nil {
+			_ = runner.Exec(ctx, "sync")
+		}
+	})
+}
+
+// withADBOOTMounted mounts adbootDev at <work>/adboot-state, runs fn with the
+// mount path, then unmounts. Best-effort and silent on failure.
+func withADBOOTMounted(ctx context.Context, runner *imaging.OSRunner, adbootDev, work string, fn func(mnt string)) {
+	mnt := filepath.Join(work, "adboot-state")
+	if err := runner.Exec(ctx, "mkdir", "-p", mnt); err != nil {
+		return
+	}
+	if err := runner.Exec(ctx, "mount", adbootDev, mnt); err != nil {
+		return
+	}
+	defer func() { _ = runner.Exec(ctx, "umount", mnt) }()
+	fn(mnt)
+}
+
+// consoleBootCountdown is the text-console form of the boot-into-Setup warning
+// for machines with no framebuffer (serial console, odd firmware). It prints a
+// one-second countdown and returns true if the operator presses Enter (any
+// input) to stay in AutoDeploy, false when the timer elapses.
+func consoleBootCountdown(seconds int) bool {
+	fmt.Printf("\nAutoDeploy: an install is in progress on this machine.\n")
+	fmt.Println("Press Enter to stay in AutoDeploy; otherwise it boots Windows Setup.")
+	key := make(chan struct{}, 1)
+	go func() {
+		var b [1]byte
+		if _, err := os.Stdin.Read(b[:]); err == nil {
+			key <- struct{}{}
+		}
+	}()
+	for s := seconds; s > 0; s-- {
+		fmt.Printf("\r  Booting Windows Setup in %2ds… ", s)
+		select {
+		case <-key:
+			fmt.Println("\n  Staying in AutoDeploy.")
+			return true
+		case <-time.After(time.Second):
+		}
+	}
+	fmt.Printf("\r  Booting Windows Setup now.        \n")
+	return false
 }
 
 func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64, shipper *logging.Shipper) {

@@ -180,6 +180,68 @@ Boot0007* AutoDeploy Setup	HD(...)/File(\EFI\BOOT\BOOTX64.EFI)
 	}
 }
 
+// TestBootWindowsBootManager locks in the mid-install loop-breaker: pointing the
+// firmware at the installed Windows boot manager sets BootNext to it AND moves
+// it to the front of BootOrder with the network entry demoted to the end.
+func TestBootWindowsBootManager(t *testing.T) {
+	out := `BootCurrent: 0002
+BootOrder: 0002,0007,0000
+Boot0000* Windows Boot Manager	HD(1,GPT,abc)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0002* UEFI: PXE IPv4 Realtek	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(001122334455,0)/IPv4(0.0.0.0)
+Boot0007* AutoDeploy Setup	HD(1,GPT,def)/File(\EFI\BOOT\BOOTX64.EFI)
+`
+	if !HasWindowsBootManager(out) {
+		t.Fatal("HasWindowsBootManager = false, want true")
+	}
+	rec := &Recorder{}
+	ok, err := BootWindowsBootManager(context.Background(), rec, out)
+	if err != nil || !ok {
+		t.Fatalf("BootWindowsBootManager ok=%v err=%v", ok, err)
+	}
+	// BootNext -> Windows Boot Manager (0000); BootOrder = WinBootMgr first,
+	// network (0002) last.
+	if !rec.Has("efibootmgr --bootnext 0000") {
+		t.Errorf("BootNext not set to Windows Boot Manager\n%s", rec.Dump())
+	}
+	if !rec.Has("efibootmgr -o 0000,0007,0002") {
+		t.Errorf("BootOrder not reordered (want 0000,0007,0002)\n%s", rec.Dump())
+	}
+}
+
+// TestBootWindowsBootManagerAbsent: no Windows Boot Manager entry -> no-op.
+func TestBootWindowsBootManagerAbsent(t *testing.T) {
+	out := "BootOrder: 0001\nBoot0001* UEFI PXE\tMAC(001122334455,0)\n"
+	if HasWindowsBootManager(out) {
+		t.Fatal("HasWindowsBootManager = true on a listing without one")
+	}
+	rec := &Recorder{}
+	ok, err := BootWindowsBootManager(context.Background(), rec, out)
+	if err != nil || ok {
+		t.Fatalf("BootWindowsBootManager on absent entry: ok=%v err=%v", ok, err)
+	}
+	if len(rec.Calls) != 0 {
+		t.Errorf("expected no efibootmgr calls, got\n%s", rec.Dump())
+	}
+}
+
+func TestPromoteToFront(t *testing.T) {
+	// Present -> moved to front, order otherwise preserved.
+	got := promoteToFront([]string{"0002", "0007", "0000"}, "0000")
+	if strings.Join(got, ",") != "0000,0002,0007" {
+		t.Errorf("promoteToFront(present) = %v", got)
+	}
+	// Absent -> prepended.
+	got = promoteToFront([]string{"0002", "0007"}, "0000")
+	if strings.Join(got, ",") != "0000,0002,0007" {
+		t.Errorf("promoteToFront(absent) = %v", got)
+	}
+	// Empty num -> unchanged.
+	got = promoteToFront([]string{"0002"}, "")
+	if strings.Join(got, ",") != "0002" {
+		t.Errorf("promoteToFront(empty) = %v", got)
+	}
+}
+
 func TestParseNetworkBootNums(t *testing.T) {
 	out := `BootOrder: 0000,0001,0002,0003,0004,0005
 Boot0000* Windows Boot Manager	HD(1,GPT,abc)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
