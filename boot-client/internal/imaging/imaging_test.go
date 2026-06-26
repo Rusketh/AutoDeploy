@@ -105,17 +105,25 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 }
 
 func TestRegisterBootEntryPrunesStaleAutoDeployEntries(t *testing.T) {
-	// Two prior AutoDeploy entries plus the firmware's own should be
-	// pruned down to nothing before the fresh one is created -- otherwise
-	// the boot list grows a BOOTX64.EFI entry every deploy.
-	rec := &Recorder{OutputResult: `BootCurrent: 0001
-Timeout: 0 seconds
+	// Two prior AutoDeploy entries should be pruned before the fresh one is
+	// created -- otherwise the boot list grows a BOOTX64.EFI entry every deploy.
+	// The first snapshot (pre-create) drives pruning; the second (post-create,
+	// verbose) drives BootNext/BootOrder.
+	rec := &Recorder{OutputResults: []string{
+		`BootCurrent: 0001
 BootOrder: 0003,0004,0000,0001
 Boot0000* Windows Boot Manager	HD(1,GPT,...)
 Boot0001* UEFI Network	BBS(Network,...)
 Boot0003* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
 Boot0004* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
-`}
+`,
+		`BootCurrent: 0001
+BootOrder: 0005,0000,0001
+Boot0000* Windows Boot Manager	HD(1,GPT,...)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0001* UEFI Network	PciRoot(0x0)/Pci(0x1f,0x6)/MAC(001122334455,0)/IPv4(0.0.0.0)
+Boot0005* AutoDeploy Setup	HD(1,GPT,...)/File(\EFI\BOOT\BOOTX64.EFI)
+`,
+	}}
 	plan := MediaPlan{TargetDisk: "/dev/sda"}
 	if err := RegisterBootEntry(context.Background(), plan, rec); err != nil {
 		t.Fatal(err)
@@ -124,6 +132,8 @@ Boot0004* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
 		"efibootmgr -b 0003 -B",
 		"efibootmgr -b 0004 -B",
 		`efibootmgr --create --disk /dev/sda --part 1 --loader \EFI\BOOT\BOOTX64.EFI --label AutoDeploy Setup`,
+		// One-shot boot into the freshly created entry.
+		"efibootmgr --bootnext 0005",
 	} {
 		if !rec.Has(want) {
 			t.Errorf("missing %q\n%s", want, rec.Dump())
@@ -134,6 +144,93 @@ Boot0004* AutoDeploy Setup	HD(1,GPT,...)\EFI\BOOT\BOOTX64.EFI
 		if rec.Has(gone) {
 			t.Errorf("pruned an unrelated boot entry: %q\n%s", gone, rec.Dump())
 		}
+	}
+}
+
+// TestRegisterBootEntryDemotesNetworkBoot locks in the fix for the iPXE reboot
+// loop: after staging, the network/PXE entry -- the firmware's primary, since
+// the machine PXE-booted to get here -- must be pushed to the END of BootOrder
+// so the next Windows Setup reboot boots the disk, not the network.
+func TestRegisterBootEntryDemotesNetworkBoot(t *testing.T) {
+	rec := &Recorder{OutputResults: []string{
+		// Pre-create: network (0002) is the primary boot option.
+		`BootCurrent: 0002
+BootOrder: 0002,0000
+Boot0000* Windows Boot Manager	HD(...)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0002* UEFI: IPv4 Realtek PCIe GbE	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(0011223344,0)/IPv4(0.0.0.0)
+`,
+		// Post-create: efibootmgr prepended the new entry (0007).
+		`BootCurrent: 0002
+BootOrder: 0007,0002,0000
+Boot0000* Windows Boot Manager	HD(...)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0002* UEFI: IPv4 Realtek PCIe GbE	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(0011223344,0)/IPv4(0.0.0.0)
+Boot0007* AutoDeploy Setup	HD(...)/File(\EFI\BOOT\BOOTX64.EFI)
+`,
+	}}
+	if err := RegisterBootEntry(context.Background(), MediaPlan{TargetDisk: "/dev/sda"}, rec); err != nil {
+		t.Fatal(err)
+	}
+	// Network 0002 moved to the end; the staged entry and Windows Boot Manager
+	// stay ahead of it.
+	if !rec.Has("efibootmgr -o 0007,0000,0002") {
+		t.Errorf("network boot entry not demoted to the end of BootOrder\n%s", rec.Dump())
+	}
+	if !rec.Has("efibootmgr --bootnext 0007") {
+		t.Errorf("BootNext not pointed at the staged media entry\n%s", rec.Dump())
+	}
+}
+
+func TestParseNetworkBootNums(t *testing.T) {
+	out := `BootOrder: 0000,0001,0002,0003,0004,0005
+Boot0000* Windows Boot Manager	HD(1,GPT,abc)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0001* AutoDeploy Setup	HD(1,GPT,def)/File(\EFI\BOOT\BOOTX64.EFI)
+Boot0002* UEFI: PXE IPv4 Intel	PciRoot(0x0)/Pci(0x1f,0x6)/MAC(aabbccddeeff,0)/IPv4(0.0.0.0)
+Boot0003* UEFI: PXE IPv6 Intel	PciRoot(0x0)/Pci(0x1f,0x6)/MAC(aabbccddeeff,0)/IPv6(::)
+Boot0004* Onboard NIC	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(112233445566,0)
+Boot0005* UEFI HTTPs Boot	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(112233445566,0)/IPv4(1.2.3.4)/Uri(https://x/y)
+`
+	got := parseNetworkBootNums(out)
+	want := []string{"0002", "0003", "0004", "0005"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("parseNetworkBootNums = %v, want %v", got, want)
+	}
+	// Windows Boot Manager and AutoDeploy Setup must never be flagged network.
+	for _, n := range got {
+		if n == "0000" || n == "0001" {
+			t.Errorf("misclassified disk entry %s as network\n%v", n, got)
+		}
+	}
+}
+
+func TestParseBootOrderAndDemote(t *testing.T) {
+	out := "Timeout: 1\nBootOrder: 0002,0000,0001\nBoot0000* x\n"
+	if got := parseBootOrder(out); strings.Join(got, ",") != "0002,0000,0001" {
+		t.Errorf("parseBootOrder = %v", got)
+	}
+	if got := parseBootOrder("no order here"); got != nil {
+		t.Errorf("parseBootOrder(none) = %v, want nil", got)
+	}
+	// Demote moves matching nums to the end, preserving order; absent nums are
+	// ignored; both groups keep their relative order.
+	got := demoteToEnd([]string{"0007", "0002", "0000", "0003"}, []string{"0002", "0003", "9999"})
+	if strings.Join(got, ",") != "0007,0000,0002,0003" {
+		t.Errorf("demoteToEnd = %v, want [0007 0000 0002 0003]", got)
+	}
+	if demoteToEnd(nil, []string{"0001"}) != nil {
+		t.Error("demoteToEnd(nil, …) should be nil")
+	}
+}
+
+func TestParseBootNumByLabel(t *testing.T) {
+	out := `BootOrder: 0000,0005
+Boot0000* Windows Boot Manager	HD(...)
+Boot0005* AutoDeploy Setup	HD(...)/File(\EFI\BOOT\BOOTX64.EFI)
+`
+	if got := parseBootNumByLabel(out, bootEntryLabel); got != "0005" {
+		t.Errorf("parseBootNumByLabel = %q, want 0005", got)
+	}
+	if got := parseBootNumByLabel(out, "Nonexistent"); got != "" {
+		t.Errorf("parseBootNumByLabel(absent) = %q, want \"\"", got)
 	}
 }
 
