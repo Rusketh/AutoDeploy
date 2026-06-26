@@ -350,16 +350,27 @@ func FinalizeMedia(ctx context.Context, plan MediaPlan, r Runner, mountPath stri
 // prunes. Kept as one constant so create and cleanup never drift.
 const bootEntryLabel = "AutoDeploy Setup"
 
-// RegisterBootEntry adds a UEFI boot entry pointing at the staged
-// partition's bootloader and makes it first in BootOrder. It is
+// RegisterBootEntry adds a UEFI boot entry pointing at the staged partition's
+// bootloader, points BootNext at it for a one-shot boot into the staged media,
+// and demotes the firmware's network/PXE entries to the end of BootOrder so the
+// machine boots the LOCAL DISK on every reboot after this one. It is
 // best-effort: the media also carries the firmware fallback path
-// \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that can
-// still boot the staged media even if this fails. The caller logs a
-// warning and reboots anyway rather than stranding a fully-staged disk.
+// \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that can still
+// boot the staged media even if this fails. The caller logs a warning and
+// reboots anyway rather than stranding a fully-staged disk.
 //
-// It first prunes any AutoDeploy entries left by previous deploys --
-// without this the firmware boot list accumulates a BOOTX64.EFI entry on
-// every run.
+// Demoting the network entry is the fix for "after the first Windows Setup
+// phase the machine reboots back into iPXE": the machine PXE-booted to get
+// here, so the network entry is the firmware's PRIMARY boot option, and once
+// Setup reboots to continue, the firmware loops back into iPXE instead of the
+// half-installed Windows. Pushing the network entries last lets the staged
+// media (this reboot) and then Windows Boot Manager (every reboot after Setup
+// lays it down) win. This does NOT break re-imaging: the agent triggers a
+// re-image with a ONE-TIME firmware next-boot to the network entry
+// (bcdedit {fwbootmgr} bootsequence), which works regardless of BootOrder.
+//
+// It first prunes any AutoDeploy entries left by previous deploys -- without
+// this the firmware boot list accumulates a BOOTX64.EFI entry on every run.
 func RegisterBootEntry(ctx context.Context, plan MediaPlan, r Runner) error {
 	if out, err := r.Output(ctx, "efibootmgr"); err == nil {
 		for _, num := range parseAutoDeployBootNums(out) {
@@ -368,10 +379,140 @@ func RegisterBootEntry(ctx context.Context, plan MediaPlan, r Runner) error {
 			_ = r.Exec(ctx, "efibootmgr", "-b", num, "-B")
 		}
 	}
-	return r.Exec(ctx, "efibootmgr", "--create",
+	if err := r.Exec(ctx, "efibootmgr", "--create",
 		"--disk", plan.TargetDisk, "--part", "1",
 		"--loader", `\EFI\BOOT\BOOTX64.EFI`,
-		"--label", bootEntryLabel)
+		"--label", bootEntryLabel); err != nil {
+		return err
+	}
+	// Re-read the (verbose) boot listing so the device paths are visible -- that
+	// is how a network entry is identified robustly, by a MAC()/IPv4()/IPv6()/
+	// URI() in its path rather than a vendor-specific label. From it: point
+	// BootNext at the entry we just created, and move the network entries to the
+	// end of BootOrder. Both are best-effort: the entry is already created and
+	// first in BootOrder (efibootmgr --create prepends it), so a failure here
+	// only forgoes the extra robustness.
+	out, err := r.Output(ctx, "efibootmgr", "-v")
+	if err != nil {
+		return nil
+	}
+	if num := parseBootNumByLabel(out, bootEntryLabel); num != "" {
+		_ = r.Exec(ctx, "efibootmgr", "--bootnext", num)
+	}
+	order := parseBootOrder(out)
+	if demoted := demoteToEnd(order, parseNetworkBootNums(out)); len(demoted) > 0 && !sameOrder(order, demoted) {
+		_ = r.Exec(ctx, "efibootmgr", "-o", strings.Join(demoted, ","))
+	}
+	return nil
+}
+
+// parseBootOrder returns the BootOrder bootnums in order, e.g.
+// ["0003","0000","0001"], or nil if there is no BootOrder line.
+func parseBootOrder(efibootmgrOutput string) []string {
+	for _, line := range strings.Split(efibootmgrOutput, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "BootOrder:")
+		if !ok {
+			continue
+		}
+		var nums []string
+		for _, n := range strings.Split(rest, ",") {
+			n = strings.TrimSpace(n)
+			if isHex4(n) {
+				nums = append(nums, n)
+			}
+		}
+		return nums
+	}
+	return nil
+}
+
+// parseBootNumByLabel returns the bootnum of the first Boot#### entry whose
+// description starts with label, or "".
+func parseBootNumByLabel(efibootmgrOutput, label string) string {
+	for _, line := range strings.Split(efibootmgrOutput, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Boot")
+		if !ok || len(rest) < 4 {
+			continue
+		}
+		num := rest[:4]
+		if !isHex4(num) {
+			continue
+		}
+		desc := strings.TrimSpace(strings.TrimPrefix(rest[4:], "*"))
+		if strings.HasPrefix(desc, label) {
+			return num
+		}
+	}
+	return ""
+}
+
+// networkEntrySignals are the case-insensitive markers that identify a UEFI
+// network/PXE boot entry in `efibootmgr -v` output. The device-path markers
+// (a MAC, an IP, or a URI) are the robust signals -- they catch a vendor entry
+// labelled only "Onboard NIC" -- while the description words catch entries
+// whose verbose path efibootmgr couldn't decode.
+var networkEntrySignals = []string{"mac(", "ipv4", "ipv6", "uri(", "pxe", "network", "wake on lan"}
+
+// parseNetworkBootNums returns the bootnums of network/PXE boot entries in a
+// verbose efibootmgr listing -- the entries to push to the end of BootOrder so
+// a freshly imaged machine boots its disk instead of looping back into PXE.
+func parseNetworkBootNums(efibootmgrOutput string) []string {
+	var nums []string
+	for _, line := range strings.Split(efibootmgrOutput, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Boot")
+		if !ok || len(rest) < 4 {
+			continue
+		}
+		num := rest[:4]
+		if !isHex4(num) {
+			continue // skip BootOrder:/BootCurrent:/BootNext: and the like
+		}
+		lower := strings.ToLower(rest[4:])
+		for _, sig := range networkEntrySignals {
+			if strings.Contains(lower, sig) {
+				nums = append(nums, num)
+				break
+			}
+		}
+	}
+	return nums
+}
+
+// demoteToEnd returns order with every bootnum in demote moved to the end,
+// preserving the relative order of both the kept and the demoted groups. A
+// demote entry not present in order is ignored. Returns nil if order is empty.
+func demoteToEnd(order, demote []string) []string {
+	if len(order) == 0 {
+		return nil
+	}
+	isDemoted := make(map[string]bool, len(demote))
+	for _, d := range demote {
+		isDemoted[d] = true
+	}
+	kept := make([]string, 0, len(order))
+	tail := make([]string, 0, len(demote))
+	for _, n := range order {
+		if isDemoted[n] {
+			tail = append(tail, n)
+		} else {
+			kept = append(kept, n)
+		}
+	}
+	return append(kept, tail...)
+}
+
+// sameOrder reports whether two bootnum slices are identical in length and
+// order -- used to skip a needless `efibootmgr -o` write when nothing moved.
+func sameOrder(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // parseAutoDeployBootNums extracts the 4-hex bootnums of every existing

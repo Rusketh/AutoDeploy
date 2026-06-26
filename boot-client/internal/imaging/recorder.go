@@ -14,6 +14,12 @@ type Recorder struct {
 	// OutputResult is what Output returns (defaults to ""). Tests set it to
 	// simulate command stdout, e.g. an efibootmgr entry listing.
 	OutputResult string
+	// OutputResults, when non-empty, is consumed one entry per Output call (in
+	// order) and takes precedence over OutputResult. It lets a test simulate
+	// commands whose output changes across calls -- e.g. an efibootmgr listing
+	// before vs after a new boot entry is created. Once exhausted, Output falls
+	// back to OutputResult.
+	OutputResults []string
 }
 
 // Exec implements Runner.
@@ -22,9 +28,15 @@ func (r *Recorder) Exec(_ context.Context, name string, args ...string) error {
 	return nil
 }
 
-// Output implements Runner: records the call and returns OutputResult.
+// Output implements Runner: records the call and returns the next queued
+// OutputResults entry (if any), else OutputResult.
 func (r *Recorder) Output(_ context.Context, name string, args ...string) (string, error) {
 	r.Calls = append(r.Calls, name+" "+strings.Join(args, " "))
+	if len(r.OutputResults) > 0 {
+		out := r.OutputResults[0]
+		r.OutputResults = r.OutputResults[1:]
+		return out, nil
+	}
 	return r.OutputResult, nil
 }
 

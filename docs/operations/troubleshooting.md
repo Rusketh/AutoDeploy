@@ -127,6 +127,39 @@ correctly. The change only ever makes the boot partition larger (trimming free
 space at the front of the disk, where Windows installs with tens of GiB to
 spare), so it can't compromise an otherwise-working deploy.
 
+## After the first Windows Setup reboot the machine boots back into iPXE
+
+A deploy stages fine and Windows Setup starts, but when Setup reboots to
+continue (after the down-level/file-copy phase) the machine **network-boots
+back into AutoDeploy** instead of continuing into Windows — and loops.
+
+The cause is the UEFI **boot order**. The machine PXE-booted to reach the boot
+client, so the firmware's **network entry is its primary boot option**. Once
+Setup reboots, the firmware honours that primary entry again and lands back in
+iPXE before the half-installed Windows can take over.
+
+When it stages the media, the boot client now:
+
+- **points `BootNext` at the staged-media entry** for a reliable one-shot boot
+  into Windows Setup, and
+- **demotes the network/PXE entries to the end of `BootOrder`**, so every reboot
+  after this one boots the local disk (the staged media, then Windows Boot
+  Manager once Setup writes it).
+
+This does **not** disable PXE or break re-imaging: a re-image is triggered by the
+agent with a **one-time** firmware next-boot to the network entry
+(`bcdedit {fwbootmgr} bootsequence`), which works regardless of the persistent
+boot order. The console log shows the reorder:
+
+```
+imaging.exec  efibootmgr --bootnext 0007
+imaging.exec  efibootmgr -o 0007,0000,0002
+```
+
+If a machine still loops, its firmware may ignore programmatic boot-order
+changes (some do); set the internal disk ahead of network boot in the BIOS, or
+rely on the `\EFI\BOOT\BOOTX64.EFI` fallback the media also carries.
+
 ## A deploy fails at partitioning (`zap … exit status 2`, wrong disk)
 
 A deploy that reaches the disk step and then fails with something like
