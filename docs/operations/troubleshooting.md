@@ -101,6 +101,32 @@ build from before the fix, correct an affected package by re-uploading its zip
 (or clicking **Extract** again) on its **Drivers** page — that re-records the
 served size.
 
+## A deploy fails staging drivers with "No space left on device"
+
+If a deploy reaches the finalise step and fails while unzipping a driver
+package —
+
+```
+imaging.exec.stderr  unzip: write: No space left on device
+imaging.exec.stderr  unzip: inflate error
+deploy.stage.fail    stage drivers: …
+```
+
+— the FAT32 boot partition ran out of room. The partition is created **before**
+the media and drivers are written onto it, so its size has to anticipate the
+whole staged tree. An earlier build sized it from the **install media alone**;
+on a driver-heavy image the driver packages — which are downloaded as zips and
+**extracted onto the same partition**, with boot-critical storage/NIC subtrees
+copied a *second* time into `$WinPEDriver$` — could overflow what was left.
+
+The boot client now sizes the partition for the media **plus** the extracted
+driver footprint (read exactly from each zip's directory, no extraction needed)
+**plus** a fixed reserve for the agent, answer file and scripts, all under the
+usual +25% margin. No action is needed — newly built deploys size themselves
+correctly. The change only ever makes the boot partition larger (trimming free
+space at the front of the disk, where Windows installs with tens of GiB to
+spare), so it can't compromise an otherwise-working deploy.
+
 ## A deploy fails at partitioning (`zap … exit status 2`, wrong disk)
 
 A deploy that reaches the disk step and then fails with something like
