@@ -119,6 +119,20 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 	return true
 }
 
+// bootCountdown shows the "an install is in progress -- booting into Windows
+// Setup" warning with an operator override: graphically if a framebuffer is
+// available, on the text console otherwise. It returns true if the operator
+// chose to STAY in AutoDeploy (cancel the hand-off), false if the timer elapsed.
+func bootCountdown(log *slog.Logger, brand brandResp, seconds int) bool {
+	g := startGUI(log, brand)
+	if g == nil {
+		return consoleBootCountdown(seconds)
+	}
+	defer g.close()
+	return g.countdown(brandTitle(brand),
+		"An install is in progress on this machine.", seconds)
+}
+
 // guiAccessPIN runs the access-PIN gate graphically. It mirrors the console
 // runAccessPIN contract: an initial empty attempt lets the server say "no
 // PIN required"; otherwise up to three masked attempts. Returns true when

@@ -16,3 +16,8 @@ import (
 func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc.Client, id smbios.Identity, resp menuResponse, brand brandResp, shipper *logging.Shipper) bool {
 	return false
 }
+
+// bootCountdown has no GUI off Linux; use the text-console countdown.
+func bootCountdown(log *slog.Logger, brand brandResp, seconds int) bool {
+	return consoleBootCountdown(seconds)
+}

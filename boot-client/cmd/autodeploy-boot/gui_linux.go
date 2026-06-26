@@ -106,6 +106,38 @@ func (g *guiSession) pin(title, message string) (string, bool) {
 	return "", false
 }
 
+// countdown shows the "booting into Windows Setup" warning with a live seconds
+// counter and an override key. It returns true if the operator pressed Enter/Esc
+// (stay in AutoDeploy) and false if the timer elapsed (proceed to boot Windows).
+// The screen has no internal clock, so this loop owns the ticker and deadline.
+func (g *guiSession) countdown(title, message string, seconds int) bool {
+	scr := ui.NewCountdownScreen(title, message, seconds)
+	scr.Version = Version
+	g.app.Render(scr)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	deadline := time.After(time.Duration(seconds) * time.Second)
+	events := g.reader.Events()
+	remaining := seconds
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return false // input closed -> proceed (boot Windows)
+			}
+			if scr.Handle(ev) == ui.ActionDone {
+				return true // operator override
+			}
+		case <-tick.C:
+			remaining--
+			scr.SetRemaining(remaining)
+			g.app.Render(scr)
+		case <-deadline:
+			return false
+		}
+	}
+}
+
 // progress returns a ProgressScreen plus a stop func. It paints the screen
 // on a ticker in the background so deploy code can call Set(...) freely.
 func (g *guiSession) progress(ctx context.Context, title string) (*ui.ProgressScreen, func()) {

@@ -149,16 +149,42 @@ When it stages the media, the boot client now:
 This does **not** disable PXE or break re-imaging: a re-image is triggered by the
 agent with a **one-time** firmware next-boot to the network entry
 (`bcdedit {fwbootmgr} bootsequence`), which works regardless of the persistent
-boot order. The console log shows the reorder:
+boot order.
+
+**Some firmware rewrites the boot order anyway.** A few firmwares (and some
+Windows installers other than the stock Windows 11 ISO) rebuild `BootOrder` on
+each Setup reboot, putting the network entry back at #1 and `Windows Boot
+Manager` *last* — so the staging-time reorder above can't hold across Setup's
+multi-reboot install. For that case the boot client also has a **loop-breaker**
+that needs no help from the firmware:
+
+- On **every** PXE boot, before showing the menu, it checks two on-machine facts
+  — the **`ADBOOT` media partition still exists** (so a deploy is in progress;
+  the agent deletes it only after a successful install) and a **`Windows Boot
+  Manager` entry exists** (so Setup has already laid down a bootable Windows).
+- When both are true, the machine clearly looped back into AutoDeploy mid-install.
+  It shows a **10-second countdown** ("Booting Windows Setup… press Enter to stay
+  in AutoDeploy") and then points `BootNext` at `Windows Boot Manager` and
+  reboots, handing control straight back to Setup.
+- This is **state-based, not timed**, so it works no matter how long the file-copy
+  phase takes (30+ minutes on old disks). It self-clears: once the agent finishes
+  and removes `ADBOOT`, the normal menu returns.
+- A **bounce counter** on `ADBOOT` caps it at **5** hand-offs, so a broken or
+  non-booting install can't loop forever — past that it gives up and shows the menu.
+
+The console log shows both the staging reorder and any later hand-off:
 
 ```
-imaging.exec  efibootmgr --bootnext 0007
-imaging.exec  efibootmgr -o 0007,0000,0002
+imaging.exec  efibootmgr --bootnext 0007          # staging: BootNext = staged media
+imaging.exec  efibootmgr -o 0007,0000,0002        # staging: network demoted
+boot.active_install.detected  bounces=0
+boot.active_install.bounce    attempt=1           # looped back; handing to Windows
+imaging.exec  efibootmgr --bootnext 0000          # BootNext = Windows Boot Manager
 ```
 
-If a machine still loops, its firmware may ignore programmatic boot-order
-changes (some do); set the internal disk ahead of network boot in the BIOS, or
-rely on the `\EFI\BOOT\BOOTX64.EFI` fallback the media also carries.
+If a machine still loops past 5 attempts, set the internal disk ahead of network
+boot in the BIOS, or rely on the `\EFI\BOOT\BOOTX64.EFI` fallback the media also
+carries.
 
 ## A deploy fails at partitioning (`zap … exit status 2`, wrong disk)
 
