@@ -25,6 +25,7 @@
 package imaging
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
 	"log/slog"
@@ -165,16 +166,102 @@ const (
 	// bootPartMarginNum/Den add headroom over MediaBytes (here +25%).
 	bootPartMarginNum = 5
 	bootPartMarginDen = 4
+	// bootPartStagedExtrasBytes reserves room for the smaller files staged onto
+	// the partition that PreparePartition cannot size precisely up front: the
+	// agent binary, the setup-lock credential-provider DLL, autounattend.xml,
+	// SetupComplete.cmd and adcb.ps1 -- plus slack for FAT32 directory and
+	// cluster overhead from the many small files in a driver package. Folded
+	// into the total before the margin, so it gets the safety multiplier too.
+	// 512 MiB comfortably covers a ~30 MiB agent and a few MiB of scripts/DLL
+	// with room to spare; oversizing here only trims free space at the front of
+	// the disk (where Windows installs, with tens of GiB to spare), whereas
+	// undersizing fails the deploy -- so the trade is deliberately one-sided.
+	bootPartStagedExtrasBytes int64 = 512 * 1024 * 1024
 )
 
-// bootPartitionMiB sizes the FAT32 boot partition from the media size
-// plus margin, never below the floor.
-func bootPartitionMiB(mediaBytes int64) int64 {
-	miB := (mediaBytes / (1024 * 1024)) * bootPartMarginNum / bootPartMarginDen
+// bootPartitionMiB sizes the FAT32 boot partition from the total staged
+// bytes (media tree + driver footprint) plus margin, never below the floor.
+func bootPartitionMiB(totalBytes int64) int64 {
+	miB := (totalBytes / (1024 * 1024)) * bootPartMarginNum / bootPartMarginDen
 	if miB < bootPartMinMiB {
 		return bootPartMinMiB
 	}
 	return miB
+}
+
+// driverStagedBytes estimates the on-partition footprint of the driver
+// packages once staged, which the FAT32 boot partition must hold IN ADDITION
+// to the media tree. Each package is extracted IN FULL into the OS $OEM$ tree,
+// and its boot-critical subtrees are ADDITIONALLY copied into $WinPEDriver$, so
+// those count twice. The per-package size is read from the zip's central
+// directory (the sum of uncompressed sizes) WITHOUT extracting -- exact for the
+// OS-bucket copy, and cheap. A non-zip (legacy opaque) blob is counted at its
+// on-disk size, the bytes `cp` will write. An unreadable blob contributes 0.
+//
+// This is the fix for `unzip: write: No space left on device`: sizing the
+// partition from the media alone undersizes it on a driver-heavy image, and the
+// driver unzip then runs out of room mid-deploy.
+func driverStagedBytes(drivers []MediaDriver) int64 {
+	var total int64
+	for _, d := range drivers {
+		total += oneDriverStagedBytes(d)
+	}
+	return total
+}
+
+// oneDriverStagedBytes returns the staged footprint of a single driver package:
+// its full extracted size plus the extracted size of the boot-critical subtrees
+// that are duplicated into $WinPEDriver$. See driverStagedBytes.
+func oneDriverStagedBytes(d MediaDriver) int64 {
+	zr, err := zip.OpenReader(d.BlobPath)
+	if err != nil {
+		// Not a readable zip (legacy opaque blob, or missing in a test):
+		// fall back to the on-disk file size, which is what `cp` writes.
+		if fi, statErr := os.Stat(d.BlobPath); statErr == nil {
+			return fi.Size()
+		}
+		return 0
+	}
+	defer zr.Close()
+	var osBucket int64
+	for _, f := range zr.File {
+		osBucket += int64(f.UncompressedSize64)
+	}
+	return osBucket + winpeDuplicateBytes(zr.File, d.WinPEDirs)
+}
+
+// winpeDuplicateBytes sums the uncompressed size of the files inside a driver
+// zip that fall under one of winpeDirs -- the subtrees stageDrivers copies a
+// SECOND time into $WinPEDriver$. winpeDirs of ["."] (or "") means the whole
+// package is boot-critical, so every file counts again.
+func winpeDuplicateBytes(files []*zip.File, winpeDirs []string) int64 {
+	if len(winpeDirs) == 0 {
+		return 0
+	}
+	var prefixes []string
+	for _, sub := range winpeDirs {
+		rel := strings.Trim(strings.ReplaceAll(sub, `\`, "/"), "/")
+		if rel == "" || rel == "." {
+			// Whole package is boot-critical -> it is duplicated in full.
+			var total int64
+			for _, f := range files {
+				total += int64(f.UncompressedSize64)
+			}
+			return total
+		}
+		prefixes = append(prefixes, rel+"/")
+	}
+	var total int64
+	for _, f := range files {
+		name := strings.Trim(strings.ReplaceAll(f.Name, `\`, "/"), "/")
+		for _, p := range prefixes {
+			if strings.HasPrefix(name+"/", p) {
+				total += int64(f.UncompressedSize64)
+				break
+			}
+		}
+	}
+	return total
 }
 
 // PreparePartition zaps the disk, creates and formats the single FAT32
@@ -190,7 +277,13 @@ func bootPartitionMiB(mediaBytes int64) int64 {
 // boot partition, extend C:) is the agent's job.
 func PreparePartition(ctx context.Context, plan MediaPlan, r Runner) (mountPath string, err error) {
 	d := plan.TargetDisk
-	sizeMiB := bootPartitionMiB(plan.MediaBytes)
+	// Size for the media tree PLUS the driver packages that get unzipped onto
+	// this partition later (and the boot-critical subtrees that are copied a
+	// second time into $WinPEDriver$), PLUS a fixed reserve for the agent,
+	// answer file and scripts that aren't otherwise counted. Omitting the
+	// drivers undersizes the partition on a driver-heavy image, and the unzip
+	// then fails mid-deploy with "No space left on device".
+	sizeMiB := bootPartitionMiB(plan.MediaBytes + driverStagedBytes(plan.Drivers) + bootPartStagedExtrasBytes)
 
 	if err := r.Exec(ctx, "sgdisk", "--zap-all", d); err != nil {
 		return "", fmt.Errorf("zap %s: %w", d, err)

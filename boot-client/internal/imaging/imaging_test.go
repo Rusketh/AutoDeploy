@@ -61,7 +61,9 @@ func TestStageMediaIssuesExpectedSteps(t *testing.T) {
 		// start), leaving the front free for Windows Setup. Type 0700
 		// (basic data) NOT ef00 (ESP) so Windows gives it a drive letter
 		// and Setup can find sources\install.swm on it.
-		"--new=1:-7680M:0 --typecode=1:0700 --change-name=1:ADBOOT /dev/sda",
+		// 6 GiB media + 512 MiB staged-extras reserve, +25% margin = 8320 MiB
+		// (the two non-zip test "drivers" don't exist on disk, so contribute 0).
+		"--new=1:-8320M:0 --typecode=1:0700 --change-name=1:ADBOOT /dev/sda",
 		"mkfs.fat -F32 -n ADBOOT /dev/sda1",
 		// Partition is mounted BEFORE the media download (which streams
 		// straight onto it, avoiding a RAM staging copy).
@@ -147,6 +149,120 @@ func TestBootPartitionSizing(t *testing.T) {
 	// Unknown size (0) -> floor.
 	if got := bootPartitionMiB(0); got != bootPartMinMiB {
 		t.Errorf("zero media sizing = %d, want floor", got)
+	}
+}
+
+// TestDriverStagedBytesCountsExtractedPlusWinPEDuplicate verifies the partition
+// sizing accounts for the driver footprint: every package counts at its full
+// EXTRACTED (uncompressed) size, and the boot-critical subtree counts a SECOND
+// time because stageDrivers copies it into $WinPEDriver$. This is what keeps a
+// driver-heavy image from overflowing the FAT32 partition (the "No space left
+// on device" unzip failure).
+func TestDriverStagedBytesCountsExtractedPlusWinPEDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "pkg.zip")
+	storage := strings.Repeat("S", 4096)  // boot-critical -> counted twice
+	bluetooth := strings.Repeat("B", 2048) // OS-bucket only -> counted once
+	writeTestZip(t, zipPath, map[string]string{
+		"Storage/iaStorAC/iaStorAC.sys": storage,
+		"Bluetooth/ibt/oem43.sys":       bluetooth,
+	})
+	d := MediaDriver{BlobPath: zipPath, WinPEDirs: []string{"Storage/iaStorAC"}}
+	// OS bucket = both files (4096+2048); $WinPEDriver$ = the storage file again.
+	want := int64(4096+2048) + int64(4096)
+	if got := oneDriverStagedBytes(d); got != want {
+		t.Errorf("oneDriverStagedBytes = %d, want %d", got, want)
+	}
+}
+
+// TestDriverStagedBytesWholePackageWinPE checks a package the server flagged
+// whole-boot-critical (WinPEDirs ["."]) is counted twice in full.
+func TestDriverStagedBytesWholePackageWinPE(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "raid.zip")
+	body := strings.Repeat("R", 8192)
+	writeTestZip(t, zipPath, map[string]string{"raid.sys": body})
+	d := MediaDriver{BlobPath: zipPath, WinPEDirs: []string{"."}}
+	if got, want := oneDriverStagedBytes(d), int64(8192*2); got != want {
+		t.Errorf("oneDriverStagedBytes(whole) = %d, want %d", got, want)
+	}
+}
+
+// TestDriverStagedBytesNonZipAndMissing covers the fallbacks: a legacy opaque
+// (non-zip) blob counts at its on-disk size, and a missing blob contributes 0
+// rather than erroring the sizing.
+func TestDriverStagedBytesNonZipAndMissing(t *testing.T) {
+	dir := t.TempDir()
+	opaque := filepath.Join(dir, "legacy.bin")
+	if err := os.WriteFile(opaque, make([]byte, 1234), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := driverStagedBytes([]MediaDriver{
+		{BlobPath: opaque},
+		{BlobPath: filepath.Join(dir, "does-not-exist")},
+	})
+	if got != 1234 {
+		t.Errorf("driverStagedBytes(non-zip + missing) = %d, want 1234", got)
+	}
+}
+
+// writeBigTestZip writes a zip whose single entry has the given UNCOMPRESSED
+// size, streamed in small chunks so the test never allocates the whole payload
+// in memory (the repeated byte deflates to almost nothing on disk; only the
+// central-directory uncompressed size matters to driverStagedBytes).
+func writeBigTestZip(t *testing.T, path, entry string, size int64) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	w, err := zw.Create(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := make([]byte, 1<<20) // 1 MiB of zero bytes
+	for remaining := size; remaining > 0; {
+		n := int64(len(chunk))
+		if n > remaining {
+			n = remaining
+		}
+		if _, err := w.Write(chunk[:n]); err != nil {
+			t.Fatal(err)
+		}
+		remaining -= n
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPreparePartitionSizesForDrivers locks in the fix end-to-end: a large
+// driver zip in the plan must enlarge the boot partition past what the media
+// size alone would yield, so the later unzip has room.
+func TestPreparePartitionSizesForDrivers(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "big-drivers.zip")
+	writeBigTestZip(t, zipPath, "Storage/big.sys", 5*1024*1024*1024) // 5 GiB extracted
+	plan := MediaPlan{
+		TargetDisk: "/dev/sda",
+		MediaBytes: 6 * 1024 * 1024 * 1024, // 6 GiB media -> 7680 MiB on its own
+		Drivers:    []MediaDriver{{BlobPath: zipPath}},
+		WorkDir:    "/tmp/work",
+	}
+	rec := &Recorder{}
+	if _, err := PreparePartition(context.Background(), plan, rec); err != nil {
+		t.Fatal(err)
+	}
+	// 6 GiB media + 512 MiB extras alone sizes to 8320 MiB; the 5 GiB of
+	// drivers must push it well past that: (6 GiB + 5 GiB + 512 MiB) * 5/4 =
+	// 14720 MiB.
+	if rec.Has("--new=1:-8320M:0") {
+		t.Errorf("partition sized for media only, ignoring drivers\n%s", rec.Dump())
+	}
+	if !rec.Has("--new=1:-14720M:0") {
+		t.Errorf("partition not sized for media+drivers (want 14720M)\n%s", rec.Dump())
 	}
 }
 
