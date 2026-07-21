@@ -67,6 +67,21 @@
     <button type="button" class="secondary sm" onclick="addSw()"><svg><use href="#i-plus"/></svg>Add package</button>
   </fieldset>
 
+  <fieldset><legend>Event sequence (optional)</legend>
+    <label><span class="lbl">Sequence</span>
+      <select name="sequence_id" id="image_sequence_id">
+        <option value="" {{if eq .Data.SeqSel ""}}selected{{end}}>(inherit / none — default order)</option>
+        <option value="inline" {{if eq .Data.SeqSel "inline"}}selected{{end}}>Inline — build for this image below</option>
+        {{range .Data.Sequences}}<option value="{{int64 .ID}}" {{if eq $.Data.SeqSel (printf "%d" (int64 .ID))}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      <span class="hint">The nearest sequence up the image chain applies (inheritable like loadouts). It defines when domain join, software, reboots, GPO updates and scripts run. With none set (directly or inherited), the default order applies: <strong>domain join, then software</strong>.</span>
+    </label>
+    <div id="image_inline_sequence" class="inline-seq">
+      <p class="hint">Drag the <span class="drag-handle" aria-hidden="true">⠿</span> handle to reorder. This inline sequence is owned by this image; to reuse one across images, build it under <a href="/portal/sequences">Sequences</a> and select it above instead.</p>
+      {{template "step_editor" .Data.EditorData}}
+    </div>
+  </fieldset>
+
   {{$dj := .Data.DomainJoin}}
   <fieldset><legend>Active Directory domain join (via agent)</legend>
     <label class="check"><input type="checkbox" name="dj_enabled" value="1" {{if $dj.Enabled}}checked{{end}}>
@@ -118,5 +133,13 @@ function addSw(){
   d.appendChild(sel); d.appendChild(ord); d.appendChild(rm);
   document.getElementById('pkgs').appendChild(d);
 }
+// Show the inline sequence editor only when "Inline" is selected.
+(function(){
+  var sel=document.getElementById('image_sequence_id');
+  var box=document.getElementById('image_inline_sequence');
+  if(!sel||!box) return;
+  function sync(){ box.style.display = sel.value==='inline' ? '' : 'none'; }
+  sel.addEventListener('change', sync); sync();
+})();
 </script>
 {{end}}

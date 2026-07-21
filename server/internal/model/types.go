@@ -142,6 +142,11 @@ type Image struct {
 	UnattendID    *ID                 `json:"unattend_id,omitempty"`
 	LoadoutID     *ID                 `json:"loadout_id,omitempty"`
 	GroupID       *ID                 `json:"group_id,omitempty"`
+	// SequenceID links an optional event sequence (SCCM-style task sequence)
+	// that defines the order of deploy actions. Resolved nearest-wins up the
+	// parent chain like LoadoutID; nil (directly and inherited) falls back to
+	// the resolver's default sequence.
+	SequenceID    *ID                 `json:"sequence_id,omitempty"`
 	SoftwareLinks []ImageSoftwareLink `json:"software_links"`
 	CreatedAt     time.Time           `json:"created_at"`
 	UpdatedAt     time.Time           `json:"updated_at"`
@@ -177,6 +182,75 @@ type SoftwareLoadoutPackage struct {
 type ImageSoftwareLink struct {
 	PackageID  ID    `json:"package_id"`
 	OrderValue int64 `json:"order_value"`
+}
+
+// Task payload shells and filter kinds.
+const (
+	TaskShellPowerShell = "powershell"
+	TaskShellCmd        = "cmd"
+
+	TaskFilterNone = ""     // always runs
+	TaskFilterOS   = "os"   // filter_value is an OS-caption substring
+	TaskFilterWMIC = "wmic" // filter_value is a WMI query; runs if it returns a row
+	TaskFilterPS1  = "ps1"  // filter_value is a PowerShell snippet; runs if it exits 0
+)
+
+// Task is a reusable, operator-authored script/task: a payload (a powershell or
+// cmd body executed on the target) plus an optional applicability filter that
+// gates whether the step runs on a given machine. Referenced from sequence
+// steps. See migration 0032.
+type Task struct {
+	ID                ID        `json:"id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	PayloadShell      string    `json:"payload_shell"` // powershell|cmd
+	PayloadBody       string    `json:"payload_body"`
+	FilterType        string    `json:"filter_type"` // ''|os|wmic|ps1
+	FilterValue       string    `json:"filter_value"`
+	ContinueOnFailure bool      `json:"continue_on_failure"`
+	SuccessCodesJSON  string    `json:"success_codes_json"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// Sequence step kinds and built-in actions.
+const (
+	SeqStepBuiltin     = "builtin"
+	SeqStepTask        = "task"
+	SeqStepSubsequence = "subsequence"
+
+	BuiltinSoftware   = "software"   // install the resolved software set
+	BuiltinDomainJoin = "domainjoin" // agent-driven AD domain join
+	BuiltinReboot     = "reboot"     // reboot; the sequence resumes after boot
+	BuiltinGPUpdate   = "gpupdate"   // gpupdate /force
+)
+
+// Sequence is a named, orderable "task sequence" of deploy steps. A sequence
+// can contain built-in actions, script/task references, and nested sequences
+// (recursion is rejected at save time). A sequence with OwnerImageID set is an
+// image-owned inline sequence, hidden from the shared library. See migration
+// 0033.
+type Sequence struct {
+	ID          ID             `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	// OwnerImageID, when set, marks this as an image-owned inline sequence
+	// (not part of the shared library).
+	OwnerImageID *ID           `json:"owner_image_id,omitempty"`
+	Steps        []SequenceStep `json:"steps"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+// SequenceStep is one ordered member of a sequence. Exactly one of
+// BuiltinAction / TaskID / ChildSequenceID is meaningful, selected by Kind.
+type SequenceStep struct {
+	Kind              string `json:"kind"`                      // builtin|task|subsequence
+	OrderValue        int64  `json:"order_value"`
+	BuiltinAction     string `json:"builtin_action,omitempty"`  // for kind=builtin
+	TaskID            *ID    `json:"task_id,omitempty"`         // for kind=task
+	ChildSequenceID   *ID    `json:"child_sequence_id,omitempty"` // for kind=subsequence
+	ContinueOnFailure bool   `json:"continue_on_failure,omitempty"`
 }
 
 // Machine-group kinds. Both resolve to a flat machine set the same way for

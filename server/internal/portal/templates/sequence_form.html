@@ -1,0 +1,25 @@
+{{define "body"}}
+{{$s := .Data.S}}
+{{$new := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $new}}New sequence{{else}}Edit sequence: {{$s.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/sequences"><svg><use href="#i-arrow-left"/></svg>Back to sequences</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if $new}}/portal/sequences{{else}}/portal/sequences/{{int64 $s.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$s.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$s.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>Steps</legend>
+    <p class="hint">Drag the <span class="drag-handle" aria-hidden="true">⠿</span> handle to reorder. Steps run top to bottom. A sub-sequence expands inline; nesting a sequence into itself (directly or indirectly) is rejected on save.</p>
+    {{template "step_editor" .Data.EditorData}}
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/sequences">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+{{end}}

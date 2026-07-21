@@ -1,0 +1,80 @@
+{{define "body"}}
+{{$t := .Data.T}}
+{{$new := .Data.IsNew}}
+<div class="toolbar">
+  <h2>{{if $new}}New script / task{{else}}Edit script / task: {{$t.Name}}{{end}}</h2>
+  <div class="right"><a class="btn ghost sm" href="/portal/tasks"><svg><use href="#i-arrow-left"/></svg>Back to scripts</a></div>
+</div>
+
+<form class="std" method="POST" action="{{if $new}}/portal/tasks{{else}}/portal/tasks/{{int64 $t.ID}}{{end}}">
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$t.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$t.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>Payload</legend>
+    <label><span class="lbl">Shell</span>
+      <select name="payload_shell">
+        <option value="powershell" {{if eq $t.PayloadShell "powershell"}}selected{{end}}>PowerShell</option>
+        <option value="cmd" {{if eq $t.PayloadShell "cmd"}}selected{{end}}>cmd</option>
+      </select>
+      <span class="hint">The script body runs in this shell on the target (PowerShell with ExecutionPolicy Bypass, or cmd).</span>
+    </label>
+    <label><span class="lbl">Script body</span>
+      <textarea name="payload_body" rows="10" class="mono" spellcheck="false" placeholder="Write-Output 'Hello from AutoDeploy'">{{$t.PayloadBody}}</textarea>
+    </label>
+    <label><span class="lbl">Success exit codes</span>
+      <input type="text" name="success_codes" value="{{range $i, $c := .Data.SuccessCodes}}{{if $i}}, {{end}}{{$c}}{{end}}" placeholder="0, 3010">
+      <span class="hint">Comma-separated exit codes treated as success. Default <code>0</code> (e.g. add <code>3010</code> for &ldquo;reboot required&rdquo;).</span>
+    </label>
+    <label class="check"><input type="checkbox" name="continue_on_failure" value="1" {{if $t.ContinueOnFailure}}checked{{end}}>
+      <span class="lbl">Continue the sequence even if this step fails</span></label>
+  </fieldset>
+
+  <fieldset><legend>Applicability filter (optional)</legend>
+    <label><span class="lbl">Filter type</span>
+      <select name="filter_type" id="filter_type">
+        <option value=""     {{if eq $t.FilterType ""}}selected{{end}}>Always run</option>
+        <option value="os"   {{if eq $t.FilterType "os"}}selected{{end}}>OS — caption substring</option>
+        <option value="wmic" {{if eq $t.FilterType "wmic"}}selected{{end}}>WMIC — WMI query returns a row</option>
+        <option value="ps1"  {{if eq $t.FilterType "ps1"}}selected{{end}}>PS1 — PowerShell snippet exits 0</option>
+      </select>
+      <span class="hint">Gates whether this step runs on a given machine. A step whose filter does not match is <strong>skipped</strong>, not failed.</span>
+    </label>
+    <label id="filter_value_row"><span class="lbl" id="filter_value_lbl">Filter value</span>
+      <textarea name="filter_value" rows="3" class="mono" spellcheck="false" placeholder="Windows 11">{{$t.FilterValue}}</textarea>
+      <span class="hint" id="filter_value_hint"></span>
+    </label>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/tasks">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save{{end}}</button>
+  </div>
+</form>
+
+<script>
+(function(){
+  var sel = document.getElementById('filter_type');
+  var row = document.getElementById('filter_value_row');
+  var lbl = document.getElementById('filter_value_lbl');
+  var hint = document.getElementById('filter_value_hint');
+  var ta = row.querySelector('textarea');
+  var meta = {
+    '':     {label:'Filter value',   hint:'',                                                                 ph:'', hide:true},
+    'os':   {label:'OS caption',     hint:'Case-insensitive substring of the OS caption, e.g. "Windows 11".', ph:'Windows 11'},
+    'wmic': {label:'WMI query',      hint:'Runs only if this WMI query returns at least one row.',             ph:'SELECT * FROM Win32_OperatingSystem WHERE BuildNumber >= 22000'},
+    'ps1':  {label:'PowerShell test',hint:'Runs only if this PowerShell snippet exits 0.',                     ph:'if ((Get-CimInstance Win32_ComputerSystem).Model -like \'*Latitude*\'){exit 0}else{exit 1}'}
+  };
+  function sync(){
+    var m = meta[sel.value] || meta[''];
+    lbl.textContent = m.label;
+    hint.textContent = m.hint;
+    ta.placeholder = m.ph;
+    row.style.display = m.hide ? 'none' : '';
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{{end}}

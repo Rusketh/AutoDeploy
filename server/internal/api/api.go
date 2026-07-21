@@ -76,6 +76,10 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
 	Groups *model.MachineGroupRepo
+	// Tasks manages reusable scripts/tasks (payload + applicability filter).
+	Tasks *model.TaskRepo
+	// Sequences manages reusable, nestable event sequences linked to images.
+	Sequences *model.SequenceRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -143,6 +147,20 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("GET /api/v1/loadouts/{id}", requireAuth(r, handleGetLoadout(r)))
 	mux.HandleFunc("PUT /api/v1/loadouts/{id}", requireAuth(r, handleUpdateLoadout(r)))
 	mux.HandleFunc("DELETE /api/v1/loadouts/{id}", requireAuth(r, handleDeleteLoadout(r)))
+
+	// Scripts / tasks (reusable payload + applicability filter).
+	mux.HandleFunc("GET /api/v1/tasks", requireAuth(r, handleListTasks(r)))
+	mux.HandleFunc("POST /api/v1/tasks", requireAuth(r, handleCreateTask(r)))
+	mux.HandleFunc("GET /api/v1/tasks/{id}", requireAuth(r, handleGetTask(r)))
+	mux.HandleFunc("PUT /api/v1/tasks/{id}", requireAuth(r, handleUpdateTask(r)))
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}", requireAuth(r, handleDeleteTask(r)))
+
+	// Event sequences (orderable, nestable; linked to images).
+	mux.HandleFunc("GET /api/v1/sequences", requireAuth(r, handleListSequences(r)))
+	mux.HandleFunc("POST /api/v1/sequences", requireAuth(r, handleCreateSequence(r)))
+	mux.HandleFunc("GET /api/v1/sequences/{id}", requireAuth(r, handleGetSequence(r)))
+	mux.HandleFunc("PUT /api/v1/sequences/{id}", requireAuth(r, handleUpdateSequence(r)))
+	mux.HandleFunc("DELETE /api/v1/sequences/{id}", requireAuth(r, handleDeleteSequence(r)))
 
 	// Machine groups (manual + dynamic, nestable).
 	mux.HandleFunc("GET /api/v1/machine-groups", requireAuth(r, handleListGroups(r)))

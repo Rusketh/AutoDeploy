@@ -40,6 +40,7 @@ func TestAllTemplatesParse(t *testing.T) {
 		if _, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 			"templates/_layout.html", "templates/_icons.html",
 			"templates/_action_picker.html", "templates/_pagination.html",
+			"templates/_step_editor.html",
 			page); err != nil {
 			t.Errorf("parse %s: %v", base, err)
 		}

@@ -889,6 +889,29 @@ func (r *InventoryRepo) SetDeploymentProgress(ctx context.Context, id ID, phase,
 	return err
 }
 
+// DeploymentCursor returns the sequence execution cursor (the index of the next
+// resolved step the agent should run) for a deployment row. A missing row
+// returns 0 so a fresh deployment starts at the first step.
+func (r *InventoryRepo) DeploymentCursor(ctx context.Context, id ID) (int, error) {
+	var cur int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT seq_cursor FROM deployment_history WHERE id=?`, id).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return cur, err
+}
+
+// SetDeploymentCursor advances the sequence execution cursor on an OPEN
+// deployment row. Race-safe: once the agent's final ok/failed report has closed
+// the row, a late cursor advance is a no-op (the outcome guard).
+func (r *InventoryRepo) SetDeploymentCursor(ctx context.Context, id ID, cursor int) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE deployment_history SET seq_cursor=?
+		WHERE id=? AND outcome='in_progress'`, cursor, id)
+	return err
+}
+
 // Delete removes a machine and all rows that reference it (binding,
 // deployment history, detected state). Done in one transaction so
 // inventory can never be left with dangling references.

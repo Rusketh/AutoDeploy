@@ -112,6 +112,30 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 			sl, _ = r.SetupLock.Get(req.Context(), im.ID)
 		}
 		groups, _ := mustListImageGroups(r, req)
+		// Event sequence: the list of shared sequences to link, plus the image's
+		// inline (owned) sequence steps for the drag-and-drop editor, and which
+		// selection is active ("inline", a shared id, or "").
+		var sequences []model.Sequence
+		var owned model.Sequence
+		var hasOwned bool
+		if r.Sequences != nil {
+			sequences, _ = r.Sequences.List(req.Context())
+			if !isNew {
+				if o, err := r.Sequences.GetOwned(req.Context(), im.ID); err == nil {
+					owned = o
+					hasOwned = true
+				}
+			}
+		}
+		seqSel := ""
+		if im.SequenceID != nil {
+			if hasOwned && *im.SequenceID == owned.ID {
+				seqSel = "inline"
+			} else {
+				seqSel = strconv.FormatInt(int64(*im.SequenceID), 10)
+			}
+		}
+		editorData := buildStepEditorData(r, req, owned.ID, owned.Steps)
 		render(w, req, r, "image_form.html", title, map[string]any{
 			"Im": im, "IsNew": isNew,
 			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
@@ -119,6 +143,9 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 			"DomainJoin": dj,
 			"SetupLock":  sl,
 			"Groups":     groups,
+			"Sequences":  sequences,
+			"SeqSel":     seqSel,
+			"EditorData": editorData,
 		})
 	}
 }
@@ -160,6 +187,11 @@ func buildImageFromForm(req *http.Request) (model.Image, error) {
 	setIDPtr("unattend_id", &im.UnattendID)
 	setIDPtr("loadout_id", &im.LoadoutID)
 	setIDPtr("group_id", &im.GroupID)
+	// sequence_id may be a numeric shared-sequence id, "inline" (an image-owned
+	// sequence handled post-save by saveImageSequenceFromForm), or empty. Only
+	// the numeric case is set here; "inline" leaves it nil until the owned
+	// sequence exists.
+	setIDPtr("sequence_id", &im.SequenceID)
 	ids := req.Form["sw_id[]"]
 	orders := req.Form["sw_order[]"]
 	for i, raw := range ids {
@@ -204,6 +236,11 @@ func imageCreate(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 			return
 		}
+		if err := saveImageSequenceFromForm(r, req, out.ID); err != nil {
+			flash(w, "err", "Image created, but event-sequence config failed: "+err.Error())
+			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
+			return
+		}
 		flash(w, "ok", "Image created.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", out.ID), http.StatusFound)
 	}
@@ -225,11 +262,65 @@ func imageUpdate(r Repos) http.HandlerFunc {
 			flash(w, "err", "domain-join config: "+err.Error())
 		} else if err := saveSetupLockFromForm(r, req, id); err != nil {
 			flash(w, "err", "setup-lock config: "+err.Error())
+		} else if err := saveImageSequenceFromForm(r, req, id); err != nil {
+			flash(w, "err", "event-sequence config: "+err.Error())
 		} else {
 			flash(w, "ok", "Saved.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
 	}
+}
+
+// saveImageSequenceFromForm reconciles the image's event-sequence link from the
+// edit form. Three cases, driven by the sequence_id select:
+//   - "inline": upsert an image-owned sequence from the drag-and-drop step
+//     editor (step_json[]) and link the image to it.
+//   - a numeric shared-sequence id: link it and drop any inline owned sequence.
+//   - "" / "0": no sequence; drop any inline owned sequence and clear the link.
+// No-op when the Sequences repo isn't wired (the numeric link set by
+// buildImageFromForm then stands). Runs after the image row exists so an owned
+// sequence has an image to belong to.
+func saveImageSequenceFromForm(r Repos, req *http.Request, imageID model.ID) error {
+	if r.Sequences == nil {
+		return nil
+	}
+	sel := strings.TrimSpace(req.FormValue("sequence_id"))
+	if sel == "inline" {
+		steps, err := parseStepsFromForm(req)
+		if err != nil {
+			return err
+		}
+		owned, gerr := r.Sequences.GetOwned(req.Context(), imageID)
+		if gerr == nil {
+			owned.Steps = steps
+			if err := r.Sequences.Update(req.Context(), owned); err != nil {
+				return err
+			}
+			return r.Images.SetSequenceID(req.Context(), imageID, &owned.ID)
+		}
+		created, err := r.Sequences.Create(req.Context(), model.Sequence{
+			Name:         fmt.Sprintf("Inline sequence for image %d", imageID),
+			Description:  "Owned by this image; edited on the image page.",
+			OwnerImageID: &imageID,
+			Steps:        steps,
+		})
+		if err != nil {
+			return err
+		}
+		return r.Images.SetSequenceID(req.Context(), imageID, &created.ID)
+	}
+	// Not inline: drop any previously created owned sequence, then set the link
+	// to the chosen shared sequence (or clear it).
+	_ = r.Sequences.DeleteOwned(req.Context(), imageID)
+	if sel == "" || sel == "0" {
+		return r.Images.SetSequenceID(req.Context(), imageID, nil)
+	}
+	n, err := strconv.ParseInt(sel, 10, 64)
+	if err != nil {
+		return r.Images.SetSequenceID(req.Context(), imageID, nil)
+	}
+	id := model.ID(n)
+	return r.Images.SetSequenceID(req.Context(), imageID, &id)
 }
 
 // saveDomainJoinFromForm persists the agent-driven AD join config from the

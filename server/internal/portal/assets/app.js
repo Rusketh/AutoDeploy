@@ -543,7 +543,7 @@
     }
     if (e.key === 'g') { gPressed = true; setTimeout(function () { gPressed = false; }, 1000); return; }
     if (gPressed) {
-      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software', n: '/portal/notifications', b: '/portal/bulk' };
+      const map = { i: '/portal/images', m: '/portal/machines', l: '/portal/logs', s: '/portal/settings', u: '/portal/unattends', d: '/portal/drivers', o: '/portal/loadouts', w: '/portal/software', n: '/portal/notifications', b: '/portal/bulk', t: '/portal/tasks', q: '/portal/sequences' };
       const dest = map[e.key];
       if (dest) { e.preventDefault(); window.location.href = dest; }
       gPressed = false;
@@ -1013,6 +1013,173 @@
       toggle();
     });
   });
+
+  // ---- Sortable step lists (drag-and-drop) ---------------------------
+  // Opt-in via [data-sortable-list]. Each child row is a .rep carrying a
+  // .drag-handle. Rows are reordered in the DOM by dragging the handle; the
+  // form submits its inputs in DOM (tree) order, so the server derives each
+  // step's order from position — no explicit order field needed. Used by the
+  // sequence editor (its own page and the inline editor on the image form).
+  (function initSortableLists() {
+    document.querySelectorAll('[data-sortable-list]').forEach(function (list) {
+      var dragEl = null;
+
+      list.addEventListener('dragstart', function (e) {
+        var handle = e.target.closest('.drag-handle');
+        if (!handle) { e.preventDefault(); return; } // only the handle starts a drag
+        dragEl = handle.closest('.rep');
+        if (!dragEl) return;
+        dragEl.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', ''); } catch (_) {}
+      });
+
+      list.addEventListener('dragend', function () {
+        if (dragEl) { dragEl.classList.remove('dragging'); dragEl = null; }
+      });
+
+      list.addEventListener('dragover', function (e) {
+        if (!dragEl) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        var after = rowAfter(list, e.clientY);
+        if (after == null) list.appendChild(dragEl);
+        else list.insertBefore(dragEl, after);
+      });
+    });
+
+    // rowAfter returns the first non-dragging row whose vertical midpoint is
+    // below the cursor, i.e. the row the dragged element should sit before.
+    function rowAfter(list, y) {
+      var rows = Array.prototype.slice.call(list.querySelectorAll('.rep:not(.dragging)'));
+      var closest = null, closestOffset = -Infinity;
+      rows.forEach(function (row) {
+        var box = row.getBoundingClientRect();
+        var offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = row; }
+      });
+      return closest;
+    }
+  })();
+
+  // ---- Sequence step editor ------------------------------------------
+  // Opt-in via [data-step-editor="<base64 json>"]. Renders draggable step rows
+  // from the decoded payload (steps + available tasks + available sequences),
+  // and keeps a hidden step_json[] input per row in sync so the form submits
+  // the (reordered) steps. Used on the sequence page and inline on the image
+  // form. Reordering is provided by initSortableLists above.
+  (function initStepEditors() {
+    var BUILTINS = [
+      { v: 'software', t: 'Install software' },
+      { v: 'domainjoin', t: 'Join domain' },
+      { v: 'reboot', t: 'Reboot' },
+      { v: 'gpupdate', t: 'GPO update (gpupdate /force)' }
+    ];
+
+    function opt(value, text, selected) {
+      var o = document.createElement('option');
+      o.value = value; o.textContent = text;
+      if (selected) o.selected = true;
+      return o;
+    }
+
+    document.querySelectorAll('[data-step-editor]').forEach(function (root) {
+      var raw = root.getAttribute('data-step-editor') || '';
+      var data;
+      try { data = JSON.parse(atob(raw)); } catch (_) { data = {}; }
+      var tasks = data.tasks || [];
+      var sequences = data.sequences || [];
+      var selfId = data.self_id || 0;
+      var list = root.querySelector('[data-sortable-list]');
+      var addBtn = root.querySelector('[data-add-step]');
+      if (!list) return;
+
+      function buildRow(step) {
+        step = step || { kind: 'builtin', builtin_action: 'software' };
+        var row = document.createElement('div');
+        row.className = 'rep seq-step';
+
+        var handle = document.createElement('span');
+        handle.className = 'drag-handle';
+        handle.setAttribute('draggable', 'true');
+        handle.setAttribute('title', 'Drag to reorder');
+        handle.setAttribute('aria-label', 'Drag to reorder');
+        handle.textContent = '⠿';
+
+        var kind = document.createElement('select');
+        kind.className = 'step-kind';
+        kind.appendChild(opt('builtin', 'Built-in action', step.kind === 'builtin'));
+        kind.appendChild(opt('task', 'Script / task', step.kind === 'task'));
+        kind.appendChild(opt('subsequence', 'Sub-sequence', step.kind === 'subsequence'));
+
+        var cBuiltin = document.createElement('span');
+        cBuiltin.className = 'step-ctl step-ctl-builtin';
+        var bSel = document.createElement('select');
+        bSel.className = 'step-builtin';
+        BUILTINS.forEach(function (b) { bSel.appendChild(opt(b.v, b.t, step.builtin_action === b.v)); });
+        cBuiltin.appendChild(bSel);
+
+        var cTask = document.createElement('span');
+        cTask.className = 'step-ctl step-ctl-task';
+        var tSel = document.createElement('select');
+        tSel.className = 'step-task';
+        if (!tasks.length) tSel.appendChild(opt('', '(no scripts defined)', false));
+        tasks.forEach(function (t) { tSel.appendChild(opt(String(t.id), t.name, String(step.task_id) === String(t.id))); });
+        cTask.appendChild(tSel);
+
+        var cSub = document.createElement('span');
+        cSub.className = 'step-ctl step-ctl-subsequence';
+        var sSel = document.createElement('select');
+        sSel.className = 'step-subseq';
+        var avail = sequences.filter(function (s) { return String(s.id) !== String(selfId); });
+        if (!avail.length) sSel.appendChild(opt('', '(no other sequences)', false));
+        avail.forEach(function (s) { sSel.appendChild(opt(String(s.id), s.name, String(step.child_sequence_id) === String(s.id))); });
+        cSub.appendChild(sSel);
+
+        var cofLabel = document.createElement('label');
+        cofLabel.className = 'inline step-cof-label';
+        var cof = document.createElement('input');
+        cof.type = 'checkbox'; cof.className = 'step-cof';
+        if (step.continue_on_failure) cof.checked = true;
+        cofLabel.appendChild(cof);
+        cofLabel.appendChild(document.createTextNode(' continue on failure'));
+
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden'; hidden.name = 'step_json[]';
+
+        var rm = document.createElement('button');
+        rm.type = 'button'; rm.className = 'rem';
+        rm.textContent = 'Remove';
+        rm.addEventListener('click', function () { row.remove(); });
+
+        row.appendChild(handle);
+        row.appendChild(kind);
+        row.appendChild(cBuiltin);
+        row.appendChild(cTask);
+        row.appendChild(cSub);
+        row.appendChild(cofLabel);
+        row.appendChild(hidden);
+        row.appendChild(rm);
+
+        function sync() {
+          cBuiltin.style.display = kind.value === 'builtin' ? '' : 'none';
+          cTask.style.display = kind.value === 'task' ? '' : 'none';
+          cSub.style.display = kind.value === 'subsequence' ? '' : 'none';
+          var obj = { kind: kind.value, continue_on_failure: cof.checked };
+          if (kind.value === 'builtin') obj.builtin_action = bSel.value;
+          else if (kind.value === 'task') obj.task_id = parseInt(tSel.value || '0', 10) || 0;
+          else if (kind.value === 'subsequence') obj.child_sequence_id = parseInt(sSel.value || '0', 10) || 0;
+          hidden.value = JSON.stringify(obj);
+        }
+        [kind, bSel, tSel, sSel, cof].forEach(function (el) { el.addEventListener('change', sync); });
+        sync();
+        return row;
+      }
+
+      (data.steps || []).forEach(function (s) { list.appendChild(buildRow(s)); });
+      if (addBtn) addBtn.addEventListener('click', function () { list.appendChild(buildRow(null)); });
+    });
+  })();
 
   // ---- Helpers ------------------------------------------------------
   function escapeHTML(s) {

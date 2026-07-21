@@ -332,6 +332,33 @@ type selfResponse struct {
 	SetupLock bool `json:"setup_lock"`
 	// UpdateJobs are pending Windows Update deployment jobs.
 	UpdateJobs []updateJob `json:"update_jobs,omitempty"`
+	// Sequence is the resolved event sequence to execute for an open
+	// deployment, starting at SeqCursor (only the not-yet-run steps). Empty
+	// means nothing left to run. The server owns the cursor, so a mid-sequence
+	// reboot resumes here transparently.
+	Sequence  []seqStep `json:"sequence,omitempty"`
+	SeqCursor int       `json:"seq_cursor,omitempty"`
+}
+
+// seqStep mirrors the server's resolve.ResolvedStep. Exactly one of
+// BuiltinAction / Task is set, selected by Kind ("builtin" | "task").
+type seqStep struct {
+	Kind              string   `json:"kind"`
+	BuiltinAction     string   `json:"builtin_action,omitempty"`
+	Task              *seqTask `json:"task,omitempty"`
+	ContinueOnFailure bool     `json:"continue_on_failure,omitempty"`
+}
+
+// seqTask mirrors the server's resolve.ResolvedTask: a script/task payload plus
+// its applicability filter.
+type seqTask struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Shell        string `json:"shell"`
+	Body         string `json:"body"`
+	FilterType   string `json:"filter_type"`
+	FilterValue  string `json:"filter_value"`
+	SuccessCodes []int  `json:"success_codes,omitempty"`
 }
 
 // runSelfOnce polls the server for this machine's desired state (by its
@@ -376,19 +403,37 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if resp.DeploymentID != 0 {
 		reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
 	}
-	if maybeDomainJoin(ctx, log, c, f) {
-		return 0 // a join reboot is scheduled; the rest resumes after reboot
-	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
 	cleanupMediaOnce(log)
+
+	identityBody := map[string]any{"system_uuid": f.uuid}
+	// setupLockReboot is set when we close a setup-lock deployment; we reboot at
+	// the END of this cycle to restore the logon screen.
+	setupLockReboot := false
 	var packageReports []pkgReport
 	var pkgFailed bool
-	if len(resp.Software) > 0 {
-		// Drive the live progress bar through the software phase: "installing
-		// (done/total)" for each package. The server scales the bar across the
-		// install band and renders the fraction.
+
+	if resp.DeploymentID != 0 {
+		// Active deployment: execute the resolved event sequence from the
+		// server-owned cursor. A reboot step (or a domain-join reboot) returns
+		// here and the next poll resumes at the following step. A failed step
+		// with continue_on_failure marks the deployment failed but proceeds; a
+		// failed step without it pauses the sequence (the cursor is not
+		// advanced) so the next poll retries — transient failures (e.g. a
+		// domain controller not yet reachable) recover on their own.
+		sr := executeSequence(ctx, log, c, f, resp)
+		if sr.rebooting || sr.paused {
+			return 0
+		}
+		packageReports = sr.packageReports
+		pkgFailed = sr.failed
+	} else if len(resp.Software) > 0 {
+		// Resident mode (the deployment is already closed): keep installing the
+		// effective software set idempotently — detection skips already-
+		// installed packages — so newly added software converges without an
+		// operator-created job, exactly as before sequences existed.
 		onProgress := func(done, total int, name string) {
 			notes := "Installing software"
 			if name != "" {
@@ -398,15 +443,12 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		}
 		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software, onProgress)
 	}
-	identityBody := map[string]any{"system_uuid": f.uuid}
-	// setupLockReboot is set when we close a setup-lock deployment; we reboot at
-	// the END of this cycle to restore the logon screen.
-	setupLockReboot := false
+
 	// If the server told us about an open deployment (opened by the boot
-	// client), report the final outcome so the dashboard row transitions
-	// from "in_progress" to "ok" or "failed". This fires at most once per
-	// deployment: after reporting, the server's next /self response won't
-	// include the deployment_id anymore.
+	// client), report the final outcome once the whole sequence has run so the
+	// dashboard row transitions from "in_progress" to "ok" or "failed". This
+	// fires at most once per deployment: after reporting, the server's next
+	// /self response won't include the deployment_id anymore.
 	if resp.DeploymentID != 0 {
 		outcome := "ok"
 		if pkgFailed {
@@ -522,21 +564,246 @@ func scheduleSetupLockReboot(ctx context.Context, log *slog.Logger, dryRun bool,
 	log.Info("setuplock.reboot", slog.String("note", reason))
 }
 
-// domainJoined guards maybeDomainJoin so a successful join (which schedules a
+// seqResult is the outcome of executing (part of) the resolved event sequence
+// in one poll.
+type seqResult struct {
+	rebooting      bool        // a step scheduled a reboot; resume next poll
+	paused         bool        // a step failed (no continue_on_failure); retry next poll
+	failed         bool        // at least one continue_on_failure step failed
+	packageReports []pkgReport // reports from any software step, for the deploy close
+}
+
+// executeSequence runs the resolved event sequence for an open deployment,
+// starting at resp.SeqCursor. After each completed step it advances the
+// server-owned cursor via /api/v1/agent/sequence-progress, so a reboot resumes
+// at the following step. Steps run in order; a failure without
+// continue_on_failure pauses the sequence (the cursor is not advanced) so the
+// next poll retries — which is what lets transient failures (a domain
+// controller not yet reachable) recover on their own.
+func executeSequence(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, resp selfResponse) seqResult {
+	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
+	facts := hostFacts(log)
+	var res seqResult
+
+	advance := func(absIdx int, status string) {
+		postSeqProgress(ctx, log, c, f, resp.DeploymentID, absIdx, status)
+	}
+
+	for i, step := range resp.Sequence {
+		absIdx := resp.SeqCursor + i
+		log.Info("sequence.step",
+			slog.Int("index", absIdx),
+			slog.String("kind", step.Kind),
+			slog.String("builtin", step.BuiltinAction))
+
+		switch step.Kind {
+		case "builtin":
+			switch step.BuiltinAction {
+			case "software":
+				onProgress := func(done, total int, name string) {
+					notes := "Installing software"
+					if name != "" {
+						notes = "Installing " + name
+					}
+					reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "installing", done, total, notes)
+				}
+				reports, failed := installPackages(ctx, log, c, f, resp.Software, onProgress)
+				res.packageReports = append(res.packageReports, reports...)
+				if failed {
+					res.failed = true
+					if !step.ContinueOnFailure {
+						res.paused = true
+						return res
+					}
+					advance(absIdx, "failed")
+					continue
+				}
+				advance(absIdx, "ok")
+
+			case "domainjoin":
+				switch domainJoinStep(ctx, log, c, f) {
+				case djReboot:
+					advance(absIdx, "ok")
+					res.rebooting = true
+					return res
+				case djFailed:
+					if step.ContinueOnFailure {
+						res.failed = true
+						advance(absIdx, "failed")
+						continue
+					}
+					res.paused = true
+					return res
+				default: // djContinue
+					advance(absIdx, "ok")
+				}
+
+			case "reboot":
+				// Advance BEFORE rebooting so the next poll resumes past this
+				// step; the reboot has a short delay to let the POST land.
+				advance(absIdx, "ok")
+				scheduleSequenceReboot(ctx, log, f.dryRun, "AutoDeploy sequence reboot")
+				res.rebooting = true
+				return res
+
+			case "gpupdate":
+				code, err := runner.Run(ctx, "gpupdate", []string{"/force"}, "")
+				if err != nil || code != 0 {
+					log.Warn("sequence.gpupdate.fail", slog.Int("exit_code", code), slog.Any("error", err))
+					res.failed = true
+					if !step.ContinueOnFailure {
+						res.paused = true
+						return res
+					}
+					advance(absIdx, "failed")
+					continue
+				}
+				advance(absIdx, "ok")
+
+			default:
+				log.Warn("sequence.builtin.unknown", slog.String("action", step.BuiltinAction))
+				advance(absIdx, "skipped")
+			}
+
+		case "task":
+			if step.Task == nil {
+				advance(absIdx, "skipped")
+				continue
+			}
+			if !taskFilterApplies(ctx, log, runner, step.Task, facts) {
+				log.Info("sequence.task.skip",
+					slog.String("task", step.Task.Name),
+					slog.String("filter", step.Task.FilterType))
+				advance(absIdx, "skipped")
+				continue
+			}
+			if f.dryRun {
+				log.Info("sequence.task.dryrun", slog.String("task", step.Task.Name))
+				advance(absIdx, "ok")
+				continue
+			}
+			code, err := runner.RunScript(ctx, step.Task.Shell, step.Task.Body)
+			if err != nil || !isSuccessCode(code, step.Task.SuccessCodes) {
+				log.Error("sequence.task.fail",
+					slog.String("task", step.Task.Name),
+					slog.Int("exit_code", code), slog.Any("error", err))
+				res.failed = true
+				if !step.ContinueOnFailure {
+					res.paused = true
+					return res
+				}
+				advance(absIdx, "failed")
+				continue
+			}
+			log.Info("sequence.task.ok", slog.String("task", step.Task.Name), slog.Int("exit_code", code))
+			advance(absIdx, "ok")
+
+		default:
+			log.Warn("sequence.kind.unknown", slog.String("kind", step.Kind))
+			advance(absIdx, "skipped")
+		}
+	}
+	return res
+}
+
+// postSeqProgress advances the deployment's sequence cursor past a finished
+// step. Best-effort — a failed post just means the step re-runs next poll.
+func postSeqProgress(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, depID int64, absIdx int, status string) {
+	if depID == 0 {
+		return
+	}
+	var ignore struct{}
+	if err := c.PostJSON(ctx, "/api/v1/agent/sequence-progress", map[string]any{
+		"deployment_id":   depID,
+		"completed_index": absIdx,
+		"status":          status,
+	}, &ignore); err != nil {
+		log.Warn("sequence.progress", slog.String("error", err.Error()))
+	}
+}
+
+// scheduleSequenceReboot restarts the machine to continue the sequence after
+// boot. Best-effort; a no-op under --dry-run.
+func scheduleSequenceReboot(ctx context.Context, log *slog.Logger, dryRun bool, reason string) {
+	if dryRun {
+		log.Info("sequence.reboot.skip", slog.String("reason", "--dry-run"))
+		return
+	}
+	runner := &steps.OSRunner{Log: log, DryRun: dryRun}
+	if _, err := runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", reason}, ""); err != nil {
+		log.Warn("sequence.reboot", slog.String("error", err.Error()))
+		return
+	}
+	log.Info("sequence.reboot", slog.String("note", reason))
+}
+
+// isSuccessCode reports whether code is in the task's success set (default {0}).
+func isSuccessCode(code int, success []int) bool {
+	if len(success) == 0 {
+		return code == 0
+	}
+	for _, s := range success {
+		if s == code {
+			return true
+		}
+	}
+	return false
+}
+
+// taskFilterApplies evaluates a task's applicability filter on this host:
+//   - ""     always applies
+//   - "os"   OS-caption substring (case-insensitive)
+//   - "wmic" a WMI (WQL) query that must return at least one instance
+//   - "ps1"  a PowerShell snippet that must exit 0
+// A filter that errors is treated as NOT applicable (the step is skipped) so a
+// broken predicate never silently runs a step on the wrong machine.
+func taskFilterApplies(ctx context.Context, log *slog.Logger, runner steps.Runner, t *seqTask, facts steps.HostFacts) bool {
+	switch t.FilterType {
+	case "", "none":
+		return true
+	case "os":
+		return strings.Contains(strings.ToLower(facts.OSCaption), strings.ToLower(strings.TrimSpace(t.FilterValue)))
+	case "ps1":
+		code, err := runner.RunScript(ctx, "powershell", t.FilterValue)
+		return err == nil && code == 0
+	case "wmic":
+		// Evaluate the WQL query via CIM (the modern replacement for wmic.exe):
+		// exit 0 when it returns at least one instance.
+		body := "$q = @'\n" + t.FilterValue + "\n'@\n" +
+			"if (@(Get-CimInstance -Query $q -ErrorAction Stop).Count -gt 0) { exit 0 } else { exit 1 }"
+		code, err := runner.RunScript(ctx, "powershell", body)
+		return err == nil && code == 0
+	default:
+		log.Warn("sequence.task.filter.unknown", slog.String("filter", t.FilterType))
+		return true
+	}
+}
+
+// domainJoined guards domainJoinStep so a successful join (which schedules a
 // reboot) isn't re-attempted later in the same process.
 var domainJoined bool
 
-// maybeDomainJoin asks the server whether this machine's image is configured
-// for agent-driven AD join and, if so and the machine isn't already in that
-// domain, joins it and schedules a reboot. Returns true when a reboot was
-// scheduled (so the caller should stop this poll). Credentials are fetched
-// per-call and NEVER logged; failures are logged and retried on the next poll.
-func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
+// djStatus is the outcome of a domain-join sequence step.
+type djStatus int
+
+const (
+	djContinue djStatus = iota // nothing to do / already a member — advance
+	djReboot                   // join succeeded; a reboot is scheduled — resume next poll
+	djFailed                   // join attempt failed — should be retried
+)
+
+// domainJoinStep asks the server whether this machine's image is configured for
+// agent-driven AD join and, if so and the machine isn't already in that domain,
+// joins it and schedules a reboot. Credentials are fetched per-call and NEVER
+// logged. Returns djReboot when a reboot was scheduled, djFailed when the join
+// attempt failed (caller decides whether to retry), and djContinue otherwise
+// (not configured, already a member, or dry-run).
+func domainJoinStep(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) djStatus {
 	if domainJoined || f.agentID == "" {
 		log.Info("domainjoin.skip",
 			slog.Bool("already_joined", domainJoined),
 			slog.Bool("no_agent_id", f.agentID == ""))
-		return false
+		return djContinue
 	}
 	var resp struct {
 		Join     bool   `json:"join"`
@@ -548,7 +815,7 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	if err := c.PostJSON(ctx, "/api/v1/agent/domain-join",
 		map[string]any{"agent_id": f.agentID}, &resp); err != nil {
 		log.Warn("domainjoin.fetch", slog.String("error", err.Error()))
-		return false
+		return djFailed
 	}
 	log.Info("domainjoin.response",
 		slog.Bool("join", resp.Join),
@@ -556,23 +823,23 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		slog.Bool("has_user", resp.User != ""),
 		slog.Bool("has_password", resp.Password != ""))
 	if !resp.Join || resp.Domain == "" {
-		return false
+		return djContinue
 	}
 	if cur, joined := currentDomain(); joined && domainMatches(cur, resp.Domain) {
 		log.Info("domainjoin.already_member",
 			slog.String("current_domain", cur))
 		domainJoined = true // already a member of the target domain
-		return false
+		return djContinue
 	}
 	if f.dryRun {
 		log.Info("domainjoin.skip",
 			slog.String("reason", "--dry-run"), slog.String("domain", resp.Domain))
-		return false
+		return djContinue
 	}
 	if err := joinDomain(resp.Domain, resp.OU, resp.User, resp.Password); err != nil {
 		log.Error("domainjoin.fail",
 			slog.String("domain", resp.Domain), slog.String("error", err.Error()))
-		return false // retry on the next poll
+		return djFailed // retry on the next poll
 	}
 	domainJoined = true
 	// LOG ONLY THE FACT — credentials never appear in any log line.
@@ -581,7 +848,7 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		slog.String("note", "rebooting to complete join"))
 	runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 	_, _ = runner.Run(ctx, "shutdown", []string{"/r", "/t", "15", "/c", "AutoDeploy domain join"}, "")
-	return true
+	return djReboot
 }
 
 // domainMatches reports whether the machine's CURRENT domain (as read from

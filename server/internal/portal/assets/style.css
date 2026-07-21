@@ -707,6 +707,26 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
 }
 .rep button.rem:hover { background: var(--bad-soft); border-color: var(--bad); }
 
+/* ---------- Sequence step editor (drag-and-drop) ---------- */
+.step-editor .seq-steps { margin-bottom: var(--sp-2); }
+.rep.seq-step { align-items: center; }
+.rep.seq-step > * { flex: 0 0 auto; }
+.rep.seq-step .step-kind,
+.rep.seq-step .step-ctl select { flex: 1 1 auto; min-width: 8rem; }
+.rep.seq-step .step-ctl { flex: 2 1 auto; display: flex; }
+.drag-handle {
+  cursor: grab;
+  user-select: none;
+  color: var(--fg-muted);
+  padding: 0 0.35rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.drag-handle:active { cursor: grabbing; }
+.rep.seq-step .step-cof-label { flex: 0 0 auto; white-space: nowrap; font-size: var(--fs-sm); color: var(--fg-muted); }
+.rep.dragging { opacity: 0.5; border-left-color: var(--accent); }
+.step-editor-nojs { display: none; }
+
 /* ---------- Misc utility ---------- */
 .muted { color: var(--fg-muted); }
 .small { font-size: var(--fs-sm); }
