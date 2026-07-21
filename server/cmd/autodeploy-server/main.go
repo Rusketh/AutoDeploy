@@ -237,6 +237,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,
+		Tasks:         r.Tasks,
+		Sequences:     r.Sequences,
 		Emitter:       emitter,
 		Waker:         waker,
 	}
@@ -308,6 +310,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,
+		Tasks:         r.Tasks,
+		Sequences:     r.Sequences,
 		Emitter:       emitter,
 		Waker:         waker,
 		SecretsBox:    bx,
@@ -472,6 +476,8 @@ type appRepos struct {
 	Webhooks      *model.WebhookRepo
 	Groups        *model.MachineGroupRepo
 	ImageGroups   *model.ImageGroupRepo
+	Tasks         *model.TaskRepo
+	Sequences     *model.SequenceRepo
 	Emitter       *notify.Emitter
 }
 
@@ -497,12 +503,15 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	updates := model.NewWindowsUpdateRepo(db, inventory)
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
+	tasks := model.NewTaskRepo(db)
+	sequences := model.NewSequenceRepo(db)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
 		Inventory: inventory,
 		Resolver: resolve.New(images, isos, unattend).
-			WithDrivers(drivers).WithLoadouts(loadouts),
+			WithDrivers(drivers).WithLoadouts(loadouts).
+			WithSequences(sequences, tasks),
 		Users: users, Settings: settings,
 		Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
@@ -513,6 +522,8 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Webhooks:      webhooks,
 		Groups:      groups,
 		ImageGroups: imageGroups,
+		Tasks:       tasks,
+		Sequences:   sequences,
 	}
 }
 

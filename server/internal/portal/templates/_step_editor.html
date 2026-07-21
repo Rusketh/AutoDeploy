@@ -1,0 +1,10 @@
+{{define "step_editor"}}
+{{/* Data (.) is the base64-encoded editor payload built by buildStepEditorData.
+     The client (app.js initStepEditors) decodes it, renders the draggable step
+     rows, and keeps a hidden step_json[] input per row in sync for submission. */}}
+<div class="step-editor" data-step-editor="{{.}}">
+  <div class="rep-list seq-steps" data-sortable-list></div>
+  <button type="button" class="secondary sm" data-add-step><svg><use href="#i-plus"/></svg>Add step</button>
+  <p class="hint small step-editor-nojs">This sequence editor needs JavaScript.</p>
+</div>
+{{end}}

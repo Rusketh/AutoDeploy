@@ -17,6 +17,7 @@ package resolve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -36,12 +37,50 @@ type Resolved struct {
 	// Resolve returns it empty because driver matching needs reported
 	// hardware.
 	Drivers    []model.DriverPackage `json:"drivers,omitempty"`
+	// Sequence is the flattened, ordered event sequence the agent executes:
+	// built-in actions (software/domainjoin/reboot/gpupdate) and script/task
+	// steps, with nested sequences expanded inline. When the image (and its
+	// ancestors) link no sequence, this is the synthetic default
+	// (domain-join → software) so behaviour matches legacy images.
+	Sequence   []ResolvedStep        `json:"sequence"`
 	ChainNames []string              `json:"chain_names"`
 	// Diagnostics surfaces issues that should be visible in the portal,
 	// not raised as errors: a missing ISO, a missing unattend, an empty
 	// software set, etc. The resolver does not refuse to produce a manifest
 	// in these cases; it is the portal's job to warn.
 	Diagnostics []string `json:"diagnostics,omitempty"`
+}
+
+// ResolvedStep is one flattened step in the executable event sequence. Exactly
+// one of BuiltinAction / Task is set, selected by Kind ("builtin" | "task").
+// Subsequence steps never appear here — they are expanded inline during
+// resolution.
+type ResolvedStep struct {
+	Kind              string        `json:"kind"`
+	BuiltinAction     string        `json:"builtin_action,omitempty"`
+	Task              *ResolvedTask `json:"task,omitempty"`
+	ContinueOnFailure bool          `json:"continue_on_failure,omitempty"`
+}
+
+// ResolvedTask is a script/task's payload + applicability filter, carried to
+// the agent as part of a resolved sequence step.
+type ResolvedTask struct {
+	ID           model.ID `json:"id"`
+	Name         string   `json:"name"`
+	Shell        string   `json:"shell"`
+	Body         string   `json:"body"`
+	FilterType   string   `json:"filter_type"`
+	FilterValue  string   `json:"filter_value"`
+	SuccessCodes []int    `json:"success_codes,omitempty"`
+}
+
+// defaultSequence is the synthetic plan used when an image links no sequence:
+// AutoDeploy's legacy order of domain-join then software install.
+func defaultSequence() []ResolvedStep {
+	return []ResolvedStep{
+		{Kind: model.SeqStepBuiltin, BuiltinAction: model.BuiltinDomainJoin},
+		{Kind: model.SeqStepBuiltin, BuiltinAction: model.BuiltinSoftware},
+	}
 }
 
 // driverCacheTTL is how long the cached driver list is considered fresh.
@@ -60,9 +99,11 @@ type Resolver struct {
 	images   *model.ImageRepo
 	isos     *model.ISORepo
 	unattend *model.UnattendRepo
-	drivers  *model.DriverPackageRepo   // nil = driver matching disabled
-	loadouts *model.SoftwareLoadoutRepo // nil = loadout resolution disabled
-	dc       driverCache
+	drivers   *model.DriverPackageRepo   // nil = driver matching disabled
+	loadouts  *model.SoftwareLoadoutRepo // nil = loadout resolution disabled
+	sequences *model.SequenceRepo        // nil = only the default sequence is emitted
+	tasks     *model.TaskRepo            // nil = task steps resolve without payload
+	dc        driverCache
 }
 
 // New constructs a resolver bound to the given repositories. The drivers
@@ -84,6 +125,15 @@ func (r *Resolver) WithDrivers(drivers *model.DriverPackageRepo) *Resolver {
 // r for chaining.
 func (r *Resolver) WithLoadouts(loadouts *model.SoftwareLoadoutRepo) *Resolver {
 	r.loadouts = loadouts
+	return r
+}
+
+// WithSequences attaches the sequence + task repos so the resolver can expand
+// an image's linked event sequence (nearest-wins up the parent chain) into a
+// flat, ordered step list. Returns r for chaining.
+func (r *Resolver) WithSequences(sequences *model.SequenceRepo, tasks *model.TaskRepo) *Resolver {
+	r.sequences = sequences
+	r.tasks = tasks
 	return r
 }
 
@@ -190,6 +240,27 @@ func (r *Resolver) Resolve(ctx context.Context, id model.ID) (Resolved, error) {
 				})
 			}
 		}
+	}
+
+	// Event sequence: nearest-wins sequence_id up the image chain (same rule
+	// as loadout/ISO/unattend). When none is linked anywhere on the chain, the
+	// synthetic default sequence (domain-join → software) is used so legacy
+	// images behave exactly as before.
+	var seqID *model.ID
+	for _, im := range chain {
+		if im.SequenceID != nil {
+			seqID = im.SequenceID
+			break
+		}
+	}
+	if seqID != nil && r.sequences != nil {
+		steps, err := r.resolveSequence(ctx, *seqID)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("resolve sequence %d: %w", *seqID, err)
+		}
+		out.Sequence = steps
+	} else {
+		out.Sequence = defaultSequence()
 	}
 
 	if out.ISO == nil {
@@ -315,6 +386,91 @@ func packageMatches(p model.DriverPackage, id match.Identity) bool {
 		}
 	}
 	return false
+}
+
+// resolveSequence flattens a sequence into an ordered list of executable steps,
+// expanding nested subsequences inline. Recursion (a sequence that nests itself,
+// directly or transitively) is a hard error (ErrCycle) — unlike software
+// dependency resolution, which merely warns. A sequence embedded on two
+// distinct branches (a diamond) is expanded on each branch, which is the
+// intended "run it wherever it's placed" behaviour; only a true loop on the
+// active path fails.
+func (r *Resolver) resolveSequence(ctx context.Context, seqID model.ID) ([]ResolvedStep, error) {
+	var out []ResolvedStep
+	active := map[model.ID]bool{} // sequences currently on the DFS path
+	var visit func(id model.ID) error
+	visit = func(id model.ID) error {
+		if active[id] {
+			return fmt.Errorf("%w (sequence %d nests itself)", model.ErrCycle, id)
+		}
+		active[id] = true
+		defer delete(active, id)
+		seq, err := r.sequences.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		for _, s := range seq.Steps {
+			switch s.Kind {
+			case model.SeqStepBuiltin:
+				out = append(out, ResolvedStep{
+					Kind:              model.SeqStepBuiltin,
+					BuiltinAction:     s.BuiltinAction,
+					ContinueOnFailure: s.ContinueOnFailure,
+				})
+			case model.SeqStepTask:
+				if s.TaskID == nil {
+					continue
+				}
+				rt, err := r.resolveTask(ctx, *s.TaskID)
+				if err != nil {
+					return err
+				}
+				out = append(out, ResolvedStep{
+					Kind:              model.SeqStepTask,
+					Task:              rt,
+					ContinueOnFailure: s.ContinueOnFailure,
+				})
+			case model.SeqStepSubsequence:
+				if s.ChildSequenceID == nil {
+					continue
+				}
+				if err := visit(*s.ChildSequenceID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(seqID); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// resolveTask loads a task and shapes it into the agent-facing ResolvedTask
+// (payload + filter). When the task repo is unavailable it returns a stub with
+// just the ID so the step still carries its identity.
+func (r *Resolver) resolveTask(ctx context.Context, id model.ID) (*ResolvedTask, error) {
+	if r.tasks == nil {
+		return &ResolvedTask{ID: id}, nil
+	}
+	t, err := r.tasks.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var codes []int
+	if t.SuccessCodesJSON != "" {
+		_ = json.Unmarshal([]byte(t.SuccessCodesJSON), &codes)
+	}
+	return &ResolvedTask{
+		ID:           t.ID,
+		Name:         t.Name,
+		Shell:        t.PayloadShell,
+		Body:         t.PayloadBody,
+		FilterType:   t.FilterType,
+		FilterValue:  t.FilterValue,
+		SuccessCodes: codes,
+	}, nil
 }
 
 // chain returns images from the selected one up to the root, inclusive.

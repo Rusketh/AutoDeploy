@@ -74,6 +74,10 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
 	Groups *model.MachineGroupRepo
+	// Tasks manages reusable scripts/tasks (payload + applicability filter).
+	Tasks *model.TaskRepo
+	// Sequences manages reusable, nestable event sequences linked to images.
+	Sequences *model.SequenceRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -155,6 +159,8 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerSoftwareRoutes(get, post, r)
 	registerLoadoutRoutes(get, post, r)
 	registerImageRoutes(get, post, r)
+	registerTaskRoutes(get, post, r)
+	registerSequenceRoutes(get, post, r)
 	registerInventoryRoutes(get, post, r)
 	registerMachineGroupRoutes(get, post, r)
 	registerBulkRoutes(get, post, r)
@@ -593,6 +599,7 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
 		assetsFS, "templates/_layout.html", "templates/_icons.html",
 		"templates/_action_picker.html", "templates/_pagination.html",
+		"templates/_step_editor.html",
 		"templates/"+page)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
 )
 
@@ -92,6 +93,16 @@ type AgentSelfResponse struct {
 	// the on-disk lock marker that the credential provider reads; it clears
 	// the marker once it closes the deployment, so later pushes never lock.
 	SetupLock bool `json:"setup_lock,omitempty"`
+	// Sequence is the resolved event sequence for the bound image, starting at
+	// SeqCursor — i.e. only the steps the agent has not yet run for the open
+	// deployment. The agent executes these in order; after each it POSTs
+	// /api/v1/agent/sequence-progress with the ABSOLUTE index (SeqCursor +
+	// local offset). When there is no open deployment the full sequence is
+	// returned with SeqCursor 0. Empty means nothing left to run.
+	Sequence []resolve.ResolvedStep `json:"sequence,omitempty"`
+	// SeqCursor is the absolute index of Sequence[0] within the full resolved
+	// plan, so the agent can report absolute step indices back.
+	SeqCursor int `json:"seq_cursor,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -99,6 +110,39 @@ func RegisterAgent(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/software", handleAgentSoftware(r))
 	mux.HandleFunc("GET /api/v1/agent/self", handleAgentSelf(r))
 	mux.HandleFunc("GET /api/v1/agent/package-items", handleAgentPackageItems(r))
+	mux.HandleFunc("POST /api/v1/agent/sequence-progress", handleAgentSequenceProgress(r))
+}
+
+// AgentSequenceProgressRequest advances a deployment's sequence cursor. The
+// agent posts it after finishing a step so a subsequent poll (e.g. after a
+// reboot step) resumes at the following step.
+type AgentSequenceProgressRequest struct {
+	DeploymentID   model.ID `json:"deployment_id"`
+	CompletedIndex int      `json:"completed_index"` // absolute index of the step just finished
+	Status         string   `json:"status"`          // "ok" | "failed" | "skipped"
+}
+
+// handleAgentSequenceProgress records that the agent finished the step at
+// CompletedIndex, advancing the deployment's cursor to CompletedIndex+1 so the
+// next /self poll returns the remaining steps. The server owns this cursor,
+// which is what makes a mid-sequence reboot transparent.
+func handleAgentSequenceProgress(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var in AgentSequenceProgressRequest
+		if err := decodeJSON(req, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		if in.DeploymentID == 0 {
+			http.Error(w, "deployment_id required", http.StatusBadRequest)
+			return
+		}
+		if err := r.Inventory.SetDeploymentCursor(req.Context(), in.DeploymentID, in.CompletedIndex+1); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"next_cursor": in.CompletedIndex + 1})
+	}
 }
 
 // handleAgentPackageItems expands a single software package (plus its
@@ -191,6 +235,30 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		// ID so the agent can close it once software installation finishes.
 		if dep, derr := r.Inventory.LatestOpenDeployment(req.Context(), m.ID); derr == nil {
 			resp.DeploymentID = dep.ID
+		}
+		// Resolve the bound image's event sequence and return the steps the
+		// agent has not yet run (from the deployment's cursor onward). The
+		// cursor advances via /api/v1/agent/sequence-progress, so a mid-sequence
+		// reboot resumes here transparently. With no open deployment the full
+		// sequence is returned at cursor 0.
+		if resp.ImageID != 0 && r.Resolver != nil {
+			if res, rerr := r.Resolver.Resolve(req.Context(), resp.ImageID); rerr == nil {
+				full := res.Sequence
+				cursor := 0
+				if resp.DeploymentID != 0 {
+					cursor, _ = r.Inventory.DeploymentCursor(req.Context(), resp.DeploymentID)
+				}
+				if cursor < 0 {
+					cursor = 0
+				}
+				if cursor > len(full) {
+					cursor = len(full)
+				}
+				resp.SeqCursor = cursor
+				resp.Sequence = full[cursor:]
+			} else {
+				resp.Warnings = append(resp.Warnings, rerr.Error())
+			}
 		}
 		// Pending jobs, claimed the same way checkin does.
 		jobs, jerr := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)

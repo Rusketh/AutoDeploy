@@ -1,0 +1,53 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Scripts &amp; tasks</h2>
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <a class="btn" href="/portal/tasks/new"><svg><use href="#i-plus"/></svg>New script / task</a>
+  </div>
+</div>
+{{if .Data.Tasks}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Name</th>
+    <th>Description</th>
+    <th>Shell</th>
+    <th>Filter</th>
+    <th class="num" data-sort="num">Used by</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Tasks}}
+    <tr>
+      <td><a href="/portal/tasks/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
+      <td class="small muted">{{.Description}}</td>
+      <td><code>{{.PayloadShell}}</code></td>
+      <td>{{if .FilterType}}<code>{{.FilterType}}</code>{{else}}<span class="muted">always</span>{{end}}</td>
+      <td class="num">{{index $.Data.Refs .ID}}</td>
+      <td class="actions">
+        <a class="btn secondary sm" href="/portal/tasks/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+        <form method="POST" action="/portal/tasks/{{int64 .ID}}/clone">
+          <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
+        </form>
+        <form method="POST" action="/portal/tasks/{{int64 .ID}}/delete" data-confirm="Delete this script / task?">
+          <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-play"/></svg>
+  <h3>No scripts or tasks yet</h3>
+  <p>A script / task carries a payload (a PowerShell or cmd body) and an optional applicability filter (OS, WMIC or PS1). Add them to an image's event sequence to run them during deployment.</p>
+  <a class="btn" href="/portal/tasks/new"><svg><use href="#i-plus"/></svg>Create script / task</a>
+</div>
+{{end}}
+{{end}}

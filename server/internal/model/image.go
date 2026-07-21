@@ -32,10 +32,11 @@ func (r *ImageRepo) Create(ctx context.Context, in Image) (Image, error) {
 	// for a NULL row reference happens via the FK.
 
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO image (name, description, parent_id, iso_id, unattend_id, loadout_id, group_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO image (name, description, parent_id, iso_id, unattend_id, loadout_id, group_id, sequence_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, in.Description,
-		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID), nullID(in.LoadoutID), nullID(in.GroupID))
+		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID), nullID(in.LoadoutID),
+		nullID(in.GroupID), nullID(in.SequenceID))
 	if err != nil {
 		if isUniqueErr(err) {
 			return Image{}, fmt.Errorf("image %q: %w", in.Name, ErrConflict)
@@ -80,11 +81,11 @@ func (r *ImageRepo) Update(ctx context.Context, in Image) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE image
 		SET name=?, description=?, parent_id=?, iso_id=?, unattend_id=?, loadout_id=?,
-		    group_id=?, updated_at=CURRENT_TIMESTAMP
+		    group_id=?, sequence_id=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.Name, in.Description,
 		nullID(in.ParentID), nullID(in.ISOID), nullID(in.UnattendID), nullID(in.LoadoutID),
-		nullID(in.GroupID), in.ID)
+		nullID(in.GroupID), nullID(in.SequenceID), in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("image %q: %w", in.Name, ErrConflict)
@@ -109,13 +110,13 @@ func (r *ImageRepo) Update(ctx context.Context, in Image) error {
 func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 	var v Image
 	var parent, iso, unattend, loadout sql.NullInt64
-	var group sql.NullInt64
+	var group, sequence sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, parent_id, iso_id, unattend_id, loadout_id,
-		       group_id, created_at, updated_at
+		       group_id, sequence_id, created_at, updated_at
 		FROM image WHERE id=?`, id).Scan(
 		&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend, &loadout,
-		&group, &v.CreatedAt, &v.UpdatedAt)
+		&group, &sequence, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Image{}, fmt.Errorf("image %d: %w", id, ErrNotFound)
 	}
@@ -127,6 +128,7 @@ func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 	v.UnattendID = idPtr(unattend)
 	v.LoadoutID = idPtr(loadout)
 	v.GroupID = idPtr(group)
+	v.SequenceID = idPtr(sequence)
 	links, err := r.linksFor(ctx, id)
 	if err != nil {
 		return Image{}, err
@@ -139,7 +141,7 @@ func (r *ImageRepo) Get(ctx context.Context, id ID) (Image, error) {
 func (r *ImageRepo) List(ctx context.Context) ([]Image, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, description, parent_id, iso_id, unattend_id, loadout_id,
-		       group_id, created_at, updated_at
+		       group_id, sequence_id, created_at, updated_at
 		FROM image ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -148,9 +150,9 @@ func (r *ImageRepo) List(ctx context.Context) ([]Image, error) {
 	var out []Image
 	for rows.Next() {
 		var v Image
-		var parent, iso, unattend, loadout, group sql.NullInt64
+		var parent, iso, unattend, loadout, group, sequence sql.NullInt64
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &parent, &iso, &unattend, &loadout,
-			&group, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&group, &sequence, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		v.ParentID = idPtr(parent)
@@ -158,6 +160,7 @@ func (r *ImageRepo) List(ctx context.Context) ([]Image, error) {
 		v.UnattendID = idPtr(unattend)
 		v.LoadoutID = idPtr(loadout)
 		v.GroupID = idPtr(group)
+		v.SequenceID = idPtr(sequence)
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
@@ -251,6 +254,23 @@ func (r *ImageRepo) Delete(ctx context.Context, id ID) error {
 		return fmt.Errorf("image %d: %w", id, ErrNotFound)
 	}
 	return tx.Commit()
+}
+
+// SetSequenceID sets (or clears, with nil) an image's linked event sequence
+// without touching its other fields. Used by the portal after it upserts an
+// image-owned inline sequence.
+func (r *ImageRepo) SetSequenceID(ctx context.Context, imageID ID, seqID *ID) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE image SET sequence_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		nullID(seqID), imageID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("image %d: %w", imageID, ErrNotFound)
+	}
+	return nil
 }
 
 // ChildCount returns the number of images that name this one as parent.
