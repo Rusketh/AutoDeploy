@@ -31,7 +31,9 @@ needs and define its detection rules and install steps.
 
 **Payload files.** A package can hold several files (e.g. `setup.exe` plus a `config.json`). The
 agent downloads every file into a per-package work directory on the target; in your install steps
-you reference each file by its bare filename and the agent resolves it to the on-disk path.
+you reference each file by its bare filename and the agent resolves it to the on-disk path. Files
+may also live in **sub-folders** — use the *Choose a folder* upload to bring a directory tree over
+with its structure intact, then reference a nested file by its relative path (e.g. `drivers/oem.inf`).
 
 **Package bundle (zip, auto-extracted).** For installers with many support files — or one that
 lives on a network share the deployed machine's **SYSTEM** account can't reach — upload a single
@@ -57,8 +59,9 @@ rules means re-install on every deployment. Rule types:
 | winget | A `winget_id` (e.g. `Microsoft.VisualStudioCode`) is reported present by `winget list --id <winget_id> --exact`; requires winget on the target |
 
 **Install steps.** Steps run in order; a failed step aborts the package unless its *On failure* is
-set to continue. You can set per-step **success exit codes** (e.g. add `3010` for installers that
-request a reboot). Step types:
+set to continue. Use the up/down arrows on each step to change the order without deleting and
+re-adding it (the same arrows reorder detection rules). You can set per-step **success exit codes**
+(e.g. add `3010` for installers that request a reboot). Step types:
 
 | Type | What it does |
 |------|--------------|

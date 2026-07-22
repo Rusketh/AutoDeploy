@@ -103,9 +103,10 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.Handle("GET /payload/software/{id}", s.throttleHandler(http.HandlerFunc(s.serveSoftware)))
 	// Multi-file: agent downloads each file by name from the
 	// per-package files directory the portal upload handler writes
-	// into. {name} is sanitized server-side; BlobStore.Resolve is
-	// the backstop against path traversal.
-	mux.Handle("GET /payload/software/{id}/files/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
+	// into. {name...} is a trailing wildcard so folder-structured
+	// payloads (drivers/x.inf) round-trip; it's sanitized server-side
+	// and BlobStore.Resolve is the backstop against path traversal.
+	mux.Handle("GET /payload/software/{id}/files/{name...}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
 	mux.Handle("GET /payload/software/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareBundle)))
 	mux.Handle("GET /payload/updates/{id}", s.throttleHandler(http.HandlerFunc(s.serveUpdate)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
@@ -527,11 +528,11 @@ func (s *Service) serveSoftware(w http.ResponseWriter, r *http.Request) {
 	s.serveBlob(w, r, pkg.StoragePath)
 }
 
-// serveSoftwareFile streams one named file from a multi-file
-// package. The filename is sanitised (no path separators, no ..) and
-// BlobStore.Resolve is the final containment check; together they
-// prevent a request from reaching anything outside the package's
-// files directory.
+// serveSoftwareFile streams one file from a multi-file package. The
+// path may contain sub-directories (folder-structured payloads), so a
+// forward slash is allowed; a leading slash, a backslash and any ".."
+// are rejected and BlobStore.Resolve is the final containment check,
+// so a request still can't reach outside the package's files directory.
 func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -539,7 +540,7 @@ func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+	if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, `\`) || strings.Contains(name, "..") {
 		http.Error(w, "bad filename", http.StatusBadRequest)
 		return
 	}

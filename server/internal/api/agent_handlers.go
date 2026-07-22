@@ -316,7 +316,10 @@ func listPackageFiles(r Repos, id model.ID, base string) []AgentPackageFile {
 		return nil
 	}
 	rel := "software/" + idStr(id) + "/files"
-	entries, err := r.Blobs.ListDir(rel)
+	// ListTree recurses so folder-structured payloads (e.g. drivers/x.inf)
+	// are advertised with their slash-relative path intact; the agent
+	// recreates the sub-directories under its workdir.
+	entries, err := r.Blobs.ListTree(rel)
 	if err != nil || len(entries) == 0 {
 		return nil
 	}
