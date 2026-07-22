@@ -6,6 +6,20 @@
 {{$bundles := .Data.Bundles}}
 <h2>{{if $new}}New software package{{else}}Edit software package: {{$p.Name}}{{end}}</h2>
 
+<style>
+  .filetree, .filetree ul { list-style: none; margin: 0; }
+  .filetree { padding-left: 0; }
+  .filetree ul { padding-left: 1.25rem; border-left: 1px solid var(--border, #2a2f3a); margin-left: .55rem; }
+  .filetree li { padding: 0; }
+  .filetree-row { display: flex; align-items: center; gap: .45rem; padding: .18rem 0; }
+  .filetree-icon { width: 16px; height: 16px; flex: none; opacity: .85; }
+  .filetree-row .code-name { margin: 0; }
+  .filetree-row .muted { margin-left: .1rem; white-space: nowrap; }
+  .filetree-row .inline-form { margin-left: auto; }
+  .filetree-row .copy { flex: none; }
+  .folder-pick { background: none; border: none; padding: 0; font: inherit; color: var(--link, #4a9eff); text-decoration: underline; cursor: pointer; }
+</style>
+
 {{if not $new}}
 {{/* Payload files sit ABOVE the form because every install-step
      field below references them by name. Multi-file packages
@@ -21,58 +35,16 @@
   <p class="hint mt-0">
     The agent downloads <strong>every file below</strong> into a per-package work directory on the target, sub-directories and all. In your install steps, reference a file by its bare filename (e.g. <code>setup.exe</code>) or, for files inside a folder, by its relative path (e.g. <code>drivers/oem.inf</code>) -- the agent resolves it to the on-disk path automatically.
   </p>
-  <div class="tablewrap mt-3">
-    <table>
-      <thead><tr><th>Filename</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
-      <tbody>
-        {{range $files}}
-        <tr>
-          <td>
-            <code class="code-name">{{.Name}}</code>
-            <button class="copy" data-copy="{{.Name}}" aria-label="Copy filename"><svg><use href="#i-copy"/></svg></button>
-          </td>
-          <td class="num small muted">{{humanBytes .Size}}</td>
-          <td class="small muted">{{relTime .ModTime}}</td>
-          <td class="right">
-            <form method="POST" action="/portal/software/{{int64 $p.ID}}/files/delete"
-                  onsubmit="return confirm('Remove {{.Name}} from this package? Detection rules and install steps stay; only this file is deleted.');"
-                  class="inline-form">
-              <input type="hidden" name="name" value="{{.Name}}">
-              <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
-            </form>
-          </td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
+  <div class="filetree-wrap mt-3">
+    {{template "filetree" dict "Nodes" $files "PkgID" (int64 $p.ID)}}
   </div>
-  <form class="dropzone mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
-    <svg class="dropzone-icon"><use href="#i-plus"/></svg>
-    <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
-    <div class="dropzone-hint">Upload files this package needs</div>
-    <input type="file" name="file" required>
-  </form>
-  <form class="dropzone mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-folder-upload>
-    <svg class="dropzone-icon"><use href="#i-box"/></svg>
-    <div class="dropzone-text"><strong>Choose a folder</strong> to upload with its structure</div>
-    <div class="dropzone-hint">Sub-directories are preserved, e.g. <code>drivers/oem.inf</code></div>
-    <input type="file" name="file" webkitdirectory directory multiple>
-  </form>
+  {{template "software_upload_dropzone" dict "PkgID" (int64 $p.ID) "Empty" false}}
   {{else}}
   <div class="empty">
     <svg class="empty-icon"><use href="#i-box"/></svg>
     <h3>No files uploaded yet</h3>
-    <p class="small muted">Upload the file (or files) this package needs. Multi-file packages are fine -- upload <code>setup.exe</code>, <code>config.json</code>, drivers, anything. You can also upload a whole folder and its structure is preserved. Reference each one by its filename (or relative path) in your install steps below.</p>
-    <form class="dropzone upload-empty-form" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone>
-      <svg class="dropzone-icon"><use href="#i-plus"/></svg>
-      <div class="dropzone-text"><strong>Choose a file</strong> or drag it here</div>
-      <input type="file" name="file" required>
-    </form>
-    <form class="dropzone upload-empty-form mt-3" method="POST" action="/portal/software/{{int64 $p.ID}}/upload" enctype="multipart/form-data" data-upload-progress data-folder-upload>
-      <svg class="dropzone-icon"><use href="#i-box"/></svg>
-      <div class="dropzone-text"><strong>Choose a folder</strong> to upload with its structure</div>
-      <input type="file" name="file" webkitdirectory directory multiple>
-    </form>
+    <p class="small muted">Upload the file (or files) this package needs — a single file, several files, or a whole folder (its structure is preserved). Reference each one by its filename (or relative path) in your install steps below.</p>
+    {{template "software_upload_dropzone" dict "PkgID" (int64 $p.ID) "Empty" true}}
   </div>
   {{end}}
 </fieldset>
@@ -422,4 +394,49 @@ function moveBlock(btn, dir){
     <span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span>
   </div>
 </div>
+{{end}}
+
+{{/* filetree renders payload files as a nested tree. Data: a dict with
+     "Nodes" (a []*fileNode) and "PkgID" (int64). Directory rows delete the
+     whole sub-tree; file rows delete just the file. Both post the node's
+     slash-relative Path to /files/delete. */}}
+{{define "filetree"}}
+<ul class="filetree">
+  {{range .Nodes}}
+  <li>
+    <span class="filetree-row">
+      {{if .IsDir}}<svg class="filetree-icon"><use href="#i-folder"/></svg>{{else}}<svg class="filetree-icon"><use href="#i-file"/></svg>{{end}}
+      <code class="code-name">{{.Name}}{{if .IsDir}}/{{end}}</code>
+      {{if not .IsDir}}
+      <button type="button" class="copy" data-copy="{{.Path}}" aria-label="Copy relative path" title="Copy {{.Path}}"><svg><use href="#i-copy"/></svg></button>
+      <span class="small muted">{{humanBytes .Size}}</span>
+      <span class="small muted">{{relTime .ModTime}}</span>
+      {{end}}
+      <form method="POST" action="/portal/software/{{$.PkgID}}/files/delete"
+            onsubmit="return confirm('{{if .IsDir}}Remove the folder “{{.Path}}” and everything inside it{{else}}Remove “{{.Path}}”{{end}} from this package? Detection rules and install steps stay.');"
+            class="inline-form">
+        <input type="hidden" name="name" value="{{.Path}}">
+        <button type="submit" class="ghost sm" title="Delete {{.Path}}"><svg><use href="#i-trash"/></svg></button>
+      </form>
+    </span>
+    {{if and .IsDir .Children}}{{template "filetree" dict "Nodes" .Children "PkgID" $.PkgID}}{{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}
+
+{{/* software_upload_dropzone is the single, merged upload area: it accepts
+     one file, several files, or a whole folder (structure preserved), by
+     click or drag. Data: a dict with "PkgID" (int64) and "Empty" (bool).
+     data-folder-capable tells app.js to use the per-file uploader that
+     carries each file's relative path. */}}
+{{define "software_upload_dropzone"}}
+<form class="dropzone mt-3{{if .Empty}} upload-empty-form{{end}}" method="POST" action="/portal/software/{{.PkgID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone data-folder-capable>
+  <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+  <div class="dropzone-text"><strong>Choose files</strong> or drag files &amp; folders here</div>
+  <div class="dropzone-hint">A file, several files, or a whole folder — sub-directories are preserved (e.g. <code>drivers/oem.inf</code>)</div>
+  <input type="file" name="file" multiple>
+  <div class="small mt-2">or <button type="button" class="folder-pick" data-folder-pick>select a whole folder…</button></div>
+  <input type="file" webkitdirectory directory multiple hidden data-folder-input>
+</form>
 {{end}}

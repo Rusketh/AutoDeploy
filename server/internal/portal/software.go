@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/logging"
@@ -31,6 +33,74 @@ func uploadActor(req *http.Request) string {
 // softwareTarget is the structured-log target for a package's payload.
 func softwareTarget(id model.ID) string {
 	return "software/" + strconv.FormatInt(int64(id), 10)
+}
+
+// fileNode is one entry in the payload file tree the edit page renders.
+// A directory node's Path is its slash-relative path from the files/
+// root, so the same delete endpoint removes a single file or a whole
+// sub-tree (BlobStore.Remove is os.RemoveAll under the hood).
+type fileNode struct {
+	Name     string
+	Path     string
+	IsDir    bool
+	Size     int64
+	ModTime  time.Time
+	Children []*fileNode
+}
+
+// buildFileTree turns the flat, slash-relative file list from
+// BlobStore.ListTree into a sorted tree (directories first, then files,
+// each alphabetically) so folder-structured payloads render as a tree
+// instead of vanishing (ListDir, the old source, skipped directories).
+func buildFileTree(entries []storage.DirEntry) []*fileNode {
+	root := &fileNode{IsDir: true}
+	dirs := map[string]*fileNode{"": root}
+
+	var mkdir func(path string) *fileNode
+	mkdir = func(path string) *fileNode {
+		if n, ok := dirs[path]; ok {
+			return n
+		}
+		parent, name := "", path
+		if i := strings.LastIndex(path, "/"); i >= 0 {
+			parent, name = path[:i], path[i+1:]
+		}
+		p := mkdir(parent)
+		n := &fileNode{Name: name, Path: path, IsDir: true}
+		p.Children = append(p.Children, n)
+		dirs[path] = n
+		return n
+	}
+
+	for _, e := range entries {
+		dir, name := "", e.Name
+		if i := strings.LastIndex(e.Name, "/"); i >= 0 {
+			dir, name = e.Name[:i], e.Name[i+1:]
+		}
+		parent := mkdir(dir)
+		parent.Children = append(parent.Children, &fileNode{
+			Name: name, Path: e.Name, Size: e.Size, ModTime: e.ModTime,
+		})
+	}
+	sortFileNodes(root)
+	return root.Children
+}
+
+// sortFileNodes orders each level: directories first, then files, each
+// group alphabetical (case-insensitive), recursing into directories.
+func sortFileNodes(n *fileNode) {
+	sort.Slice(n.Children, func(i, j int) bool {
+		a, b := n.Children[i], n.Children[j]
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+	for _, c := range n.Children {
+		if c.IsDir {
+			sortFileNodes(c)
+		}
+	}
 }
 
 func init() {
@@ -181,7 +251,7 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 		// no separate DB table needed since the filesystem is the
 		// source of truth and BlobStore.Resolve already enforces
 		// path containment.
-		var files []storage.DirEntry
+		var files []*fileNode
 		if !isNew && r.Blobs != nil {
 			// Lazy migration: if the package still references a
 			// legacy single-file payload.bin but no files dir yet
@@ -190,7 +260,11 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 			// fatal (the legacy single-file path is still listed
 			// below in a banner so operators aren't blindsided).
 			migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
-			files, _ = r.Blobs.ListDir(softwarePackageFilesDir(p.ID))
+			// ListTree (recursive) so folder-structured payloads
+			// render as a tree; ListDir skipped sub-directories, which
+			// made an uploaded folder look like it never arrived.
+			entries, _ := r.Blobs.ListTree(softwarePackageFilesDir(p.ID))
+			files = buildFileTree(entries)
 		}
 		var bundles []storage.DirEntry
 		if !isNew && r.Blobs != nil {

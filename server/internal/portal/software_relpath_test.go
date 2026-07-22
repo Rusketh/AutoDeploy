@@ -66,8 +66,9 @@ func TestSoftwareFormRendersReorderControls(t *testing.T) {
 		`onclick="moveBlock(this,-1)"`, // move up (static block)
 		`onclick="moveBlock(this,1)"`,  // move down (static block)
 		`function moveBlock(`,          // helper present
-		`webkitdirectory`,              // folder-upload input
-		`data-folder-upload`,           // folder-upload form marker
+		`webkitdirectory`,              // folder picker input in the merged dropzone
+		`data-folder-capable`,          // merged dropzone marker (files + folders)
+		`data-folder-input`,            // the hidden folder picker
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered software form missing %q", want)
@@ -76,21 +77,22 @@ func TestSoftwareFormRendersReorderControls(t *testing.T) {
 }
 
 // TestSoftwareFormNestedFileDeleteAction confirms a payload file that lives in
-// a sub-folder renders a wildcard-free delete action and carries its (possibly
-// nested) name in a hidden form field, so the name never needs a trailing-
-// wildcard route (which net/http's ServeMux forbids mid-path).
+// a sub-folder renders in the tree with a wildcard-free delete action carrying
+// its (nested) name in a hidden field, plus a folder row that deletes the whole
+// sub-tree by its directory path.
 func TestSoftwareFormNestedFileDeleteAction(t *testing.T) {
 	out := renderSoftwareForm(t, map[string]any{
 		"Pkg":     model.SoftwarePackage{ID: 5, Name: "MyApp"},
 		"IsNew":   false,
 		"Steps":   []swspec.InstallStep{},
 		"Rules":   []swspec.DetectionRule{},
-		"Files":   []storage.DirEntry{{Name: "drivers/oem.inf", Size: 12, ModTime: time.Now()}},
+		"Files":   buildFileTree([]storage.DirEntry{{Name: "drivers/oem.inf", Size: 12, ModTime: time.Now()}}),
 		"Bundles": []string{},
 	})
 	for _, want := range []string{
 		`action="/portal/software/5/files/delete"`,
-		`<input type="hidden" name="name" value="drivers/oem.inf">`,
+		`<input type="hidden" name="name" value="drivers/oem.inf">`, // the file
+		`<input type="hidden" name="name" value="drivers">`,         // the folder (deletes the sub-tree)
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered delete form missing %q; got:\n%s", want, out)
