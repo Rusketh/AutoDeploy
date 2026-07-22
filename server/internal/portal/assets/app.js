@@ -678,24 +678,23 @@
     ui.abortBtn.onclick = function () { xhr.abort(); };
   }
 
-  // startFolderUpload uploads every file the operator picked with a
-  // webkitdirectory input, preserving the folder structure. It sends
-  // ONE request per file (each a "relpath" field + the "file" part) so
-  // a multi-GB directory tree — e.g. the MS Office offline install
-  // files — never becomes a single giant request that exhausts browser
-  // memory or trips a proxy's upload-size limit. The server pairs the
-  // relpath with the file and recreates the sub-directory under the
-  // package's files/ tree. Failures are per-file (partial success is
-  // kept), and a run of consecutive failures stops early since that is
-  // the signature of the server being out of disk space or behind an
-  // upload-size limit.
-  function startFolderUpload(form, input) {
-    const files = Array.prototype.slice.call(input.files);
-    if (!files.length) return;
+  // uploadItemsSequential uploads a list of { file, relpath } items ONE
+  // request per file (each a "relpath" field + the "file" part). This
+  // backs the merged upload area — a single file, several files, or a
+  // whole directory tree (e.g. the MS Office offline install files) all
+  // funnel through here, so a big tree never becomes one giant request
+  // that exhausts browser memory or trips a proxy's upload-size limit.
+  // The server pairs the relpath with the file and recreates the
+  // sub-directory under the package's files/ tree. Failures are per-file
+  // (partial success is kept), and a run of consecutive failures stops
+  // early since that is the signature of the server being out of disk
+  // space or behind an upload-size limit.
+  function uploadItemsSequential(form, items) {
+    if (!items.length) return;
     const ui = ensureProgressUI(form);
-    const total = files.length;
+    const total = items.length;
     let totalBytes = 0;
-    files.forEach(function (f) { totalBytes += f.size; });
+    items.forEach(function (it) { totalBytes += it.file.size; });
 
     ui.bar.value = 0;
     ui.bar.max = 100;
@@ -775,10 +774,10 @@
         ui.error.textContent = 'Upload aborted after ' + index + ' of ' + total + ' file(s).';
         return;
       }
-      if (index >= files.length) { done(); return; }
+      if (index >= items.length) { done(); return; }
 
-      const f = files[index];
-      const rel = f.webkitRelativePath || f.name;
+      const f = items[index].file;
+      const rel = items[index].relpath;
       const fd = new FormData();
       fd.append('relpath', rel);
       fd.append('file', f, f.name);
@@ -1075,9 +1074,79 @@
   })();
 
   // ---- Drop-zone auto-upload -----------------------------------------
+  // Two flavours:
+  //   * plain (ISO, drivers, bundle .zip …): one file via startUpload.
+  //   * data-folder-capable (software payload files): a file, several
+  //     files, or a whole folder tree — each file uploaded as its own
+  //     request with a relative path via uploadItemsSequential. The one
+  //     drop area handles both files and folders (drag or click).
+
+  // filesToItems maps a FileList to { file, relpath } items, using each
+  // file's webkitRelativePath (set for a folder pick) or bare name.
+  function filesToItems(fileList) {
+    return Array.prototype.slice.call(fileList).map(function (f) {
+      return { file: f, relpath: f.webkitRelativePath || f.name };
+    });
+  }
+
+  // walkEntry resolves a dropped file/directory entry into { file, relpath }
+  // items, recursing into sub-directories so a dragged folder keeps its
+  // structure. readEntries returns in batches, so we drain it fully.
+  function walkEntry(entry, prefix) {
+    if (entry.isFile) {
+      return new Promise(function (resolve) {
+        entry.file(
+          function (f) { resolve([{ file: f, relpath: prefix + entry.name }]); },
+          function () { resolve([]); });
+      });
+    }
+    if (entry.isDirectory) {
+      var reader = entry.createReader();
+      var collected = [];
+      return new Promise(function (resolve) {
+        (function readBatch() {
+          reader.readEntries(function (batch) {
+            if (!batch.length) {
+              Promise.all(collected.map(function (e) {
+                return walkEntry(e, prefix + entry.name + '/');
+              })).then(function (lists) {
+                resolve(Array.prototype.concat.apply([], lists));
+              });
+              return;
+            }
+            collected = collected.concat(Array.prototype.slice.call(batch));
+            readBatch();
+          }, function () { resolve([]); });
+        })();
+      });
+    }
+    return Promise.resolve([]);
+  }
+
+  // dropToItems turns a drop's DataTransfer into { file, relpath } items,
+  // recursing into dropped directories where the entries API is available,
+  // else falling back to the flat file list.
+  function dropToItems(dataTransfer) {
+    var dtItems = dataTransfer.items;
+    var entries = [];
+    if (dtItems && dtItems.length) {
+      for (var i = 0; i < dtItems.length; i++) {
+        var getAsEntry = dtItems[i].webkitGetAsEntry || dtItems[i].getAsEntry;
+        var entry = getAsEntry ? getAsEntry.call(dtItems[i]) : null;
+        if (entry) entries.push(entry);
+      }
+    }
+    if (!entries.length) {
+      return Promise.resolve(filesToItems(dataTransfer.files));
+    }
+    return Promise.all(entries.map(function (e) { return walkEntry(e, ''); }))
+      .then(function (lists) { return Array.prototype.concat.apply([], lists); });
+  }
+
   document.querySelectorAll('[data-dropzone]').forEach(function (form) {
     var fileInput = form.querySelector('input[type=file]');
     if (!fileInput) return;
+    var folderCapable = form.hasAttribute('data-folder-capable');
 
     ['dragenter', 'dragover'].forEach(function (evt) {
       form.addEventListener(evt, function (e) {
@@ -1092,6 +1161,13 @@
       });
     });
     form.addEventListener('drop', function (e) {
+      if (!e.dataTransfer) return;
+      if (folderCapable) {
+        dropToItems(e.dataTransfer).then(function (items) {
+          if (items.length) uploadItemsSequential(form, items);
+        });
+        return;
+      }
       if (e.dataTransfer.files.length) {
         var accept = fileInput.getAttribute('accept');
         if (accept) {
@@ -1111,17 +1187,28 @@
       }
     });
     fileInput.addEventListener('change', function () {
-      if (fileInput.files.length) startUpload(form);
+      if (!fileInput.files.length) return;
+      if (folderCapable) uploadItemsSequential(form, filesToItems(fileInput.files));
+      else startUpload(form);
     });
-  });
 
-  // ---- Folder auto-upload (webkitdirectory, preserves structure) ------
-  document.querySelectorAll('[data-folder-upload]').forEach(function (form) {
-    var folderInput = form.querySelector('input[type=file]');
-    if (!folderInput) return;
-    folderInput.addEventListener('change', function () {
-      if (folderInput.files.length) startFolderUpload(form, folderInput);
-    });
+    // Folder-capable dropzones also expose a hidden webkitdirectory input
+    // triggered by an inline "select a whole folder…" button, so folders
+    // work by click as well as drag.
+    if (folderCapable) {
+      var folderInput = form.querySelector('[data-folder-input]');
+      var folderPick = form.querySelector('[data-folder-pick]');
+      if (folderPick && folderInput) {
+        folderPick.addEventListener('click', function () { folderInput.click(); });
+      }
+      if (folderInput) {
+        folderInput.addEventListener('change', function () {
+          if (folderInput.files.length) {
+            uploadItemsSequential(form, filesToItems(folderInput.files));
+          }
+        });
+      }
+    }
   });
 
   // ---- Unattend TOC scroll spy ----------------------------------------
