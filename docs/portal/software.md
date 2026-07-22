@@ -34,6 +34,17 @@ agent downloads every file into a per-package work directory on the target; in y
 you reference each file by its bare filename and the agent resolves it to the on-disk path. Files
 may also live in **sub-folders** — use the *Choose a folder* upload to bring a directory tree over
 with its structure intact, then reference a nested file by its relative path (e.g. `drivers/oem.inf`).
+The folder upload sends **one file at a time**, so a large tree (e.g. the Office offline install
+files under `Office/Data/`) uploads incrementally with per-file progress rather than as one giant
+request.
+
+> **Large payloads (multi-GB folders or zips).** AutoDeploy itself puts no size limit on payload
+> uploads, but two things must have room for them: the server's data directory needs free disk space
+> (`df` on `AUTODEPLOY_DATA_DIR`), and any reverse proxy in front of AutoDeploy must allow large
+> request bodies (e.g. raise nginx's `client_max_body_size`, which defaults to 1 MB). If a large
+> upload fails while a small one succeeds, check those two first — the server journal logs a
+> `software.upload.write_failed` / `software.bundle.write_failed` event when a write can't complete
+> (typically a full or read-only data dir).
 
 **Package bundle (zip, auto-extracted).** For installers with many support files — or one that
 lives on a network share the deployed machine's **SYSTEM** account can't reach — upload a single
