@@ -34,9 +34,10 @@
           <td class="num small muted">{{humanBytes .Size}}</td>
           <td class="small muted">{{relTime .ModTime}}</td>
           <td class="right">
-            <form method="POST" action="/portal/software/{{int64 $p.ID}}/files/{{.Name}}/delete"
+            <form method="POST" action="/portal/software/{{int64 $p.ID}}/files/delete"
                   onsubmit="return confirm('Remove {{.Name}} from this package? Detection rules and install steps stay; only this file is deleted.');"
                   class="inline-form">
+              <input type="hidden" name="name" value="{{.Name}}">
               <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
             </form>
           </td>

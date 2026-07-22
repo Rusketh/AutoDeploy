@@ -29,7 +29,7 @@ func init() {
 		// don't 404; new UI uses per-file delete instead.
 		post("/portal/software/{id}/upload/delete", softwareUploadDelete(r))
 		// Multi-file: delete one named file from a package.
-		post("/portal/software/{id}/files/{name...}/delete", softwareFileDelete(r))
+		post("/portal/software/{id}/files/delete", softwareFileDelete(r))
 		// Bundle zips: uploaded once, extracted into the agent workdir.
 		post("/portal/software/{id}/bundle", softwareBundleUpload(r))
 		post("/portal/software/{id}/bundle/{name}/delete", softwareBundleDelete(r))
@@ -520,14 +520,17 @@ func softwareUpload(r Repos) http.HandlerFunc {
 
 // softwareFileDelete removes one named file from a package's files
 // directory. Other files in the package are untouched, the package
-// row stays. URL: POST /portal/software/{id}/files/{name}/delete.
+// row stays. URL: POST /portal/software/{id}/files/delete with the
+// (possibly nested) file name in the "name" form field -- kept out of
+// the path so it can carry sub-directory separators without needing a
+// trailing-wildcard route (which net/http's ServeMux forbids mid-path).
 func softwareFileDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		raw := req.PathValue("name")
-		// PathValue is URL-decoded but we still apply the same
-		// sanitiser the upload side uses so a malicious URL can't
-		// reach a sibling directory. The path may contain sub-dirs.
+		raw := req.FormValue("name")
+		// Apply the same sanitiser the upload side uses so a crafted
+		// value can't reach a sibling directory. The path may contain
+		// sub-dirs.
 		name, sanErr := sanitizeUploadRelPath(raw)
 		if sanErr != nil {
 			flash(w, "err", "Bad filename: "+sanErr.Error())
