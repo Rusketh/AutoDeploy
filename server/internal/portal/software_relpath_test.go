@@ -76,8 +76,9 @@ func TestSoftwareFormRendersReorderControls(t *testing.T) {
 }
 
 // TestSoftwareFormNestedFileDeleteAction confirms a payload file that lives in
-// a sub-folder renders a delete action whose path keeps its slashes intact
-// (so the {name...} route matches), not a percent-encoded blob.
+// a sub-folder renders a wildcard-free delete action and carries its (possibly
+// nested) name in a hidden form field, so the name never needs a trailing-
+// wildcard route (which net/http's ServeMux forbids mid-path).
 func TestSoftwareFormNestedFileDeleteAction(t *testing.T) {
 	out := renderSoftwareForm(t, map[string]any{
 		"Pkg":     model.SoftwarePackage{ID: 5, Name: "MyApp"},
@@ -87,7 +88,12 @@ func TestSoftwareFormNestedFileDeleteAction(t *testing.T) {
 		"Files":   []storage.DirEntry{{Name: "drivers/oem.inf", Size: 12, ModTime: time.Now()}},
 		"Bundles": []string{},
 	})
-	if !strings.Contains(out, `/portal/software/5/files/drivers/oem.inf/delete`) {
-		t.Errorf("delete action should keep the sub-path slashes intact; got:\n%s", out)
+	for _, want := range []string{
+		`action="/portal/software/5/files/delete"`,
+		`<input type="hidden" name="name" value="drivers/oem.inf">`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered delete form missing %q; got:\n%s", want, out)
+		}
 	}
 }
