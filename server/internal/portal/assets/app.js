@@ -679,84 +679,165 @@
   }
 
   // startFolderUpload uploads every file the operator picked with a
-  // webkitdirectory input, preserving the folder structure. A plain
-  // form submit only carries basenames, so we build the multipart body
-  // by hand: for each file we append a "relpath" field (its path
-  // relative to the picked folder) immediately followed by the "file"
-  // part. The server pairs each relpath with the next file part and
-  // recreates the sub-directories under the package's files/ tree.
+  // webkitdirectory input, preserving the folder structure. It sends
+  // ONE request per file (each a "relpath" field + the "file" part) so
+  // a multi-GB directory tree — e.g. the MS Office offline install
+  // files — never becomes a single giant request that exhausts browser
+  // memory or trips a proxy's upload-size limit. The server pairs the
+  // relpath with the file and recreates the sub-directory under the
+  // package's files/ tree. Failures are per-file (partial success is
+  // kept), and a run of consecutive failures stops early since that is
+  // the signature of the server being out of disk space or behind an
+  // upload-size limit.
   function startFolderUpload(form, input) {
     const files = Array.prototype.slice.call(input.files);
     if (!files.length) return;
     const ui = ensureProgressUI(form);
-    const label = files.length + ' file' + (files.length === 1 ? '' : 's');
-    ui.label.textContent = label + ' — preparing…';
+    const total = files.length;
+    let totalBytes = 0;
+    files.forEach(function (f) { totalBytes += f.size; });
+
     ui.bar.value = 0;
     ui.bar.max = 100;
     ui.wrap.hidden = false;
     ui.error.hidden = true;
+    ui.label.textContent = 'Uploading 1 of ' + total + '…';
     setSubmitDisabled(form, true);
 
-    const fd = new FormData();
-    files.forEach(function (f) {
-      fd.append('relpath', f.webkitRelativePath || f.name);
-      fd.append('file', f, f.name);
-    });
+    // Stop early after this many consecutive failures — a full disk or a
+    // proxy body-size limit fails every file, and hammering the server
+    // hundreds of times helps nobody.
+    const consecutiveFailLimit = 3;
 
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', form.action, true);
-    xhr.setRequestHeader('Accept', 'text/html, application/json');
-
+    let index = 0;          // next file to send
+    let doneBytes = 0;      // bytes accounted for (uploaded or skipped-on-failure)
+    let failed = 0;
+    let consecutiveFails = 0;
+    const errors = [];      // { name, msg }
+    let currentXhr = null;
+    let aborted = false;
     const startedAt = Date.now();
-    xhr.upload.addEventListener('progress', function (evt) {
-      if (!evt.lengthComputable) {
-        ui.label.textContent = label + ' — uploading ' + formatBytes(evt.loaded) + '…';
-        return;
-      }
-      const pct = (evt.loaded / evt.total) * 100;
-      ui.bar.value = pct;
-      const secs = Math.max(0.001, (Date.now() - startedAt) / 1000);
-      const rate = evt.loaded / secs;
-      const eta = (evt.total - evt.loaded) / Math.max(rate, 1);
-      ui.label.textContent =
-        label + ' — ' +
-        formatBytes(evt.loaded) + ' / ' + formatBytes(evt.total) +
-        ' (' + pct.toFixed(1) + '%, ' + formatBytes(rate) + '/s, ' +
-        formatDuration(eta) + ' left)';
-    });
 
-    xhr.upload.addEventListener('load', function () {
-      ui.label.textContent = label + ' — finalising on server…';
-    });
+    ui.abortBtn.onclick = function () {
+      aborted = true;
+      if (currentXhr) currentXhr.abort();
+    };
 
-    xhr.addEventListener('load', function () {
+    function summarise() {
+      const shown = errors.slice(0, 3).map(function (e) {
+        return e.name + ' (' + e.msg + ')';
+      }).join('; ');
+      return shown + (errors.length > 3 ? ' …' : '');
+    }
+
+    function done() {
       setSubmitDisabled(form, false);
-      if (xhr.status >= 200 && xhr.status < 400) {
+      if (failed === 0) {
         ui.bar.value = 100;
-        ui.label.textContent = label + ' — done. Reloading…';
-        window.location.assign(xhr.responseURL || window.location.href);
+        ui.label.textContent = total + ' file' + (total === 1 ? '' : 's') + ' uploaded — reloading…';
+        window.location.reload();
         return;
       }
+      // Some failed: reload so the files that DID upload appear, then
+      // surface the failure summary. Reload wins the race visually, so
+      // set the flash-style error before reloading isn't useful; instead
+      // leave the summary in place and let the operator reload manually
+      // if they want the partial list — but a repeated-failure stop
+      // almost always means nothing got through, so we keep the page.
       ui.error.hidden = false;
       ui.error.textContent =
-        'Upload failed: HTTP ' + xhr.status + (xhr.statusText ? ' ' + xhr.statusText : '') +
-        (xhr.responseText ? ' — ' + truncate(xhr.responseText, 240) : '');
-    });
+        failed + ' of ' + total + ' file(s) failed: ' + summarise() +
+        '. Likely causes: the server is out of disk space or behind an ' +
+        'upload-size limit (check journalctl and df on the server). ' +
+        'Files that succeeded are saved — reload to see them.';
+    }
 
-    xhr.addEventListener('error', function () {
-      setSubmitDisabled(form, false);
-      ui.error.hidden = false;
-      ui.error.textContent = 'Upload failed: network error. The server may have closed the connection -- check journalctl on the server.';
-    });
+    function afterFailure(name, msg) {
+      failed++;
+      consecutiveFails++;
+      errors.push({ name: name, msg: msg });
+      if (consecutiveFails >= consecutiveFailLimit && index + 1 < total) {
+        setSubmitDisabled(form, false);
+        ui.error.hidden = false;
+        ui.error.textContent =
+          'Stopped after ' + consecutiveFails + ' consecutive failures (' + msg + '). ' +
+          'The server is most likely out of disk space or behind an upload-size ' +
+          'limit — check journalctl and df on the server, then try again.';
+        return true; // halt
+      }
+      return false;
+    }
 
-    xhr.addEventListener('abort', function () {
-      setSubmitDisabled(form, false);
-      ui.error.hidden = false;
-      ui.error.textContent = 'Upload aborted.';
-    });
+    function uploadNext() {
+      if (aborted) {
+        setSubmitDisabled(form, false);
+        ui.error.hidden = false;
+        ui.error.textContent = 'Upload aborted after ' + index + ' of ' + total + ' file(s).';
+        return;
+      }
+      if (index >= files.length) { done(); return; }
 
-    xhr.send(fd);
-    ui.abortBtn.onclick = function () { xhr.abort(); };
+      const f = files[index];
+      const rel = f.webkitRelativePath || f.name;
+      const fd = new FormData();
+      fd.append('relpath', rel);
+      fd.append('file', f, f.name);
+
+      const xhr = new XMLHttpRequest();
+      currentXhr = xhr;
+      xhr.open('POST', form.action, true);
+      xhr.setRequestHeader('Accept', 'text/html, application/json');
+
+      xhr.upload.addEventListener('progress', function (evt) {
+        const loaded = doneBytes + (evt.lengthComputable ? evt.loaded : 0);
+        if (totalBytes > 0) {
+          ui.bar.value = Math.min(100, (loaded / totalBytes) * 100);
+        }
+        const secs = Math.max(0.001, (Date.now() - startedAt) / 1000);
+        const rate = loaded / secs;
+        const eta = totalBytes > 0 ? (totalBytes - loaded) / Math.max(rate, 1) : 0;
+        ui.label.textContent =
+          'Uploading ' + (index + 1) + ' of ' + total + ' — ' + rel + ' — ' +
+          formatBytes(loaded) + ' / ' + formatBytes(totalBytes) +
+          ' (' + formatBytes(rate) + '/s, ' + formatDuration(eta) + ' left)';
+      });
+
+      xhr.addEventListener('load', function () {
+        currentXhr = null;
+        doneBytes += f.size;
+        if (xhr.status >= 200 && xhr.status < 400) {
+          consecutiveFails = 0;
+          index++;
+          uploadNext();
+          return;
+        }
+        const msg = 'HTTP ' + xhr.status;
+        if (afterFailure(rel, msg)) return;
+        index++;
+        uploadNext();
+      });
+
+      xhr.addEventListener('error', function () {
+        currentXhr = null;
+        doneBytes += f.size;
+        if (afterFailure(rel, 'network error')) return;
+        index++;
+        uploadNext();
+      });
+
+      xhr.addEventListener('abort', function () {
+        currentXhr = null;
+        if (aborted) { uploadNext(); return; } // aborted branch reports it
+        doneBytes += f.size;
+        if (afterFailure(rel, 'aborted')) return;
+        index++;
+        uploadNext();
+      });
+
+      xhr.send(fd);
+    }
+
+    uploadNext();
   }
 
   // ensureProgressUI returns the progress-bar widget for a form,

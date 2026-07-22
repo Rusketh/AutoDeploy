@@ -5,16 +5,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/rusketh/autodeploy/server/internal/auth"
+	"github.com/rusketh/autodeploy/server/internal/logging"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
 )
+
+// uploadActor returns the logged-in portal username for the audit
+// "actor" field, or "portal" when it can't be determined.
+func uploadActor(req *http.Request) string {
+	if u, ok := req.Context().Value(ctxKeyUser{}).(auth.User); ok && u.Username != "" {
+		return u.Username
+	}
+	return "portal"
+}
+
+// softwareTarget is the structured-log target for a package's payload.
+func softwareTarget(id model.ID) string {
+	return "software/" + strconv.FormatInt(int64(id), 10)
+}
 
 func init() {
 	registerSoftwareRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
@@ -454,8 +471,12 @@ func softwareUpload(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		ctx := req.Context()
+		actor, target := uploadActor(req), softwareTarget(id)
 		mr, err := req.MultipartReader()
 		if err != nil {
+			logging.Event(ctx, "software.upload.bad_request", actor, target,
+				slog.String("error", err.Error()))
 			http.Error(w, "expected multipart upload", http.StatusBadRequest)
 			return
 		}
@@ -471,6 +492,8 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				break
 			}
 			if err != nil {
+				logging.Event(ctx, "software.upload.stream_error", actor, target,
+					slog.String("error", err.Error()))
 				flash(w, "err", err.Error())
 				break
 			}
@@ -498,6 +521,8 @@ func softwareUpload(r Repos) http.HandlerFunc {
 			if sanErr != nil {
 				_, _ = io.Copy(io.Discard, part)
 				_ = part.Close()
+				logging.Event(ctx, "software.upload.rejected", actor, target,
+					slog.String("error", sanErr.Error()))
 				flash(w, "err", "Upload rejected: "+sanErr.Error())
 				continue
 			}
@@ -505,13 +530,23 @@ func softwareUpload(r Repos) http.HandlerFunc {
 			n, err := r.Blobs.WriteStream(rel, part)
 			_ = part.Close()
 			if err != nil {
+				// The common causes here are a full disk or a
+				// non-writable data dir; make it explicit in the log so
+				// "uploads don't work" isn't a black box.
+				logging.Event(ctx, "software.upload.write_failed", actor, target,
+					slog.String("file", name),
+					slog.String("error", err.Error()))
 				flash(w, "err", err.Error())
 				break
 			}
 			uploaded++
+			logging.Event(ctx, "software.upload.file_ok", actor, target,
+				slog.String("file", name),
+				slog.Int64("bytes", n))
 			flash(w, "ok", fmt.Sprintf("Uploaded %s (%d bytes).", name, n))
 		}
 		if uploaded == 0 {
+			logging.Event(ctx, "software.upload.empty", actor, target)
 			flash(w, "warn", "No file received in the upload.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
@@ -558,8 +593,12 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		ctx := req.Context()
+		actor, target := uploadActor(req), softwareTarget(id)
 		mr, err := req.MultipartReader()
 		if err != nil {
+			logging.Event(ctx, "software.bundle.bad_request", actor, target,
+				slog.String("error", err.Error()))
 			http.Error(w, "expected multipart upload", http.StatusBadRequest)
 			return
 		}
@@ -570,6 +609,8 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 				break
 			}
 			if err != nil {
+				logging.Event(ctx, "software.bundle.stream_error", actor, target,
+					slog.String("error", err.Error()))
 				flash(w, "err", err.Error())
 				break
 			}
@@ -582,6 +623,8 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 			if sanErr != nil {
 				_, _ = io.Copy(io.Discard, part)
 				_ = part.Close()
+				logging.Event(ctx, "software.bundle.rejected", actor, target,
+					slog.String("error", sanErr.Error()))
 				flash(w, "err", "Upload rejected: "+sanErr.Error())
 				continue
 			}
@@ -595,13 +638,21 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 			n, err := r.Blobs.WriteStream(rel, part)
 			_ = part.Close()
 			if err != nil {
+				// Usually a full disk or a non-writable data dir.
+				logging.Event(ctx, "software.bundle.write_failed", actor, target,
+					slog.String("file", name),
+					slog.String("error", err.Error()))
 				flash(w, "err", err.Error())
 				break
 			}
 			uploaded++
+			logging.Event(ctx, "software.bundle.file_ok", actor, target,
+				slog.String("file", name),
+				slog.Int64("bytes", n))
 			flash(w, "ok", fmt.Sprintf("Uploaded bundle %s (%d bytes).", name, n))
 		}
 		if uploaded == 0 {
+			logging.Event(ctx, "software.bundle.empty", actor, target)
 			flash(w, "warn", "No bundle received in the upload.")
 		}
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
