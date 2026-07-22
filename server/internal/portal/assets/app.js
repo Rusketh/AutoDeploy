@@ -678,6 +678,87 @@
     ui.abortBtn.onclick = function () { xhr.abort(); };
   }
 
+  // startFolderUpload uploads every file the operator picked with a
+  // webkitdirectory input, preserving the folder structure. A plain
+  // form submit only carries basenames, so we build the multipart body
+  // by hand: for each file we append a "relpath" field (its path
+  // relative to the picked folder) immediately followed by the "file"
+  // part. The server pairs each relpath with the next file part and
+  // recreates the sub-directories under the package's files/ tree.
+  function startFolderUpload(form, input) {
+    const files = Array.prototype.slice.call(input.files);
+    if (!files.length) return;
+    const ui = ensureProgressUI(form);
+    const label = files.length + ' file' + (files.length === 1 ? '' : 's');
+    ui.label.textContent = label + ' — preparing…';
+    ui.bar.value = 0;
+    ui.bar.max = 100;
+    ui.wrap.hidden = false;
+    ui.error.hidden = true;
+    setSubmitDisabled(form, true);
+
+    const fd = new FormData();
+    files.forEach(function (f) {
+      fd.append('relpath', f.webkitRelativePath || f.name);
+      fd.append('file', f, f.name);
+    });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', form.action, true);
+    xhr.setRequestHeader('Accept', 'text/html, application/json');
+
+    const startedAt = Date.now();
+    xhr.upload.addEventListener('progress', function (evt) {
+      if (!evt.lengthComputable) {
+        ui.label.textContent = label + ' — uploading ' + formatBytes(evt.loaded) + '…';
+        return;
+      }
+      const pct = (evt.loaded / evt.total) * 100;
+      ui.bar.value = pct;
+      const secs = Math.max(0.001, (Date.now() - startedAt) / 1000);
+      const rate = evt.loaded / secs;
+      const eta = (evt.total - evt.loaded) / Math.max(rate, 1);
+      ui.label.textContent =
+        label + ' — ' +
+        formatBytes(evt.loaded) + ' / ' + formatBytes(evt.total) +
+        ' (' + pct.toFixed(1) + '%, ' + formatBytes(rate) + '/s, ' +
+        formatDuration(eta) + ' left)';
+    });
+
+    xhr.upload.addEventListener('load', function () {
+      ui.label.textContent = label + ' — finalising on server…';
+    });
+
+    xhr.addEventListener('load', function () {
+      setSubmitDisabled(form, false);
+      if (xhr.status >= 200 && xhr.status < 400) {
+        ui.bar.value = 100;
+        ui.label.textContent = label + ' — done. Reloading…';
+        window.location.assign(xhr.responseURL || window.location.href);
+        return;
+      }
+      ui.error.hidden = false;
+      ui.error.textContent =
+        'Upload failed: HTTP ' + xhr.status + (xhr.statusText ? ' ' + xhr.statusText : '') +
+        (xhr.responseText ? ' — ' + truncate(xhr.responseText, 240) : '');
+    });
+
+    xhr.addEventListener('error', function () {
+      setSubmitDisabled(form, false);
+      ui.error.hidden = false;
+      ui.error.textContent = 'Upload failed: network error. The server may have closed the connection -- check journalctl on the server.';
+    });
+
+    xhr.addEventListener('abort', function () {
+      setSubmitDisabled(form, false);
+      ui.error.hidden = false;
+      ui.error.textContent = 'Upload aborted.';
+    });
+
+    xhr.send(fd);
+    ui.abortBtn.onclick = function () { xhr.abort(); };
+  }
+
   // ensureProgressUI returns the progress-bar widget for a form,
   // creating it on first call. The widget is appended at the end of
   // the form so the markup stays simple in the templates: just slap
@@ -950,6 +1031,15 @@
     });
     fileInput.addEventListener('change', function () {
       if (fileInput.files.length) startUpload(form);
+    });
+  });
+
+  // ---- Folder auto-upload (webkitdirectory, preserves structure) ------
+  document.querySelectorAll('[data-folder-upload]').forEach(function (form) {
+    var folderInput = form.querySelector('input[type=file]');
+    if (!folderInput) return;
+    folderInput.addEventListener('change', function () {
+      if (folderInput.files.length) startFolderUpload(form, folderInput);
     });
   });
 

@@ -29,7 +29,7 @@ func init() {
 		// don't 404; new UI uses per-file delete instead.
 		post("/portal/software/{id}/upload/delete", softwareUploadDelete(r))
 		// Multi-file: delete one named file from a package.
-		post("/portal/software/{id}/files/{name}/delete", softwareFileDelete(r))
+		post("/portal/software/{id}/files/{name...}/delete", softwareFileDelete(r))
 		// Bundle zips: uploaded once, extracted into the agent workdir.
 		post("/portal/software/{id}/bundle", softwareBundleUpload(r))
 		post("/portal/software/{id}/bundle/{name}/delete", softwareBundleDelete(r))
@@ -77,6 +77,54 @@ func sanitizeUploadFilename(name string) (string, error) {
 		return "", fmt.Errorf("filename longer than 255 chars")
 	}
 	return name, nil
+}
+
+// sanitizeUploadRelPath validates a slash-relative payload path that may
+// contain sub-directories (e.g. "drivers/x.inf"), so folder-structured
+// installers can be uploaded into a package's files/ tree. Windows
+// separators are folded to forward slashes; each path segment is checked
+// the same way sanitizeUploadFilename checks a lone filename. Absolute
+// paths, drive letters and any ".." segment are rejected. The returned
+// value is a clean, forward-slash path suitable for joining under the
+// package files dir; BlobStore.Resolve is still the containment backstop.
+func sanitizeUploadRelPath(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+	name = strings.ReplaceAll(name, `\`, "/")
+	name = strings.TrimSpace(name)
+	if strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("path must be relative")
+	}
+	// Reject a Windows drive prefix like "C:" in the first segment.
+	if i := strings.Index(name, "/"); i >= 0 {
+		if strings.Contains(name[:i], ":") {
+			return "", fmt.Errorf("path must be relative")
+		}
+	} else if strings.Contains(name, ":") {
+		return "", fmt.Errorf("path must be relative")
+	}
+	if len(name) > 4096 {
+		return "", fmt.Errorf("path longer than 4096 chars")
+	}
+	segs := strings.Split(name, "/")
+	clean := make([]string, 0, len(segs))
+	for _, seg := range segs {
+		if seg == "" {
+			return "", fmt.Errorf("path has an empty segment")
+		}
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("path has a special segment")
+		}
+		if strings.ContainsRune(seg, 0) {
+			return "", fmt.Errorf("path segment contains a null byte")
+		}
+		if len(seg) > 255 {
+			return "", fmt.Errorf("path segment longer than 255 chars")
+		}
+		clean = append(clean, seg)
+	}
+	return strings.Join(clean, "/"), nil
 }
 
 func softwareList(r Repos) http.HandlerFunc {
@@ -412,6 +460,11 @@ func softwareUpload(r Repos) http.HandlerFunc {
 			return
 		}
 		var uploaded int
+		// A folder upload sends each file preceded by a "relpath" field
+		// carrying its path relative to the picked folder (from the
+		// browser's webkitRelativePath). pendingRel holds that value
+		// until the matching "file" part arrives, then is cleared.
+		var pendingRel string
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
@@ -421,19 +474,34 @@ func softwareUpload(r Repos) http.HandlerFunc {
 				flash(w, "err", err.Error())
 				break
 			}
+			if part.FormName() == "relpath" {
+				buf, _ := io.ReadAll(io.LimitReader(part, 4096))
+				_ = part.Close()
+				pendingRel = string(buf)
+				continue
+			}
 			if part.FormName() != "file" {
 				_, _ = io.Copy(io.Discard, part)
 				_ = part.Close()
 				continue
 			}
-			name, sanErr := sanitizeUploadFilename(part.FileName())
+			// A relpath (with sub-dirs) takes precedence over the bare
+			// part filename; without one we keep the flat-file behaviour.
+			var name string
+			var sanErr error
+			if strings.TrimSpace(pendingRel) != "" {
+				name, sanErr = sanitizeUploadRelPath(pendingRel)
+			} else {
+				name, sanErr = sanitizeUploadFilename(part.FileName())
+			}
+			pendingRel = ""
 			if sanErr != nil {
 				_, _ = io.Copy(io.Discard, part)
 				_ = part.Close()
 				flash(w, "err", "Upload rejected: "+sanErr.Error())
 				continue
 			}
-			rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), name))
+			rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), filepath.FromSlash(name)))
 			n, err := r.Blobs.WriteStream(rel, part)
 			_ = part.Close()
 			if err != nil {
@@ -459,14 +527,14 @@ func softwareFileDelete(r Repos) http.HandlerFunc {
 		raw := req.PathValue("name")
 		// PathValue is URL-decoded but we still apply the same
 		// sanitiser the upload side uses so a malicious URL can't
-		// reach a sibling directory.
-		name, sanErr := sanitizeUploadFilename(raw)
+		// reach a sibling directory. The path may contain sub-dirs.
+		name, sanErr := sanitizeUploadRelPath(raw)
 		if sanErr != nil {
 			flash(w, "err", "Bad filename: "+sanErr.Error())
 			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 			return
 		}
-		rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), name))
+		rel := filepath.ToSlash(filepath.Join(softwarePackageFilesDir(id), filepath.FromSlash(name)))
 		if err := r.Blobs.Remove(rel); err != nil && !os.IsNotExist(err) {
 			flash(w, "err", "Remove "+name+": "+err.Error())
 		} else {

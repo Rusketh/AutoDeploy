@@ -963,7 +963,18 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			if len(url) > 0 && url[0] == '/' {
 				url = f.server + url
 			}
-			fdst := filepath.Join(filesDir, pf.Name)
+			// pf.Name may be a slash-relative sub-path (folder-structured
+			// payloads), so honour any sub-directories and create them
+			// before opening the file for writing.
+			fdst := filepath.Join(filesDir, filepath.FromSlash(pf.Name))
+			if err := os.MkdirAll(filepath.Dir(fdst), 0o755); err != nil {
+				log.Error("package.download.mkdir",
+					slog.String("package", pkg.Name),
+					slog.String("file", pf.Name),
+					slog.String("error", err.Error()))
+				downloadOK = false
+				break
+			}
 			out, err := os.Create(fdst)
 			if err != nil {
 				log.Error("package.download.create",
