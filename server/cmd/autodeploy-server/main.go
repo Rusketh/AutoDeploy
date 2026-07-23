@@ -297,22 +297,23 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Images: r.Images, ImageGroups: r.ImageGroups, Inventory: r.Inventory,
 		Bulk: r.Bulk, Logs: r.Logs,
 		Users: r.Users, Settings: r.Settings, Branding: r.Branding,
-		Mirrors:       r.Mirrors,
-		Runtime:       rt,
-		Resolver:      r.Resolver,
-		Blobs:         blobs,
-		AD:            adSvc,
-		DomainJoin:    r.DomainJoin,
-		SetupLock:     r.SetupLock,
-		Updates:       r.Updates,
-		Notifications: r.Notifications,
-		WebhookRepo:   r.Webhooks,
-		Groups:        r.Groups,
-		Emitter:       emitter,
-		Waker:         waker,
-		SecretsBox:    bx,
-		DataDir:       cfg.DataDir,
-		ServerVersion: Version,
+		Mirrors:        r.Mirrors,
+		Runtime:        rt,
+		Resolver:       r.Resolver,
+		Blobs:          blobs,
+		AD:             adSvc,
+		DomainJoin:     r.DomainJoin,
+		SetupLock:      r.SetupLock,
+		Updates:        r.Updates,
+		Notifications:  r.Notifications,
+		WebhookRepo:    r.Webhooks,
+		Groups:         r.Groups,
+		ImportedAssets: r.ImportedAssets,
+		Emitter:        emitter,
+		Waker:          waker,
+		SecretsBox:     bx,
+		DataDir:        cfg.DataDir,
+		ServerVersion:  Version,
 	}); err != nil {
 		return err
 	}
@@ -333,6 +334,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications:       r.Notifications,
 		NotifyRetentionDays: rt.NotifyPortalRetentionDays,
 		WebhookRepo:         r.Webhooks,
+		Assets:              r.ImportedAssets,
 	}
 	go sch.Start(ctx)
 	logger.LogAttrs(ctx, slog.LevelInfo, "retention.scheduler_started",
@@ -450,29 +452,30 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 type appRepos struct {
-	ISOs          *model.ISORepo
-	Unattend      *model.UnattendRepo
-	Drivers       *model.DriverPackageRepo
-	Software      *model.SoftwarePackageRepo
-	Loadouts      *model.SoftwareLoadoutRepo
-	Images        *model.ImageRepo
-	Inventory     *model.InventoryRepo
-	Resolver      *resolve.Resolver
-	Users         *auth.Repo
-	Settings      *auth.SettingsRepo
-	Bulk          *model.BulkRepo
-	Logs          *model.LogRepo
-	Branding      *branding.Repo
-	Mirrors       *model.PayloadMirrorRepo
-	Runtime       *runtime.Settings
-	DomainJoin    *model.DomainJoinRepo
-	SetupLock     *model.SetupLockRepo
-	Updates       *model.WindowsUpdateRepo
-	Notifications *model.NotificationRepo
-	Webhooks      *model.WebhookRepo
-	Groups        *model.MachineGroupRepo
-	ImageGroups   *model.ImageGroupRepo
-	Emitter       *notify.Emitter
+	ISOs           *model.ISORepo
+	Unattend       *model.UnattendRepo
+	Drivers        *model.DriverPackageRepo
+	Software       *model.SoftwarePackageRepo
+	Loadouts       *model.SoftwareLoadoutRepo
+	Images         *model.ImageRepo
+	Inventory      *model.InventoryRepo
+	Resolver       *resolve.Resolver
+	Users          *auth.Repo
+	Settings       *auth.SettingsRepo
+	Bulk           *model.BulkRepo
+	Logs           *model.LogRepo
+	Branding       *branding.Repo
+	Mirrors        *model.PayloadMirrorRepo
+	Runtime        *runtime.Settings
+	DomainJoin     *model.DomainJoinRepo
+	SetupLock      *model.SetupLockRepo
+	Updates        *model.WindowsUpdateRepo
+	Notifications  *model.NotificationRepo
+	Webhooks       *model.WebhookRepo
+	Groups         *model.MachineGroupRepo
+	ImageGroups    *model.ImageGroupRepo
+	ImportedAssets *model.ImportedAssetRepo
+	Emitter        *notify.Emitter
 }
 
 func repos(db *storage.DB, bx *secrets.Box) appRepos {
@@ -497,6 +500,10 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	updates := model.NewWindowsUpdateRepo(db, inventory)
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
+	importedAssets := model.NewImportedAssetRepo(db)
+	// Let first-contact enrollment apply operator-imported name/OU (self-clean
+	// staging table matched on serial+model).
+	inventory.SetAssetImporter(importedAssets)
 	return appRepos{
 		ISOs: isos, Unattend: unattend, Drivers: drivers,
 		Software: software, Loadouts: loadouts, Images: images,
@@ -506,13 +513,14 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Users: users, Settings: settings,
 		Bulk: bulk,
 		Logs: logs, Branding: brandRepo, Mirrors: mirrors,
-		DomainJoin:    domainJoin,
-		SetupLock:     setupLock,
-		Updates:       updates,
-		Notifications: notifications,
-		Webhooks:      webhooks,
-		Groups:      groups,
-		ImageGroups: imageGroups,
+		DomainJoin:     domainJoin,
+		SetupLock:      setupLock,
+		Updates:        updates,
+		Notifications:  notifications,
+		Webhooks:       webhooks,
+		Groups:         groups,
+		ImageGroups:    imageGroups,
+		ImportedAssets: importedAssets,
 	}
 }
 

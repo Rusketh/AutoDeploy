@@ -46,3 +46,6 @@ var registerLogsRoutes = func(get, post func(string, http.HandlerFunc), r Repos)
 var registerSettingsRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 	get("/portal/settings", placeholder(r, "Settings"))
 }
+var registerImportRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
+	get("/portal/import", placeholder(r, "Import assets"))
+}

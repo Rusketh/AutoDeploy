@@ -195,9 +195,20 @@ type DetectedState struct {
 
 // InventoryRepo owns machine_record, machine_binding, deployment_history
 // and machine_detected_state.
-type InventoryRepo struct{ db *storage.DB }
+type InventoryRepo struct {
+	db *storage.DB
+	// assets, when set, lets UpsertFromIdentity apply an operator-imported
+	// name/OU to a machine the first time it is seen (see importedasset.go).
+	// Optional and nil-safe so existing callers/tests need no change.
+	assets *ImportedAssetRepo
+}
 
 func NewInventoryRepo(db *storage.DB) *InventoryRepo { return &InventoryRepo{db: db} }
+
+// SetAssetImporter wires the imported-asset staging table into first-contact
+// matching. Called once during server wiring; leaving it unset simply disables
+// import matching.
+func (r *InventoryRepo) SetAssetImporter(a *ImportedAssetRepo) { r.assets = a }
 
 // UpsertFromIdentity creates a machine_record if one does not exist for
 // id.SystemUUID, or updates its last_seen and identity fields if it does.
@@ -208,6 +219,14 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 	}
 	existing, err := r.GetByUUID(ctx, id.SystemUUID)
 	if err == nil {
+		// If this update fills in a serial or product that was previously
+		// unknown (e.g. the agent enrolled UUID-first and the Boot Client's
+		// SMBIOS report arrives now), the machine may finally match an
+		// imported asset. Note the transition before the write; the match
+		// attempt runs after it below. This is a cheap in-memory check, so
+		// the common per-poll case (serial already known) adds no query.
+		serialNewlyKnown := (strings.TrimSpace(existing.SystemSerial) == "" && strings.TrimSpace(id.SystemSerial) != "") ||
+			(strings.TrimSpace(existing.SystemProduct) == "" && strings.TrimSpace(id.SystemProduct) != "")
 		// Update identity fields and last_seen. Only non-empty incoming
 		// values overwrite what's stored: the SMBIOS make/model are read
 		// pre-boot by the Boot Client, but the resident agent (and several
@@ -240,7 +259,11 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 		if err != nil {
 			return MachineRecord{}, err
 		}
-		return r.Get(ctx, existing.ID)
+		m, err := r.Get(ctx, existing.ID)
+		if err == nil && serialNewlyKnown {
+			r.tryApplyImportedAsset(ctx, m, id)
+		}
+		return m, err
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return MachineRecord{}, err
@@ -259,7 +282,51 @@ func (r *InventoryRepo) UpsertFromIdentity(ctx context.Context, id match.Identit
 	newID, _ := res.LastInsertId()
 	m, err := r.Get(ctx, ID(newID))
 	m.FirstContact = err == nil
+	if m.FirstContact {
+		r.tryApplyImportedAsset(ctx, m, id)
+	}
 	return m, err
+}
+
+// tryApplyImportedAsset looks for an operator-imported asset matching the
+// machine's SMBIOS serial + product and, on a hit, applies the imported name/OU
+// to the machine's binding and records the match. Best-effort: any error is
+// swallowed so it can never block enrollment (mirrors the other post-insert
+// best-effort steps at the call sites). Does nothing when no importer is wired
+// or the identity lacks a serial/model to key on.
+func (r *InventoryRepo) tryApplyImportedAsset(ctx context.Context, m MachineRecord, id match.Identity) {
+	if r.assets == nil {
+		return
+	}
+	asset, err := r.assets.MatchByIdentity(ctx, id.SystemSerial, id.SystemProduct)
+	if err != nil {
+		return // ErrNotFound (the common case) or a lookup error -> skip
+	}
+	b, err := r.GetBinding(ctx, m.ID)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return
+		}
+		b = MachineBinding{MachineID: m.ID}
+	}
+	changed := false
+	// A binding name that is an operator-set TEMPLATE (contains '%') expands
+	// per machine on re-image; never replace it with a literal imported name.
+	if asset.Name != "" && !strings.Contains(b.MachineName, "%") &&
+		(asset.Overwrite || b.MachineName == "") && b.MachineName != asset.Name {
+		b.MachineName = asset.Name
+		changed = true
+	}
+	if asset.OU != "" && (asset.Overwrite || b.TargetOU == "") && b.TargetOU != asset.OU {
+		b.TargetOU = asset.OU
+		changed = true
+	}
+	if changed {
+		if err := r.UpsertBinding(ctx, b); err != nil {
+			return
+		}
+	}
+	_ = r.assets.MarkMatched(ctx, asset.ID, m.ID)
 }
 
 // Get returns the machine record by primary key.
