@@ -29,6 +29,9 @@ type Scheduler struct {
 	NotifyRetentionDays func() int
 	// WebhookRepo, when set, prunes old webhook delivery rows.
 	WebhookRepo *model.WebhookRepo
+	// Assets, when set, sweeps imported-asset rows that have matched a machine
+	// or whose serial+model is already in inventory (self-cleaning).
+	Assets *model.ImportedAssetRepo
 }
 
 // Start runs the scheduler until ctx is cancelled.
@@ -98,6 +101,17 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 				slog.String("error", err.Error()))
 		} else if n > 0 {
 			s.log().Info("retention.webhook_delivery_prune.ok",
+				slog.Int64("removed", n))
+		}
+	}
+
+	if s.Assets != nil {
+		n, err := s.Assets.SweepMatched(ctx)
+		if err != nil {
+			s.log().Warn("retention.imported_asset_sweep.fail",
+				slog.String("error", err.Error()))
+		} else if n > 0 {
+			s.log().Info("retention.imported_asset_sweep.ok",
 				slog.Int64("removed", n))
 		}
 	}

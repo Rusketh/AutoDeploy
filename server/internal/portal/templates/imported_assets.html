@@ -1,0 +1,92 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Import assets</h2>
+  {{if .Data.Assets}}
+  <div class="filter">
+    <svg><use href="#i-search"/></svg>
+    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
+  </div>
+  <div class="right">
+    <form method="POST" action="/portal/import/wipe" data-confirm="Wipe the entire imported asset table? This removes every staged row.">
+      <button class="danger" type="submit"><svg><use href="#i-trash"/></svg>Wipe all</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+
+<p class="lede">
+  Pre-register machines from your asset-management system. Upload a CSV of
+  <code>serial, model, name, ou</code>; each row is staged here. The first time a
+  matching machine contacts AutoDeploy — imaged by the Boot Client, or when an
+  unknown agent enrolls — its <strong>serial + model</strong> are matched against
+  this table and the imported <strong>name</strong> and <strong>OU</strong> are
+  applied to that machine automatically. Matched (and otherwise known) rows are
+  cleaned up on their own.
+</p>
+
+<fieldset class="card">
+  <legend><svg class="icon-inline"><use href="#i-file"/></svg>Upload CSV</legend>
+  <form class="std" method="POST" action="/portal/import" enctype="multipart/form-data">
+    <label><span class="lbl">CSV file</span>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+    </label>
+    <p class="small muted">
+      Columns: <code>serial</code>, <code>model</code>, <code>name</code>,
+      <code>ou</code>. A header row is optional — without one the fixed order
+      above is assumed. Serial and model are required on every row; rows missing
+      either are skipped. Re-importing the same serial + model updates it in place.
+    </p>
+    <fieldset class="inline-radios">
+      <legend class="lbl">When a machine matches</legend>
+      <label class="radio">
+        <input type="radio" name="apply_mode" value="fill" checked>
+        <span>Fill only if empty <span class="small muted">— never change a name/OU an operator already set (safe for migrations)</span></span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="apply_mode" value="overwrite">
+        <span>Always overwrite <span class="small muted">— the import is authoritative; replace the machine's name/OU</span></span>
+      </label>
+    </fieldset>
+    <div class="actions">
+      <button type="submit" class="btn"><svg><use href="#i-plus"/></svg>Import</button>
+    </div>
+  </form>
+</fieldset>
+
+{{if .Data.Assets}}
+<div class="toolbar sub">
+  <h3>Staged assets</h3>
+  <span class="small muted">{{.Data.Total}} total · {{.Data.Matched}} matched</span>
+</div>
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Serial</th>
+    <th>Model</th>
+    <th>Name</th>
+    <th>OU</th>
+    <th>Apply mode</th>
+    <th>Status</th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Assets}}
+    <tr>
+      <td><strong>{{.Serial}}</strong></td>
+      <td>{{.Model}}</td>
+      <td>{{if .Name}}{{.Name}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small">{{if .OU}}{{.OU}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .Overwrite}}<span class="badge accent">overwrite</span>{{else}}<span class="badge muted">fill only</span>{{end}}</td>
+      <td>{{if .Matched}}<span class="badge ok"><svg class="icon-inline"><use href="#i-check"/></svg>matched</span>{{else}}<span class="badge muted">waiting</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-file"/></svg>
+  <h3>No imported assets yet</h3>
+  <p>Upload a CSV above to pre-seed machine names and OUs before your machines are imaged or their agents enroll.</p>
+</div>
+{{end}}
+{{end}}

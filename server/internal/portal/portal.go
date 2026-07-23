@@ -74,6 +74,9 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
 	Groups *model.MachineGroupRepo
+	// ImportedAssets stores operator-imported assets (serial/model → name/OU)
+	// that pre-seed a machine's binding the first time it is seen.
+	ImportedAssets *model.ImportedAssetRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -156,6 +159,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerLoadoutRoutes(get, post, r)
 	registerImageRoutes(get, post, r)
 	registerInventoryRoutes(get, post, r)
+	registerImportRoutes(get, post, r)
 	registerMachineGroupRoutes(get, post, r)
 	registerBulkRoutes(get, post, r)
 	registerLogsRoutes(get, post, r)
