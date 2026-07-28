@@ -170,14 +170,72 @@ Boot0007* AutoDeploy Setup	HD(...)/File(\EFI\BOOT\BOOTX64.EFI)
 	if err := RegisterBootEntry(context.Background(), MediaPlan{TargetDisk: "/dev/sda"}, rec); err != nil {
 		t.Fatal(err)
 	}
-	// Network 0002 moved to the end; the staged entry and Windows Boot Manager
-	// stay ahead of it.
-	if !rec.Has("efibootmgr -o 0007,0000,0002") {
-		t.Errorf("network boot entry not demoted to the end of BootOrder\n%s", rec.Dump())
+	// Both the network entry (0002) AND our own staged-media entry (0007) move to
+	// the end; Windows Boot Manager (0000) stays ahead so Setup's inter-phase
+	// reboot boots Windows, not the network or the staged media.
+	if !rec.Has("efibootmgr -o 0000,0007,0002") {
+		t.Errorf("network/staged entries not demoted below Windows Boot Manager\n%s", rec.Dump())
 	}
 	if !rec.Has("efibootmgr --bootnext 0007") {
 		t.Errorf("BootNext not pointed at the staged media entry\n%s", rec.Dump())
 	}
+}
+
+// TestRegisterBootEntryDemotesOwnEntryBelowWindows locks in the fix for the
+// ADBOOT install loop: efibootmgr --create prepends our entry, so on firmware
+// that doesn't reorder for the freshly created Windows Boot Manager, Setup's
+// mid-install reboot re-enters the staged media. Our own entry must be demoted
+// below Windows Boot Manager in BootOrder.
+func TestRegisterBootEntryDemotesOwnEntryBelowWindows(t *testing.T) {
+	rec := &Recorder{OutputResults: []string{
+		// Pre-create: a Windows Boot Manager from a prior install is present.
+		`BootCurrent: 0002
+BootOrder: 0002,0000
+Boot0000* Windows Boot Manager	HD(...)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0002* UEFI: IPv4 Realtek PCIe GbE	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(0011223344,0)/IPv4(0.0.0.0)
+`,
+		// Post-create: efibootmgr prepended the new entry (0007) to BootOrder.
+		`BootCurrent: 0002
+BootOrder: 0007,0002,0000
+Boot0000* Windows Boot Manager	HD(...)/File(\EFI\Microsoft\Boot\bootmgfw.efi)
+Boot0002* UEFI: IPv4 Realtek PCIe GbE	PciRoot(0x0)/Pci(0x1c,0x0)/MAC(0011223344,0)/IPv4(0.0.0.0)
+Boot0007* AutoDeploy Setup	HD(...)/File(\EFI\BOOT\BOOTX64.EFI)
+`,
+	}}
+	if err := RegisterBootEntry(context.Background(), MediaPlan{TargetDisk: "/dev/sda"}, rec); err != nil {
+		t.Fatal(err)
+	}
+	order := lastBootOrder(t, rec)
+	winIdx, ourIdx := indexOf(order, "0000"), indexOf(order, "0007")
+	if winIdx < 0 || ourIdx < 0 {
+		t.Fatalf("expected both Windows Boot Manager and AutoDeploy entries in BootOrder, got %v\n%s", order, rec.Dump())
+	}
+	if ourIdx < winIdx {
+		t.Errorf("AutoDeploy Setup (0007) is ahead of Windows Boot Manager (0000) in %v -- the ADBOOT loop is not fixed\n%s", order, rec.Dump())
+	}
+}
+
+// lastBootOrder returns the bootnums from the final `efibootmgr -o` the code
+// issued, or fails the test if none was recorded.
+func lastBootOrder(t *testing.T, rec *Recorder) []string {
+	t.Helper()
+	const prefix = "efibootmgr -o "
+	for i := len(rec.Calls) - 1; i >= 0; i-- {
+		if rest, ok := strings.CutPrefix(rec.Calls[i], prefix); ok {
+			return strings.Split(rest, ",")
+		}
+	}
+	t.Fatalf("no `efibootmgr -o` command recorded\n%s", rec.Dump())
+	return nil
+}
+
+func indexOf(s []string, v string) int {
+	for i, x := range s {
+		if x == v {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestBootWindowsBootManager locks in the mid-install loop-breaker: pointing the
