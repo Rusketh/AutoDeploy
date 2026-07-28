@@ -352,22 +352,31 @@ const bootEntryLabel = "AutoDeploy Setup"
 
 // RegisterBootEntry adds a UEFI boot entry pointing at the staged partition's
 // bootloader, points BootNext at it for a one-shot boot into the staged media,
-// and demotes the firmware's network/PXE entries to the end of BootOrder so the
-// machine boots the LOCAL DISK on every reboot after this one. It is
-// best-effort: the media also carries the firmware fallback path
-// \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that can still
-// boot the staged media even if this fails. The caller logs a warning and
-// reboots anyway rather than stranding a fully-staged disk.
+// and demotes BOTH the firmware's network/PXE entries AND AutoDeploy's own
+// entry to the end of BootOrder so the machine boots the LOCAL WINDOWS on every
+// reboot after this one. It is best-effort: the media also carries the firmware
+// fallback path \EFI\BOOT\BOOTX64.EFI, so a machine whose firmware honours that
+// can still boot the staged media even if this fails. The caller logs a warning
+// and reboots anyway rather than stranding a fully-staged disk.
 //
 // Demoting the network entry is the fix for "after the first Windows Setup
 // phase the machine reboots back into iPXE": the machine PXE-booted to get
 // here, so the network entry is the firmware's PRIMARY boot option, and once
 // Setup reboots to continue, the firmware loops back into iPXE instead of the
-// half-installed Windows. Pushing the network entries last lets the staged
-// media (this reboot) and then Windows Boot Manager (every reboot after Setup
-// lays it down) win. This does NOT break re-imaging: the agent triggers a
+// half-installed Windows. This does NOT break re-imaging: the agent triggers a
 // re-image with a ONE-TIME firmware next-boot to the network entry
 // (bcdedit {fwbootmgr} bootsequence), which works regardless of BootOrder.
+//
+// Demoting our OWN entry is the fix for "after Setup reboots the machine boots
+// back into the ADBOOT media": `efibootmgr --create` PREPENDS the new entry to
+// BootOrder, so it outranks the Windows Boot Manager that Setup lays down
+// mid-install. On firmware that does not move the freshly created Windows Boot
+// Manager ahead of our pre-existing entry, Setup's inter-phase reboot re-enters
+// the staged media and Windows Setup restarts in a loop. Pushing our entry last
+// lets Windows Boot Manager (prepended by Setup) win every reboot after the
+// first. The one-shot BootNext still boots the staged media into Windows Setup
+// this reboot, so the persistent entry only needs to exist as a fallback for
+// firmware that ignores BootNext -- it does not need to sit at the front.
 //
 // It first prunes any AutoDeploy entries left by previous deploys -- without
 // this the firmware boot list accumulates a BOOTX64.EFI entry on every run.
@@ -388,19 +397,27 @@ func RegisterBootEntry(ctx context.Context, plan MediaPlan, r Runner) error {
 	// Re-read the (verbose) boot listing so the device paths are visible -- that
 	// is how a network entry is identified robustly, by a MAC()/IPv4()/IPv6()/
 	// URI() in its path rather than a vendor-specific label. From it: point
-	// BootNext at the entry we just created, and move the network entries to the
-	// end of BootOrder. Both are best-effort: the entry is already created and
-	// first in BootOrder (efibootmgr --create prepends it), so a failure here
-	// only forgoes the extra robustness.
+	// BootNext at the entry we just created, and move the network entries AND our
+	// own entry to the end of BootOrder. Both are best-effort: the entry is
+	// already created and first in BootOrder (efibootmgr --create prepends it),
+	// so a failure here only forgoes the extra robustness.
 	out, err := r.Output(ctx, "efibootmgr", "-v")
 	if err != nil {
 		return nil
 	}
-	if num := parseBootNumByLabel(out, bootEntryLabel); num != "" {
+	num := parseBootNumByLabel(out, bootEntryLabel)
+	if num != "" {
 		_ = r.Exec(ctx, "efibootmgr", "--bootnext", num)
 	}
+	// Demote the network entries and our own staged-media entry to the end so
+	// Windows Boot Manager (laid down by Setup) outranks both on every reboot
+	// after this one; BootNext (above) still boots the staged media this reboot.
+	demote := parseNetworkBootNums(out)
+	if num != "" {
+		demote = append(demote, num)
+	}
 	order := parseBootOrder(out)
-	if demoted := demoteToEnd(order, parseNetworkBootNums(out)); len(demoted) > 0 && !sameOrder(order, demoted) {
+	if demoted := demoteToEnd(order, demote); len(demoted) > 0 && !sameOrder(order, demoted) {
 		_ = r.Exec(ctx, "efibootmgr", "-o", strings.Join(demoted, ","))
 	}
 	return nil
