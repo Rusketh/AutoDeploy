@@ -130,6 +130,38 @@ func emitLoginFailed(req *http.Request, r Repos, username, ip string) {
 	})
 }
 
+// emitADJoinFailure fires ad.join_failed / ad.trust_failed for a machine whose
+// AD join status just transitioned into a failure. event is the model status
+// token (model.ADJoinFailed or model.ADTrustBroken); detail is the agent's
+// reported error text (never a credential). Best-effort and deduped upstream —
+// the caller only invokes this on a genuine transition, so it fires once per
+// failure episode.
+func emitADJoinFailure(req *http.Request, r Repos, m model.MachineRecord, event, detail string) {
+	if r.Emitter == nil {
+		return
+	}
+	name := machineDisplayName(req.Context(), r, m)
+	ev := notify.Event{
+		Severity: notify.SevError,
+		Link:     machineLink(m.ID),
+		Actor:    "system",
+	}
+	switch event {
+	case model.ADTrustBroken:
+		ev.Name = notify.EventADTrustFailed
+		ev.Title = "AD trust broken on " + name
+		ev.Body = "The trust relationship between this machine and the domain has failed. It likely needs to be rejoined."
+	default:
+		ev.Name = notify.EventADJoinFailed
+		ev.Title = "AD join failed on " + name
+		ev.Body = "The agent could not join this machine to Active Directory."
+	}
+	if detail != "" {
+		ev.Body += " Detail: " + detail
+	}
+	r.Emitter.Emit(req.Context(), ev)
+}
+
 // emitBulkFinished loads the operation + latest-run rollup and emits the
 // appropriate bulk.completed/failed/partial event. opID 0 is a no-op, so
 // callers can pass CompleteJob's return straight through.

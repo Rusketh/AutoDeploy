@@ -160,6 +160,24 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"add":        func(a, b int) int { return a + b },
+		"adJoinLabel": func(status string) string {
+			switch status {
+			case model.ADJoinJoined:
+				return "Joined"
+			case model.ADJoinFailed:
+				return "Join failed"
+			case model.ADTrustBroken:
+				return "Trust broken"
+			default:
+				return ""
+			}
+		},
+		"adJoinBadgeClass": func(status string) string {
+			if status == model.ADJoinJoined {
+				return "ok"
+			}
+			return "bad"
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 		"templates/machine_list.html", "templates/_pagination.html")

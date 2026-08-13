@@ -64,6 +64,7 @@
     {{with $sort.serial}}<th class="sortable {{.State}}"><a href="{{.URL}}">Serial</a></th>{{end}}
     {{with $sort.os}}<th class="sortable {{.State}}"><a href="{{.URL}}">OS</a></th>{{end}}
     {{with $sort.image}}<th class="sortable {{.State}}"><a href="{{.URL}}">Image</a></th>{{end}}
+    <th title="Active Directory join status reported by the agent">AD</th>
     {{with $sort.last_seen}}<th class="sortable {{.State}}"><a href="{{.URL}}">Last seen</a></th>{{end}}
     <th></th>
   </tr></thead>
@@ -80,6 +81,7 @@
       <td class="small">{{.Machine.SystemSerial}}</td>
       <td class="small">{{if .OS}}{{.OS}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{$adl := adJoinLabel .Machine.ADJoinStatus}}{{if $adl}}<span class="badge {{adJoinBadgeClass .Machine.ADJoinStatus}}"{{if .Machine.ADJoinDetail}} title="{{.Machine.ADJoinDetail}}"{{end}}>{{$adl}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="small muted">{{formatTime .Machine.LastSeen}}</td>
       <td class="actions"><a class="btn secondary sm" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
     </tr>

@@ -29,6 +29,24 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 		"idEq":       func(p *model.ID, v int64) bool { return p != nil && int64(*p) == v },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"relTime":    func(tm time.Time) string { return "just now" },
+		"adJoinLabel": func(status string) string {
+			switch status {
+			case model.ADJoinJoined:
+				return "Joined"
+			case model.ADJoinFailed:
+				return "Join failed"
+			case model.ADTrustBroken:
+				return "Trust broken"
+			default:
+				return ""
+			}
+		},
+		"adJoinBadgeClass": func(status string) string {
+			if status == model.ADJoinJoined {
+				return "ok"
+			}
+			return "bad"
+		},
 		"dict": func(args ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(args); i += 2 {

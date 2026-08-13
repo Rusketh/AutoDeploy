@@ -27,6 +27,7 @@ The list shows, per machine:
 | Serial | System serial |
 | OS | The running OS (e.g. "Microsoft Windows 10 Pro"), from the agent's hardware report |
 | Image | The bound image's name |
+| AD | Active Directory join status the agent reports — **Joined**, **Join failed**, or **Trust broken** (hover for detail); a dash means not applicable / not yet reported. See [AD join status & alerts](../operations/active-directory.md#join-status--alerts). |
 | Last seen | When the machine last contacted the server |
 
 Use the **filter** box to narrow the list. Filtering happens server-side across the whole

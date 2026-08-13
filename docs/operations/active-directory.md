@@ -57,6 +57,25 @@ How it works:
 > is used for related directory lookups and [bulk rename](../portal/bulk-operations.md)
 > coordination.
 
+### Join status & alerts
+
+Each resident agent reports its machine's **AD join status** to the server on every check-in, shown
+as a badge in the **AD** column of the [machines list](../portal/machines.md) and on each machine's
+detail page:
+
+| Status | Meaning |
+|--------|---------|
+| **Joined** | Domain-joined and the secure channel (trust) with the domain is healthy. |
+| **Join failed** | The agent attempted the AD join and it failed (the failure detail is shown on hover / the machine page). |
+| **Trust broken** | The machine is domain-joined but the secure-channel test (`Test-ComputerSecureChannel`) reports the *trust relationship between this workstation and the primary domain* has failed — it typically needs to be rejoined. |
+| *(—)* | Not applicable / not yet reported (a workgroup machine, or an image that doesn't join a domain). |
+
+A **Join failed** or **Trust broken** transition raises a notification — enable email (or any other
+channel) for the **Active Directory** category under
+[Settings → Notifications](../portal/settings.md#notifications) to be alerted. Each failure alerts
+**once per episode**: it won't re-notify every check-in while the fault persists, and re-arms once
+the machine reports a healthy **Joined** again.
+
 ### Legacy: unattend join
 
 An [unattend](../portal/payloads.md#unattend-files) can also carry the domain, credentials and OU

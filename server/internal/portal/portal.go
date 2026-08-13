@@ -510,7 +510,32 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		// "Europe/London" or "UTC"). Shown once in the footer and handed to
 		// the live-tail JS so client-rendered times match the server.
 		"displayTZName": func() string { return loc.String() },
-		"list":          func(args ...any) []any { return args },
+		// adJoinLabel / adJoinBadgeClass render a machine's AD join status as a
+		// human label and a badge colour class. An empty (unknown / N/A) status
+		// yields an empty label so the caller can show a muted dash instead.
+		"adJoinLabel": func(status string) string {
+			switch status {
+			case model.ADJoinJoined:
+				return "Joined"
+			case model.ADJoinFailed:
+				return "Join failed"
+			case model.ADTrustBroken:
+				return "Trust broken"
+			default:
+				return ""
+			}
+		},
+		"adJoinBadgeClass": func(status string) string {
+			switch status {
+			case model.ADJoinJoined:
+				return "ok"
+			case model.ADJoinFailed, model.ADTrustBroken:
+				return "bad"
+			default:
+				return "muted"
+			}
+		},
+		"list": func(args ...any) []any { return args },
 		"dict": func(args ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(args); i += 2 {
