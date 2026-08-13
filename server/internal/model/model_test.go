@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
@@ -173,6 +174,45 @@ func TestImageChildCountBlocksDelete(t *testing.T) {
 
 	if err := repo.Delete(ctx, root.ID); !errors.Is(err, ErrInUse) {
 		t.Errorf("expected in-use, got %v", err)
+	}
+}
+
+// TestDeleteImageWithDeployHistory guards the fix for images being
+// undeletable once they had been deployed or re-imaged: deployment_history
+// and reimage_event reference image(id), and deleting the image must null
+// those audit references rather than fail on a FOREIGN KEY constraint (which
+// the portal surfaced as a flash error, leaving the image in the list).
+func TestDeleteImageWithDeployHistory(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	inv := NewInventoryRepo(db)
+	img := NewImageRepo(db)
+
+	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "img-del-1"})
+	i, _ := img.Create(ctx, Image{Name: "deployed"})
+	imgID := i.ID
+	_ = inv.UpsertBinding(ctx, MachineBinding{MachineID: m.ID, ImageID: &imgID, MachineName: "LAB-X"})
+	depID, _ := inv.RecordDeployment(ctx, m.ID, &imgID)
+	_ = inv.CompleteDeployment(ctx, depID, "ok", "")
+	if err := inv.RecordReimageEvent(ctx, m.ID, &imgID, "boot_menu"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := img.Delete(ctx, imgID); err != nil {
+		t.Fatalf("delete image with history failed: %v", err)
+	}
+	if _, err := img.Get(ctx, imgID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("image should be gone after delete, got %v", err)
+	}
+
+	// The audit rows survive with their image reference nulled; the binding's
+	// image_id is nulled too (ON DELETE SET NULL).
+	hist, _ := inv.HistoryFor(ctx, m.ID)
+	if len(hist) != 1 {
+		t.Fatalf("deployment history should survive delete, got %d rows", len(hist))
+	}
+	if hist[0].ImageID != nil {
+		t.Errorf("deployment history image_id should be nil after image delete, got %v", *hist[0].ImageID)
 	}
 }
 

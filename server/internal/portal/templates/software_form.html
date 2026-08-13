@@ -104,6 +104,22 @@
     {{end}}
   </fieldset>
 
+  <fieldset><legend>Supersedence</legend>
+    <p class="hint">The package this one <strong>succeeds</strong> (supersedes). When both this package and the one it succeeds would install on the same machine — for example the older one comes from a parent image or loadout — the older one is <strong>dropped</strong> and only this package installs.</p>
+    {{if .Data.AllPackages}}
+    <label><span class="lbl">Succeeds package</span>
+      <select name="succeeds_id">
+        <option value="0"{{if not .Data.Succeeds}} selected{{end}}>— none —</option>
+        {{range .Data.AllPackages}}
+        <option value="{{.ID}}"{{if eq $.Data.Succeeds .ID}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    {{else}}
+    <p class="hint">No other packages exist yet.</p>
+    {{end}}
+  </fieldset>
+
   <fieldset><legend>Detection rules</legend>
     <p class="hint">A package counts as <strong>already installed</strong> when <strong>every</strong> rule below reports present. Zero rules = re-install on every deployment.</p>
     <div id="rules">

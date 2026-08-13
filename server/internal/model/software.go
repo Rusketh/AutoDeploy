@@ -47,13 +47,16 @@ func (r *SoftwarePackageRepo) Create(ctx context.Context, in SoftwarePackage) (S
 	if err := validateSoftware(&in); err != nil {
 		return SoftwarePackage{}, err
 	}
+	if err := r.validateSucceeds(ctx, in.ID, in.SucceedsID); err != nil {
+		return SoftwarePackage{}, err
+	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO software_package
 		    (name, description, storage_path, payload_filename,
-		     size_bytes, detection_json, steps_json, depends_on_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		     size_bytes, detection_json, steps_json, depends_on_json, succeeds_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, in.Description, in.StoragePath, in.PayloadFilename,
-		in.SizeBytes, in.DetectionJSON, in.StepsJSON, marshalDeps(in.DependsOn))
+		in.SizeBytes, in.DetectionJSON, in.StepsJSON, marshalDeps(in.DependsOn), nullID(in.SucceedsID))
 	if err != nil {
 		if isUniqueErr(err) {
 			return SoftwarePackage{}, fmt.Errorf("software package %q: %w", in.Name, ErrConflict)
@@ -67,23 +70,28 @@ func (r *SoftwarePackageRepo) Create(ctx context.Context, in SoftwarePackage) (S
 func (r *SoftwarePackageRepo) Get(ctx context.Context, id ID) (SoftwarePackage, error) {
 	var v SoftwarePackage
 	var deps string
+	var succeeds sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, name, description, storage_path, payload_filename,
-		       size_bytes, detection_json, steps_json, depends_on_json, created_at, updated_at
+		       size_bytes, detection_json, steps_json, depends_on_json, succeeds_id,
+		       created_at, updated_at
 		FROM software_package WHERE id=?`, id).Scan(
 		&v.ID, &v.Name, &v.Description, &v.StoragePath, &v.PayloadFilename,
-		&v.SizeBytes, &v.DetectionJSON, &v.StepsJSON, &deps, &v.CreatedAt, &v.UpdatedAt)
+		&v.SizeBytes, &v.DetectionJSON, &v.StepsJSON, &deps, &succeeds,
+		&v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SoftwarePackage{}, fmt.Errorf("software package %d: %w", id, ErrNotFound)
 	}
 	v.DependsOn = unmarshalDeps(deps)
+	v.SucceedsID = idPtr(succeeds)
 	return v, err
 }
 
 func (r *SoftwarePackageRepo) List(ctx context.Context) ([]SoftwarePackage, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, description, storage_path, payload_filename,
-		       size_bytes, detection_json, steps_json, depends_on_json, created_at, updated_at
+		       size_bytes, detection_json, steps_json, depends_on_json, succeeds_id,
+		       created_at, updated_at
 		FROM software_package ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -93,12 +101,14 @@ func (r *SoftwarePackageRepo) List(ctx context.Context) ([]SoftwarePackage, erro
 	for rows.Next() {
 		var v SoftwarePackage
 		var deps string
+		var succeeds sql.NullInt64
 		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.StoragePath,
 			&v.PayloadFilename, &v.SizeBytes, &v.DetectionJSON, &v.StepsJSON,
-			&deps, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&deps, &succeeds, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		v.DependsOn = unmarshalDeps(deps)
+		v.SucceedsID = idPtr(succeeds)
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -108,14 +118,18 @@ func (r *SoftwarePackageRepo) Update(ctx context.Context, in SoftwarePackage) er
 	if err := validateSoftware(&in); err != nil {
 		return err
 	}
+	if err := r.validateSucceeds(ctx, in.ID, in.SucceedsID); err != nil {
+		return err
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE software_package
 		SET name=?, description=?, storage_path=?, payload_filename=?,
 		    size_bytes=?, detection_json=?, steps_json=?, depends_on_json=?,
-		    updated_at=CURRENT_TIMESTAMP
+		    succeeds_id=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		in.Name, in.Description, in.StoragePath, in.PayloadFilename,
-		in.SizeBytes, in.DetectionJSON, in.StepsJSON, marshalDeps(in.DependsOn), in.ID)
+		in.SizeBytes, in.DetectionJSON, in.StepsJSON, marshalDeps(in.DependsOn),
+		nullID(in.SucceedsID), in.ID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return fmt.Errorf("software package %q: %w", in.Name, ErrConflict)
@@ -185,6 +199,10 @@ func (r *SoftwarePackageRepo) RefCount(ctx context.Context, id ID) (int, error) 
 // dependencies placed BEFORE it (stable topological order, seed order
 // otherwise preserved). Cycles and missing packages are skipped with a
 // warning rather than failing the whole resolve. The result is deduped.
+//
+// A final supersedence pass then drops any package that is succeeded
+// (superseded) by another package present in the resolved set, so only the
+// newest survivor of each supersedence chain installs. See applySupersedence.
 func (r *SoftwarePackageRepo) ResolveOrder(ctx context.Context, seeds []ID) ([]ID, []string) {
 	var (
 		order    []ID
@@ -216,7 +234,107 @@ func (r *SoftwarePackageRepo) ResolveOrder(ctx context.Context, seeds []ID) ([]I
 	for _, s := range seeds {
 		visit(s)
 	}
-	return order, warnings
+	return r.applySupersedence(ctx, order, warnings)
+}
+
+// applySupersedence drops every package in order that is superseded by another
+// package also in order. "A succeeds B" (A.SucceedsID == B) means B is
+// superseded by A: when both land in the same install set only A installs.
+// Supersedence is transitive — if C succeeds B and B succeeds A, then C in the
+// set supersedes A even when B itself is absent — so each package's succeeds
+// chain is walked to the end, marking every predecessor present in the set.
+// A corrupt self/cyclic chain is broken with a warning rather than looping.
+func (r *SoftwarePackageRepo) applySupersedence(ctx context.Context, order []ID, warnings []string) ([]ID, []string) {
+	if len(order) == 0 {
+		return order, warnings
+	}
+	inSet := make(map[ID]bool, len(order))
+	for _, id := range order {
+		inSet[id] = true
+	}
+	// predCache memoises each package's immediate predecessor (SucceedsID) so
+	// walking overlapping chains stays cheap; intermediate packages on a chain
+	// need not be in the install set.
+	predCache := map[ID]*ID{}
+	predOf := func(id ID) *ID {
+		if p, ok := predCache[id]; ok {
+			return p
+		}
+		pkg, err := r.Get(ctx, id)
+		if err != nil {
+			predCache[id] = nil
+			return nil
+		}
+		predCache[id] = pkg.SucceedsID
+		return pkg.SucceedsID
+	}
+
+	superseded := map[ID]bool{}
+	for _, start := range order {
+		seen := map[ID]bool{start: true}
+		cur := start
+		for {
+			pred := predOf(cur)
+			if pred == nil {
+				break
+			}
+			if seen[*pred] {
+				warnings = append(warnings,
+					fmt.Sprintf("software package %d: supersedence cycle broken", *pred))
+				break
+			}
+			seen[*pred] = true
+			if inSet[*pred] {
+				superseded[*pred] = true
+			}
+			cur = *pred
+		}
+	}
+	if len(superseded) == 0 {
+		return order, warnings
+	}
+	filtered := make([]ID, 0, len(order))
+	for _, id := range order {
+		if superseded[id] {
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered, warnings
+}
+
+// validateSucceeds rejects a supersedence pointer that names the package
+// itself or that would close a supersedence cycle (walking UP from the
+// proposed predecessor must never return to id). A nil pointer is always
+// valid. Existence of the referenced package is enforced by the FK.
+func (r *SoftwarePackageRepo) validateSucceeds(ctx context.Context, id ID, succeedsID *ID) error {
+	if succeedsID == nil {
+		return nil
+	}
+	if *succeedsID == id {
+		return fmt.Errorf("software package %d: %w (cannot succeed itself)", id, ErrValidation)
+	}
+	const maxDepth = 256
+	cur := *succeedsID
+	for depth := 0; depth < maxDepth; depth++ {
+		if cur == id {
+			return fmt.Errorf("software package %d: %w (supersedence cycle)", id, ErrValidation)
+		}
+		var next sql.NullInt64
+		err := r.db.QueryRowContext(ctx,
+			`SELECT succeeds_id FROM software_package WHERE id=?`, cur).Scan(&next)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !next.Valid {
+			return nil
+		}
+		cur = ID(next.Int64)
+	}
+	return fmt.Errorf("software package %d: %w (supersedence chain too deep)", id, ErrValidation)
 }
 
 // SoftwareCompliance is per-package fleet compliance stats.

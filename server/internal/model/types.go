@@ -113,9 +113,15 @@ type SoftwarePackage struct {
 	// DependsOn lists other package IDs this package requires. Resolving a
 	// package auto-includes its dependencies (transitively) and installs
 	// them first. See SoftwarePackageRepo.ResolveOrder.
-	DependsOn []ID      `json:"depends_on"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	DependsOn []ID `json:"depends_on"`
+	// SucceedsID, when set, is the package this one supersedes. During
+	// resolve, if both this package and the package it succeeds end up in a
+	// machine's install set, the superseded (older) package is dropped so
+	// only the successor installs (transitively, following the succeeds
+	// chain). nil supersedes nothing. See SoftwarePackageRepo.ResolveOrder.
+	SucceedsID *ID       `json:"succeeds_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // ImageGroup is a named bucket for organising images on the PXE boot menu.

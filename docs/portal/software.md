@@ -58,6 +58,15 @@ step extracts a zip you reference to a destination you choose.
 **Dependencies.** A package can require other packages. They're installed before it and pulled in
 automatically even if not directly assigned to an image.
 
+**Supersedence.** A package can *succeed* (supersede) another package. When both a package and the
+one it succeeds would install on the same machine — typically because the older one is contributed by
+a parent image or a loadout you don't directly control — the older one is **dropped** and only the
+successor installs. This lets you roll out a new version by adding it and marking it as succeeding the
+old one, without hunting down every image and loadout that still references the old package.
+Supersedence is transitive (if v3 succeeds v2 and v2 succeeds v1, deploying v3 suppresses v1 too), and
+a package that succeeds another still installs normally on machines where the older package isn't
+present.
+
 **Detection rules.** A package counts as already installed when *every* rule reports present. Zero
 rules means re-install on every deployment. Rule types:
 
