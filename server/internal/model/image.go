@@ -242,6 +242,20 @@ func (r *ImageRepo) Delete(ctx context.Context, id ID) error {
 	if refs > 0 {
 		return fmt.Errorf("image %d: %w (parent of %d images)", id, ErrInUse, refs)
 	}
+	// Audit-log tables reference image(id) but must not pin the image in place:
+	// history targets the LATEST image definition, and machine_binding already
+	// nulls its image_id on delete. deployment_history and reimage_event have no
+	// ON DELETE clause (implicit RESTRICT), which would otherwise make any image
+	// that has ever been deployed or re-imaged undeletable. Null those references
+	// first so the row can go while the audit rows survive.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE deployment_history SET image_id=NULL WHERE image_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE reimage_event SET image_id=NULL WHERE image_id=?`, id); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM image WHERE id=?`, id)
 	if err != nil {
 		return err

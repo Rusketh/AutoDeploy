@@ -105,6 +105,12 @@ type AgentIdentityRequest struct {
 	AgentID             string `json:"agent_id"`
 	ComputerName        string `json:"computer_name"`
 	ADDistinguishedName string `json:"ad_distinguished_name"`
+	// ADJoinStatus / ADJoinDetail are the machine's Active Directory join
+	// health as the agent observes it each poll (model.ADJoin* tokens, plus a
+	// human-readable detail on failure — never a credential). Empty when the
+	// agent doesn't report it (older agents) or it's not applicable.
+	ADJoinStatus string `json:"ad_join_status,omitempty"`
+	ADJoinDetail string `json:"ad_join_detail,omitempty"`
 }
 
 func handleAgentIdentity(r Repos) http.HandlerFunc {
@@ -124,6 +130,14 @@ func handleAgentIdentity(r Repos) http.HandlerFunc {
 		if err := r.Inventory.SyncBindingFromObserved(req.Context(), m.ID, name, ouFromDN(dn)); err != nil {
 			writeError(w, err)
 			return
+		}
+		// AD join status: persist and, on a transition into failure, alert once
+		// per episode. Best-effort — a status hiccup must not fail the poll.
+		if upd, aerr := r.Inventory.UpdateADJoinStatus(req.Context(), in.AgentID,
+			in.ADJoinStatus, strings.TrimSpace(in.ADJoinDetail)); aerr == nil {
+			if upd.NotifyEvent != "" {
+				emitADJoinFailure(req, r, upd.Machine, upd.NotifyEvent, upd.Machine.ADJoinDetail)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
 	}

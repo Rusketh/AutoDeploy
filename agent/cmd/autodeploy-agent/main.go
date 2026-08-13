@@ -526,6 +526,21 @@ func scheduleSetupLockReboot(ctx context.Context, log *slog.Logger, dryRun bool,
 // reboot) isn't re-attempted later in the same process.
 var domainJoined bool
 
+// AD join status tokens reported to the server (must match model.ADJoin* on
+// the server side).
+const (
+	adStatusJoined      = "joined"
+	adStatusJoinFailed  = "join_failed"
+	adStatusTrustBroken = "trust_broken"
+)
+
+// adJoinLastError holds the last agent-driven AD join failure message, set by
+// maybeDomainJoin and reported by reportObservedIdentity so the server can flag
+// join_failed and alert. Cleared on a successful join (or confirmed
+// membership). Never carries a credential — joinDomain's error text is the
+// Add-Computer stderr, which the join script keeps free of secrets.
+var adJoinLastError string
+
 // maybeDomainJoin asks the server whether this machine's image is configured
 // for agent-driven AD join and, if so and the machine isn't already in that
 // domain, joins it and schedules a reboot. Returns true when a reboot was
@@ -561,7 +576,8 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	if cur, joined := currentDomain(); joined && domainMatches(cur, resp.Domain) {
 		log.Info("domainjoin.already_member",
 			slog.String("current_domain", cur))
-		domainJoined = true // already a member of the target domain
+		domainJoined = true  // already a member of the target domain
+		adJoinLastError = "" // membership confirmed; clear any stale failure
 		return false
 	}
 	if f.dryRun {
@@ -572,9 +588,14 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	if err := joinDomain(resp.Domain, resp.OU, resp.User, resp.Password); err != nil {
 		log.Error("domainjoin.fail",
 			slog.String("domain", resp.Domain), slog.String("error", err.Error()))
+		// Record the failure so the next identity report flags join_failed and
+		// the server can alert. The error text is Add-Computer stderr — no
+		// credentials (the script passes them via env, never the command line).
+		adJoinLastError = err.Error()
 		return false // retry on the next poll
 	}
 	domainJoined = true
+	adJoinLastError = "" // joined cleanly; clear any prior failure
 	// LOG ONLY THE FACT — credentials never appear in any log line.
 	log.Info("domainjoin.ok",
 		slog.String("domain", resp.Domain), slog.String("ou", resp.OU),
@@ -682,16 +703,33 @@ func reportObservedIdentity(ctx context.Context, log *slog.Logger, c *httpc.Clie
 		return
 	}
 	name, dn := collectObservedIdentity()
-	if name == "" && dn == "" {
+	status, detail := adJoinStatus()
+	if name == "" && dn == "" && status == "" {
 		return
 	}
 	if err := c.PostJSON(ctx, "/api/v1/agent/identity", map[string]any{
 		"agent_id":              f.agentID,
 		"computer_name":         name,
 		"ad_distinguished_name": dn,
+		"ad_join_status":        status,
+		"ad_join_detail":        detail,
 	}, nil); err != nil {
 		log.Warn("identity.report", slog.String("error", err.Error()))
 	}
+}
+
+// adJoinStatus derives the machine's AD join status to report this poll. It
+// combines the observed domain/trust state (collectADJoinStatus) with the last
+// agent-driven join failure: a machine that isn't in a domain but whose last
+// join attempt failed reports join_failed; an in-domain machine reports joined
+// or trust_broken from the secure-channel test; anything else (workgroup with
+// no join attempted, or a non-Windows dev host) reports "" (nothing).
+func adJoinStatus() (status, detail string) {
+	status, detail = collectADJoinStatus()
+	if status == "" && adJoinLastError != "" {
+		return adStatusJoinFailed, adJoinLastError
+	}
+	return status, detail
 }
 
 // mediaCleaned guards cleanupMediaOnce so the partition removal is attempted

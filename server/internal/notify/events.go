@@ -44,6 +44,9 @@ const (
 	EventMachineOffline        = "machine.offline"
 	EventMachineHardwareChange = "machine.hardware_change"
 
+	EventADJoinFailed  = "ad.join_failed"
+	EventADTrustFailed = "ad.trust_failed"
+
 	EventUpdateDeployed       = "update.deployed"
 	EventUpdateComplianceFail = "update.compliance_fail"
 
@@ -62,6 +65,7 @@ var EventCategories = []struct {
 	{"Bulk operations", []string{EventBulkCreated, EventBulkCompleted, EventBulkFailed, EventBulkPartial}},
 	{"Software installs", []string{EventSoftwareInstallOK, EventSoftwareInstallFailed}},
 	{"Machine inventory", []string{EventMachineFirstSeen, EventMachineOffline, EventMachineHardwareChange}},
+	{"Active Directory", []string{EventADJoinFailed, EventADTrustFailed}},
 	{"Windows Updates", []string{EventUpdateDeployed, EventUpdateComplianceFail}},
 	{"Security", []string{EventAuthLoginFailed}},
 	{"System health", []string{EventSystemStorageLow, EventSystemAgentOutdated}},

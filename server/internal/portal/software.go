@@ -283,9 +283,14 @@ func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc
 		for _, d := range p.DependsOn {
 			depSel[d] = true
 		}
+		var succeeds model.ID
+		if p.SucceedsID != nil {
+			succeeds = *p.SucceedsID
+		}
 		render(w, req, r, "software_form.html", title, map[string]any{
 			"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
 			"Files": files, "Bundles": bundles, "AllPackages": others, "DepSelected": depSel,
+			"Succeeds": succeeds,
 		})
 	}
 }
@@ -441,6 +446,18 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 		}
 	}
 	pkg.DependsOn = deps
+
+	// Supersedence: the package this one succeeds (replaces). When both this
+	// package and the one it succeeds resolve onto a machine, only this one
+	// installs. Empty / "0" = supersedes nothing. A package can't succeed
+	// itself (guarded again in the model for the update path, where pkg.ID is
+	// set after this build).
+	if s := strings.TrimSpace(req.FormValue("succeeds_id")); s != "" && s != "0" {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
+			id := model.ID(n)
+			pkg.SucceedsID = &id
+		}
+	}
 
 	return pkg, nil
 }

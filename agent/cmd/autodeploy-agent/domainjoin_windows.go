@@ -30,6 +30,43 @@ func currentDomain() (domain string, joined bool) {
 	return strings.TrimSpace(parts[1]), joined
 }
 
+// collectADJoinStatus reports the machine's Active Directory join health:
+//   - ""            not domain-joined (workgroup) — the caller may still map
+//     this to join_failed if an agent-driven join attempt failed.
+//   - "joined"      domain-joined and the secure channel (trust) is healthy.
+//   - "trust_broken" domain-joined but Test-ComputerSecureChannel reports the
+//     secure channel is broken ("the trust relationship between this
+//     workstation and the primary domain failed").
+//
+// The secure-channel test is wrapped so a transient failure to reach a DC (the
+// cmdlet throwing) is treated as "joined, unverified" rather than a false
+// trust_broken — only a clean False is reported as broken, so alerts don't fire
+// on network blips. detail carries a short note on trust_broken, never a
+// credential. Best-effort: any failure to determine membership returns "".
+func collectADJoinStatus() (status, detail string) {
+	const script = `$ErrorActionPreference='SilentlyContinue'
+$cs = Get-CimInstance Win32_ComputerSystem
+if (-not $cs.PartOfDomain) { 'workgroup'; return }
+try {
+    if (Test-ComputerSecureChannel -ErrorAction Stop) { 'joined' } else { 'trust_broken' }
+} catch { 'joined' }`
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+		"-ExecutionPolicy", "Bypass", "-Command", script).Output()
+	if err != nil {
+		return "", ""
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "joined":
+		return "joined", ""
+	case "trust_broken":
+		return "trust_broken", "Test-ComputerSecureChannel reported the trust relationship with the domain has failed."
+	default: // "workgroup" or anything unexpected
+		return "", ""
+	}
+}
+
 // joinDomain joins the machine to domain with the given credentials, placing
 // the computer object at ou when non-empty. The credentials are passed via
 // environment variables (NOT the command line), so they never appear in the

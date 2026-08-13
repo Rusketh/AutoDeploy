@@ -42,9 +42,16 @@ type MachineRecord struct {
 	ADDistinguishedName string `json:"ad_distinguished_name"`
 	// Hardware is the full spec set the agent collects (CPU/RAM/disks/
 	// GPU/NICs), reported on each poll. Empty until the agent reports.
-	Hardware  *Hardware `json:"hardware,omitempty"`
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
+	Hardware *Hardware `json:"hardware,omitempty"`
+	// ADJoinStatus is the machine's Active Directory join health, reported by
+	// the resident agent each poll: one of ADJoin* below (empty = unknown /
+	// not applicable). ADJoinDetail carries the last error/detail text (never
+	// a credential); ADJoinReportedAt is when it was last reported.
+	ADJoinStatus     string     `json:"ad_join_status,omitempty"`
+	ADJoinDetail     string     `json:"ad_join_detail,omitempty"`
+	ADJoinReportedAt *time.Time `json:"ad_join_reported_at,omitempty"`
+	FirstSeen        time.Time  `json:"first_seen"`
+	LastSeen         time.Time  `json:"last_seen"`
 	// FirstContact is set (derived, never persisted) when UpsertFromIdentity
 	// just created this record — i.e. the machine was seen for the very first
 	// time. Handlers use it to emit the machine.first_seen notification.
@@ -333,18 +340,25 @@ func (r *InventoryRepo) tryApplyImportedAsset(ctx context.Context, m MachineReco
 func (r *InventoryRepo) Get(ctx context.Context, id ID) (MachineRecord, error) {
 	var v MachineRecord
 	var hw sql.NullString
+	var adReported sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, system_uuid, agent_id, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
-		       hardware_json, reported_name, ad_dn, first_seen, last_seen
+		       hardware_json, reported_name, ad_dn,
+		       ad_join_status, ad_join_detail, ad_join_reported_at, first_seen, last_seen
 		FROM machine_record WHERE id=?`, id).Scan(
 		&v.ID, &v.SystemUUID, &v.AgentID, &v.SystemSerial, &v.SystemManufacturer, &v.SystemProduct,
 		&v.BIOSVendor, &v.BIOSVersion, &v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
-		&hw, &v.ReportedName, &v.ADDistinguishedName, &v.FirstSeen, &v.LastSeen)
+		&hw, &v.ReportedName, &v.ADDistinguishedName,
+		&v.ADJoinStatus, &v.ADJoinDetail, &adReported, &v.FirstSeen, &v.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MachineRecord{}, fmt.Errorf("machine %d: %w", id, ErrNotFound)
 	}
 	v.Hardware = parseHardware(hw.String)
+	if adReported.Valid {
+		t := adReported.Time
+		v.ADJoinReportedAt = &t
+	}
 	return v, err
 }
 
@@ -648,7 +662,7 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, system_uuid, system_serial, system_manufacturer, system_product,
 		       bios_vendor, bios_version, board_manufacturer, board_product, board_serial,
-		       reported_name, ad_dn, first_seen, last_seen
+		       reported_name, ad_dn, ad_join_status, ad_join_detail, first_seen, last_seen
 		FROM machine_record ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, err
@@ -661,6 +675,7 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 			&v.SystemProduct, &v.BIOSVendor, &v.BIOSVersion,
 			&v.BoardManufacturer, &v.BoardProduct, &v.BoardSerial,
 			&v.ReportedName, &v.ADDistinguishedName,
+			&v.ADJoinStatus, &v.ADJoinDetail,
 			&v.FirstSeen, &v.LastSeen); err != nil {
 			return nil, err
 		}

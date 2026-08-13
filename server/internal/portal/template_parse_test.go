@@ -29,6 +29,7 @@ func TestAllTemplatesParse(t *testing.T) {
 		"hasItems", "formatTime", "list", "dict", "add", "sub", "min",
 		"derefInt", "lt", "toFloat", "div", "mul", "pct", "humanBytes",
 		"relTime", "formatDate", "displayTZName", "brandLogo",
+		"adJoinLabel", "adJoinBadgeClass",
 	} {
 		funcs[name] = func(args ...any) string { return "" }
 	}

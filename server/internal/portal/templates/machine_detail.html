@@ -55,6 +55,7 @@
 <dl class="kv">
   <dt>Name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
   {{if $m.ADDistinguishedName}}<dt>AD location</dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
+  {{$adl := adJoinLabel $m.ADJoinStatus}}{{if $adl}}<dt>AD join</dt><dd><span class="badge {{adJoinBadgeClass $m.ADJoinStatus}}">{{$adl}}</span>{{if $m.ADJoinDetail}} <span class="small muted">{{$m.ADJoinDetail}}</span>{{end}}{{if $m.ADJoinReportedAt}} <span class="small muted">· reported {{formatTime $m.ADJoinReportedAt.UTC}}</span>{{end}}</dd>{{end}}
   <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
   <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
   <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
