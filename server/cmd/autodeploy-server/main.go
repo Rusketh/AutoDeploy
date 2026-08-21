@@ -235,7 +235,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		SetupLock:     r.SetupLock,
 		Updates:       r.Updates,
 		MSCatalog:     mscatalog.New(),
-		Winget:        wingetsrc.New(),
+		Winget:        wingetsrc.New(filepath.Join(cfg.DataDir, "winget")),
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,

@@ -1,0 +1,16 @@
+PackageIdentifier: Example.InnoApp
+PackageVersion: 1.2.3
+InstallerType: inno
+Scope: machine
+InstallerSwitches:
+  Silent: /VERYSILENT
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+Installers:
+- Architecture: x64
+  InstallerUrl: https://downloads.example.com/innoapp/1.2.3/setup-x64.exe
+  InstallerSha256: DEADBEEF00112233445566778899AABBCCDDEEFF00112233445566778899AABB
+  AppsAndFeaturesEntries:
+  - ProductCode: '{11112222-3333-4444-5555-666677778888}'
+    DisplayName: Inno Example App

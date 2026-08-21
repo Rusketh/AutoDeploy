@@ -1,13 +1,18 @@
 package wingetsrc
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func readTestdata(t *testing.T, name string) []byte {
@@ -19,151 +24,384 @@ func readTestdata(t *testing.T, name string) []byte {
 	return b
 }
 
-func TestParseSearch(t *testing.T) {
-	results, err := parseSearch(readTestdata(t, "manifestSearch.json"))
+// --- YAML manifest parsing (real fixtures) --------------------------------
+
+func TestParseInstallerYAMLReal7zip(t *testing.T) {
+	m, err := parseInstallerYAML(readTestdata(t, "real_7zip.installer.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("want 2 results, got %d", len(results))
+	if m.PackageIdentifier != "7zip.7zip" || m.Version != "23.01" {
+		t.Fatalf("identity: %+v", m)
 	}
-	if results[0].PackageIdentifier != "7zip.7zip" || results[0].Name != "7-Zip" {
-		t.Errorf("unexpected first result: %+v", results[0])
+	// The real manifest carries multiple architectures and both exe and wix.
+	var haveX64exe, haveWix bool
+	for _, inst := range m.Installers {
+		if inst.Architecture == "x64" && inst.InstallerType == "exe" {
+			haveX64exe = true
+			if inst.Silent != "/S" {
+				t.Errorf("x64 exe silent = %q, want /S", inst.Silent)
+			}
+			// Scope is set at the top level (machine) and inherited.
+			if inst.Scope != "machine" {
+				t.Errorf("x64 exe scope = %q, want machine (inherited)", inst.Scope)
+			}
+		}
+		if inst.InstallerType == "wix" {
+			haveWix = true
+		}
 	}
-	// Latest version chosen from the (unsorted) list.
-	if results[0].LatestVersion != "24.08" {
-		t.Errorf("latest version = %q, want 24.08", results[0].LatestVersion)
+	if !haveX64exe || !haveWix {
+		t.Errorf("expected x64 exe and a wix installer; got %d installers", len(m.Installers))
 	}
 }
 
-func TestParseManifestLatestAndInheritance(t *testing.T) {
-	// exe manifest sets InstallerType/Scope at the version level; the
-	// installer should inherit them.
-	m, err := parseManifest(readTestdata(t, "manifest_exe_deps.json"), "")
+func TestParseInstallerYAMLDepsAndProductCode(t *testing.T) {
+	m, err := parseInstallerYAML(readTestdata(t, "synthetic_deps.installer.yaml"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if m.Version != "1.2.3" {
-		t.Fatalf("version = %q", m.Version)
-	}
-	if len(m.Installers) != 1 {
-		t.Fatalf("want 1 installer, got %d", len(m.Installers))
-	}
-	inst := m.Installers[0]
-	if inst.InstallerType != "inno" || inst.Scope != "machine" {
-		t.Errorf("inheritance failed: type=%q scope=%q", inst.InstallerType, inst.Scope)
 	}
 	if len(m.Dependencies) != 1 || m.Dependencies[0] != "Microsoft.VCRedist.2015+.x64" {
 		t.Errorf("dependencies = %v", m.Dependencies)
 	}
+	if len(m.Installers) != 1 {
+		t.Fatalf("installers = %d", len(m.Installers))
+	}
+	inst := m.Installers[0]
+	if inst.InstallerType != "inno" || inst.Scope != "machine" {
+		t.Errorf("inheritance: type=%q scope=%q", inst.InstallerType, inst.Scope)
+	}
+	if len(inst.AppsAndFeatures) != 1 || inst.AppsAndFeatures[0].ProductCode != "{11112222-3333-4444-5555-666677778888}" {
+		t.Errorf("apps&features = %+v", inst.AppsAndFeatures)
+	}
 }
 
-func TestPickInstaller(t *testing.T) {
-	m, err := parseManifest(readTestdata(t, "manifest_msi.json"), "")
+func TestApplyLocaleAndDefaultLocale(t *testing.T) {
+	loc := parseDefaultLocale(readTestdata(t, "real_7zip.yaml"))
+	if loc != "en-US" {
+		t.Fatalf("default locale = %q", loc)
+	}
+	m := &Manifest{}
+	applyLocale(m, readTestdata(t, "real_7zip.locale.en-US.yaml"))
+	if m.Name != "7-Zip" || m.Publisher != "Igor Pavlov" {
+		t.Errorf("locale applied: name=%q publisher=%q", m.Name, m.Publisher)
+	}
+}
+
+func TestManifestDir(t *testing.T) {
+	cases := map[string]struct{ id, version, want string }{
+		"simple": {"7zip.7zip", "23.01", "manifests/7/7zip/7zip/23.01"},
+		"nested": {"Microsoft.VCRedist.2015+.x64", "14.40", "manifests/m/Microsoft/VCRedist/2015+/x64/14.40"},
+	}
+	for name, c := range cases {
+		if got := manifestDir(c.id, c.version); got != c.want {
+			t.Errorf("%s: manifestDir(%q,%q)=%q want %q", name, c.id, c.version, got, c.want)
+		}
+	}
+}
+
+// --- End-to-end Manifest over an httptest raw server ----------------------
+
+func TestClientManifestOverHTTP(t *testing.T) {
+	// Serve the real 7zip manifests at the winget-pkgs path layout.
+	dir := "/manifests/7/7zip/7zip/23.01/"
+	files := map[string][]byte{
+		dir + "7zip.7zip.installer.yaml":    readTestdata(t, "real_7zip.installer.yaml"),
+		dir + "7zip.7zip.yaml":              readTestdata(t, "real_7zip.yaml"),
+		dir + "7zip.7zip.locale.en-US.yaml": readTestdata(t, "real_7zip.locale.en-US.yaml"),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if b, ok := files[r.URL.Path]; ok {
+			_, _ = w.Write(b)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: srv.Client(), RawBaseURL: srv.URL}
+	// version pinned, so the index is never consulted.
+	m, err := c.Manifest(context.Background(), "7zip.7zip", "23.01")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default prefers x64 + machine.
-	got := PickInstaller(m.Installers, "", "")
-	if got == nil || got.Architecture != "x64" {
+	if m.Name != "7-Zip" || m.Publisher != "Igor Pavlov" {
+		t.Errorf("name/publisher = %q / %q", m.Name, m.Publisher)
+	}
+	if len(m.Installers) == 0 {
+		t.Fatal("no installers parsed")
+	}
+	// A full import path: pick x64 and build a package.
+	chosen := PickInstaller(m.Installers, "x64", "machine")
+	if chosen == nil || chosen.Architecture != "x64" {
+		t.Fatalf("pick = %+v", chosen)
+	}
+	bp, err := BuildPackage(m, chosen, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bp.Files) != 1 || len(bp.Steps) != 1 {
+		t.Errorf("built = %+v", bp)
+	}
+}
+
+// --- Index (synthetic source MSIX) ----------------------------------------
+
+// buildSyntheticIndex writes a winget-style index.db with the given
+// packages and returns it as bytes. Each package is (id, name, moniker,
+// version).
+func buildSyntheticIndex(t *testing.T, rows [][4]string) []byte {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "src.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := []string{
+		`CREATE TABLE ids(rowid INTEGER PRIMARY KEY, id TEXT)`,
+		`CREATE TABLE names(rowid INTEGER PRIMARY KEY, name TEXT)`,
+		`CREATE TABLE monikers(rowid INTEGER PRIMARY KEY, moniker TEXT)`,
+		`CREATE TABLE versions(rowid INTEGER PRIMARY KEY, version TEXT)`,
+		`CREATE TABLE manifest(rowid INTEGER PRIMARY KEY, id INTEGER, name INTEGER, moniker INTEGER, version INTEGER)`,
+	}
+	for _, s := range schema {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intern := func(table, col, val string) int64 {
+		var rowid int64
+		err := db.QueryRow("SELECT rowid FROM "+table+" WHERE "+col+"=?", val).Scan(&rowid)
+		if err == nil {
+			return rowid
+		}
+		res, err := db.Exec("INSERT INTO "+table+"("+col+") VALUES(?)", val)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowid, _ = res.LastInsertId()
+		return rowid
+	}
+	for _, r := range rows {
+		idID := intern("ids", "id", r[0])
+		nameID := intern("names", "name", r[1])
+		monID := intern("monikers", "moniker", r[2])
+		verID := intern("versions", "version", r[3])
+		if _, err := db.Exec(
+			`INSERT INTO manifest(id,name,moniker,version) VALUES(?,?,?,?)`,
+			idID, nameID, monID, verID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dbBytes, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Zip it as Public/index.db, the winget source layout.
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, err := zw.Create("Public/index.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(dbBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestSearchIndexAndVersions(t *testing.T) {
+	msix := buildSyntheticIndex(t, [][4]string{
+		{"7zip.7zip", "7-Zip", "7zip", "23.01"},
+		{"7zip.7zip", "7-Zip", "7zip", "24.08"},
+		{"7zip.7zip", "7-Zip", "7zip", "22.01"},
+		{"Notepad++.Notepad++", "Notepad++", "notepad++", "8.6.2"},
+		{"Google.Chrome", "Google Chrome", "chrome", "120.0"},
+	})
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/source2.msix") {
+			hits++
+			_, _ = w.Write(msix)
+			return
+		}
+		http.NotFound(w, r) // force source.msix path unused
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: srv.Client(), IndexBaseURL: srv.URL, CacheDir: t.TempDir()}
+
+	// Search by name substring.
+	res, err := c.Search(context.Background(), "7-zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].PackageIdentifier != "7zip.7zip" {
+		t.Fatalf("search results = %+v", res)
+	}
+	// Grouped to one row with the newest version.
+	if res[0].LatestVersion != "24.08" {
+		t.Errorf("latest = %q, want 24.08", res[0].LatestVersion)
+	}
+
+	// Moniker match.
+	res, err = c.Search(context.Background(), "chrome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].PackageIdentifier != "Google.Chrome" {
+		t.Errorf("moniker search = %+v", res)
+	}
+
+	// indexVersions returns newest-first.
+	dbPath, err := c.ensureIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vers, err := c.indexVersions(context.Background(), dbPath, "7zip.7zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vers) != 3 || vers[0] != "24.08" {
+		t.Errorf("versions = %v", vers)
+	}
+
+	// The index was downloaded once and cached (TTL default is large).
+	if hits != 1 {
+		t.Errorf("index downloaded %d times, want 1 (cached)", hits)
+	}
+}
+
+func TestSearchIndexFallbackToSourceMsix(t *testing.T) {
+	msix := buildSyntheticIndex(t, [][4]string{{"Foo.Bar", "Foo Bar", "foo", "1.0"}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// source2.msix missing; only the legacy source.msix is served.
+		if strings.HasSuffix(r.URL.Path, "/source.msix") {
+			_, _ = w.Write(msix)
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: srv.Client(), IndexBaseURL: srv.URL, CacheDir: t.TempDir()}
+	res, err := c.Search(context.Background(), "foo")
+	if err != nil {
+		t.Fatalf("fallback failed: %v", err)
+	}
+	if len(res) != 1 || res[0].PackageIdentifier != "Foo.Bar" {
+		t.Errorf("results = %+v", res)
+	}
+}
+
+func TestSearchEmptyQuery(t *testing.T) {
+	c := &Client{}
+	res, err := c.Search(context.Background(), "   ")
+	if err != nil || res != nil {
+		t.Errorf("empty query should no-op: res=%v err=%v", res, err)
+	}
+}
+
+// --- build.go coverage (installer-type -> step/detection mapping) ---------
+
+func mkManifest(id, version, name string, installers ...Installer) *Manifest {
+	return &Manifest{PackageIdentifier: id, Version: version, Name: name, Installers: installers}
+}
+
+func TestPickInstaller(t *testing.T) {
+	insts := []Installer{
+		{Architecture: "x64", Scope: "machine", InstallerType: "wix", URL: "u64"},
+		{Architecture: "x86", Scope: "machine", InstallerType: "wix", URL: "u86"},
+	}
+	if got := PickInstaller(insts, "", ""); got == nil || got.Architecture != "x64" {
 		t.Fatalf("default pick = %+v", got)
 	}
-	// Explicit x86 override.
-	got = PickInstaller(m.Installers, "x86", "machine")
-	if got == nil || got.Architecture != "x86" {
+	if got := PickInstaller(insts, "x86", "machine"); got == nil || got.Architecture != "x86" {
 		t.Fatalf("x86 pick = %+v", got)
 	}
-	// A requested arch with no match falls back rather than returning nil.
-	got = PickInstaller(m.Installers, "arm64", "machine")
-	if got == nil {
-		t.Fatal("arm64 pick returned nil; expected a fallback")
+	if got := PickInstaller(insts, "arm64", "machine"); got == nil {
+		t.Fatal("arm64 should fall back, not nil")
 	}
 	if PickInstaller(nil, "", "") != nil {
-		t.Error("empty installer list should pick nil")
+		t.Error("empty list should pick nil")
 	}
 }
 
 func TestBuildPackageMSI(t *testing.T) {
-	m, _ := parseManifest(readTestdata(t, "manifest_msi.json"), "")
-	chosen := PickInstaller(m.Installers, "x64", "machine")
-	bp, err := BuildPackage(m, chosen, nil, nil)
+	m := mkManifest("7zip.7zip", "23.01", "7-Zip", Installer{
+		Architecture: "x64", Scope: "machine", InstallerType: "wix",
+		URL:         "https://www.7-zip.org/a/7z2301-x64.msi",
+		ProductCode: "{23170F69-40C1-2702-2301-000001000000}",
+	})
+	bp, err := BuildPackage(m, &m.Installers[0], nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(bp.Files) != 1 || !strings.HasSuffix(bp.Files[0].Filename, ".msi") {
 		t.Fatalf("files = %+v", bp.Files)
 	}
-	if len(bp.Steps) != 1 || bp.Steps[0].Type != "msi" {
+	if len(bp.Steps) != 1 || bp.Steps[0].Type != "msi" || bp.Steps[0].MSIPath != bp.Files[0].Filename {
 		t.Fatalf("steps = %+v", bp.Steps)
 	}
-	if bp.Steps[0].MSIPath != bp.Files[0].Filename {
-		t.Errorf("msi step path %q != file %q", bp.Steps[0].MSIPath, bp.Files[0].Filename)
-	}
-	// winget + msi detection (product code present).
-	if len(bp.Detection) != 2 {
+	if len(bp.Detection) != 2 || bp.Detection[0].Type != "winget" || bp.Detection[1].Type != "msi" {
 		t.Fatalf("detection = %+v", bp.Detection)
 	}
-	if bp.Detection[0].Type != "winget" || bp.Detection[0].WingetID != "7zip.7zip" {
-		t.Errorf("winget detection = %+v", bp.Detection[0])
-	}
-	if bp.Detection[1].Type != "msi" || bp.Detection[1].MSIProductCode == "" {
-		t.Errorf("msi detection = %+v", bp.Detection[1])
-	}
-	// SuccessCodes include reboot-required.
-	if len(bp.Steps[0].SuccessCodes) == 0 || bp.Steps[0].SuccessCodes[1] != 3010 {
+	if bp.Steps[0].SuccessCodes[1] != 3010 {
 		t.Errorf("success codes = %v", bp.Steps[0].SuccessCodes)
 	}
 }
 
 func TestBuildPackageExeWithPrereqOrdering(t *testing.T) {
-	m, _ := parseManifest(readTestdata(t, "manifest_exe_deps.json"), "")
-	chosen := PickInstaller(m.Installers, "x64", "machine")
-
-	dep, _ := parseManifest(readTestdata(t, "manifest_vcredist.json"), "")
-	depInst := PickInstaller(dep.Installers, "x64", "machine")
-
-	bp, err := BuildPackage(m, chosen, []DepInstaller{{Manifest: dep, Installer: depInst}}, nil)
+	app := mkManifest("Example.InnoApp", "1.2.3", "Inno Example App", Installer{
+		Architecture: "x64", Scope: "machine", InstallerType: "inno",
+		URL:             "https://downloads.example.com/innoapp/1.2.3/setup-x64.exe",
+		AppsAndFeatures: []AppEntry{{ProductCode: "{11112222-3333-4444-5555-666677778888}"}},
+	})
+	dep := mkManifest("Microsoft.VCRedist.2015+.x64", "14.40", "VC++ Redist", Installer{
+		Architecture: "x64", Scope: "machine", InstallerType: "burn",
+		URL: "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+	})
+	bp, err := BuildPackage(app, &app.Installers[0],
+		[]DepInstaller{{Manifest: dep, Installer: &dep.Installers[0]}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two files: prereq then app.
-	if len(bp.Files) != 2 {
-		t.Fatalf("files = %+v", bp.Files)
+	if len(bp.Files) != 2 || len(bp.Steps) != 2 {
+		t.Fatalf("built = files:%d steps:%d", len(bp.Files), len(bp.Steps))
 	}
-	if len(bp.Steps) != 2 {
-		t.Fatalf("steps = %+v", bp.Steps)
-	}
-	// Prereq step comes first and is an exe (burn → exe with /quiet).
 	if bp.Steps[0].Type != "exe" || !strings.Contains(bp.Steps[0].Description, "Prerequisite") {
-		t.Errorf("first step should be the prereq: %+v", bp.Steps[0])
+		t.Errorf("first step should be prereq: %+v", bp.Steps[0])
 	}
-	if len(bp.Steps[0].ExeArgs) == 0 || bp.Steps[0].ExeArgs[0] != "/quiet" {
-		t.Errorf("burn prereq args = %v (want /quiet default)", bp.Steps[0].ExeArgs)
+	if bp.Steps[0].ExeArgs[0] != "/quiet" {
+		t.Errorf("burn prereq args = %v", bp.Steps[0].ExeArgs)
 	}
-	// Main app: inno → exe with /VERYSILENT default.
-	if bp.Steps[1].Type != "exe" || bp.Steps[1].ExeArgs[0] != "/VERYSILENT" {
-		t.Errorf("inno main step = %+v", bp.Steps[1])
+	if bp.Steps[1].ExeArgs[0] != "/VERYSILENT" {
+		t.Errorf("inno main args = %v", bp.Steps[1].ExeArgs)
 	}
-	// AppsAndFeatures product code drives the msi detection rule.
 	if len(bp.Detection) != 2 || bp.Detection[1].Type != "msi" {
 		t.Errorf("detection = %+v", bp.Detection)
 	}
 }
 
 func TestBuildPackageMSIX(t *testing.T) {
-	m, _ := parseManifest(readTestdata(t, "manifest_msix.json"), "")
-	chosen := PickInstaller(m.Installers, "x64", "machine")
-	bp, err := BuildPackage(m, chosen, nil, nil)
+	m := mkManifest("Example.StoreApp", "2.0.0", "Store Example App", Installer{
+		Architecture: "x64", InstallerType: "msix",
+		URL: "https://downloads.example.com/storeapp/2.0.0/app.msix",
+	})
+	bp, err := BuildPackage(m, &m.Installers[0], nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bp.Steps) != 1 || bp.Steps[0].Type != "appx" {
+	if len(bp.Steps) != 1 || bp.Steps[0].Type != "appx" || bp.Steps[0].APPXPath != bp.Files[0].Filename {
 		t.Fatalf("steps = %+v", bp.Steps)
 	}
-	if bp.Steps[0].APPXPath != bp.Files[0].Filename {
-		t.Errorf("appx path %q != file %q", bp.Steps[0].APPXPath, bp.Files[0].Filename)
-	}
-	// No product code → winget-only detection.
 	if len(bp.Detection) != 1 || bp.Detection[0].Type != "winget" {
 		t.Errorf("detection = %+v", bp.Detection)
 	}
@@ -171,62 +409,12 @@ func TestBuildPackageMSIX(t *testing.T) {
 
 func TestInstallerFilenameFallback(t *testing.T) {
 	m := &Manifest{PackageIdentifier: "Vendor.App", Version: "1.0"}
-	inst := &Installer{InstallerType: "exe"}
-	// A URL with no usable base name synthesizes one.
-	name := installerFilename("https://example.com/download?id=42", m, inst)
+	name := installerFilename("https://example.com/download?id=42", m, &Installer{InstallerType: "exe"})
 	if !strings.HasSuffix(name, ".exe") || !strings.Contains(name, "Vendor-App") {
 		t.Errorf("synthesized filename = %q", name)
 	}
-	// A clean URL keeps its base name.
 	name = installerFilename("https://example.com/path/setup.msi", m, &Installer{InstallerType: "msi"})
 	if name != "setup.msi" {
 		t.Errorf("filename = %q, want setup.msi", name)
-	}
-}
-
-func TestClientSearchAndManifestOverHTTP(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/manifestSearch":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(readTestdata(t, "manifestSearch.json"))
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/packageManifests/"):
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(readTestdata(t, "manifest_msi.json"))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	c := &Client{HTTP: srv.Client(), BaseURL: srv.URL}
-	results, err := c.Search(context.Background(), "7zip")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("search results = %d", len(results))
-	}
-	m, err := c.Manifest(context.Background(), "7zip.7zip", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.PackageIdentifier != "7zip.7zip" || len(m.Installers) != 2 {
-		t.Errorf("manifest = %+v", m)
-	}
-}
-
-func TestSearchNoContent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-	c := &Client{HTTP: srv.Client(), BaseURL: srv.URL}
-	results, err := c.Search(context.Background(), "nothing")
-	if err != nil {
-		t.Fatalf("204 should not error: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected no results, got %d", len(results))
 	}
 }
