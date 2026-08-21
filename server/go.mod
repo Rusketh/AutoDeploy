@@ -8,6 +8,7 @@ require (
 	github.com/kdomanski/iso9660 v0.4.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/sys v0.45.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.5
 )
 

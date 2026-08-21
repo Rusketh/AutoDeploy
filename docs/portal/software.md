@@ -37,7 +37,9 @@ Store source at install time — which many sites disable by policy. To get thos
 machines, **Software → Import from winget** builds an *offline* package instead.
 
 Search the winget community catalog (e.g. `7zip`, `Notepad++`), choose an app, optionally override the
-**architecture / scope** (the default is x64 / machine), and import. The server downloads the app's
+**architecture / scope** (the default is x64 / machine), and import. Search runs against winget's own
+pre-indexed catalog (the same index the `winget` client uses, cached on the server and refreshed daily),
+and the installer details come from the winget-pkgs manifests. The server then downloads the app's
 **real vendor installer** — plus any prerequisites the app declares (e.g. a VC++ redistributable) — and
 creates a **standard software package**:
 
