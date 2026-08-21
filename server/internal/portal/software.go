@@ -106,6 +106,7 @@ func sortFileNodes(n *fileNode) {
 func init() {
 	registerSoftwareRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 		get("/portal/software", softwareList(r))
+		get("/portal/software/import", softwareImportPage(r))
 		get("/portal/software/new", softwareForm(r, model.SoftwarePackage{}, true))
 		post("/portal/software", softwareCreate(r))
 		get("/portal/software/{id}/edit", softwareEdit(r))

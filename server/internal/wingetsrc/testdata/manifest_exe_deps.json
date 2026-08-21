@@ -1,0 +1,32 @@
+{
+  "Data": {
+    "PackageIdentifier": "Example.InnoApp",
+    "Versions": [
+      {
+        "PackageVersion": "1.2.3",
+        "DefaultLocale": {
+          "PackageName": "Inno Example App",
+          "Publisher": "Example Corp",
+          "ShortDescription": "An example Inno Setup app."
+        },
+        "InstallerType": "inno",
+        "Scope": "machine",
+        "Installers": [
+          {
+            "Architecture": "x64",
+            "InstallerUrl": "https://downloads.example.com/innoapp/1.2.3/setup-x64.exe",
+            "InstallerSha256": "DEADBEEF00112233445566778899AABBCCDDEEFF00112233445566778899AABB",
+            "AppsAndFeaturesEntries": [
+              { "ProductCode": "{11112222-3333-4444-5555-666677778888}", "DisplayName": "Inno Example App" }
+            ]
+          }
+        ],
+        "Dependencies": {
+          "PackageDependencies": [
+            { "PackageIdentifier": "Microsoft.VCRedist.2015+.x64" }
+          ]
+        }
+      }
+    ]
+  }
+}

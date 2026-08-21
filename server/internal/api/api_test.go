@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/auth"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -45,6 +46,16 @@ func newTestServer(t *testing.T) (*httptest.Server, Repos) {
 
 func authedClient(t *testing.T, srv *httptest.Server, repos Repos) *http.Client {
 	t.Helper()
+	// The login rate limiter is a package-global keyed by client IP; every
+	// test authenticates from 127.0.0.1, so without a reset the cumulative
+	// login count across the package's tests eventually trips the 429 cap.
+	// Clear it per authenticated client so login attempts never accumulate
+	// across tests.
+	loginLimiter.mu.Lock()
+	loginLimiter.counts = map[string]int{}
+	loginLimiter.resetAt = time.Time{}
+	loginLimiter.mu.Unlock()
+
 	ctx := context.Background()
 	if _, err := repos.Users.CreateUser(ctx, "admin", "admin"); err != nil {
 		t.Fatal(err)

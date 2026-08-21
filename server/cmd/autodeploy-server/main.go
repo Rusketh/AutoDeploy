@@ -39,6 +39,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 	"github.com/rusketh/autodeploy/server/internal/tftp"
+	"github.com/rusketh/autodeploy/server/internal/wingetsrc"
 	"github.com/rusketh/autodeploy/server/internal/wol"
 )
 
@@ -234,6 +235,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		SetupLock:     r.SetupLock,
 		Updates:       r.Updates,
 		MSCatalog:     mscatalog.New(),
+		Winget:        wingetsrc.New(),
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,

@@ -1,0 +1,22 @@
+{
+  "Data": {
+    "PackageIdentifier": "Example.StoreApp",
+    "Versions": [
+      {
+        "PackageVersion": "2.0.0",
+        "DefaultLocale": {
+          "PackageName": "Store Example App",
+          "Publisher": "Example Corp"
+        },
+        "Installers": [
+          {
+            "Architecture": "x64",
+            "InstallerType": "msix",
+            "InstallerUrl": "https://downloads.example.com/storeapp/2.0.0/app.msix",
+            "InstallerSha256": "0011223344556677889900AABBCCDDEEFF00112233445566778899AABBCCDDEE"
+          }
+        ]
+      }
+    ]
+  }
+}
