@@ -25,8 +25,16 @@ import (
 // itself consumes the community source.
 
 // indexEntryNames are the candidate source-index MSIX filenames, newest
-// schema first. Both are served for client-compat; the tables we read
-// (ids/names/monikers/versions/manifest) exist in either.
+// schema first. Both are served for client-compat, but they carry *different*
+// SQLite schemas, so we detect which one we got before querying (see
+// indexIsV2):
+//
+//   - source2.msix holds the v2 ("SQLite Index 2.0") schema: a single
+//     denormalised `packages` table (id, name, moniker, latest_version, ...)
+//     storing one row per package with only its latest version.
+//   - source.msix holds the v1 normalised schema: ids/names/monikers/versions
+//     interned by rowid and joined through a `manifest` table, with one
+//     manifest row per package *version*.
 var indexEntryNames = []string{"source2.msix", "source.msix"}
 
 // ensureIndex makes sure a fresh-enough index db is cached on disk and
@@ -154,6 +162,43 @@ func openIndexDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// indexIsV2 reports whether the opened index uses the v2 "packages" schema
+// (from source2.msix) rather than the v1 normalised manifest schema (from
+// source.msix). We branch on the presence of the `packages` table; a v1 index
+// has no such table, a v2 index has no `manifest` table.
+func indexIsV2(ctx context.Context, db *sql.DB) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='packages'`).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// v1 search: the manifest table references ids/names/monikers/versions by
+// rowid. A LEFT JOIN on monikers keeps rows whose moniker is unset.
+const searchQueryV1 = `
+	SELECT ids.id, names.name, versions.version
+	FROM manifest
+	JOIN ids ON manifest.id = ids.rowid
+	JOIN names ON manifest.name = names.rowid
+	JOIN versions ON manifest.version = versions.rowid
+	LEFT JOIN monikers ON manifest.moniker = monikers.rowid
+	WHERE ids.id LIKE ?1 ESCAPE '\'
+	   OR names.name LIKE ?1 ESCAPE '\'
+	   OR monikers.moniker LIKE ?1 ESCAPE '\'`
+
+// v2 search: the packages table stores id/name/moniker/latest_version
+// directly as text (moniker is nullable, so LIKE against NULL is simply
+// false — no join needed).
+const searchQueryV2 = `
+	SELECT id, name, latest_version
+	FROM packages
+	WHERE id LIKE ?1 ESCAPE '\'
+	   OR name LIKE ?1 ESCAPE '\'
+	   OR moniker LIKE ?1 ESCAPE '\'`
+
 // searchIndex queries the index for packages whose id, name or moniker
 // contains query (case-insensitive substring), grouped by identifier with
 // the newest version chosen. Results are capped at limit.
@@ -164,19 +209,16 @@ func (c *Client) searchIndex(ctx context.Context, dbPath, query string, limit in
 	}
 	defer db.Close()
 
+	v2, err := indexIsV2(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("winget index: detect schema: %w", err)
+	}
+	q := searchQueryV1
+	if v2 {
+		q = searchQueryV2
+	}
+
 	like := "%" + escapeLike(query) + "%"
-	// The manifest table references ids/names/monikers/versions by rowid.
-	// A LEFT JOIN on monikers keeps rows whose moniker is unset.
-	const q = `
-		SELECT ids.id, names.name, versions.version
-		FROM manifest
-		JOIN ids ON manifest.id = ids.rowid
-		JOIN names ON manifest.name = names.rowid
-		JOIN versions ON manifest.version = versions.rowid
-		LEFT JOIN monikers ON manifest.moniker = monikers.rowid
-		WHERE ids.id LIKE ?1 ESCAPE '\'
-		   OR names.name LIKE ?1 ESCAPE '\'
-		   OR monikers.moniker LIKE ?1 ESCAPE '\'`
 	rows, err := db.QueryContext(ctx, q, like)
 	if err != nil {
 		return nil, fmt.Errorf("winget index: query (schema may have changed): %w", err)
@@ -229,9 +271,25 @@ func (c *Client) searchIndex(ctx context.Context, dbPath, query string, limit in
 	return out, nil
 }
 
-// indexVersions returns every version of an exact package identifier in the
-// index, newest first. Used to resolve "latest" when a caller doesn't pin a
-// version (imports and dependency resolution).
+// v1 lists every interned version row for an identifier.
+const versionsQueryV1 = `
+	SELECT versions.version
+	FROM manifest
+	JOIN ids ON manifest.id = ids.rowid
+	JOIN versions ON manifest.version = versions.rowid
+	WHERE ids.id = ?1 COLLATE NOCASE`
+
+// v2 only stores each package's latest version, so this yields a single row.
+const versionsQueryV2 = `
+	SELECT latest_version
+	FROM packages
+	WHERE id = ?1 COLLATE NOCASE`
+
+// indexVersions returns the versions of an exact package identifier held in
+// the index, newest first. Used to resolve "latest" when a caller doesn't pin
+// a version (imports and dependency resolution). A v1 index carries every
+// published version; a v2 index carries only the latest, so this returns that
+// single version there — still the right answer for resolving "latest".
 func (c *Client) indexVersions(ctx context.Context, dbPath, id string) ([]string, error) {
 	db, err := openIndexDB(dbPath)
 	if err != nil {
@@ -239,12 +297,14 @@ func (c *Client) indexVersions(ctx context.Context, dbPath, id string) ([]string
 	}
 	defer db.Close()
 
-	const q = `
-		SELECT versions.version
-		FROM manifest
-		JOIN ids ON manifest.id = ids.rowid
-		JOIN versions ON manifest.version = versions.rowid
-		WHERE ids.id = ?1 COLLATE NOCASE`
+	v2, err := indexIsV2(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("winget index: detect schema: %w", err)
+	}
+	q := versionsQueryV1
+	if v2 {
+		q = versionsQueryV2
+	}
 	rows, err := db.QueryContext(ctx, q, id)
 	if err != nil {
 		return nil, fmt.Errorf("winget index: version query: %w", err)

@@ -147,10 +147,74 @@ func TestClientManifestOverHTTP(t *testing.T) {
 
 // --- Index (synthetic source MSIX) ----------------------------------------
 
-// buildSyntheticIndex writes a winget-style index.db with the given
-// packages and returns it as bytes. Each package is (id, name, moniker,
-// version).
-func buildSyntheticIndex(t *testing.T, rows [][4]string) []byte {
+// zipAsIndexDB packages a db file as Public/index.db, the winget source
+// MSIX layout our extractor reads.
+func zipAsIndexDB(t *testing.T, dbPath string) []byte {
+	t.Helper()
+	dbBytes, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, err := zw.Create("Public/index.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(dbBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// buildSyntheticIndexV2 writes the v2 source index (as source2.msix ships):
+// a single denormalised `packages` table holding one row per package with its
+// latest version. Each row is (id, name, moniker, latest_version).
+func buildSyntheticIndexV2(t *testing.T, rows [][4]string) []byte {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "src.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mirror winget-cli's 2.0 PackagesTable: an implicit rowid PK, id/name/
+	// latest_version NOT NULL, moniker nullable.
+	if _, err := db.Exec(`CREATE TABLE packages(
+		rowid INTEGER PRIMARY KEY,
+		id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		moniker TEXT,
+		latest_version TEXT NOT NULL,
+		arp_min_version TEXT,
+		arp_max_version TEXT,
+		hash BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		var moniker interface{}
+		if r[2] != "" {
+			moniker = r[2]
+		}
+		if _, err := db.Exec(
+			`INSERT INTO packages(id,name,moniker,latest_version) VALUES(?,?,?,?)`,
+			r[0], r[1], moniker, r[3]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return zipAsIndexDB(t, dbPath)
+}
+
+// buildSyntheticIndexV1 writes the v1 source index (as the legacy source.msix
+// ships): ids/names/monikers/versions interned by rowid and joined through a
+// `manifest` table, one manifest row per package version. Each row is (id,
+// name, moniker, version).
+func buildSyntheticIndexV1(t *testing.T, rows [][4]string) []byte {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "src.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -196,31 +260,15 @@ func buildSyntheticIndex(t *testing.T, rows [][4]string) []byte {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	dbBytes, err := os.ReadFile(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Zip it as Public/index.db, the winget source layout.
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	f, err := zw.Create("Public/index.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.Write(dbBytes); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
+	return zipAsIndexDB(t, dbPath)
 }
 
+// TestSearchIndexAndVersions exercises the v2 schema served at source2.msix,
+// which the client prefers. The v2 index stores one row per package with only
+// its latest version.
 func TestSearchIndexAndVersions(t *testing.T) {
-	msix := buildSyntheticIndex(t, [][4]string{
-		{"7zip.7zip", "7-Zip", "7zip", "23.01"},
+	msix := buildSyntheticIndexV2(t, [][4]string{
 		{"7zip.7zip", "7-Zip", "7zip", "24.08"},
-		{"7zip.7zip", "7-Zip", "7zip", "22.01"},
 		{"Notepad++.Notepad++", "Notepad++", "notepad++", "8.6.2"},
 		{"Google.Chrome", "Google Chrome", "chrome", "120.0"},
 	})
@@ -246,7 +294,6 @@ func TestSearchIndexAndVersions(t *testing.T) {
 	if len(res) != 1 || res[0].PackageIdentifier != "7zip.7zip" {
 		t.Fatalf("search results = %+v", res)
 	}
-	// Grouped to one row with the newest version.
 	if res[0].LatestVersion != "24.08" {
 		t.Errorf("latest = %q, want 24.08", res[0].LatestVersion)
 	}
@@ -260,7 +307,7 @@ func TestSearchIndexAndVersions(t *testing.T) {
 		t.Errorf("moniker search = %+v", res)
 	}
 
-	// indexVersions returns newest-first.
+	// indexVersions returns the latest version the v2 index carries.
 	dbPath, err := c.ensureIndex(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -269,8 +316,8 @@ func TestSearchIndexAndVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vers) != 3 || vers[0] != "24.08" {
-		t.Errorf("versions = %v", vers)
+	if len(vers) != 1 || vers[0] != "24.08" {
+		t.Errorf("versions = %v, want [24.08]", vers)
 	}
 
 	// The index was downloaded once and cached (TTL default is large).
@@ -279,8 +326,15 @@ func TestSearchIndexAndVersions(t *testing.T) {
 	}
 }
 
+// TestSearchIndexFallbackToSourceMsix exercises the v1 normalised schema via
+// the legacy source.msix fallback: source2.msix is absent, so the client
+// downloads source.msix and must query its multi-version manifest layout,
+// grouping to the newest version.
 func TestSearchIndexFallbackToSourceMsix(t *testing.T) {
-	msix := buildSyntheticIndex(t, [][4]string{{"Foo.Bar", "Foo Bar", "foo", "1.0"}})
+	msix := buildSyntheticIndexV1(t, [][4]string{
+		{"Foo.Bar", "Foo Bar", "foo", "1.0"},
+		{"Foo.Bar", "Foo Bar", "foo", "2.0"},
+	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// source2.msix missing; only the legacy source.msix is served.
 		if strings.HasSuffix(r.URL.Path, "/source.msix") {
@@ -296,8 +350,21 @@ func TestSearchIndexFallbackToSourceMsix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fallback failed: %v", err)
 	}
-	if len(res) != 1 || res[0].PackageIdentifier != "Foo.Bar" {
+	if len(res) != 1 || res[0].PackageIdentifier != "Foo.Bar" || res[0].LatestVersion != "2.0" {
 		t.Errorf("results = %+v", res)
+	}
+
+	// The v1 index carries every published version, newest first.
+	dbPath, err := c.ensureIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vers, err := c.indexVersions(context.Background(), dbPath, "Foo.Bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vers) != 2 || vers[0] != "2.0" || vers[1] != "1.0" {
+		t.Errorf("versions = %v, want [2.0 1.0]", vers)
 	}
 }
 
