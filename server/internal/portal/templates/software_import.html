@@ -1,0 +1,223 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Import from winget</h2>
+  <div class="right">
+    <a class="btn secondary" href="/portal/software">Back to list</a>
+  </div>
+</div>
+
+<fieldset>
+  <legend>Search the winget community source</legend>
+  <p class="hint">Search the winget community catalog (e.g. <code>7zip</code>, <code>Notepad++</code>,
+    <code>Visual Studio Code</code>), then import an app. The server downloads the app's real installer
+    (and any prerequisites it declares) and builds a <strong>standard software package</strong> — files,
+    detection, and install steps — that you can edit like any other. Because the installer is captured up
+    front, it installs even where the Microsoft Store / winget source is disabled by policy.</p>
+  <p class="hint">Store-exclusive apps (the <code>msstore</code> source) are licence-locked and can't be
+    repackaged offline — those aren't importable here.</p>
+  <div class="flex gap-3" style="align-items:center;">
+    <input type="search" id="q" placeholder="7zip" style="flex:1; max-width:420px;" autofocus>
+    <button type="button" class="btn" id="searchBtn" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
+  </div>
+  <p id="searchStatus" class="hint"></p>
+</fieldset>
+
+<div class="tablewrap mt-3" id="resultsWrap" hidden>
+<table id="results">
+  <thead><tr>
+    <th>Name</th>
+    <th>Publisher</th>
+    <th>Identifier</th>
+    <th>Version</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+</div>
+
+<script>
+function el(tag, className, text) {
+  var e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text; // winget strings are untrusted
+  return e;
+}
+
+function formatBytes(n) {
+  if (!n || n <= 0) return '';
+  var units = ['B', 'KB', 'MB', 'GB'], i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + ' ' + units[i];
+}
+
+function runSearch() {
+  var q = document.getElementById('q').value.trim();
+  var status = document.getElementById('searchStatus');
+  var btn = document.getElementById('searchBtn');
+  if (!q) { status.textContent = 'Enter an app name or keyword.'; return; }
+  btn.disabled = true;
+  status.textContent = 'Searching winget…';
+  fetch('/api/v1/winget/search?q=' + encodeURIComponent(q))
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(b) { throw new Error(b.error || ('search failed (' + r.status + ')')); });
+      return r.json();
+    })
+    .then(function(body) {
+      renderResults(body.results || []);
+      status.textContent = (body.results && body.results.length)
+        ? body.results.length + ' result(s).'
+        : 'No results. winget may not know that query.';
+    })
+    .catch(function(err) { status.textContent = err.message; })
+    .finally(function() { btn.disabled = false; });
+}
+
+function renderResults(results) {
+  var wrap = document.getElementById('resultsWrap');
+  var tbody = document.querySelector('#results tbody');
+  tbody.innerHTML = '';
+  wrap.hidden = results.length === 0;
+  results.forEach(function(r) {
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', '', r.name || r.package_identifier));
+    tr.appendChild(el('td', '', r.publisher || ''));
+    var idc = el('td');
+    idc.appendChild(el('code', '', r.package_identifier));
+    tr.appendChild(idc);
+    tr.appendChild(el('td', '', r.latest_version || ''));
+    var actions = el('td', 'actions');
+    var btn = el('button', 'btn secondary sm', 'Choose…');
+    btn.type = 'button';
+    btn.onclick = function() { chooseVariant(r, tr, actions, btn); };
+    actions.appendChild(btn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+// chooseVariant loads the manifest so the operator can pick an
+// architecture / scope, then import.
+function chooseVariant(r, tr, cell, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  fetch('/api/v1/winget/manifest?id=' + encodeURIComponent(r.package_identifier))
+    .then(function(resp) {
+      if (!resp.ok) return resp.json().then(function(b) { throw new Error(b.error || ('manifest failed (' + resp.status + ')')); });
+      return resp.json();
+    })
+    .then(function(m) { renderVariantPicker(r, m, cell); })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = 'Choose…';
+      cell.appendChild(el('div', 'hint', err.message));
+    });
+}
+
+function renderVariantPicker(r, manifest, cell) {
+  cell.innerHTML = '';
+  var installers = (manifest && manifest.installers) || [];
+  var box = el('div');
+
+  var sel = document.createElement('select');
+  sel.className = 'sm';
+  // "Auto (x64 / machine)" default plus one option per real variant.
+  var auto = document.createElement('option');
+  auto.value = ''; auto.textContent = 'Auto (x64 / machine)';
+  sel.appendChild(auto);
+  installers.forEach(function(inst, i) {
+    var o = document.createElement('option');
+    o.value = String(i);
+    var scope = inst.scope ? (' / ' + inst.scope) : '';
+    o.textContent = (inst.architecture || '?') + scope + ' — ' + (inst.installer_type || '?');
+    sel.appendChild(o);
+  });
+  box.appendChild(sel);
+
+  var go = el('button', 'btn sm', 'Import');
+  go.type = 'button';
+  go.style.marginLeft = '8px';
+  go.onclick = function() {
+    var payload = {
+      package_identifier: r.package_identifier,
+      version: manifest.version || ''
+    };
+    var idx = sel.value;
+    if (idx !== '') {
+      var inst = installers[parseInt(idx, 10)];
+      if (inst) { payload.architecture = inst.architecture; payload.scope = inst.scope; }
+    }
+    startImport(payload, cell, go);
+  };
+  box.appendChild(go);
+  cell.appendChild(box);
+}
+
+function startImport(payload, cell, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  fetch('/api/v1/software/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+    body: JSON.stringify(payload)
+  })
+    .then(function(resp) { return resp.json().then(function(b) { return { status: resp.status, body: b }; }); })
+    .then(function(out) {
+      if (out.status !== 200 && out.status !== 201) {
+        throw new Error(out.body.error || ('import failed (' + out.status + ')'));
+      }
+      showProgress(cell, out.body.id);
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = 'Import';
+      cell.appendChild(el('div', 'hint', err.message));
+    });
+}
+
+function showProgress(cell, id) {
+  cell.innerHTML = '';
+  var box = el('div');
+  var bar = document.createElement('progress');
+  bar.max = 100; bar.value = 0;
+  var note = el('p', 'hint', 'Starting…');
+  box.appendChild(bar);
+  box.appendChild(note);
+  cell.appendChild(box);
+
+  var timer = setInterval(function() {
+    fetch('/api/v1/software/' + id + '/import-status')
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        if (s.phase === 'resolving') note.textContent = 'Resolving…';
+        if (s.phase === 'downloading') {
+          bar.value = s.percent || 0;
+          var of = s.file_count > 1 ? (' (file ' + s.file_index + ' of ' + s.file_count + ')') : '';
+          note.textContent = 'Downloading ' + (s.filename || '') + of + ' — ' +
+            formatBytes(s.done_bytes) + (s.total_bytes ? ' of ' + formatBytes(s.total_bytes) : '') +
+            (s.percent ? ' (' + s.percent + '%)' : '');
+        }
+        if (s.finished) {
+          clearInterval(timer);
+          box.innerHTML = '';
+          if (s.error) {
+            box.appendChild(el('span', 'badge warn', 'failed'));
+            box.appendChild(el('p', 'hint', s.error));
+            var edit = el('a', 'btn secondary sm', 'Edit package (retry or upload manually)');
+            edit.href = '/portal/software/' + id + '/edit';
+            box.appendChild(edit);
+          } else {
+            var a = el('a', 'btn sm', 'Imported — edit package');
+            a.href = '/portal/software/' + id + '/edit';
+            box.appendChild(a);
+          }
+        }
+      })
+      .catch(function() { /* transient poll error: keep trying */ });
+  }, 1500);
+}
+
+document.getElementById('q').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+});
+</script>
+{{end}}

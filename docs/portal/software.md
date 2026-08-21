@@ -29,6 +29,31 @@ needs and define its detection rules and install steps.
 
 ![Creating a software package](../images/software-new.png)
 
+### Import from winget (offline installer)
+
+AutoDeploy can install winget / Microsoft Store apps by running `winget install` on the target
+(the **winget** step and detection rule below), but that needs the machine to reach the winget /
+Store source at install time — which many sites disable by policy. To get those apps onto locked-down
+machines, **Software → Import from winget** builds an *offline* package instead.
+
+Search the winget community catalog (e.g. `7zip`, `Notepad++`), choose an app, optionally override the
+**architecture / scope** (the default is x64 / machine), and import. The server downloads the app's
+**real vendor installer** — plus any prerequisites the app declares (e.g. a VC++ redistributable) — and
+creates a **standard software package**:
+
+- the installer file(s) land under the package's files, exactly like a manual upload;
+- an install step is generated per installer (`msi`, `appx`, or `exe` with the manifest's silent
+  switches), with prerequisites ordered first;
+- a `winget` detection rule is added (plus an `msi` product-code rule when available).
+
+The result is an ordinary, fully-editable package — tweak the steps, detection, or files afterwards like
+any other. Because the installer is captured up front, it installs with **no dependency on the Store or
+winget source being enabled on the target**.
+
+> **Scope.** This uses the winget **community** source only. Store-exclusive apps (the `msstore`
+> source) are licence/DRM-locked and can't be repackaged offline, so they aren't importable here — for
+> those, use the live `winget` step and ensure the target can reach the Store.
+
 **Payload files.** A package can hold several files (e.g. `setup.exe` plus a `config.json`). The
 agent downloads every file into a per-package work directory on the target; in your install steps
 you reference each file by its bare filename and the agent resolves it to the on-disk path. Files

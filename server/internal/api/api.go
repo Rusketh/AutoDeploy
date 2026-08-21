@@ -20,6 +20,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/wingetsrc"
 	"github.com/rusketh/autodeploy/server/internal/wol"
 )
 
@@ -70,6 +71,10 @@ type Repos struct {
 	// operator-driven import flow. Optional; nil disables the import
 	// endpoints (manual upload always works).
 	MSCatalog mscatalog.Searcher
+	// Winget searches the winget community REST source for the
+	// operator-driven "import an app as an offline package" flow.
+	// Optional; nil disables the winget import endpoints.
+	Winget wingetsrc.Searcher
 	// Notifications handles in-portal notification CRUD and preferences.
 	Notifications *model.NotificationRepo
 	// WebhookRepo manages webhook endpoints and delivery logs.
@@ -97,6 +102,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterDomainJoin(mux, r)
 	RegisterWindowsUpdates(mux, r)
 	RegisterMSCatalog(mux, r)
+	RegisterWinget(mux, r)
 	RegisterNotifications(mux, r)
 	RegisterWebhooks(mux, r)
 
