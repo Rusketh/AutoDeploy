@@ -3325,3 +3325,25 @@ preserved), and the no-folder case.
 
 **NEXT.** Re-run the "Snipping Tool Offline" push on a real SYSTEM deploy and
 confirm the bundle now provisions for all users with its framework deps.
+
+---
+
+## 2026-08-25 — appx: -DependencyPackagePath takes an array, not repeated flags
+
+**WHAT.** The SYSTEM/Dependencies fix got the real deploy to the provisioning
+call, which then failed: `Add-AppxProvisionedPackage : Cannot bind parameter
+because parameter 'DependencyPackagePath' is specified more than once ... use
+the array syntax`. Both `Add-AppxProvisionedPackage -DependencyPackagePath` and
+`Add-AppxPackage -DependencyPath` bind a *single* array parameter and reject a
+repeated flag. Changed `appxCommand` to emit one flag with a comma-separated,
+individually-quoted list (`-DependencyPackagePath 'a','b','c'`) via a shared
+`psList` helper; the Add-AppxPackage branch already did this.
+
+**WHY (decision).** Matching the observed error text exactly — PowerShell wants
+array syntax for these params, not one flag per value.
+
+**STATE.** Agent `go build`/`vet`/`gofmt` clean; `go test ./...` green. Tests
+updated to expect the comma-joined array for the provisioning path (two deps).
+
+**NEXT.** Re-run the "Snipping Tool Offline" push; expect the provision call to
+bind and the bundle to install for all users.

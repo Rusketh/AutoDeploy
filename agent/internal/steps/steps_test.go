@@ -79,14 +79,14 @@ func TestAppxCommand(t *testing.T) {
 			want: `Add-AppxPackage -Path 'C:\pkg\app.msixbundle' -DependencyPath 'C:\pkg\VCLibs.appx','C:\pkg\UIXaml.appx' -ErrorAction Stop`,
 		},
 		{
-			name: "provision without a licence skips it and provisions online",
+			name: "provision passes multiple dependencies as one comma-separated array",
 			step: swspec.InstallStep{
 				Type:             "appx",
 				APPXPath:         `C:\pkg\app.msixbundle`,
-				APPXDependencies: []string{`C:\pkg\VCLibs.appx`},
+				APPXDependencies: []string{`C:\pkg\VCLibs.appx`, `C:\pkg\UIXaml.appx`},
 				APPXProvision:    true,
 			},
-			want: `Add-AppxProvisionedPackage -Online -PackagePath 'C:\pkg\app.msixbundle' -DependencyPackagePath 'C:\pkg\VCLibs.appx' -SkipLicense -ErrorAction Stop`,
+			want: `Add-AppxProvisionedPackage -Online -PackagePath 'C:\pkg\app.msixbundle' -DependencyPackagePath 'C:\pkg\VCLibs.appx','C:\pkg\UIXaml.appx' -SkipLicense -ErrorAction Stop`,
 		},
 		{
 			name: "provision with an offline licence uses -LicensePath",
@@ -120,13 +120,13 @@ func TestExecuteAppxBundleProvision(t *testing.T) {
 	res := Execute(context.Background(), []swspec.InstallStep{{
 		Type:             "appx",
 		APPXPath:         `C:\pkg\app.msixbundle`,
-		APPXDependencies: []string{`C:\pkg\VCLibs.appx`},
+		APPXDependencies: []string{`C:\pkg\VCLibs.appx`, `C:\pkg\UIXaml.appx`},
 		APPXProvision:    true,
 	}}, rec, HostFacts{})
 	if len(res) != 1 || res[0].Aborted || res[0].Error != nil {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-	want := "Add-AppxProvisionedPackage -Online -PackagePath 'C:\\pkg\\app.msixbundle' -DependencyPackagePath 'C:\\pkg\\VCLibs.appx' -SkipLicense -ErrorAction Stop"
+	want := "Add-AppxProvisionedPackage -Online -PackagePath 'C:\\pkg\\app.msixbundle' -DependencyPackagePath 'C:\\pkg\\VCLibs.appx','C:\\pkg\\UIXaml.appx' -SkipLicense -ErrorAction Stop"
 	found := false
 	for _, c := range rec.Calls {
 		if strings.Contains(c, want) {
