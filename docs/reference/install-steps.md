@@ -90,14 +90,26 @@ Install an AppX / MSIX package or an `.appxbundle` / `.msixbundle` bundle.
 By default the agent runs `Add-AppxPackage -Path <appx_path>`, which registers the package for the
 account the agent runs as. Set `appx_provision` to instead provision it **for every user on the
 machine** with `Add-AppxProvisionedPackage -Online` (DISM) — the right mode for a bundle staged at
-image time, since the agent runs as `SYSTEM` and a per-user install wouldn't reach the people who log
-in later.
+image time.
+
+> **The agent provisions automatically when it runs as `SYSTEM`.** At deploy time the agent is the
+> Local System account, and `Add-AppxPackage` (per-user) is *rejected* for that account with
+> `0x80073CF9` ("the Local System account is not allowed to perform this operation"). So whenever the
+> agent detects it's running as `SYSTEM` it provisions machine-wide regardless of `appx_provision`;
+> the flag only matters when the agent is run interactively as a normal user. You rarely need to set
+> it by hand.
 
 A `.msixbundle` / `.appxbundle` almost always depends on framework packages (Microsoft.VCLibs,
 Microsoft.UI.Xaml, Microsoft.NET.Native.*, …). List those in `appx_dependencies` — without them the
-install fails with `0x80073CF3` ("dependency or conflict validation"). An offline-licensed Store
-bundle carries a licence file (`<name>_License1.xml`); supply it in `appx_license` (which requires
-`appx_provision`), otherwise provisioning uses `-SkipLicense`.
+install fails with `0x80073CF3` ("dependency or conflict validation").
+
+> **A `Dependencies/` folder is picked up automatically.** If the step names no `appx_dependencies`
+> but the package ships a `Dependencies/` subfolder (the layout `winget download` produces), the
+> agent installs every `.appx` / `.msix` in it alongside the main package. An explicit
+> `appx_dependencies` list always takes precedence.
+
+An offline-licensed Store bundle carries a licence file (`<name>_License1.xml`); supply it in
+`appx_license` (which requires `appx_provision`), otherwise provisioning uses `-SkipLicense`.
 
 | Field | Required | Description |
 |-------|----------|-------------|

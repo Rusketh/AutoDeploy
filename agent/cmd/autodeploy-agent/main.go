@@ -17,9 +17,11 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1123,6 +1125,14 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 		rewritten = resolveBareFilenames(rewritten, knownFiles)
 	}
 	rewritten = expandStepEnv(rewritten)
+	// Adapt appx steps to the agent's context: provision machine-wide when we're
+	// SYSTEM (per-user Add-AppxPackage is rejected for that account), and pick up
+	// a Dependencies/ folder for a bundle whose framework packages weren't named.
+	appxDepDir := ""
+	if hasWorkdir {
+		appxDepDir = filesDir
+	}
+	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
 
 	log.Info("package.install.start",
 		slog.String("actor", f.uuid),
@@ -1640,6 +1650,93 @@ func expandEnvAll(in []string) []string {
 		out[i] = envExpand(s)
 	}
 	return out
+}
+
+// systemSID is the well-known SID of the Windows Local System account.
+const systemSID = "S-1-5-18"
+
+// runningAsSystem reports whether the agent process is the Local System
+// account. Per-user Add-AppxPackage is rejected for that account with
+// 0x80073CF9 ("the Local System account is not allowed to perform this
+// operation"), so an appx step run at deploy time -- where the agent is SYSTEM
+// -- must provision machine-wide instead. A package var so tests can force
+// either branch; on non-Windows user.Current().Uid is a numeric uid that never
+// equals the SID, so this is false off Windows (where the agent doesn't ship).
+var runningAsSystem = func() bool {
+	u, err := user.Current()
+	if err != nil {
+		return false
+	}
+	return u.Uid == systemSID
+}
+
+// finalizeAppxSteps adapts appx steps to the agent's runtime context, just
+// before execution. A hand-authored (or winget-download-derived) step usually
+// can't know two things the agent can:
+//
+//   - The agent runs as Local System, for which per-user Add-AppxPackage is
+//     rejected (0x80073CF9). When we're SYSTEM, force machine-wide provisioning
+//     (Add-AppxProvisionedPackage -Online) -- the only mode Local System may use.
+//   - A bundle's framework dependencies must be passed explicitly or the install
+//     fails dependency validation (0x80073CF3). When a step names none but the
+//     package ships a Dependencies/ folder (the layout `winget download`
+//     writes), pick those .appx/.msix packages up automatically.
+//
+// Explicit operator choices win: a step that already lists dependencies keeps
+// them, and appx_provision already set stays set.
+func finalizeAppxSteps(in []swspec.InstallStep, filesDir string) []swspec.InstallStep {
+	out := make([]swspec.InstallStep, len(in))
+	copy(out, in)
+	asSystem := runningAsSystem()
+	for i := range out {
+		if out[i].Type != "appx" {
+			continue
+		}
+		if asSystem {
+			out[i].APPXProvision = true
+		}
+		if len(out[i].APPXDependencies) == 0 && filesDir != "" {
+			out[i].APPXDependencies = discoverAppxDependencies(filesDir)
+		}
+	}
+	return out
+}
+
+// discoverAppxDependencies returns the .appx/.msix packages inside a
+// Dependencies/ subfolder of the package work dir, sorted for a deterministic
+// install order. That folder is what `winget download` writes alongside the
+// main installer; returns nil when there's none (the common single-file case).
+func discoverAppxDependencies(filesDir string) []string {
+	entries, err := os.ReadDir(filesDir)
+	if err != nil {
+		return nil
+	}
+	depDir := ""
+	for _, e := range entries {
+		if e.IsDir() && strings.EqualFold(e.Name(), "Dependencies") {
+			depDir = filepath.Join(filesDir, e.Name())
+			break
+		}
+	}
+	if depDir == "" {
+		return nil
+	}
+	depEntries, err := os.ReadDir(depDir)
+	if err != nil {
+		return nil
+	}
+	var deps []string
+	for _, e := range depEntries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".appx", ".msix":
+			deps = append(deps, filepath.Join(depDir, e.Name()))
+		}
+	}
+	sort.Strings(deps)
+	return deps
 }
 
 func resolveOne(p string, files map[string]string) string {
