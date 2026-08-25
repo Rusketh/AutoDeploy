@@ -3276,3 +3276,52 @@ fields and for a powershell body posted alongside an empty cmd textarea
 **NEXT.** On a real box, confirm a Store `.msixbundle` provisions for all users
 with its framework deps and (where applicable) offline licence, and that a
 newly-authored powershell step saves and round-trips through the editor.
+
+---
+
+## 2026-08-25 — appx: provision under SYSTEM, auto-pick Dependencies/ (follow-up)
+
+**WHAT.** A real deploy of a `winget download` bundle ("Snipping Tool Offline")
+surfaced the actual runtime failure the earlier entry only anticipated:
+`Add-AppxPackage` run by the agent (Local System) is rejected outright with
+`0x80073CF9` — "the Local System account is not allowed to perform this
+operation" — before any dependency check. The step that ran used the default
+per-user path and named no dependencies. Two agent-side fixes, applied just
+before step execution in `finalizeAppxSteps`:
+
+1. **Auto-provision under SYSTEM.** `runningAsSystem()` (SID `S-1-5-18` via
+   `os/user`) gates it: when the agent is Local System, every `appx` step is
+   forced to `Add-AppxProvisionedPackage -Online` regardless of `appx_provision`
+   — the only mode that account may use. `appx_provision` now only matters when
+   the agent is run interactively as a normal user.
+2. **Auto-discover `Dependencies/`.** When a step names no `appx_dependencies`
+   but the package ships a `Dependencies/` subfolder (exactly what
+   `winget download` writes), the agent installs every `.appx`/`.msix` in it as
+   dependency packages, sorted for determinism. An explicit list still wins.
+
+Both are agent-only, so the already-imported package works on the next check-in
+with no re-import or portal edit.
+
+**WHY (decisions).**
+- DECISION: force provisioning by *detecting SYSTEM* rather than flipping the
+  default for everyone — per-user `Add-AppxPackage` is still correct when a human
+  runs the agent by hand, and it's the mode the operator expects there.
+- DECISION: auto-discovery is scoped to a `Dependencies/` subfolder (not any
+  sibling file) so the main bundle is never mistaken for a dependency, and only
+  fills in when the step lists none — operator intent is never overridden.
+- ASSUMPTION: passing the full framework set from `Dependencies/` (multiple
+  VCLibs/UI.Xaml/WindowsAppRuntime versions) to `-DependencyPackagePath` is safe;
+  that's the same set `winget` itself hands to the deployment API, which resolves
+  the applicable ones.
+- LIMITATION: an offline *licensed* Store bundle still needs `appx_license` set
+  by hand; provisioning otherwise uses `-SkipLicense` (correct for free apps like
+  Snipping Tool). Auto-discovering a `*_License*.xml` is left for later.
+
+**STATE.** Agent + server `go build`/`vet`/`gofmt` clean; `go test ./...` green;
+`scripts/check-secrets.sh` OK. New agent tests: SYSTEM forces provisioning (and
+leaves non-appx steps and the input slice alone), non-SYSTEM stays per-user,
+`Dependencies/` discovery (sorted, non-package files ignored, explicit list
+preserved), and the no-folder case.
+
+**NEXT.** Re-run the "Snipping Tool Offline" push on a real SYSTEM deploy and
+confirm the bundle now provisions for all users with its framework deps.

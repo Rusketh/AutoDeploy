@@ -85,3 +85,89 @@ func TestExpandStepEnv(t *testing.T) {
 		t.Error("expandStepEnv mutated its input")
 	}
 }
+
+// Under the Local System account, a per-user Add-AppxPackage is rejected
+// (0x80073CF9), so finalizeAppxSteps forces machine-wide provisioning on every
+// appx step -- and only appx steps.
+func TestFinalizeAppxStepsProvisionsUnderSystem(t *testing.T) {
+	orig := runningAsSystem
+	t.Cleanup(func() { runningAsSystem = orig })
+	runningAsSystem = func() bool { return true }
+
+	in := []swspec.InstallStep{
+		{Type: "appx", APPXPath: "App.msixbundle"},
+		{Type: "exe", ExePath: "setup.exe"},
+	}
+	out := finalizeAppxSteps(in, "")
+	if !out[0].APPXProvision {
+		t.Error("appx step should be provisioned machine-wide under SYSTEM")
+	}
+	if out[1].APPXProvision {
+		t.Error("non-appx step must be left alone")
+	}
+	// Copy semantics: the input slice is not mutated.
+	if in[0].APPXProvision {
+		t.Error("finalizeAppxSteps mutated its input")
+	}
+}
+
+// Off the Local System account, provisioning is not forced: a plain appx step
+// stays a per-user Add-AppxPackage unless the operator opted into provisioning.
+func TestFinalizeAppxStepsKeepsPerUserOffSystem(t *testing.T) {
+	orig := runningAsSystem
+	t.Cleanup(func() { runningAsSystem = orig })
+	runningAsSystem = func() bool { return false }
+
+	out := finalizeAppxSteps([]swspec.InstallStep{{Type: "appx", APPXPath: "App.msix"}}, "")
+	if out[0].APPXProvision {
+		t.Error("appx step should stay per-user when the agent isn't SYSTEM")
+	}
+}
+
+// A bundle whose step names no dependencies picks up the .appx/.msix packages in
+// a sibling Dependencies/ folder (the layout `winget download` writes), sorted
+// for a deterministic order and ignoring non-package files. An explicit
+// dependency list is left untouched.
+func TestFinalizeAppxStepsDiscoversDependenciesFolder(t *testing.T) {
+	orig := runningAsSystem
+	t.Cleanup(func() { runningAsSystem = orig })
+	runningAsSystem = func() bool { return false }
+
+	dir := t.TempDir()
+	depDir := filepath.Join(dir, "Dependencies")
+	if err := os.MkdirAll(depDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"VCLibs.appx", "UIXaml.msix", "readme.txt"} {
+		if err := os.WriteFile(filepath.Join(depDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := finalizeAppxSteps([]swspec.InstallStep{{Type: "appx", APPXPath: "App.msixbundle"}}, dir)
+	want := []string{filepath.Join(depDir, "UIXaml.msix"), filepath.Join(depDir, "VCLibs.appx")}
+	if len(out[0].APPXDependencies) != len(want) {
+		t.Fatalf("dependencies = %v, want %v", out[0].APPXDependencies, want)
+	}
+	for i := range want {
+		if out[0].APPXDependencies[i] != want[i] {
+			t.Errorf("dependency %d = %q, want %q", i, out[0].APPXDependencies[i], want[i])
+		}
+	}
+
+	// An operator-supplied list is authoritative -- discovery must not override it.
+	explicit := finalizeAppxSteps([]swspec.InstallStep{
+		{Type: "appx", APPXPath: "App.msixbundle", APPXDependencies: []string{"chosen.appx"}},
+	}, dir)
+	if len(explicit[0].APPXDependencies) != 1 || explicit[0].APPXDependencies[0] != "chosen.appx" {
+		t.Errorf("explicit dependencies overridden: %v", explicit[0].APPXDependencies)
+	}
+}
+
+// No Dependencies/ folder is the common case for a single-file package and must
+// yield no dependencies rather than an error.
+func TestDiscoverAppxDependenciesNoFolder(t *testing.T) {
+	if got := discoverAppxDependencies(t.TempDir()); got != nil {
+		t.Errorf("expected nil for a package with no Dependencies/ folder, got %v", got)
+	}
+}
