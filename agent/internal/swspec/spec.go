@@ -31,6 +31,9 @@ type InstallStep struct {
 	MSIPath           string   `json:"msi_path,omitempty"`
 	MSIArgs           []string `json:"msi_args,omitempty"`
 	APPXPath          string   `json:"appx_path,omitempty"`
+	APPXDependencies  []string `json:"appx_dependencies,omitempty"`
+	APPXLicense       string   `json:"appx_license,omitempty"`
+	APPXProvision     bool     `json:"appx_provision,omitempty"`
 	ScriptBody        string   `json:"script_body,omitempty"`
 	ExePath           string   `json:"exe_path,omitempty"`
 	ExeArgs           []string `json:"exe_args,omitempty"`

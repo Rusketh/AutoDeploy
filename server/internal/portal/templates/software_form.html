@@ -256,9 +256,13 @@ function addStep(){
     '<div class="step-msi" style="display:none"><label><span class="lbl">MSI file path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="setup.msi"></label>' +
     '<label><span class="lbl">Extra msiexec args</span><input type="text" name="step_' + idx + '_msi_args" placeholder="TARGETDIR=C:\\Foo"></label>' +
     '<span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. Write the uploaded MSI’s filename here (e.g. <code>setup.msi</code>).</span></div>' +
-    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX / MSIX file path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="app.msix"></label></div>' +
-    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C script body</span><textarea name="step_' + idx + '_script_body" rows="6" placeholder="reg add HKLM\\Software\\Acme /v Installed /t REG_SZ /d 1 /f"></textarea></label></div>' +
-    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell script body</span><textarea name="step_' + idx + '_script_body" rows="6" placeholder="Set-ItemProperty -Path \'HKLM:\\\\…\' -Name X -Value 1"></textarea></label></div>' +
+    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX / MSIX / bundle file path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="app.msixbundle"></label>' +
+    '<label><span class="lbl">Dependency packages <span class="muted small">(space-separated)</span></span><input type="text" name="step_' + idx + '_appx_dependencies" placeholder="Microsoft.VCLibs….appx Microsoft.UI.Xaml….appx"></label>' +
+    '<label><span class="lbl">Offline licence file <span class="muted small">(machine-wide only)</span></span><input type="text" name="step_' + idx + '_appx_license" placeholder="App_License1.xml"></label>' +
+    '<label class="check"><input type="checkbox" name="step_' + idx + '_appx_provision" value="1"> Install for all users (machine-wide)</label>' +
+    '<span class="hint">Runs <code>Add-AppxPackage</code> (current user) or, when <em>all users</em> is ticked, <code>Add-AppxProvisionedPackage -Online</code>. A <code>.msixbundle</code>/<code>.appxbundle</code> usually needs its framework packages listed as dependencies. Reference an uploaded file by bare name or <code>{payload}</code>.</span></div>' +
+    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C script body</span><textarea name="step_' + idx + '_cmd_script_body" rows="6" placeholder="reg add HKLM\\Software\\Acme /v Installed /t REG_SZ /d 1 /f"></textarea></label></div>' +
+    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell script body</span><textarea name="step_' + idx + '_ps_script_body" rows="6" placeholder="Set-ItemProperty -Path \'HKLM:\\\\…\' -Name X -Value 1"></textarea></label></div>' +
     '<div class="step-exe" style="display:none"><label><span class="lbl">EXE file path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="setup.exe"></label>' +
     '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args" placeholder="/S /quiet"></label>' +
     '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div>' +
@@ -388,15 +392,18 @@ function moveBlock(btn, dir){
     <span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. If you uploaded the .msi above, just write <code>{payload}</code> as the path.</span>
   </div>
   <div class="step-appx" {{if ne $s.Type "appx"}}style="display:none"{{end}}>
-    <label><span class="lbl">APPX / MSIX file path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="app.msix"></label>
-    <span class="hint">Runs <code>Add-AppxPackage -Path &lt;path&gt;</code> via PowerShell. If you uploaded the .appx/.msix above, write <code>{payload}</code>.</span>
+    <label><span class="lbl">APPX / MSIX / bundle file path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="app.msixbundle"></label>
+    <label><span class="lbl">Dependency packages <span class="muted small">(space-separated)</span></span><input type="text" name="step_{{$i}}_appx_dependencies" value="{{range $j, $a := $s.APPXDependencies}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="Microsoft.VCLibs….appx Microsoft.UI.Xaml….appx"></label>
+    <label><span class="lbl">Offline licence file <span class="muted small">(machine-wide only)</span></span><input type="text" name="step_{{$i}}_appx_license" value="{{$s.APPXLicense}}" placeholder="App_License1.xml"></label>
+    <label class="check"><input type="checkbox" name="step_{{$i}}_appx_provision" value="1" {{if $s.APPXProvision}}checked{{end}}><span>Install for all users (machine-wide)</span></label>
+    <span class="hint">Runs <code>Add-AppxPackage -Path &lt;path&gt;</code> (current user) or, when <em>all users</em> is ticked, <code>Add-AppxProvisionedPackage -Online</code> via PowerShell. A <code>.msixbundle</code>/<code>.appxbundle</code> usually needs its framework packages listed as dependencies (else install fails with <code>0x80073CF3</code>). If you uploaded a file above, write its name or <code>{payload}</code>.</span>
   </div>
   <div class="step-cmd" {{if ne $s.Type "cmd"}}style="display:none"{{end}}>
-    <label><span class="lbl">cmd /C script body</span><textarea name="step_{{$i}}_script_body" rows="6" placeholder="reg add HKLM\Software\Acme /v Installed /t REG_SZ /d 1 /f">{{$s.ScriptBody}}</textarea></label>
+    <label><span class="lbl">cmd /C script body</span><textarea name="step_{{$i}}_cmd_script_body" rows="6" placeholder="reg add HKLM\Software\Acme /v Installed /t REG_SZ /d 1 /f">{{if eq $s.Type "cmd"}}{{$s.ScriptBody}}{{end}}</textarea></label>
     <span class="hint">Runs <code>cmd /C &lt;body&gt;</code>. Multi-line bodies work; use <code>&amp;&amp;</code> to chain. Reference the uploaded installer as <code>{payload}</code>.</span>
   </div>
   <div class="step-powershell" {{if ne $s.Type "powershell"}}style="display:none"{{end}}>
-    <label><span class="lbl">PowerShell script body</span><textarea name="step_{{$i}}_script_body" rows="6" placeholder="Set-ItemProperty -Path 'HKLM:\…' -Name X -Value 1">{{$s.ScriptBody}}</textarea></label>
+    <label><span class="lbl">PowerShell script body</span><textarea name="step_{{$i}}_ps_script_body" rows="6" placeholder="Set-ItemProperty -Path 'HKLM:\…' -Name X -Value 1">{{if eq $s.Type "powershell"}}{{$s.ScriptBody}}{{end}}</textarea></label>
     <span class="hint">Body is piped to <code>powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -</code>. Reference the uploaded installer as <code>{payload}</code>.</span>
   </div>
   <div class="step-exe" {{if ne $s.Type "exe"}}style="display:none"{{end}}>

@@ -58,6 +58,11 @@ func TestExpandStepEnv(t *testing.T) {
 		Type:    "exe",
 		ExePath: `%ROOT%\setup.exe`,
 		ExeArgs: []string{`/dir=%ROOT%\x`},
+	}, {
+		Type:             "appx",
+		APPXPath:         `%ROOT%\app.msixbundle`,
+		APPXDependencies: []string{`%ROOT%\VCLibs.appx`},
+		APPXLicense:      `%ROOT%\App_License1.xml`,
 	}}
 	out := expandStepEnv(in)
 
@@ -69,6 +74,11 @@ func TestExpandStepEnv(t *testing.T) {
 	}
 	if out[2].ExePath != `C:\Root\setup.exe` || out[2].ExeArgs[0] != `/dir=C:\Root\x` {
 		t.Errorf("exe fields not expanded: %+v", out[2])
+	}
+	if out[3].APPXPath != `C:\Root\app.msixbundle` ||
+		out[3].APPXDependencies[0] != `C:\Root\VCLibs.appx` ||
+		out[3].APPXLicense != `C:\Root\App_License1.xml` {
+		t.Errorf("appx fields not expanded: %+v", out[3])
 	}
 	// Input must be untouched (expandStepEnv copies).
 	if in[0].DestinationPath != `%ROOT%\Start Menu\Programs` {

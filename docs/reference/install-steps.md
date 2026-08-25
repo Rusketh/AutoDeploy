@@ -85,11 +85,35 @@ Run an MSI installer. The agent invokes `msiexec /i <msi_path> /quiet /norestart
 
 ### `appx`
 
-Install an AppX / MSIX package.
+Install an AppX / MSIX package or an `.appxbundle` / `.msixbundle` bundle.
+
+By default the agent runs `Add-AppxPackage -Path <appx_path>`, which registers the package for the
+account the agent runs as. Set `appx_provision` to instead provision it **for every user on the
+machine** with `Add-AppxProvisionedPackage -Online` (DISM) — the right mode for a bundle staged at
+image time, since the agent runs as `SYSTEM` and a per-user install wouldn't reach the people who log
+in later.
+
+A `.msixbundle` / `.appxbundle` almost always depends on framework packages (Microsoft.VCLibs,
+Microsoft.UI.Xaml, Microsoft.NET.Native.*, …). List those in `appx_dependencies` — without them the
+install fails with `0x80073CF3` ("dependency or conflict validation"). An offline-licensed Store
+bundle carries a licence file (`<name>_License1.xml`); supply it in `appx_license` (which requires
+`appx_provision`), otherwise provisioning uses `-SkipLicense`.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `appx_path` | yes | The `.appx` / `.msix` file. |
+| `appx_path` | yes | The `.appx` / `.msix` / `.appxbundle` / `.msixbundle` file. |
+| `appx_dependencies` | no | Framework/dependency packages installed alongside `appx_path` (array of `.appx` / `.msix` paths), passed as `-DependencyPath` / `-DependencyPackagePath`. |
+| `appx_license` | no | Offline Store licence file (`<name>_License1.xml`). Requires `appx_provision`. |
+| `appx_provision` | no | If `true`, provision machine-wide for all users via `Add-AppxProvisionedPackage -Online` instead of `Add-AppxPackage` (default `false`). |
+
+```json
+{
+  "type": "appx",
+  "appx_path": "App.msixbundle",
+  "appx_dependencies": ["Microsoft.VCLibs.140.00_x64.appx", "Microsoft.UI.Xaml.2.8_x64.appx"],
+  "appx_provision": true
+}
+```
 
 ### `cmd`, `powershell`
 
@@ -140,7 +164,7 @@ available on the target.
 - Steps run in array order. By default the first failing step (whose exit code is not `0` and not
   listed in `success_codes`) aborts the package; set `continue_on_failure` to override per step.
 - **Path resolution** (applied to `source_path`, `destination_path`, `msi_path`, `appx_path`,
-  `exe_path` and the arg lists): a bare filename resolves to an uploaded file or a file from an
+  `appx_dependencies`, `appx_license`, `exe_path` and the arg lists): a bare filename resolves to an uploaded file or a file from an
   extracted [package bundle](../portal/software.md); `%pkgdir%` expands to the package work
   directory in **every** field of **every** step type (paths, args, and `cmd`/`powershell` script
   bodies); other Windows environment variables (`%ProgramData%`, `%ProgramFiles%`, …) are expanded
