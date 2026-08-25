@@ -1486,15 +1486,32 @@ func ps1Escape(s string) string {
 }
 
 // rewriteSteps replaces the literal token "{payload}" in source/MSI/APPX/EXE
-// paths with the actual on-disk path of the downloaded package.
+// paths (and the appx dependency/licence paths) with the actual on-disk path of
+// the downloaded package.
 func rewriteSteps(in []swspec.InstallStep, payload string) []swspec.InstallStep {
 	out := make([]swspec.InstallStep, len(in))
 	copy(out, in)
+	rep := func(s string) string { return strings.ReplaceAll(s, "{payload}", payload) }
 	for i := range out {
-		out[i].SourcePath = strings.ReplaceAll(out[i].SourcePath, "{payload}", payload)
-		out[i].MSIPath = strings.ReplaceAll(out[i].MSIPath, "{payload}", payload)
-		out[i].APPXPath = strings.ReplaceAll(out[i].APPXPath, "{payload}", payload)
-		out[i].ExePath = strings.ReplaceAll(out[i].ExePath, "{payload}", payload)
+		out[i].SourcePath = rep(out[i].SourcePath)
+		out[i].MSIPath = rep(out[i].MSIPath)
+		out[i].APPXPath = rep(out[i].APPXPath)
+		out[i].APPXLicense = rep(out[i].APPXLicense)
+		out[i].APPXDependencies = mapStrings(out[i].APPXDependencies, rep)
+		out[i].ExePath = rep(out[i].ExePath)
+	}
+	return out
+}
+
+// mapStrings returns a new slice with f applied to each element, or the input
+// unchanged when it's empty (so a nil slice stays nil and copies stay cheap).
+func mapStrings(in []string, f func(string) string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = f(s)
 	}
 	return out
 }
@@ -1531,6 +1548,8 @@ func expandPkgDir(in []swspec.InstallStep, dir string) []swspec.InstallStep {
 		out[i].DestinationPath = rep(out[i].DestinationPath)
 		out[i].MSIPath = rep(out[i].MSIPath)
 		out[i].APPXPath = rep(out[i].APPXPath)
+		out[i].APPXLicense = rep(out[i].APPXLicense)
+		out[i].APPXDependencies = repAll(out[i].APPXDependencies)
 		out[i].ExePath = rep(out[i].ExePath)
 		out[i].ScriptBody = rep(out[i].ScriptBody)
 		out[i].MSIArgs = repAll(out[i].MSIArgs)
@@ -1555,6 +1574,8 @@ func resolveBareFilenames(in []swspec.InstallStep, files map[string]string) []sw
 		out[i].SourcePath = resolveOne(out[i].SourcePath, files)
 		out[i].MSIPath = resolveOne(out[i].MSIPath, files)
 		out[i].APPXPath = resolveOne(out[i].APPXPath, files)
+		out[i].APPXLicense = resolveOne(out[i].APPXLicense, files)
+		out[i].APPXDependencies = mapStrings(out[i].APPXDependencies, func(s string) string { return resolveOne(s, files) })
 		out[i].ExePath = resolveOne(out[i].ExePath, files)
 	}
 	return out
@@ -1601,6 +1622,8 @@ func expandStepEnv(in []swspec.InstallStep) []swspec.InstallStep {
 		out[i].DestinationPath = envExpand(out[i].DestinationPath)
 		out[i].MSIPath = envExpand(out[i].MSIPath)
 		out[i].APPXPath = envExpand(out[i].APPXPath)
+		out[i].APPXLicense = envExpand(out[i].APPXLicense)
+		out[i].APPXDependencies = expandEnvAll(out[i].APPXDependencies)
 		out[i].ExePath = envExpand(out[i].ExePath)
 		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs)
 		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs)

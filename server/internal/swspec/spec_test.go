@@ -72,6 +72,44 @@ func TestParseStepsCarriesFilterOS(t *testing.T) {
 	}
 }
 
+// An appx bundle step carries dependency packages, an offline licence, and the
+// machine-wide provision flag, and they survive a JSON round-trip.
+func TestParseStepsCarriesAppxBundleFields(t *testing.T) {
+	raw := `[
+		{"type":"appx","appx_path":"App.msixbundle","appx_dependencies":["VCLibs.appx","UIXaml.appx"],"appx_license":"App_License1.xml","appx_provision":true}
+	]`
+	steps, err := ParseSteps(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("got %d steps", len(steps))
+	}
+	s := steps[0]
+	if s.APPXPath != "App.msixbundle" {
+		t.Errorf("appx_path = %q", s.APPXPath)
+	}
+	if len(s.APPXDependencies) != 2 || s.APPXDependencies[0] != "VCLibs.appx" {
+		t.Errorf("appx_dependencies = %v", s.APPXDependencies)
+	}
+	if s.APPXLicense != "App_License1.xml" {
+		t.Errorf("appx_license = %q", s.APPXLicense)
+	}
+	if !s.APPXProvision {
+		t.Error("appx_provision should be true")
+	}
+}
+
+// A licence without provisioning is rejected: Add-AppxPackage (per-user) has no
+// place to apply an offline Store licence, so it only makes sense machine-wide.
+func TestParseStepsRejectsLicenseWithoutProvision(t *testing.T) {
+	raw := `[{"type":"appx","appx_path":"App.msixbundle","appx_license":"App_License1.xml"}]`
+	_, err := ParseSteps(raw)
+	if err == nil || !strings.Contains(err.Error(), "appx_provision") {
+		t.Errorf("expected appx_license-needs-appx_provision error, got %v", err)
+	}
+}
+
 func TestStepValidationRequiresFields(t *testing.T) {
 	cases := []struct {
 		name, raw string

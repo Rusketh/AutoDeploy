@@ -83,7 +83,7 @@ func TestBuildSoftwareFromFormCarriesOSFilter(t *testing.T) {
 		"step_1_destination_path=dst",
 		"step_index[]=2",
 		"step_2_type=cmd",
-		"step_2_script_body=echo+done",
+		"step_2_cmd_script_body=echo+done",
 	}, "&"))
 	req := httptest.NewRequest("POST", "/portal/software", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -111,5 +111,71 @@ func TestBuildSoftwareFromFormCarriesOSFilter(t *testing.T) {
 	}
 	if strings.Contains(pkg.StepsJSON, `"filter_os":""`) {
 		t.Errorf("empty filter_os should be omitted from JSON, got %s", pkg.StepsJSON)
+	}
+}
+
+// A powershell step's body must survive the form round-trip. cmd and powershell
+// have separate textareas that both submit (the hidden one with display:none is
+// still posted); when they shared a field name the empty cmd textarea, first in
+// the form, clobbered the powershell body and the step failed to save. Post
+// both fields with only the powershell one filled, mimicking the real form, and
+// confirm the body lands in steps_json.
+func TestBuildSoftwareFromFormSavesPowershellBody(t *testing.T) {
+	form := strings.NewReader(strings.Join([]string{
+		"name=MyApp",
+		"step_index[]=0",
+		"step_0_type=powershell",
+		"step_0_cmd_script_body=", // the inactive cmd textarea posts empty
+		"step_0_ps_script_body=Write-Host+hi",
+	}, "&"))
+	req := httptest.NewRequest("POST", "/portal/software", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	pkg, err := buildSoftwareFromForm(req)
+	if err != nil {
+		t.Fatalf("powershell step should save: %v", err)
+	}
+	steps, err := swspec.ParseSteps(pkg.StepsJSON)
+	if err != nil {
+		t.Fatalf("steps_json should parse: %v (json=%s)", err, pkg.StepsJSON)
+	}
+	if len(steps) != 1 || steps[0].Type != "powershell" {
+		t.Fatalf("expected 1 powershell step, got %+v", steps)
+	}
+	if steps[0].ScriptBody != "Write-Host hi" {
+		t.Errorf("ScriptBody = %q, want %q", steps[0].ScriptBody, "Write-Host hi")
+	}
+}
+
+// The appx bundle fields (dependencies, offline licence, machine-wide provision)
+// survive the form round-trip into steps_json.
+func TestBuildSoftwareFromFormCarriesAppxBundleFields(t *testing.T) {
+	form := strings.NewReader(strings.Join([]string{
+		"name=MyApp",
+		"step_index[]=0",
+		"step_0_type=appx",
+		"step_0_appx_path=App.msixbundle",
+		"step_0_appx_dependencies=VCLibs.appx+UIXaml.appx",
+		"step_0_appx_license=App_License1.xml",
+		"step_0_appx_provision=1",
+	}, "&"))
+	req := httptest.NewRequest("POST", "/portal/software", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	pkg, err := buildSoftwareFromForm(req)
+	if err != nil {
+		t.Fatalf("appx bundle step should save: %v", err)
+	}
+	steps, err := swspec.ParseSteps(pkg.StepsJSON)
+	if err != nil {
+		t.Fatalf("steps_json should parse: %v (json=%s)", err, pkg.StepsJSON)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+	s := steps[0]
+	if s.APPXPath != "App.msixbundle" || len(s.APPXDependencies) != 2 ||
+		s.APPXDependencies[1] != "UIXaml.appx" || s.APPXLicense != "App_License1.xml" || !s.APPXProvision {
+		t.Errorf("appx bundle fields not round-tripped: %+v", s)
 	}
 }

@@ -79,7 +79,7 @@ func (r DetectionRule) Validate() error {
 
 // InstallStep is one ordered, typed action.
 type InstallStep struct {
-	Type        string `json:"type"` // "copy" | "unzip" | "msi" | "appx" | "cmd" | "powershell" | "exe"
+	Type        string `json:"type"` // "copy" | "unzip" | "msi" | "appx" | "cmd" | "powershell" | "exe" | "winget"
 	Description string `json:"description,omitempty"`
 
 	// FilterOS gates the step by operating system: when non-empty, the agent
@@ -107,8 +107,20 @@ type InstallStep struct {
 	MSIPath string   `json:"msi_path,omitempty"`
 	MSIArgs []string `json:"msi_args,omitempty"` // appended after "/quiet /norestart"
 
-	// appx / msix.
-	APPXPath string `json:"appx_path,omitempty"`
+	// appx / msix / bundle. APPXPath is the .appx/.msix/.appxbundle/.msixbundle
+	// to install. A bundle almost always relies on framework packages (VCLibs,
+	// UI.Xaml, .NET.Native, ...) that must be supplied in APPXDependencies --
+	// without them Add-AppxPackage fails with 0x80073CF3 ("dependency or
+	// conflict validation"). APPXLicense is the offline license file
+	// (e.g. <name>_License1.xml) that ships with a Store-for-Business bundle.
+	// APPXProvision installs the package for every user on the machine via DISM
+	// online provisioning (Add-AppxProvisionedPackage) rather than only the
+	// agent's SYSTEM account -- the correct mode for a bundle deployed at image
+	// time, and the only mode that can apply an offline license.
+	APPXPath         string   `json:"appx_path,omitempty"`
+	APPXDependencies []string `json:"appx_dependencies,omitempty"`
+	APPXLicense      string   `json:"appx_license,omitempty"`
+	APPXProvision    bool     `json:"appx_provision,omitempty"`
 
 	// cmd, powershell.
 	ScriptBody string `json:"script_body,omitempty"`
@@ -140,6 +152,9 @@ func (s InstallStep) Validate() error {
 	case "appx":
 		if s.APPXPath == "" {
 			return fmt.Errorf("appx step: appx_path required")
+		}
+		if s.APPXLicense != "" && !s.APPXProvision {
+			return fmt.Errorf("appx step: appx_license needs appx_provision (a license applies only to machine-wide provisioning)")
 		}
 	case "cmd", "powershell":
 		if s.ScriptBody == "" {

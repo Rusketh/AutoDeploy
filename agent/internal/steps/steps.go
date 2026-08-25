@@ -358,11 +358,9 @@ func runOne(ctx context.Context, s swspec.InstallStep, r Runner) Result {
 		args := append([]string{"/i", s.MSIPath, "/quiet", "/norestart"}, s.MSIArgs...)
 		res.ExitCode, res.Error = r.Run(ctx, "msiexec", args, "")
 	case "appx":
-		// Add-AppxPackage via PowerShell.
-		body := fmt.Sprintf(`Add-AppxPackage -Path '%s' -ErrorAction Stop`,
-			strings.ReplaceAll(s.APPXPath, "'", "''"))
+		// Install an .appx/.msix or an .appxbundle/.msixbundle via PowerShell.
 		res.ExitCode, res.Error = r.Run(ctx, "powershell",
-			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body}, "")
+			[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", appxCommand(s)}, "")
 	case "cmd":
 		// Write the body to a .cmd and run it; a multi-line script passed
 		// inline as `cmd /C <body>` only runs its first line.
@@ -389,6 +387,49 @@ func runOne(ctx context.Context, s swspec.InstallStep, r Runner) Result {
 		}
 	}
 	return res
+}
+
+// appxCommand builds the PowerShell that installs an appx step's package. It
+// handles plain .appx/.msix packages and .appxbundle/.msixbundle bundles.
+//
+// A bundle almost always needs framework dependencies (VCLibs, UI.Xaml,
+// .NET.Native, ...); Add-AppxPackage fails with 0x80073CF3 when they're
+// missing, so any APPXDependencies are passed through with it. By default the
+// package is installed with Add-AppxPackage, which registers it for the calling
+// account only -- during deployment that's the agent's SYSTEM context, so a
+// real user who logs in later wouldn't see the app. When APPXProvision is set
+// the package is instead provisioned machine-wide via DISM online
+// (Add-AppxProvisionedPackage -Online), which stages it for every current and
+// future user -- the correct mode for a bundle deployed at image time.
+// Add-AppxProvisionedPackage requires a licence decision: APPXLicense supplies
+// an offline Store licence (<name>_License1.xml), otherwise -SkipLicense is used.
+func appxCommand(s swspec.InstallStep) string {
+	quote := func(p string) string { return "'" + strings.ReplaceAll(p, "'", "''") + "'" }
+	var b strings.Builder
+	if s.APPXProvision {
+		fmt.Fprintf(&b, "Add-AppxProvisionedPackage -Online -PackagePath %s", quote(s.APPXPath))
+		for _, dep := range s.APPXDependencies {
+			fmt.Fprintf(&b, " -DependencyPackagePath %s", quote(dep))
+		}
+		if s.APPXLicense != "" {
+			fmt.Fprintf(&b, " -LicensePath %s", quote(s.APPXLicense))
+		} else {
+			b.WriteString(" -SkipLicense")
+		}
+		b.WriteString(" -ErrorAction Stop")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Add-AppxPackage -Path %s", quote(s.APPXPath))
+	if len(s.APPXDependencies) > 0 {
+		deps := make([]string, len(s.APPXDependencies))
+		for i, dep := range s.APPXDependencies {
+			deps[i] = quote(dep)
+		}
+		// -DependencyPath takes an array of paths.
+		fmt.Fprintf(&b, " -DependencyPath %s", strings.Join(deps, ","))
+	}
+	b.WriteString(" -ErrorAction Stop")
+	return b.String()
 }
 
 func isSuccess(code int, allowed []int) bool {

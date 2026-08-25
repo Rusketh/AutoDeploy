@@ -55,6 +55,90 @@ func TestExecuteAllStepTypes(t *testing.T) {
 	}
 }
 
+// appxCommand builds the right PowerShell for each appx-step shape: a plain
+// package, a bundle with framework dependencies, and a machine-wide provision
+// with and without an offline licence.
+func TestAppxCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		step swspec.InstallStep
+		want string
+	}{
+		{
+			name: "plain package installs for the current user",
+			step: swspec.InstallStep{Type: "appx", APPXPath: `C:\pkg\a.msix`},
+			want: `Add-AppxPackage -Path 'C:\pkg\a.msix' -ErrorAction Stop`,
+		},
+		{
+			name: "bundle with dependencies passes -DependencyPath as an array",
+			step: swspec.InstallStep{
+				Type:             "appx",
+				APPXPath:         `C:\pkg\app.msixbundle`,
+				APPXDependencies: []string{`C:\pkg\VCLibs.appx`, `C:\pkg\UIXaml.appx`},
+			},
+			want: `Add-AppxPackage -Path 'C:\pkg\app.msixbundle' -DependencyPath 'C:\pkg\VCLibs.appx','C:\pkg\UIXaml.appx' -ErrorAction Stop`,
+		},
+		{
+			name: "provision without a licence skips it and provisions online",
+			step: swspec.InstallStep{
+				Type:             "appx",
+				APPXPath:         `C:\pkg\app.msixbundle`,
+				APPXDependencies: []string{`C:\pkg\VCLibs.appx`},
+				APPXProvision:    true,
+			},
+			want: `Add-AppxProvisionedPackage -Online -PackagePath 'C:\pkg\app.msixbundle' -DependencyPackagePath 'C:\pkg\VCLibs.appx' -SkipLicense -ErrorAction Stop`,
+		},
+		{
+			name: "provision with an offline licence uses -LicensePath",
+			step: swspec.InstallStep{
+				Type:          "appx",
+				APPXPath:      `C:\pkg\app.msixbundle`,
+				APPXLicense:   `C:\pkg\App_License1.xml`,
+				APPXProvision: true,
+			},
+			want: `Add-AppxProvisionedPackage -Online -PackagePath 'C:\pkg\app.msixbundle' -LicensePath 'C:\pkg\App_License1.xml' -ErrorAction Stop`,
+		},
+		{
+			name: "single quotes in a path are doubled",
+			step: swspec.InstallStep{Type: "appx", APPXPath: `C:\Bob's App\a.msix`},
+			want: `Add-AppxPackage -Path 'C:\Bob''s App\a.msix' -ErrorAction Stop`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := appxCommand(tc.step); got != tc.want {
+				t.Errorf("appxCommand =\n  %q\nwant\n  %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// An appx bundle step drives PowerShell with the provisioning command built by
+// appxCommand -- confirming the runOne switch wires the new fields through.
+func TestExecuteAppxBundleProvision(t *testing.T) {
+	rec := &Recorder{}
+	res := Execute(context.Background(), []swspec.InstallStep{{
+		Type:             "appx",
+		APPXPath:         `C:\pkg\app.msixbundle`,
+		APPXDependencies: []string{`C:\pkg\VCLibs.appx`},
+		APPXProvision:    true,
+	}}, rec, HostFacts{})
+	if len(res) != 1 || res[0].Aborted || res[0].Error != nil {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	want := "Add-AppxProvisionedPackage -Online -PackagePath 'C:\\pkg\\app.msixbundle' -DependencyPackagePath 'C:\\pkg\\VCLibs.appx' -SkipLicense -ErrorAction Stop"
+	found := false
+	for _, c := range rec.Calls {
+		if strings.Contains(c, want) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected call containing %q\n%s", want, rec.Dump())
+	}
+}
+
 // cmd/powershell steps write the body to a real script file (so multi-line
 // bodies survive -- an inline `cmd /C <body>` only runs the first line). The
 // file-writing helper normalises to CRLF and keeps the requested extension.

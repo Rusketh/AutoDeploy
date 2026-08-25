@@ -3225,3 +3225,54 @@ change.
 with chipset + Wi-Fi installing online. Residual risk: a storage controller
 that is somehow not `SCSIAdapter`/`HDC` would miss WinPE (surfaces as
 disk-not-found, recoverable) — none known.
+
+---
+
+## 2026-08-25 — Install .msixbundle bundles; fix powershell step not saving
+
+**WHAT.** Two software-package fixes.
+
+1. **`.msixbundle` / `.appxbundle` support in the `appx` step.** The step ran a
+   bare `Add-AppxPackage -Path <file>`, which fails on a bundle whose framework
+   dependencies (VCLibs, UI.Xaml, .NET.Native, ...) aren't already present
+   (`0x80073CF3`) and only ever registers the app for the agent's SYSTEM
+   account. Added three optional step fields (`appx_dependencies`,
+   `appx_license`, `appx_provision`) in both `swspec` packages. The executor now
+   builds either `Add-AppxPackage -Path <p> [-DependencyPath a,b]` (per-user,
+   default) or, when `appx_provision` is set, `Add-AppxProvisionedPackage
+   -Online -PackagePath <p> [-DependencyPackagePath ...] (-LicensePath <xml> |
+   -SkipLicense)` (machine-wide, all users). The new path fields are threaded
+   through every agent resolver ({payload}, %pkgdir%, bare-filename, %VAR%).
+   Portal form + parser and the install-steps reference document the fields.
+
+2. **Powershell install step silently failed to save.** The `cmd` and
+   `powershell` step blocks each rendered a `<textarea>` sharing the field name
+   `step_<i>_script_body`. Both are always in the form (the inactive one is only
+   `display:none`, which still posts), so `req.FormValue` returned the *first* —
+   the empty cmd textarea — and the powershell body was dropped, failing
+   `script_body required`. Gave them distinct names (`_cmd_script_body` /
+   `_ps_script_body`) and the parser now reads the one matching the step type;
+   the editor pre-fills each textarea only for its own type.
+
+**WHY (decisions).**
+- DECISION: `appx_provision` uses DISM online provisioning because AutoDeploy
+  installs during/after deployment as SYSTEM before real users log in; a
+  per-user `Add-AppxPackage` wouldn't reach them. Kept `Add-AppxPackage` as the
+  default so existing per-user `.appx`/`.msix` steps are unchanged.
+- DECISION: `appx_license` requires `appx_provision` (validated) — an offline
+  Store licence only applies to the provisioning path; `-SkipLicense` is used
+  otherwise, which `Add-AppxProvisionedPackage` mandates.
+- DECISION: fixed the shared-name textarea bug by renaming the form fields
+  rather than by JS-disabling hidden inputs, so the save is correct without
+  relying on client script.
+
+**STATE.** Both modules `go build`/`vet`/`gofmt` clean; `go test ./...` green
+(server + agent). `scripts/check-secrets.sh` OK. New tests: `appxCommand`
+shapes + bundle execution; server swspec round-trip and the
+licence-without-provision rejection; portal form round-trips for the appx bundle
+fields and for a powershell body posted alongside an empty cmd textarea
+(regression); agent env-expansion of the new appx path fields.
+
+**NEXT.** On a real box, confirm a Store `.msixbundle` provisions for all users
+with its framework deps and (where applicable) offline licence, and that a
+newly-authored powershell step saves and round-trips through the editor.

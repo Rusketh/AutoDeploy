@@ -115,7 +115,7 @@ re-adding it (the same arrows reorder detection rules). You can set per-step **s
 | copy | Copy a file to a destination |
 | unzip | Extract a ZIP archive to a destination |
 | msi | Install an MSI (`msiexec /quiet /norestart`) |
-| appx | Install an APPX / MSIX package |
+| appx | Install an APPX / MSIX package or `.appxbundle` / `.msixbundle` (with optional dependency packages, offline licence, and machine-wide provisioning) |
 | exe | Run an EXE installer with arguments |
 | cmd | Run a cmd.exe script |
 | powershell | Run a PowerShell script |

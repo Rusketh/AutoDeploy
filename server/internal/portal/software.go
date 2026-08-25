@@ -400,10 +400,25 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 			DestinationPath:   req.FormValue("step_" + idx + "_destination_path"),
 			MSIPath:           req.FormValue("step_" + idx + "_msi_path"),
 			APPXPath:          req.FormValue("step_" + idx + "_appx_path"),
-			ScriptBody:        req.FormValue("step_" + idx + "_script_body"),
+			APPXLicense:       req.FormValue("step_" + idx + "_appx_license"),
+			APPXProvision:     req.FormValue("step_"+idx+"_appx_provision") != "",
 			ExePath:           req.FormValue("step_" + idx + "_exe_path"),
 			WingetID:          req.FormValue("step_" + idx + "_winget_id"),
 			ContinueOnFailure: req.FormValue("step_"+idx+"_continue") != "",
+		}
+		if a := req.FormValue("step_" + idx + "_appx_dependencies"); a != "" {
+			s.APPXDependencies = splitArgs(a)
+		}
+		// cmd and powershell each have their own script-body textarea. They
+		// can't share one field name: both blocks are always present in the
+		// form (the inactive one is only hidden with display:none, which still
+		// submits), so a shared name would let the empty inactive textarea
+		// clobber the active one -- which dropped every powershell step's body.
+		switch s.Type {
+		case "cmd":
+			s.ScriptBody = req.FormValue("step_" + idx + "_cmd_script_body")
+		case "powershell":
+			s.ScriptBody = req.FormValue("step_" + idx + "_ps_script_body")
 		}
 		if a := req.FormValue("step_" + idx + "_msi_args"); a != "" {
 			s.MSIArgs = splitArgs(a)
