@@ -405,11 +405,23 @@ func runOne(ctx context.Context, s swspec.InstallStep, r Runner) Result {
 // an offline Store licence (<name>_License1.xml), otherwise -SkipLicense is used.
 func appxCommand(s swspec.InstallStep) string {
 	quote := func(p string) string { return "'" + strings.ReplaceAll(p, "'", "''") + "'" }
+	// psList quotes each path and joins them with commas -- the PowerShell array
+	// syntax the -Dependency* parameters want. Both Add-AppxPackage's
+	// -DependencyPath and Add-AppxProvisionedPackage's -DependencyPackagePath
+	// bind an array and reject the flag being repeated, so a single flag with a
+	// comma-separated list is required.
+	psList := func(paths []string) string {
+		q := make([]string, len(paths))
+		for i, p := range paths {
+			q[i] = quote(p)
+		}
+		return strings.Join(q, ",")
+	}
 	var b strings.Builder
 	if s.APPXProvision {
 		fmt.Fprintf(&b, "Add-AppxProvisionedPackage -Online -PackagePath %s", quote(s.APPXPath))
-		for _, dep := range s.APPXDependencies {
-			fmt.Fprintf(&b, " -DependencyPackagePath %s", quote(dep))
+		if len(s.APPXDependencies) > 0 {
+			fmt.Fprintf(&b, " -DependencyPackagePath %s", psList(s.APPXDependencies))
 		}
 		if s.APPXLicense != "" {
 			fmt.Fprintf(&b, " -LicensePath %s", quote(s.APPXLicense))
@@ -421,12 +433,7 @@ func appxCommand(s swspec.InstallStep) string {
 	}
 	fmt.Fprintf(&b, "Add-AppxPackage -Path %s", quote(s.APPXPath))
 	if len(s.APPXDependencies) > 0 {
-		deps := make([]string, len(s.APPXDependencies))
-		for i, dep := range s.APPXDependencies {
-			deps[i] = quote(dep)
-		}
-		// -DependencyPath takes an array of paths.
-		fmt.Fprintf(&b, " -DependencyPath %s", strings.Join(deps, ","))
+		fmt.Fprintf(&b, " -DependencyPath %s", psList(s.APPXDependencies))
 	}
 	b.WriteString(" -ErrorAction Stop")
 	return b.String()
