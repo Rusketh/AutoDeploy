@@ -105,6 +105,38 @@ There are two ways to get an image onto a machine:
   it deploys automatically on the next network boot. You can also re-image many machines at once
   with a [bulk operation](bulk-operations.md).
 
+## Export a bootable ISO (USB re-imaging)
+
+A normal network deploy stages a copy of the whole Windows media set onto a **~7 GiB boot partition
+on the target machine's own disk**, then installs Windows into the space in front of it. On a
+machine whose disk is too small to hold both, that deploy fails part-way through with an
+out-of-space error. For those machines you can instead **export the image as a bootable ISO**, write
+it to a USB stick, and boot from the stick — the media lives on the USB, so the whole internal disk
+is free for Windows.
+
+Open the image's **[Resolved](#the-resolved-view)** view and use **Export bootable ISO**. The server
+builds a bootable ISO of the resolved media in the background (a progress bar shows the stages);
+when it finishes, **Download ISO** streams it. Write it to a USB stick with a tool like
+[Rufus](https://rufus.ie) and boot the target from it.
+
+- The exported ISO installs Windows onto the **whole disk** (a clean install — there is no media
+  partition to preserve), so it is only for machines you intend to wipe.
+- It bakes in the AutoDeploy **agent** and the image's **boot-critical storage/NIC drivers**; the
+  rest of the drivers and all software install after first boot, exactly as in a network deploy.
+- **Naming.** The ISO is generic — one file for every machine — so Windows installs with a
+  *temporary random name*. On first boot the agent enrols against the server (by hardware identity)
+  and the machine is **renamed to its [binding's](machines.md#bindings) computer name** (or the
+  image's name template) automatically, then rebooted. If a machine has no binding, it simply keeps
+  its random name until you rename it from the portal. So bind the machines (or
+  [import an asset list](machines.md)) *before* they check in if you want them named on their own.
+- **Requirements.** The server needs `xorriso` installed (see
+  [Linux server install](../install/linux-server.md)), and the image's ISO **boot media must be
+  ready** — the same readiness a network deploy needs.
+
+> **The exported ISO carries the answer file**, which includes the local administrator / OOBE
+> credentials from the image's unattend. Treat exported ISOs as sensitive and don't leave them on
+> shared media.
+
 ## Next steps
 
 - Set up [network booting](../install/pxe-and-boot.md) so machines can deploy.

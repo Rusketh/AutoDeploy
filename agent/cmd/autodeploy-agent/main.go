@@ -334,6 +334,11 @@ type selfResponse struct {
 	SetupLock bool `json:"setup_lock"`
 	// UpdateJobs are pending Windows Update deployment jobs.
 	UpdateJobs []updateJob `json:"update_jobs,omitempty"`
+	// DesiredName is the computer name the server wants this machine to carry
+	// (resolved from its binding/template). Non-empty and deterministic only:
+	// the agent renames itself to it and reboots. This is what gives a
+	// USB/ISO-imaged machine — installed with a random name — its real name.
+	DesiredName string `json:"desired_name,omitempty"`
 }
 
 // runSelfOnce polls the server for this machine's desired state (by its
@@ -377,6 +382,13 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	}
 	if resp.DeploymentID != 0 {
 		reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
+	}
+	// Name reconciliation: a USB/ISO-imaged machine boots with a random name.
+	// The server hands back the deterministic name it should carry; rename and
+	// reboot BEFORE joining AD or installing software, so the domain object and
+	// everything after it use the final name. Resumes after the reboot.
+	if maybeRename(ctx, log, resp.DesiredName) {
+		return 0 // a rename reboot is scheduled; the rest resumes after reboot
 	}
 	if maybeDomainJoin(ctx, log, c, f) {
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
@@ -476,6 +488,60 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 		return time.Duration(resp.PollIntervalSeconds) * time.Second
 	}
 	return 0
+}
+
+// maybeRename renames this machine to desired and reboots when desired is a
+// valid computer name that differs from the CURRENT hostname. Returns true when
+// a rename+reboot was launched, so the caller ends the poll cycle and resumes
+// after the reboot.
+//
+// This is the agent half of USB/ISO name reconciliation: an exported ISO
+// installs Windows with a random name, and the server hands back the
+// deterministic name the machine should carry (from its binding/template). We
+// re-check against the LIVE hostname — not just trust the server — so a
+// server-side observed name that lags a reboot can never drive a rename loop.
+func maybeRename(ctx context.Context, log *slog.Logger, desired string) bool {
+	desired = strings.TrimSpace(desired)
+	if !validComputerName(desired) {
+		return false
+	}
+	current, _ := os.Hostname()
+	if strings.EqualFold(strings.TrimSpace(current), desired) {
+		return false // already correct — nothing to do
+	}
+	runner := &steps.OSRunner{Log: log}
+	body := fmt.Sprintf(`Rename-Computer -NewName '%s' -Force -Restart`, ps1Escape(desired))
+	log.Info("rename.desired", slog.String("from", current), slog.String("to", desired))
+	code, err := runner.Run(ctx, "powershell",
+		[]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", body}, "")
+	if err != nil || code != 0 {
+		log.Warn("rename.failed", slog.Int("exit_code", code), slog.String("error", errString(err)))
+		return false
+	}
+	return true
+}
+
+// validComputerName reports whether s is a valid NetBIOS computer name: 1-15
+// characters of ASCII letters, digits and hyphens, and not all-numeric. Mirrors
+// the constraints unattend.ExpandName enforces server-side; re-checked here so a
+// malformed value never reaches Rename-Computer.
+func validComputerName(s string) bool {
+	if len(s) == 0 || len(s) > 15 {
+		return false
+	}
+	allDigits := true
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			allDigits = false
+		case c >= '0' && c <= '9':
+		case c == '-':
+			allDigits = false
+		default:
+			return false
+		}
+	}
+	return !allDigits
 }
 
 // reportDeployProgress posts a best-effort live-progress update for an open

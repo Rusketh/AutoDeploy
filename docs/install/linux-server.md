@@ -18,6 +18,9 @@ command-line tools make ISO handling smoother and are installed automatically wh
 - **p7zip** (`7z`/`7za`) or `bsdtar` — to extract Windows ISOs (modern Windows ISOs are UDF).
 - **wimlib** (`wimlib-imagex`, packaged as `wimtools`/`wimlib-utils`) — to split an `install.wim`
   larger than FAT32's 4 GiB per-file limit.
+- **xorriso** — to author a bootable ISO when you [export an image](../portal/images.md#export-a-bootable-iso-usb-re-imaging)
+  for USB re-imaging (`apt install xorriso` / `dnf install xorriso`). Only needed if you use that
+  feature.
 
 If a package can't be installed automatically the installer prints a warning and continues; the
 portal later shows a clear message if it needs one of these tools.

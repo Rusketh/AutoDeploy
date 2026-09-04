@@ -142,6 +142,11 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("PUT /api/v1/images/{id}", requireAuth(r, handleUpdateImage(r)))
 	mux.HandleFunc("DELETE /api/v1/images/{id}", requireAuth(r, handleDeleteImage(r)))
 	mux.HandleFunc("GET /api/v1/images/{id}/resolved", requireAuth(r, handleResolveImage(r)))
+	// USB/ISO export: author a bootable ISO for the image (for small-disk
+	// machines re-imaged from a USB stick), poll its progress, and download it.
+	mux.HandleFunc("POST /api/v1/images/{id}/export", requireAuth(r, handleExportImage(r)))
+	mux.HandleFunc("GET /api/v1/images/{id}/export/status", requireAuth(r, handleExportStatus(r)))
+	mux.HandleFunc("GET /api/v1/images/{id}/export/download", requireAuth(r, handleExportDownload(r)))
 
 	// Software loadouts (Phase 7).
 	mux.HandleFunc("GET /api/v1/loadouts", requireAuth(r, handleListLoadouts(r)))

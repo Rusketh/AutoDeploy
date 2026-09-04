@@ -57,4 +57,71 @@
   <ul style="margin:0;padding-left:1.2rem">{{range $r.Diagnostics}}<li>{{.}}</li>{{end}}</ul>
 </div>
 {{end}}
+
+<div class="section-head"><h3>Export bootable ISO (USB re-imaging)</h3><div class="line"></div></div>
+<p class="muted small">
+  Build a bootable ISO of this image to write to a USB stick with
+  <a href="https://rufus.ie" target="_blank" rel="noopener">Rufus</a>, then re-image machines
+  whose disk is too small to stage the media locally. Windows installs to the whole disk with a
+  temporary name; the agent enrols on first boot and the machine is renamed to its binding's name
+  automatically. The exported ISO carries the answer file — treat it as sensitive.
+</p>
+{{$ready := false}}{{if $r.ISO}}{{if $r.ISO.DeployReady}}{{$ready = true}}{{end}}{{end}}
+{{if $ready}}
+<div id="export-box" data-image="{{int64 $r.ImageID}}">
+  <button type="button" id="export-start" class="btn secondary sm"><svg><use href="#i-disc"/></svg>Build ISO</button>
+  <a id="export-download" class="btn primary sm" href="/api/v1/images/{{int64 $r.ImageID}}/export/download" hidden><svg><use href="#i-arrow-left"/></svg>Download ISO</a>
+  <div id="export-progress" class="mt-3" hidden>
+    <div style="background:var(--surface-2,#eee);border-radius:6px;overflow:hidden;height:10px">
+      <div id="export-bar" style="height:10px;width:0;background:var(--accent,#3b82f6);transition:width .3s"></div>
+    </div>
+    <p id="export-stage" class="muted small mt-1"></p>
+  </div>
+  <div id="export-error" class="flash flash-warn flash-inline mt-3" hidden></div>
+</div>
+<script>
+(function(){
+  var box=document.getElementById('export-box'); if(!box) return;
+  var id=box.getAttribute('data-image');
+  var btn=document.getElementById('export-start'),
+      dl=document.getElementById('export-download'),
+      prog=document.getElementById('export-progress'),
+      bar=document.getElementById('export-bar'),
+      stage=document.getElementById('export-stage'),
+      errBox=document.getElementById('export-error'),
+      timer=null;
+  function showErr(m){ errBox.textContent=m; errBox.hidden=!m; }
+  function render(s){
+    if(!s) return;
+    if(s.phase==='running'){
+      prog.hidden=false; btn.disabled=true; dl.hidden=true; showErr('');
+      bar.style.width=(s.percent||0)+'%'; stage.textContent=(s.stage||'Working')+' — '+(s.percent||0)+'%';
+      poll();
+    } else if(s.phase==='done'){
+      prog.hidden=false; bar.style.width='100%';
+      var sz=s.size_bytes?(' ('+(s.size_bytes/1048576).toFixed(0)+' MB)'):'';
+      stage.textContent='Ready'+sz; btn.disabled=false; dl.hidden=false; showErr('');
+    } else if(s.phase==='error'){
+      btn.disabled=false; prog.hidden=true; dl.hidden=true; showErr(s.error||'Export failed');
+    }
+  }
+  function status(){ return fetch('/api/v1/images/'+id+'/export/status',{credentials:'same-origin'}).then(function(r){return r.json();}); }
+  function poll(){ if(timer) return; timer=setInterval(function(){ status().then(function(s){ if(s.phase!=='running'){clearInterval(timer);timer=null;} render(s); }).catch(function(){}); },2000); }
+  btn.addEventListener('click',function(){
+    btn.disabled=true; showErr(''); prog.hidden=false; bar.style.width='0'; stage.textContent='Starting…';
+    fetch('/api/v1/images/'+id+'/export',{method:'POST',credentials:'same-origin',headers:{'X-Requested-With':'fetch'}})
+      .then(function(r){ if(!r.ok){ return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); } return r.json(); })
+      .then(function(j){ (j.warnings||[]).forEach(function(w){ showErr(w); }); render(j.status||{phase:'running',percent:0}); })
+      .catch(function(e){ btn.disabled=false; prog.hidden=true; showErr(e.message); });
+  });
+  // Reflect any export already in progress or finished on load.
+  status().then(render).catch(function(){});
+})();
+</script>
+{{else}}
+<div class="flash flash-warn flash-inline">
+  The resolved ISO's boot media is not ready, so this image can't be exported yet. Prepare the ISO
+  under <a href="/portal/isos">ISOs</a> first.
+</div>
+{{end}}
 {{end}}
