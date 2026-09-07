@@ -80,6 +80,50 @@ func TestGenerateDrivesUnattendedInstall(t *testing.T) {
 	}
 }
 
+func TestGenerateWholeDiskWipe(t *testing.T) {
+	s := Defaults()
+	s.Edition = "Windows 11 Pro"
+	s.WholeDisk = true // USB/ISO export: media is on the stick, own the disk
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(x)
+	// The whole-disk export must wipe the target (no ADBOOT partition to keep)
+	// and still lay down the EFI+MSR+Windows triplet with the OS at partition 3.
+	for _, want := range []string{
+		`<WillWipeDisk>true</WillWipeDisk>`,
+		`<InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>`,
+		`<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("whole-disk unattend missing %q", want)
+		}
+	}
+	if strings.Contains(out, `<WillWipeDisk>false</WillWipeDisk>`) {
+		t.Error("whole-disk unattend must not carry WillWipeDisk=false")
+	}
+	var root struct{ XMLName xml.Name }
+	if err := xml.Unmarshal(x, &root); err != nil {
+		t.Fatalf("invalid XML: %v\n%s", err, out)
+	}
+}
+
+func TestGenerateWholeDiskRandomName(t *testing.T) {
+	// An exported ISO is generic, so it must install with a random computer
+	// name (the agent renames the machine to its binding name after first boot).
+	s := Defaults()
+	s.WholeDisk = true
+	s.NameTemplate = "" // random
+	x, err := Generate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(x), `<ComputerName>*</ComputerName>`) {
+		t.Errorf("expected random <ComputerName>*</ComputerName> in export unattend:\n%s", x)
+	}
+}
+
 func TestGenerateDefaultsIsValidXML(t *testing.T) {
 	x, err := Generate(Defaults())
 	if err != nil {

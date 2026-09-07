@@ -110,6 +110,13 @@ type Settings struct {
 
 	// --- Disk ---
 	DiskID int `json:"disk_id"`
+	// WholeDisk selects the clean full-disk install layout instead of the
+	// default single-disk coexistence layout. It is NOT persisted
+	// (json:"-"); it is set only when generating the answer file baked into
+	// an exported USB/ISO image, where the media lives on removable media
+	// (not a staged ADBOOT partition on the target) so Windows Setup owns
+	// the entire disk. See writeDiskAndImage.
+	WholeDisk bool `json:"-"`
 
 	// --- OOBE ---
 	SkipMachineOOBE          bool `json:"skip_machine_oobe"`

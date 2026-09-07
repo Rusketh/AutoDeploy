@@ -3347,3 +3347,59 @@ updated to expect the comma-joined array for the provisioning path (two deps).
 
 **NEXT.** Re-run the "Snipping Tool Offline" push; expect the provision call to
 bind and the bundle to install for all users.
+
+---
+
+## 2026-09-04 — Export an image as a bootable ISO for USB re-imaging
+
+**WHAT.** Auto-deploy stages the whole Windows media set onto a ~7 GiB `ADBOOT`
+partition on the target's own disk, which runs out of space on machines with a
+small internal disk. Added an **image → bootable ISO export** so those machines
+can be re-imaged from a USB stick (Rufus) instead: the media lives on the stick,
+so the entire internal disk is free for Windows.
+
+- `server/internal/payload/iso_build.go` — low-level ISO authoring via `xorriso`
+  (`-as mkisofs`, dual BIOS+UEFI El Torito when the media tree carries the boot
+  images; Rufus boots via `efi\boot\bootx64.efi` regardless). Runner seam so the
+  argv is asserted in tests without xorriso installed. `ISOBuilderAvailable()` +
+  an actionable "install xorriso" hint, mirroring the p7zip/wimlib messaging.
+- `server/internal/payload/iso_export.go` — orchestration: resolve the image,
+  generate a whole-disk, random-name `autounattend.xml`, inject the agent +
+  a SetupComplete.cmd bootstrap into `sources\$OEM$\$$`, copy each driver
+  package's boot-critical subtree into `$WinPEDriver$`, then author the ISO.
+- `server/internal/payload/export_async.go` — background job + progress tracker
+  (same shape as the ISO-prep async job); one ISO per image under `export/{id}/`.
+- `server/internal/unattend/generate.go` — new `Settings.WholeDisk` emits
+  `WillWipeDisk=true` (clean install onto the whole disk) instead of the default
+  coexistence layout; the EFI+MSR+Windows triplet and PartitionID=3 are unchanged.
+- `server/internal/api/image_export_handlers.go` + routes — POST `.../export`,
+  GET `.../export/status`, GET `.../export/download`. Portal: an "Export bootable
+  ISO" card on the image Resolved page drives them over the shared session.
+
+**Naming (the hard part).** A generic ISO is identical for every machine, so it
+can't carry a per-machine name. Windows installs with a random name; on first
+boot the baked agent enrols by SMBIOS identity, and `/api/v1/agent/self` now
+returns `DesiredName` — the machine's binding name (or the bound image's name
+template, expanded from its hardware identity). The agent renames itself to it
+and reboots before joining AD or installing software. Guards keep it loop-free:
+`resolveDesiredName` returns "" for a non-deterministic (`%random%`) or absent
+source, and for a name that already matches the observed name — so a
+network-deployed machine never sees a spurious rename, and a machine with no
+binding just keeps its random name until an operator renames it.
+
+**DECISIONS.** Lean/networked packaging (agent + boot-critical drivers baked;
+everything else — full drivers, software, naming — from the server post-boot).
+The agent's `ADBOOT` cleanup no-ops when the partition is absent, so a USB clean
+install needs no change there. The exported ISO carries the answer file
+(OOBE/admin creds) — documented as sensitive.
+
+**STATE.** server + agent `go build`/`vet`/`gofmt` clean; `go test ./...` green;
+boot-client builds. New tests: unattend whole-disk golden + random name; xorriso
+argv + boot-image probing + AuthorISO runner seam; SetupComplete script,
+`safeServerBase`, `sanitizeDirName`; `resolveDesiredName` (literal / random-skip
+/ image-template / no-binding); agent `validComputerName`.
+
+**NEXT.** Manual VM validation: export an image, Rufus to USB, boot a small-disk
+VM under BIOS and UEFI; confirm the whole-disk install, agent enrolment, and that
+a bound machine renames on first check-in while an unbound one stays random.
+Requires `xorriso` on the server.

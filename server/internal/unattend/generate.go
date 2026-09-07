@@ -129,16 +129,28 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 // NOTE: PartitionID=3 assumes the standard EFI+MSR+Windows triplet ahead
 // of the trailing media partition. If a future layout changes the number
 // of partitions before the OS partition, this is the knob to adjust.
+//
+// Layout (whole-disk clean install, s.WholeDisk): used for USB/ISO exports
+// where the media lives on the removable stick, not a staged ADBOOT
+// partition on the target. There is no partition to preserve, so
+// WillWipeDisk=true lets Setup claim the ENTIRE disk — which is exactly the
+// point of the USB flow: a small internal disk no longer has to hold a
+// multi-GB copy of the media. The created triplet is identical (EFI=1,
+// MSR=2, Windows=3), so PartitionID=3 stays correct.
 func writeDiskAndImage(b *bytes.Buffer, s Settings) {
 	edition := s.Edition
 	if edition == "" {
 		edition = "Windows 11 Pro"
 	}
+	willWipe := "false"
+	if s.WholeDisk {
+		willWipe = "true"
+	}
 	fmt.Fprintf(b, `      <DiskConfiguration>
         <WillShowUI>OnError</WillShowUI>
         <Disk wcm:action="add">
           <DiskID>%d</DiskID>
-          <WillWipeDisk>false</WillWipeDisk>
+          <WillWipeDisk>%s</WillWipeDisk>
           <CreatePartitions>
             <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>384</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
@@ -159,7 +171,7 @@ func writeDiskAndImage(b *bytes.Buffer, s Settings) {
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
-`, s.DiskID, esc(edition), s.DiskID)
+`, s.DiskID, willWipe, esc(edition), s.DiskID)
 }
 
 // rsCmd is one RunSynchronousCommand row.

@@ -10,6 +10,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
+	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
 // AgentSoftwareRequest is what the agent POSTs to /api/v1/agent/software.
@@ -92,6 +93,20 @@ type AgentSelfResponse struct {
 	// the on-disk lock marker that the credential provider reads; it clears
 	// the marker once it closes the deployment, so later pushes never lock.
 	SetupLock bool `json:"setup_lock,omitempty"`
+	// DesiredName is the computer name this machine should carry, resolved
+	// from its binding (or the bound image's name template). It is set only
+	// when that name is DETERMINISTIC (a literal, or a hardware-derived
+	// template — never a %random% one) AND differs from the machine's
+	// currently observed name. The agent renames itself to it and reboots.
+	//
+	// This is how a USB/ISO-imaged machine acquires its real name: the
+	// exported media installs Windows with a random name, and this field —
+	// populated once the machine enrols and polls — reconciles it to the
+	// intended name. Empty means "keep the current name" (no binding, a
+	// random-template image, or the name already matches), so a
+	// network-deployed machine that was named during Setup never sees a
+	// spurious rename.
+	DesiredName string `json:"desired_name,omitempty"`
 }
 
 // RegisterAgent mounts the agent endpoints.
@@ -192,6 +207,11 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		if dep, derr := r.Inventory.LatestOpenDeployment(req.Context(), m.ID); derr == nil {
 			resp.DeploymentID = dep.ID
 		}
+		// Name reconciliation: hand back the deterministic name this machine
+		// should carry so a USB/ISO-imaged machine (installed with a random
+		// name) renames itself to its binding/template name. Best-effort and
+		// idempotent — see resolveDesiredName.
+		resp.DesiredName = resolveDesiredName(req.Context(), r, m)
 		// Pending jobs, claimed the same way checkin does.
 		jobs, jerr := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
 		if jerr != nil {
@@ -360,4 +380,58 @@ func listPackageBundles(r Repos, id model.ID, base string) []AgentPackageFile {
 
 func idStr(id model.ID) string {
 	return strconv.FormatInt(int64(id), 10)
+}
+
+// resolveDesiredName returns the computer name m should carry, or "" for
+// "leave it alone". It is the server half of USB/ISO name reconciliation: an
+// exported ISO installs Windows with a random name, and this resolves the
+// machine's intended name from its binding so the agent can rename itself.
+//
+// The name source is, in order: an explicit binding.MachineName (which also
+// carries any CSV-imported asset name, applied to the binding at first
+// contact), else the bound image's unattend name template. Either is expanded
+// with the machine's own SMBIOS/agent identity.
+//
+// Two guards keep this safe and loop-free:
+//   - A NON-DETERMINISTIC source (empty, or one containing %random%) returns
+//     "": re-expanding it every poll would yield a different name each time and
+//     rename the machine forever. Such machines keep whatever random name they
+//     were installed with.
+//   - A name that already matches the observed name returns "": so a
+//     network-deployed machine (named during Setup) and an already-reconciled
+//     USB machine never see a spurious rename.
+func resolveDesiredName(ctx context.Context, r Repos, m model.MachineRecord) string {
+	if r.Inventory == nil {
+		return ""
+	}
+	b, err := r.Inventory.GetBinding(ctx, m.ID)
+	if err != nil {
+		return ""
+	}
+	raw := b.MachineName
+	if raw == "" && b.ImageID != nil && r.Resolver != nil {
+		if res, rerr := r.Resolver.Resolve(ctx, *b.ImageID); rerr == nil && res.Unattend != nil {
+			if s, perr := unattend.Parse(res.Unattend.SettingsJSON); perr == nil {
+				raw = s.NameTemplate
+			}
+		}
+	}
+	raw = strings.TrimSpace(raw)
+	// Non-deterministic (no source, or a random template): do not reconcile.
+	if raw == "" || strings.Contains(strings.ToLower(raw), "%random") {
+		return ""
+	}
+	intended := unattend.ExpandName(raw, unattend.NameIdentity{
+		Serial: m.SystemSerial,
+		UUID:   m.SystemUUID,
+		Agent:  m.AgentID,
+	})
+	if intended == "" {
+		return ""
+	}
+	// Already correct (observed name matches): nothing to do.
+	if strings.EqualFold(strings.TrimSpace(m.ReportedName), intended) {
+		return ""
+	}
+	return intended
 }
