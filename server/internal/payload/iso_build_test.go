@@ -20,7 +20,7 @@ func TestBuildXorrisoArgs_DualBoot(t *testing.T) {
 
 	// mkisofs emulation with the media features a Windows tree needs.
 	for _, want := range []string{
-		"-as mkisofs", "-iso-level 3", "-udf", "-V AUTODEPLOY",
+		"-as mkisofs", "-iso-level 3", "-J -joliet-long", "-R", "-V AUTODEPLOY",
 		"-b boot/etfsboot.com", "-no-emul-boot", "-boot-info-table",
 		"-eltorito-alt-boot", "-e efi/microsoft/boot/efisys.bin",
 		"-o /out/image.iso", "-graft-points",
@@ -29,6 +29,11 @@ func TestBuildXorrisoArgs_DualBoot(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q\n got: %s", want, joined)
 		}
+	}
+	// xorriso's mkisofs emulation rejects -udf outright (it aborts with exit 5),
+	// and the media is pre-split for FAT32, so UDF must never be requested.
+	if strings.Contains(joined, "-udf") {
+		t.Errorf("must not request -udf (unsupported by xorriso -as mkisofs): %s", joined)
 	}
 	// The overlay tree must be grafted AFTER the media tree so it wins on a
 	// path conflict (the injected autounattend.xml overrides any in the media).
@@ -53,16 +58,18 @@ func TestBuildXorrisoArgs_NoBootImages(t *testing.T) {
 
 func TestFindBootImages(t *testing.T) {
 	root := t.TempDir()
-	// Mixed-case dirs, as a real extracted Windows tree carries.
-	mustWrite(t, filepath.Join(root, "BOOT", "etfsboot.com"), "x")
-	mustWrite(t, filepath.Join(root, "EFI", "microsoft", "boot", "efisys.bin"), "x")
+	// Upper-case dirs, as real Windows media commonly carries. The returned
+	// path MUST preserve this real casing, because xorriso's -b/-e lookup is
+	// case-sensitive — returning the lower-case candidate would fail the build.
+	mustWrite(t, filepath.Join(root, "BOOT", "ETFSBOOT.COM"), "x")
+	mustWrite(t, filepath.Join(root, "EFI", "MICROSOFT", "BOOT", "EFISYS.BIN"), "x")
 
 	bios, uefi := FindBootImages(root)
-	if bios != "boot/etfsboot.com" {
-		t.Errorf("bios = %q, want boot/etfsboot.com", bios)
+	if bios != "BOOT/ETFSBOOT.COM" {
+		t.Errorf("bios = %q, want BOOT/ETFSBOOT.COM (real casing)", bios)
 	}
-	if uefi != "efi/microsoft/boot/efisys.bin" {
-		t.Errorf("uefi = %q, want efi/microsoft/boot/efisys.bin", uefi)
+	if uefi != "EFI/MICROSOFT/BOOT/EFISYS.BIN" {
+		t.Errorf("uefi = %q, want EFI/MICROSOFT/BOOT/EFISYS.BIN (real casing)", uefi)
 	}
 
 	// A tree with neither returns empties (still exportable, non-bootable ISO).
@@ -109,6 +116,55 @@ func TestAuthorISO_RejectsMissingTree(t *testing.T) {
 	}, &recordingRunner{})
 	if err == nil {
 		t.Fatal("expected error for a missing source tree")
+	}
+}
+
+// TestAuthorISO_RealXorriso drives the REAL xorriso (skipped when it isn't
+// installed) against a tree shaped like real Windows media — upper-case boot
+// images and the literal $OEM$ / $WinPEDriver$ overlay dirs — so it exercises
+// the exact argv the export builds. This is the regression guard for the two
+// bugs that made a real export fail: `-udf` (rejected by mkisofs emulation) and
+// a lower-cased boot-image path (xorriso's -b/-e lookup is case-sensitive).
+func TestAuthorISO_RealXorriso(t *testing.T) {
+	if !ISOBuilderAvailable() {
+		t.Skip("xorriso not installed")
+	}
+	media := t.TempDir()
+	mustWrite(t, filepath.Join(media, "sources", "boot.wim"), "wim")
+	mustWrite(t, filepath.Join(media, "sources", "install.swm"), "swm")
+	// Real boot images are a few KiB; -boot-info-table patches a 56-byte table
+	// into the BIOS image, so a too-small stub makes xorriso MISHAP.
+	mustWrite(t, filepath.Join(media, "BOOT", "ETFSBOOT.COM"), strings.Repeat("b", 4096))
+	mustWrite(t, filepath.Join(media, "EFI", "MICROSOFT", "BOOT", "EFISYS.BIN"), strings.Repeat("u", 4096))
+	// Real media carries the UEFI fallback loader (this is also how Rufus makes
+	// the USB bootable); include it so the tree matches a real export.
+	mustWrite(t, filepath.Join(media, "EFI", "BOOT", "BOOTX64.EFI"), strings.Repeat("e", 4096))
+
+	overlay := t.TempDir()
+	mustWrite(t, filepath.Join(overlay, "autounattend.xml"), "<xml/>")
+	mustWrite(t, filepath.Join(overlay, "sources", "$OEM$", "$$", "Setup", "Scripts", "SetupComplete.cmd"), "@echo off\r\n")
+	mustWrite(t, filepath.Join(overlay, "$WinPEDriver$", "intel_rst", "oem.inf"), "inf")
+
+	bios, uefi := FindBootImages(media)
+	if bios == "" || uefi == "" {
+		t.Fatalf("boot images not found: bios=%q uefi=%q", bios, uefi)
+	}
+	out := filepath.Join(t.TempDir(), "image.iso")
+	if err := AuthorISO(context.Background(), ISOSpec{
+		OutPath:     out,
+		VolumeLabel: "AUTODEPLOY",
+		Trees:       []string{media, overlay},
+		BIOSBootImg: bios,
+		UEFIBootImg: uefi,
+	}, &OSISORunner{}); err != nil {
+		t.Fatalf("AuthorISO with real xorriso: %v", err)
+	}
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("output ISO missing: %v", err)
+	}
+	if fi.Size() < 32*1024 {
+		t.Errorf("ISO suspiciously small: %d bytes", fi.Size())
 	}
 }
 

@@ -25,6 +25,7 @@ package payload
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -58,9 +59,49 @@ func (r *OSISORunner) Exec(ctx context.Context, name string, args ...string) err
 			slog.String("args", fmt.Sprintf("%q", args)))
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Tee stderr to both the log (line by line) and a bounded buffer, so a
+	// failure can surface xorriso's own diagnostic (e.g. "Unsupported option",
+	// "Cannot find in ISO image") in the returned error instead of a bare
+	// "exit status N" the operator can't act on.
+	tail := &tailBuffer{max: 4096}
 	cmd.Stdout = isoStdoutWriter{r.Log}
-	cmd.Stderr = isoStderrWriter{r.Log}
-	return cmd.Run()
+	cmd.Stderr = io.MultiWriter(isoStderrWriter{r.Log}, tail)
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(tail.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, lastLine(msg))
+		}
+		return err
+	}
+	return nil
+}
+
+// tailBuffer keeps at most the last max bytes written to it, so a chatty tool's
+// output can be summarised in an error without unbounded memory.
+type tailBuffer struct {
+	max int
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		t.buf = t.buf[len(t.buf)-t.max:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return string(t.buf) }
+
+// lastLine returns the last non-empty line of s — xorriso prints the actionable
+// reason (the FAILURE line) just before it aborts.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return s
 }
 
 type isoStdoutWriter struct{ log *slog.Logger }
@@ -137,13 +178,22 @@ func FindBootImages(mediaDir string) (bios, uefi string) {
 	return firstExisting(mediaDir, biosBootCandidates), firstExisting(mediaDir, uefiBootCandidates)
 }
 
-// firstExisting returns the first candidate (relative, forward-slash) that
-// resolves to a regular file under root, matched case-insensitively.
+// firstExisting returns the REAL on-disk (case-correct) relative path of the
+// first candidate that resolves to a regular file under root, matched
+// case-insensitively. The real casing matters: xorriso's -b/-e boot-image
+// lookup into the built image is case-SENSITIVE, and Windows media is commonly
+// authored upper-case (BOOT/ETFSBOOT.COM, EFI/MICROSOFT/BOOT/EFISYS.BIN), so
+// returning the lower-case candidate would make xorriso fail with "Cannot find
+// in ISO image".
 func firstExisting(root string, candidates []string) string {
 	for _, c := range candidates {
 		if abs, ok := resolveInsensitive(root, c); ok {
 			if fi, err := os.Stat(abs); err == nil && fi.Mode().IsRegular() {
-				return c
+				rel, err := filepath.Rel(root, abs)
+				if err != nil {
+					return c
+				}
+				return filepath.ToSlash(rel)
 			}
 		}
 	}
@@ -184,14 +234,20 @@ func resolveInsensitive(root, relSlash string) (string, bool) {
 // pure function so tests can assert the command shape without xorriso present.
 //
 // Layout: -graft-points with one "/=<tree>" per tree merges the trees at the
-// ISO root (later wins on conflict). `-iso-level 3` and `-udf` allow the >4 GiB
-// install.wim / long paths a Windows media tree carries. The El Torito entries
-// are added only for boot images that were found.
+// ISO root (later wins on conflict). `-iso-level 3` allows large files and long
+// names; `-J -joliet-long` and `-R` (Joliet + Rock Ridge) preserve the media's
+// real, mixed-case, long path names — including the literal `$OEM$` /
+// `$WinPEDriver$` directories the overlay injects — that the bare ISO9660 layer
+// would mangle. UDF is deliberately NOT requested: xorriso's mkisofs emulation
+// rejects `-udf` outright, and the media is already split into <4 GiB `.swm`
+// parts for FAT32, so no single file needs it. El Torito entries are added only
+// for boot images that were found.
 func buildXorrisoArgs(spec ISOSpec) []string {
 	args := []string{
 		"-as", "mkisofs",
 		"-iso-level", "3",
-		"-udf",
+		"-J", "-joliet-long",
+		"-R",
 		"-V", spec.VolumeLabel,
 	}
 	if spec.BIOSBootImg != "" {

@@ -3403,3 +3403,33 @@ argv + boot-image probing + AuthorISO runner seam; SetupComplete script,
 VM under BIOS and UEFI; confirm the whole-disk install, agent enrolment, and that
 a bound machine renames on first check-in while an unbound one stays random.
 Requires `xorriso` on the server.
+
+---
+
+## 2026-09-07 — Fix ISO export: xorriso "-udf" and case-sensitive boot paths
+
+**WHAT.** The first real export failed with `iso build: xorriso: exit status 5`.
+Reproduced with xorriso 1.5.6 and fixed two bugs in `payload/iso_build.go`:
+
+- **`-udf` is rejected** by xorriso's `-as mkisofs` emulation ("Unsupported
+  option '-udf'", exit 5). Dropped it and added `-J -joliet-long -R` instead —
+  the media is already split into <4 GiB `.swm` parts, so no file needs UDF, and
+  Joliet+RockRidge preserve the real mixed-case long names (including the literal
+  `$OEM$` / `$WinPEDriver$` overlay dirs).
+- **`-b`/`-e` boot-image lookup is case-SENSITIVE.** `FindBootImages` returned the
+  lower-case probe candidate, which fails on real Windows media authored
+  upper-case (`BOOT/ETFSBOOT.COM`, `EFI/MICROSOFT/BOOT/EFISYS.BIN`) with "Cannot
+  find in ISO image". Now returns the real on-disk casing.
+
+Also made `OSISORunner.Exec` tee xorriso stderr into a bounded buffer and fold
+its last FAILURE line into the returned error, so a future build failure shows
+the actionable reason instead of a bare "exit status N".
+
+**STATE.** server `go build`/`vet`/`gofmt` clean; `go test ./...` green. New
+regression test `TestAuthorISO_RealXorriso` drives the actual xorriso (skips when
+absent) against an upper-case, `$OEM$`-shaped tree — it fails on either bug.
+Updated the argv/boot-path unit tests to assert no `-udf`, the Joliet/RockRidge
+flags, and real-case boot paths.
+
+**NEXT.** Re-export from the portal and confirm the ISO builds; then the pending
+manual VM boot test (BIOS + UEFI, small disk).
