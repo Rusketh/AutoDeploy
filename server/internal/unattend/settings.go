@@ -117,6 +117,12 @@ type Settings struct {
 	// (not a staged ADBOOT partition on the target) so Windows Setup owns
 	// the entire disk. See writeDiskAndImage.
 	WholeDisk bool `json:"-"`
+	// DiskGuard replaces the static DiskConfiguration with the guarded,
+	// script-driven partitioning used by USB/ISO exports (see diskguard.go):
+	// the target disk is only cleaned after a WinPE check proves it is not the
+	// USB stick / install media. NOT persisted (json:"-"); set only by the
+	// export path, so the PXE/boot-client answer file is unaffected.
+	DiskGuard bool `json:"-"`
 
 	// --- OOBE ---
 	SkipMachineOOBE          bool `json:"skip_machine_oobe"`

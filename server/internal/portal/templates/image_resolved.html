@@ -62,57 +62,90 @@
 <p class="muted small">
   Build a bootable ISO of this image to write to a USB stick with
   <a href="https://rufus.ie" target="_blank" rel="noopener">Rufus</a>, then re-image machines
-  whose disk is too small to stage the media locally. Windows installs to the whole disk with a
-  temporary name; the agent enrols on first boot and the machine is renamed to its binding's name
-  automatically. The exported ISO carries the answer file — treat it as sensitive.
+  whose disk is too small to stage the media locally. Windows installs to the whole internal disk
+  with a temporary name; the agent enrols on first boot and the machine is renamed to its binding's
+  name automatically. Before wiping anything the USB checks the target disk is not the USB stick
+  itself, and powers off instead if it is. The exported ISO carries the answer file — treat it as
+  sensitive.
+</p>
+<p class="muted small">
+  <strong>Write it with Rufus in ISO mode</strong> (partition scheme GPT, target UEFI; choose
+  "ISO Image mode" if Rufus asks) and untick every option in Rufus's "Customize Windows
+  installation" dialog — the ISO's own answer file already handles Setup. Raw "DD image" writers
+  (dd, balenaEtcher, Rufus DD mode) produce a stick that will not boot. Boot the target in UEFI mode.
 </p>
 {{$ready := false}}{{if $r.ISO}}{{if $r.ISO.DeployReady}}{{$ready = true}}{{end}}{{end}}
 {{if $ready}}
+<style>#export-box [hidden]{display:none!important}</style>
 <div id="export-box" data-image="{{int64 $r.ImageID}}">
   <button type="button" id="export-start" class="btn secondary sm"><svg><use href="#i-disc"/></svg>Build ISO</button>
-  <a id="export-download" class="btn primary sm" href="/api/v1/images/{{int64 $r.ImageID}}/export/download" hidden><svg><use href="#i-arrow-left"/></svg>Download ISO</a>
+  <button type="button" id="export-cancel" class="btn secondary sm" hidden><svg><use href="#i-x"/></svg>Cancel build</button>
+  <a id="export-download" class="btn primary sm" href="/api/v1/images/{{int64 $r.ImageID}}/export/download" hidden><svg><use href="#i-download"/></svg>Download ISO</a>
   <div id="export-progress" class="mt-3" hidden>
     <div style="background:var(--surface-2,#eee);border-radius:6px;overflow:hidden;height:10px">
       <div id="export-bar" style="height:10px;width:0;background:var(--accent,#3b82f6);transition:width .3s"></div>
     </div>
-    <p id="export-stage" class="muted small mt-1"></p>
+    <p id="export-stage" class="muted small mt-1" aria-live="polite"></p>
   </div>
-  <div id="export-error" class="flash flash-warn flash-inline mt-3" hidden></div>
+  <div id="export-warn" class="flash flash-warn flash-inline mt-3" hidden></div>
+  <div id="export-error" class="flash flash-err flash-inline mt-3" role="alert" hidden></div>
 </div>
 <script>
 (function(){
   var box=document.getElementById('export-box'); if(!box) return;
   var id=box.getAttribute('data-image');
   var btn=document.getElementById('export-start'),
+      cancelBtn=document.getElementById('export-cancel'),
       dl=document.getElementById('export-download'),
       prog=document.getElementById('export-progress'),
       bar=document.getElementById('export-bar'),
       stage=document.getElementById('export-stage'),
+      warnBox=document.getElementById('export-warn'),
       errBox=document.getElementById('export-error'),
-      timer=null;
-  function showErr(m){ errBox.textContent=m; errBox.hidden=!m; }
+      timer=null, startWarnings=[];
+  function showErr(m){ errBox.textContent=m||''; errBox.hidden=!m; }
+  function showWarn(list){
+    warnBox.textContent='';
+    (list||[]).forEach(function(w){ var p=document.createElement('div'); p.textContent=w; warnBox.appendChild(p); });
+    warnBox.hidden=!(list&&list.length);
+  }
+  function size(b){ return b>=1073741824?(b/1073741824).toFixed(1)+' GB':Math.max(1,Math.round(b/1048576))+' MB'; }
   function render(s){
     if(!s) return;
+    showWarn(startWarnings.concat(s.warnings||[]));
     if(s.phase==='running'){
-      prog.hidden=false; btn.disabled=true; dl.hidden=true; showErr('');
-      bar.style.width=(s.percent||0)+'%'; stage.textContent=(s.stage||'Working')+' — '+(s.percent||0)+'%';
+      prog.hidden=false; btn.disabled=true; btn.innerHTML='<svg><use href="#i-disc"/></svg>Building…'; cancelBtn.hidden=false; cancelBtn.disabled=s.stage==='Cancelling';
+      dl.hidden=true; showErr('');
+      bar.style.width=(s.percent||0)+'%';
+      stage.textContent=(s.stage||'Working')+' — '+(s.percent||0)+'%. The download appears here when the build finishes; you can leave this page.';
       poll();
-    } else if(s.phase==='done'){
-      prog.hidden=false; bar.style.width='100%';
-      var sz=s.size_bytes?(' ('+(s.size_bytes/1048576).toFixed(0)+' MB)'):'';
-      stage.textContent='Ready'+sz; btn.disabled=false; dl.hidden=false; showErr('');
-    } else if(s.phase==='error'){
-      btn.disabled=false; prog.hidden=true; dl.hidden=true; showErr(s.error||'Export failed');
+    } else {
+      btn.disabled=false; cancelBtn.hidden=true; btn.innerHTML='<svg><use href="#i-disc"/></svg>'+(s.phase==='done'?'Rebuild ISO':'Build ISO');
+      if(s.phase==='done'){
+        prog.hidden=false; bar.style.width='100%'; dl.hidden=false; showErr('');
+        var when=s.built_at?(' · built '+new Date(s.built_at).toLocaleString()):'';
+        stage.textContent='Ready'+(s.size_bytes?(' — '+size(s.size_bytes)):'')+when+'. Write it with Rufus in ISO mode.';
+      } else if(s.phase==='error'){
+        showErr(s.error||'Export failed');
+        // A previous finished ISO survives a failed or cancelled rebuild.
+        var prev=!!s.size_bytes; dl.hidden=!prev; prog.hidden=!prev; bar.style.width=prev?'100%':'0';
+        if(prev) stage.textContent='The previous ISO is still available — '+size(s.size_bytes)+(s.built_at?(' · built '+new Date(s.built_at).toLocaleString()):'')+'.';
+      }
     }
   }
-  function status(){ return fetch('/api/v1/images/'+id+'/export/status',{credentials:'same-origin'}).then(function(r){return r.json();}); }
+  function status(){ return fetch('/api/v1/images/'+id+'/export/status',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json();}); }
   function poll(){ if(timer) return; timer=setInterval(function(){ status().then(function(s){ if(s.phase!=='running'){clearInterval(timer);timer=null;} render(s); }).catch(function(){}); },2000); }
   btn.addEventListener('click',function(){
-    btn.disabled=true; showErr(''); prog.hidden=false; bar.style.width='0'; stage.textContent='Starting…';
+    btn.disabled=true; showErr(''); startWarnings=[]; showWarn([]); dl.hidden=true; prog.hidden=false; bar.style.width='0'; stage.textContent='Starting…';
     fetch('/api/v1/images/'+id+'/export',{method:'POST',credentials:'same-origin',headers:{'X-Requested-With':'fetch'}})
-      .then(function(r){ if(!r.ok){ return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); } return r.json(); })
-      .then(function(j){ (j.warnings||[]).forEach(function(w){ showErr(w); }); render(j.status||{phase:'running',percent:0}); })
+      .then(function(r){ if(!r.ok){ return r.text().then(function(t){ throw new Error((t||'').trim()||('Export could not start (HTTP '+r.status+')')); }); } return r.json(); })
+      .then(function(j){ startWarnings=j.warnings||[]; render(j.status||{phase:'running',percent:0}); })
       .catch(function(e){ btn.disabled=false; prog.hidden=true; showErr(e.message); });
+  });
+  cancelBtn.addEventListener('click',function(){
+    cancelBtn.disabled=true; stage.textContent='Cancelling…';
+    fetch('/api/v1/images/'+id+'/export/cancel',{method:'POST',credentials:'same-origin',headers:{'X-Requested-With':'fetch'}})
+      .then(function(r){return r.json();}).then(function(j){ render(j.status); }).catch(function(){ cancelBtn.disabled=false; });
   });
   // Reflect any export already in progress or finished on load.
   status().then(render).catch(function(){});

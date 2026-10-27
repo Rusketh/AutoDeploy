@@ -12,11 +12,16 @@
 // bootable ISO. The high-level orchestration that assembles those overlays
 // from an image resolution lives in iso_export.go.
 //
-// The El Torito boot catalog is best-effort: Rufus (and most USB-writers) lay
-// the ISO's files onto the stick and boot Windows via the fallback
-// efi\boot\bootx64.efi path, so the USB boots even when the source tree lacks
-// the original boot images. When the boot images ARE present we add the
-// catalog so the ISO also boots directly (e.g. in a VM or via Ventoy).
+// The El Torito boot catalog: Rufus in its (default) ISO-image mode lays the
+// ISO's files onto a FAT32/NTFS stick and boots Windows via the fallback
+// efi\boot\bootx64.efi path, so the USB boots from the files alone. The
+// catalog makes the ISO itself bootable (a VM, BMC virtual media, Ventoy) and
+// is what Rufus inspects to recognise the image as bootable at all. A raw
+// sector copy (dd, Etcher, Rufus "DD image" mode) does NOT give a bootable
+// stick: Windows media is not an isohybrid image, so those writers are not
+// supported. AuthorISO itself tolerates missing boot images (it is a
+// low-level step); ExportImageISO refuses to author an ISO with no boot image
+// at all and warns when only one firmware type is covered.
 //
 // All destructive work funnels through Runner.Exec so the argv can be asserted
 // in tests (via a recorder) without xorriso installed.
@@ -165,9 +170,14 @@ var biosBootCandidates = []string{
 	"[BOOT]/Boot-NoEmul.img",
 }
 
+// uefiBootCandidates: efisys_noprompt.bin is preferred over efisys.bin, the
+// "Press any key to boot from CD or DVD..." loader that times out and falls through
+// to the internal disk when nobody is at the keyboard, so an exported ISO
+// booted in a VM or over a BMC's virtual media would silently not install.
+// (A Rufus-written USB boots efi\boot\bootx64.efi and never prompts either way.)
 var uefiBootCandidates = []string{
-	"efi/microsoft/boot/efisys.bin",
 	"efi/microsoft/boot/efisys_noprompt.bin",
+	"efi/microsoft/boot/efisys.bin",
 	"[BOOT]/2-Boot-NoEmul.img",
 }
 
@@ -242,6 +252,14 @@ func resolveInsensitive(root, relSlash string) (string, bool) {
 // rejects `-udf` outright, and the media is already split into <4 GiB `.swm`
 // parts for FAT32, so no single file needs it. El Torito entries are added only
 // for boot images that were found.
+//
+// `-boot-info-table` is deliberately NOT passed for the BIOS image. It makes
+// xorriso overwrite bytes 8..63 of the boot image IN THE ISO with a table of
+// ISO offsets — the convention for isolinux, which expects it. Windows'
+// etfsboot.com does not: those bytes are its own code, so patching them
+// corrupts the loader and BIOS boot hangs or reboots. Microsoft's oscdimg
+// never patches it either. etfsboot.com is loaded as 8 virtual sectors (4 KiB)
+// with no emulation, exactly as oscdimg's -bootdata:2#p0,e,b... layout does.
 func buildXorrisoArgs(spec ISOSpec) []string {
 	args := []string{
 		"-as", "mkisofs",
@@ -255,7 +273,6 @@ func buildXorrisoArgs(spec ISOSpec) []string {
 			"-b", spec.BIOSBootImg,
 			"-no-emul-boot",
 			"-boot-load-size", "8",
-			"-boot-info-table",
 		)
 	}
 	if spec.UEFIBootImg != "" {

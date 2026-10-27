@@ -115,12 +115,36 @@ it to a USB stick, and boot from the stick — the media lives on the USB, so th
 is free for Windows.
 
 Open the image's **[Resolved](#the-resolved-view)** view and use **Export bootable ISO**. The server
-builds a bootable ISO of the resolved media in the background (a progress bar shows the stages);
-when it finishes, **Download ISO** streams it. Write it to a USB stick with a tool like
-[Rufus](https://rufus.ie) and boot the target from it.
+builds a bootable ISO of the resolved media in the background (a progress bar shows the stages, and
+**Cancel build** stops it); when it finishes, **Download ISO** streams it. The download only ever
+serves a *finished* ISO: while a build is running it answers "still building" (HTTP 409), and if no
+build has finished yet it says so (HTTP 404) — a failed or cancelled build never leaves a truncated
+ISO behind, and a previous good ISO stays downloadable until a new build replaces it. A build that
+runs longer than two hours is stopped.
+
+Before it starts, the export checks the image: it needs a linked, prepared ISO, and the unattend's
+**Edition** (or the default *Windows 11 Pro* when it is left blank) must be one of the editions
+listed on the ISO — otherwise you get an error naming the editions the ISO does contain, instead of
+a USB that stops on the target with "no images are available".
+
+**Write the ISO with [Rufus](https://rufus.ie) in ISO mode**: partition scheme **GPT**, target
+system **UEFI**, and "ISO Image mode" if Rufus asks. Untick every option in Rufus's *Customize
+Windows installation* dialog — the ISO already carries AutoDeploy's answer file. Raw "DD image"
+writers (`dd`, balenaEtcher, Rufus's DD mode) do **not** produce a bootable stick: Windows media is
+not a hybrid image. Boot the target from the stick **in UEFI mode**.
 
 - The exported ISO installs Windows onto the **whole disk** (a clean install — there is no media
   partition to preserve), so it is only for machines you intend to wipe.
+- **It will not wipe the USB stick.** A network deploy boots from the target's own disk, so
+  "disk 0" is reliably that disk. From a USB stick it is not: Windows Setup may number the stick
+  (or an external drive) as disk 0. So the exported answer file carries no fixed "wipe disk 0" step.
+  Instead, before anything is written, a small check on the stick (`\AutoDeploy\diskguard.cmd`, run
+  from Setup's first pass) confirms that the target disk (disk 0) exists, is **not** a USB/FireWire disk, does **not** hold the install media, and that the PC
+  booted in UEFI mode. Only then does it partition that disk (EFI, MSR, Windows — the same layout as
+  before). If any check fails, Setup is stopped, **nothing is wiped**, a message explains why (also
+  logged to `X:\Windows\Temp\autodeploy-diskguard.log`), and the PC powers off after five minutes.
+  The usual fixes: unplug other USB drives, boot in UEFI mode, or add the PC's storage driver (for
+  example Intel RST/VMD) as a driver package so Windows Setup can see the internal disk.
 - It bakes in the AutoDeploy **agent** and the image's **boot-critical storage/NIC drivers**; the
   rest of the drivers and all software install after first boot, exactly as in a network deploy.
 - **Naming.** The ISO is generic — one file for every machine — so Windows installs with a
