@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/rusketh/autodeploy/boot-client/internal/fb"
@@ -35,13 +36,7 @@ func startGUI(log *slog.Logger, brand brandResp) *guiSession {
 	}
 	w, h := surface.Size()
 	// Scale fonts up a touch on very large panels.
-	scale := 1.0
-	if h >= 1440 {
-		scale = 1.4
-	} else if h >= 1080 {
-		scale = 1.15
-	}
-	theme, err := ui.NewTheme(brand.PrimaryColor, scale)
+	theme, err := ui.NewTheme(brand.PrimaryColor, ui.ScaleForHeight(h))
 	if err != nil {
 		log.Warn("gui.theme", slog.String("error", err.Error()))
 		_ = surface.Close()
@@ -140,11 +135,19 @@ func (g *guiSession) countdown(title, message string, seconds int) bool {
 
 // progress returns a ProgressScreen plus a stop func. It paints the screen
 // on a ticker in the background so deploy code can call Set(...) freely.
-func (g *guiSession) progress(ctx context.Context, title string) (*ui.ProgressScreen, func()) {
+// id fills the identity header. stop is idempotent and returns only once
+// the repaint loop has exited, so a screen drawn after it (the failure
+// screen) can't be painted over by a late progress frame.
+func (g *guiSession) progress(ctx context.Context, title string, id ui.Identity) (*ui.ProgressScreen, func()) {
 	scr := ui.NewProgressScreen(title)
 	scr.Version = Version
+	scr.Identity = id
 	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	// Initial paint, before the loop starts so the two never overlap.
+	g.app.Render(scr)
 	go func() {
+		defer close(done)
 		t := time.NewTicker(200 * time.Millisecond)
 		defer t.Stop()
 		for {
@@ -156,7 +159,23 @@ func (g *guiSession) progress(ctx context.Context, title string) (*ui.ProgressSc
 			}
 		}
 	}()
-	// Initial paint.
-	g.app.Render(scr)
-	return scr, cancel
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	return scr, stop
+}
+
+// failure shows the failure screen and waits for the technician's choice
+// (ui.FailureNone if input goes away).
+func (g *guiSession) failure(info ui.FailureInfo) ui.FailureChoice {
+	scr := ui.NewFailureScreen(info)
+	scr.Version = Version
+	if g.app.Run(scr, g.reader.Events()) == ui.ActionDone {
+		return scr.Choice
+	}
+	return ui.FailureNone
 }

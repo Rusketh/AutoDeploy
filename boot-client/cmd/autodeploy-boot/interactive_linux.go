@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"syscall"
 
 	"github.com/rusketh/autodeploy/boot-client/internal/httpc"
 	"github.com/rusketh/autodeploy/boot-client/internal/logging"
@@ -109,8 +110,8 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 
 	// Deploy with a live progress screen. Install the GUI progress sink so
 	// runDeploy's stage reports paint the bar; clear it afterwards.
-	prog, stop := g.progress(ctx, title)
-	setProgressSink(&guiProgressSink{scr: prog})
+	prog, stop := g.progress(ctx, title, screenIdentity(id, f.server))
+	setProgressSink(&guiProgressSink{scr: prog, g: g, stop: stop})
 	defer func() {
 		stop()
 		setProgressSink(nil)
@@ -186,14 +187,34 @@ func enableConsoleDebugOutput(log *slog.Logger) {
 
 // guiProgressSink adapts a ui.ProgressScreen to the progressSink interface
 // runDeploy reports to.
-type guiProgressSink struct{ scr *ui.ProgressScreen }
+type guiProgressSink struct {
+	scr  *ui.ProgressScreen
+	g    *guiSession
+	stop func() // stops (and waits out) the progress repaint loop
+}
 
-func (s *guiProgressSink) Stage(stage, detail string, percent int) {
+func (s *guiProgressSink) Stage(stage, detail string, percent, step, steps int) {
 	s.scr.Set(stage, detail, percent)
+	s.scr.SetStep(step, steps)
 }
 
 func (s *guiProgressSink) File(name string) {
 	s.scr.SetFile(name)
+}
+
+// Fail swaps the progress screen for the failure screen and waits for the
+// technician's choice. Unless the machine is about to reboot (when the
+// failure screen may as well stay up), the GUI is torn down first: the
+// text console is otherwise left in graphics mode, so the initramfs shell
+// would be invisible, and a retried boot client must take the framebuffer
+// afresh.
+func (s *guiProgressSink) Fail(info ui.FailureInfo) ui.FailureChoice {
+	s.stop() // no progress repaint may land on top of the failure screen
+	choice := s.g.failure(info)
+	if choice != ui.FailureReboot {
+		s.g.close()
+	}
+	return choice
 }
 
 // consoleProgressSink logs deploy stage and current-file transitions to the
@@ -210,7 +231,7 @@ type consoleProgressSink struct {
 	lastFile   string
 }
 
-func (s *consoleProgressSink) Stage(stage, detail string, percent int) {
+func (s *consoleProgressSink) Stage(stage, detail string, percent, step, steps int) {
 	if stage == s.lastStage && detail == s.lastDetail {
 		return
 	}
@@ -218,7 +239,45 @@ func (s *consoleProgressSink) Stage(stage, detail string, percent int) {
 	s.log.Info("deploy.progress",
 		slog.String("stage", stage),
 		slog.String("detail", detail),
-		slog.Int("percent", percent))
+		slog.Int("percent", percent),
+		slog.Int("step", step),
+		slog.Int("steps", steps))
+}
+
+// Fail prints the failure block on the console the operator is watching;
+// there is no key prompt in console mode, so the run exits to the shell.
+func (s *consoleProgressSink) Fail(info ui.FailureInfo) ui.FailureChoice {
+	printFailure(info)
+	return ui.FailureNone
+}
+
+// showFailureStandalone shows the failure screen when no deploy progress
+// UI is up (e.g. the menu couldn't be fetched): graphically when a
+// framebuffer is available, else as a console block.
+func showFailureStandalone(log *slog.Logger, info ui.FailureInfo) ui.FailureChoice {
+	g := startGUI(log, brandResp{})
+	if g == nil {
+		printFailure(info)
+		return ui.FailureNone
+	}
+	choice := g.failure(info)
+	if choice != ui.FailureReboot {
+		g.close()
+	}
+	return choice
+}
+
+// restartSelf re-executes the boot client with its original arguments, so
+// "retry" starts over from the menu (or the same deploy command) without a
+// reboot. (The failure screen has already closed the GUI.) Returns only if
+// the exec failed.
+func restartSelf(log *slog.Logger) {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "/proc/self/exe"
+	}
+	err = syscall.Exec(exe, os.Args, os.Environ())
+	log.Error("deploy.retry.exec", slog.String("error", errString(err)))
 }
 
 func (s *consoleProgressSink) File(name string) {

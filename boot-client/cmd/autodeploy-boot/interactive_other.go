@@ -9,6 +9,7 @@ import (
 	"github.com/rusketh/autodeploy/boot-client/internal/httpc"
 	"github.com/rusketh/autodeploy/boot-client/internal/logging"
 	"github.com/rusketh/autodeploy/boot-client/internal/smbios"
+	"github.com/rusketh/autodeploy/boot-client/internal/ui"
 )
 
 // startInteractive has no GUI off Linux (the boot client only ever runs in
@@ -21,3 +22,12 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 func bootCountdown(log *slog.Logger, brand brandResp, seconds int) bool {
 	return consoleBootCountdown(seconds)
 }
+
+// showFailureStandalone has no GUI off Linux; print the console block.
+func showFailureStandalone(log *slog.Logger, info ui.FailureInfo) ui.FailureChoice {
+	printFailure(info)
+	return ui.FailureNone
+}
+
+// restartSelf is never reached off Linux (no failure screen offers retry).
+func restartSelf(log *slog.Logger) {}
