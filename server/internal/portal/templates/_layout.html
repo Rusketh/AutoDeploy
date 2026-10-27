@@ -10,6 +10,8 @@
 <script>
   /* Apply saved theme before first paint so the page doesn't flash. */
   (function(){try{var t=localStorage.getItem('ad-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+  /* Mark JS-capable pages so the grouped nav collapses into dropdowns; without JS every link stays visible. */
+  document.documentElement.classList.add('js');
 </script>
 </head>
 <body data-tz="{{displayTZName}}">
@@ -18,24 +20,22 @@
 {{if .User.ID}}
 <header class="app">
   <h1 class="brand"><a href="/portal/">{{if .Brand.LogoDataURL}}<img src="{{brandLogo .Brand.LogoDataURL}}" alt="" class="logo" aria-hidden="true">{{end}}{{.Brand.ProductName}}</a></h1>
-  <nav class="main" aria-label="Primary">
-    <a href="/portal/images"    class="{{if eq .Path "/portal/images"}}on{{end}}"   ><svg aria-hidden="true"><use href="#i-image"/></svg>Images</a>
-    <a href="/portal/isos"      class="{{if eq .Path "/portal/isos"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-disc"/></svg>ISOs</a>
-    <a href="/portal/unattends" class="{{if eq .Path "/portal/unattends"}}on{{end}}"><svg aria-hidden="true"><use href="#i-file"/></svg>Unattends</a>
-    <a href="/portal/drivers"   class="{{if eq .Path "/portal/drivers"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-cpu"/></svg>Drivers</a>
-    <a href="/portal/software"  class="{{if eq .Path "/portal/software"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-box"/></svg>Software</a>
-    <a href="/portal/loadouts"  class="{{if eq .Path "/portal/loadouts"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-stack"/></svg>Loadouts</a>
-    <span class="nav-sep" aria-hidden="true"></span>
-    <a href="/portal/machines"  class="{{if eq .Path "/portal/machines"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-server"/></svg>Machines</a>
-    <a href="/portal/groups"    class="{{if eq .Path "/portal/groups"}}on{{end}}"   ><svg aria-hidden="true"><use href="#i-stack"/></svg>Groups</a>
-    <a href="/portal/import"    class="{{if eq .Path "/portal/import"}}on{{end}}"   ><svg aria-hidden="true"><use href="#i-file"/></svg>Import</a>
-    <a href="/portal/updates"   class="{{if eq .Path "/portal/updates"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-disc"/></svg>Updates</a>
-    <a href="/portal/bulk"      class="{{if eq .Path "/portal/bulk"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-bolt"/></svg>Bulk</a>
-    <span class="nav-sep" aria-hidden="true"></span>
-    <a href="/portal/mirrors"   class="{{if eq .Path "/portal/mirrors"}}on{{end}}"  ><svg aria-hidden="true"><use href="#i-globe"/></svg>Mirrors</a>
-    <a href="/portal/logs"      class="{{if eq .Path "/portal/logs"}}on{{end}}"     ><svg aria-hidden="true"><use href="#i-list"/></svg>Logs</a>
-    <span class="nav-sep" aria-hidden="true"></span>
-    <a href="/portal/settings"  class="{{if eq .Path "/portal/settings"}}on{{end}}" ><svg aria-hidden="true"><use href="#i-gear"/></svg>Settings</a>
+  {{/* Grouped primary nav. Without JS every group renders as a label plus
+       its links in a row (all visible); app.js turns each group label into
+       a dropdown button (aria-expanded, Esc closes) and, below 900px, folds
+       the whole nav behind the hamburger button. Active state is by URL
+       prefix (see nav.go). */}}
+  <nav class="main" id="main-nav" aria-label="Primary">
+    {{range navGroups}}
+    <div class="nav-group{{if .On}} on{{end}}" data-nav-group>
+      <button type="button" class="nav-trigger{{if .On}} on{{end}}" aria-expanded="false" aria-controls="nav-menu-{{.Key}}" id="nav-trigger-{{.Key}}">
+        <svg aria-hidden="true"><use href="#{{.Icon}}"/></svg><span>{{.Label}}</span><svg class="chev" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </button>
+      <ul class="nav-menu" id="nav-menu-{{.Key}}" aria-labelledby="nav-trigger-{{.Key}}">
+        {{range .Items}}<li><a href="{{.URL}}"{{if .On}} class="on" aria-current="page"{{end}}><svg aria-hidden="true"><use href="#{{.Icon}}"/></svg>{{.Label}}</a></li>{{end}}
+      </ul>
+    </div>
+    {{end}}
   </nav>
   <div class="toolset">
     <a href="/portal/notifications" class="iconbtn" id="notify-bell" aria-label="Notifications" title="Notifications">
@@ -54,6 +54,7 @@
         <button type="submit" class="iconbtn" aria-label="Sign out" title="Sign out"><svg aria-hidden="true"><use href="#i-logout"/></svg></button>
       </form>
     </div>
+    <button type="button" class="iconbtn nav-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Menu" title="Menu"><svg aria-hidden="true"><use href="#i-menu"/></svg></button>
   </div>
 </header>
 {{end}}

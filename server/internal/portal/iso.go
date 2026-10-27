@@ -2,6 +2,7 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,7 +28,7 @@ func isoList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.ISOs.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Per-row reference counts so the operator sees what's in use.
@@ -54,12 +55,12 @@ func isoEdit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		iso, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		render(w, req, r, "iso_form.html", "Edit ISO: "+iso.Name, map[string]any{
@@ -71,7 +72,7 @@ func isoEdit(r Repos) http.HandlerFunc {
 func isoCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("bad form"))
 			return
 		}
 		out, err := r.ISOs.Create(req.Context(), model.ISO{
@@ -93,16 +94,16 @@ func isoUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("bad form"))
 			return
 		}
 		existing, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		existing.Name = req.FormValue("name")
@@ -121,15 +122,11 @@ func isoDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-		if err := r.ISOs.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/isos", http.StatusFound)
-			return
-		}
-		flash(w, "ok", "ISO deleted.")
+		name := nameBeforeDelete(req, r, model.KindISO, id)
+		deleteFlash(w, req, model.KindISO, name, r.ISOs.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/isos", http.StatusFound)
 	}
 }
@@ -142,17 +139,17 @@ func isoUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		iso, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		mr, err := req.MultipartReader()
 		if err != nil {
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var n int64
@@ -206,11 +203,11 @@ func isoExtract(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if _, err := r.ISOs.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		payload.StartPrepareAsync(r.Blobs, r.ISOs, id)
@@ -225,7 +222,7 @@ func isoPrepStatus(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -31,7 +31,7 @@ func imageList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		images, err := r.Images.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Build a name map for ISO / Unattend / Loadout / parent image so
@@ -128,7 +128,7 @@ func imageEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		im, err := r.Images.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		imageFormFor(r, im, false)(w, req)
@@ -264,11 +264,8 @@ func saveSetupLockFromForm(r Repos, req *http.Request, imageID model.ID) error {
 func imageDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Images.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindImage, id)
+		deleteFlash(w, req, model.KindImage, name, r.Images.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/images", http.StatusFound)
 	}
 }
@@ -317,7 +314,7 @@ func imageResolved(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		res, err := r.Resolver.Resolve(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "image_resolved.html", "Resolved configuration", map[string]any{
@@ -337,7 +334,7 @@ func imageGroupList(r Repos) http.HandlerFunc {
 			}
 		}
 		render(w, req, r, "image_group_list.html", "Image Groups", map[string]any{
-			"Groups":   groups,
+			"Groups":    groups,
 			"GroupRefs": grpRefs,
 		})
 	}
@@ -400,11 +397,8 @@ func imageGroupDelete(r Repos) http.HandlerFunc {
 			return
 		}
 		id, _ := pathID(req)
-		if err := r.ImageGroups.Delete(req.Context(), id); err != nil {
-			flash(w, "err", "Delete group failed: "+err.Error())
-		} else {
-			flash(w, "ok", "Group deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindImageGroup, id)
+		deleteFlash(w, req, model.KindImageGroup, name, r.ImageGroups.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 	}
 }

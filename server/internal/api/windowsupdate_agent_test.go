@@ -114,12 +114,13 @@ func TestAgentSelfEnrichedUpdateJobs(t *testing.T) {
 	}
 
 	// The hand-off is audited so operators can see jobs reached the
-	// machine even when its agent logs nothing.
+	// machine even when its agent logs nothing. The actor is the SMBIOS UUID
+	// (like every machine-originated row) so the Logs page names the machine.
 	events, err := repos.Logs.Search(context.Background(), model.LogSearch{Action: "update.jobs.claimed"})
 	if err != nil || len(events) != 1 {
 		t.Fatalf("claim audit events: %v %+v", err, events)
 	}
-	if events[0].Actor != m.AgentID || !bytes.Contains([]byte(events[0].Fields), []byte("KB5034441")) {
+	if events[0].Actor != m.SystemUUID || !bytes.Contains([]byte(events[0].Fields), []byte("KB5034441")) {
 		t.Errorf("claim audit event = %+v", events[0])
 	}
 }

@@ -2,7 +2,7 @@
 {{$m := .Data.M}}
 {{$b := .Data.Binding}}
 <div class="toolbar">
-  <h2>Machine <code class="toolbar-code">{{slice $m.SystemUUID 0 8}}…</code></h2>
+  <h2>{{with .Data.Display}}{{.Name}}{{if .RenamingFrom}} <span class="rename-hint small muted" title="The agent still reports {{.RenamingFrom}}; the desired name applies on the next rename or re-image">renaming from {{.RenamingFrom}}</span>{{end}}{{end}}</h2>
   <div class="right">
     <a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a>
     <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
@@ -53,17 +53,18 @@
 </div>
 
 <dl class="kv">
-  <dt>Name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
+  <dt>Reported name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
+  {{if and $b.MachineName (ne $b.MachineName $m.ReportedName)}}<dt>Desired name</dt><dd>{{$b.MachineName}}{{if .Data.Display.RenamingFrom}} <span class="small muted">(applies on the next rename or re-image)</span>{{end}}</dd>{{end}}
   {{if $m.ADDistinguishedName}}<dt>AD location</dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
-  {{$adl := adJoinLabel $m.ADJoinStatus}}{{if $adl}}<dt>AD join</dt><dd><span class="badge {{adJoinBadgeClass $m.ADJoinStatus}}">{{$adl}}</span>{{if $m.ADJoinDetail}} <span class="small muted">{{$m.ADJoinDetail}}</span>{{end}}{{if $m.ADJoinReportedAt}} <span class="small muted">· reported {{formatTime $m.ADJoinReportedAt.UTC}}</span>{{end}}</dd>{{end}}
+  {{$adl := adJoinLabel $m.ADJoinStatus}}{{if $adl}}<dt>AD join</dt><dd><span class="badge {{adJoinBadgeClass $m.ADJoinStatus}}">{{$adl}}</span>{{if $m.ADJoinDetail}} <span class="small muted">{{$m.ADJoinDetail}}</span>{{end}}{{if $m.ADJoinReportedAt}} <span class="small muted">· reported {{timeAgo $m.ADJoinReportedAt}}</span>{{end}}</dd>{{end}}
   <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
   <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
   <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
   <dt>AutoDeploy ID</dt><dd><code>{{$m.AgentID}}</code></dd>
   <dt>BIOS</dt><dd>{{$m.BIOSVendor}} {{$m.BIOSVersion}}</dd>
   <dt>Board</dt><dd>{{$m.BoardManufacturer}} {{$m.BoardProduct}} ({{$m.BoardSerial}})</dd>
-  <dt>First seen</dt><dd>{{formatTime $m.FirstSeen}}</dd>
-  <dt>Last seen</dt><dd>{{formatTime $m.LastSeen}}</dd>
+  <dt>First seen</dt><dd>{{timeAbs $m.FirstSeen}}</dd>
+  <dt>Last seen</dt><dd>{{timeAbs $m.LastSeen}}</dd>
 </dl>
 
 {{with $m.Hardware}}
@@ -156,9 +157,9 @@
     <tbody>
       {{range .Data.History}}
       <tr>
-        <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{formatTime .StartedAt}}</td>
-        <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
-        <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{timeAgo .StartedAt}}</td>
+        <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
+        <td>{{entityLink "image" .ImageID}}</td>
         <td class="small muted">{{if .Phase}}{{.Phase}}{{else}}—{{end}}</td>
         <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
         <td class="small">{{.Notes}}</td>
@@ -183,8 +184,8 @@
     <tbody>
       {{range .Data.Reimages}}
       <tr>
-        <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{formatTime .CreatedAt}}</td>
-        <td>{{if .ImageID}}<code>#{{derefID .ImageID}}</code>{{else}}<span class="muted">bound image</span>{{end}}</td>
+        <td class="small muted" data-sort-value="{{.CreatedAt.Unix}}">{{timeAgo .CreatedAt}}</td>
+        <td>{{if .ImageID}}{{entityLink "image" .ImageID}}{{else}}<span class="muted">bound image</span>{{end}}</td>
         <td>{{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{else}}<span class="muted">—</span>{{end}}</td>
       </tr>
       {{end}}
@@ -204,9 +205,9 @@
     {{range .Data.Detected}}
     {{$pid := .SoftwarePackageID}}
     <tr>
-      <td>{{range $pkgs}}{{if eq .ID $pid}}<strong>{{.Name}}</strong>{{end}}{{end}} <span class="small muted">#{{int64 $pid}}</span></td>
+      <td>{{entityLink "software" $pid}}</td>
       <td>{{if .Detected}}<span class="badge ok"><svg><use href="#i-check"/></svg>present</span>{{else}}<span class="badge bad">absent</span>{{end}}</td>
-      <td class="small muted" data-sort-value="{{.LastEvaluatedAt.Unix}}">{{formatTime .LastEvaluatedAt}}</td>
+      <td class="small muted" data-sort-value="{{.LastEvaluatedAt.Unix}}">{{timeAgo .LastEvaluatedAt}}</td>
     </tr>
     {{end}}
   </tbody>
@@ -226,7 +227,7 @@
     <tr>
       <td><strong>{{.KBNumber}}</strong></td>
       <td><span class="badge {{if eq .Status "installed"}}ok{{else if eq .Status "pending"}}warn{{else if eq .Status "failed"}}bad{{else}}{{end}}">{{.Status}}</span></td>
-      <td class="small muted" data-sort-value="{{.ReportedAt.Unix}}">{{formatTime .ReportedAt}}</td>
+      <td class="small muted" data-sort-value="{{.ReportedAt.Unix}}">{{timeAgo .ReportedAt}}</td>
     </tr>
     {{end}}
   </tbody>

@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,7 +37,7 @@ func storageForm(r Repos) http.HandlerFunc {
 func storageSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {

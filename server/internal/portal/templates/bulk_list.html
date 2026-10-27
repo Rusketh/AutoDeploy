@@ -30,9 +30,9 @@
     {{range .Data.Ops}}
     {{$st := .Status}}
     <tr>
-      <td class="num"><code>#{{int64 .ID}}</code></td>
+      <td class="num"><code>{{idLabel .ID}}</code></td>
       <td>
-        <a href="/portal/bulk/{{int64 .ID}}"><strong>{{if .Name}}{{.Name}}{{else}}{{.Action}}{{end}}</strong></a>
+        <a href="/portal/bulk/{{int64 .ID}}"><strong>{{if .Name}}{{.Name}}{{else}}{{entityName "bulk" .ID}}{{end}}</strong></a>
         {{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}
       </td>
       <td><span class="badge accent">{{.Action}}</span></td>
@@ -56,7 +56,7 @@
         {{else if eq .ScheduleKind "recurring"}}<svg class="icon-inline"><use href="#i-repeat"/></svg> recurring
         {{else}}now{{end}}
       </td>
-      <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{formatTime (deref .NextRunAt)}}{{else}}—{{end}}</td>
+      <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{timeAgo .NextRunAt}}{{else}}—{{end}}</td>
       <td class="small">{{.CreatedBy}}</td>
       <td class="actions">
         <a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a>

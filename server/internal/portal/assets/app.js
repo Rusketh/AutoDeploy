@@ -413,7 +413,8 @@
               '<span class="lvl">' + escapeHTML(ev.level || '') + '</span>' +
               '<span class="mc">' + (machine ? escapeHTML(machine) : '<span class="muted">—</span>') + '</span>' +
               '<span class="msg"><code>' + escapeHTML(ev.component) + '</code> ' + escapeHTML(ev.action) +
-              (ev.target ? ' <span class="muted">(' + escapeHTML(ev.target) + ')</span>' : '') + '</span>';
+              (ev.target ? ' <span class="muted" title="' + escapeHTML(ev.target) + '">(' +
+                escapeHTML(ev.target_name || ev.target) + ')</span>' : '') + '</span>';
             tail.insertBefore(row, tail.firstChild);
           });
           // Cap visible rows so the page doesn't grow forever.
@@ -518,6 +519,84 @@
         form.submit();
       });
     });
+  })();
+
+  // ---- Grouped primary nav --------------------------------------------
+  // Each group label is a button controlling its menu (aria-expanded).
+  // Click/Enter/Space toggles, ArrowDown opens and focuses the first link,
+  // Up/Down move within an open menu, Esc closes and returns focus, and a
+  // click elsewhere closes. Below 900px the whole nav folds behind the
+  // hamburger (.nav-toggle) and every group is listed open.
+  (function initNav() {
+    const header = document.querySelector('header.app');
+    const nav = document.getElementById('main-nav');
+    if (!header || !nav) return;
+    const narrow = window.matchMedia('(max-width: 900px)');
+    const groups = Array.prototype.slice.call(nav.querySelectorAll('[data-nav-group]'));
+    function trigger(g) { return g.querySelector('.nav-trigger'); }
+    function links(g) { return Array.prototype.slice.call(g.querySelectorAll('.nav-menu a')); }
+    function setOpen(g, open) {
+      g.classList.toggle('open', open);
+      trigger(g).setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    function closeAll(except) { groups.forEach(function (g) { if (g !== except) setOpen(g, false); }); }
+    groups.forEach(function (g) {
+      const btn = trigger(g);
+      btn.addEventListener('click', function () {
+        if (narrow.matches) return; // every group is shown open on phones
+        const open = !g.classList.contains('open');
+        closeAll(g);
+        setOpen(g, open);
+      });
+      btn.addEventListener('keydown', function (e) {
+        if (narrow.matches || e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        e.stopPropagation(); // the group's own Up/Down handler must not also move focus
+        closeAll(g);
+        setOpen(g, true);
+        const first = links(g)[0];
+        if (first) first.focus();
+      });
+      g.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && g.classList.contains('open')) {
+          setOpen(g, false);
+          btn.focus();
+          return;
+        }
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        const items = links(g);
+        const i = items.indexOf(document.activeElement);
+        if (i < 0) return;
+        e.preventDefault();
+        const next = items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length];
+        if (next) next.focus();
+      });
+      // Tabbing out of a group closes it.
+      g.addEventListener('focusout', function (e) {
+        if (!narrow.matches && !g.contains(e.relatedTarget)) setOpen(g, false);
+      });
+    });
+    document.addEventListener('click', function (e) {
+      if (!nav.contains(e.target)) closeAll(null);
+    });
+    const toggle = header.querySelector('.nav-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', function () {
+        const open = !header.classList.contains('nav-open');
+        header.classList.toggle('nav-open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        groups.forEach(function (g) { trigger(g).setAttribute('aria-expanded', open ? 'true' : 'false'); });
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && header.classList.contains('nav-open')) {
+          header.classList.remove('nav-open');
+          toggle.setAttribute('aria-expanded', 'false');
+          toggle.focus();
+        }
+      });
+    }
+    // Leaving phone width resets the per-group state.
+    narrow.addEventListener('change', function () { closeAll(null); });
   })();
 
   // ---- Keyboard shortcuts -------------------------------------------

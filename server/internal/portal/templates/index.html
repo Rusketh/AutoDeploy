@@ -170,10 +170,10 @@
       {{range .Data.TopMachines}}
       <li>
         <a href="/portal/machines/{{int64 .ID}}">
-          <span class="machine-name">{{if .SystemProduct}}{{.SystemProduct}}{{else}}<span class="muted">unidentified</span>{{end}}</span>
-          <span class="machine-meta">{{.SystemManufacturer}} · {{.SystemSerial}}</span>
+          {{$n := machineName .ID}}<span class="machine-name">{{if $n.Unnamed}}<span class="muted">{{$n.Name}}</span>{{else}}{{$n.Name}}{{end}}</span>
+          <span class="machine-meta">{{if .SystemProduct}}{{.SystemManufacturer}} {{.SystemProduct}}{{else}}unidentified hardware{{end}}{{if .SystemSerial}} · {{.SystemSerial}}{{end}}</span>
         </a>
-        <span class="small muted nowrap">{{formatTime .LastSeen}}</span>
+        <span class="small muted nowrap">{{timeAgo .LastSeen}}</span>
       </li>
       {{end}}
     </ul>
@@ -196,11 +196,11 @@
       <tbody>
         {{range .Data.Events}}
         <tr>
-          <td class="small muted nowrap">{{formatTime .OccurredAt}}</td>
+          <td class="small muted nowrap">{{timeAgo .OccurredAt}}</td>
           <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}{{end}}">{{.Level}}</span></td>
           <td><code>{{.Component}}</code></td>
           <td><code>{{.Action}}</code></td>
-          <td class="small muted">{{.Target}}</td>
+          <td class="small">{{if .Target}}{{logTarget .}}{{else if .MachineName}}{{.MachineName}}{{else}}<span class="muted">—</span>{{end}}</td>
         </tr>
         {{end}}
       </tbody>

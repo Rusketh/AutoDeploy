@@ -32,7 +32,7 @@ func wuList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		updates, err := r.Updates.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		compliance, _ := r.Updates.AllComplianceSummaries(req.Context())
@@ -54,7 +54,7 @@ func wuFormNew(r Repos) http.HandlerFunc {
 func wuCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		u := model.WindowsUpdate{
@@ -72,7 +72,7 @@ func wuCreate(r Repos) http.HandlerFunc {
 		}
 		created, err := r.Updates.Create(req.Context(), u)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		flash(w, "ok", "Update "+created.KBNumber+" created")
@@ -94,12 +94,12 @@ func wuFormEdit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		u, err := r.Updates.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		render(w, req, r, "windowsupdate_form.html", "Edit "+u.KBNumber, map[string]any{
@@ -113,16 +113,16 @@ func wuSave(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		u, err := r.Updates.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		u.KBNumber = strings.TrimSpace(req.FormValue("kb_number"))
@@ -137,7 +137,7 @@ func wuSave(r Repos) http.HandlerFunc {
 			u.SupersedesJSON = "[]"
 		}
 		if err := r.Updates.Update(req.Context(), u); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		flash(w, "ok", "Update "+u.KBNumber+" saved")
@@ -149,14 +149,15 @@ func wuDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
+		name := nameBeforeDelete(req, r, model.KindUpdate, id)
 		if err := r.Updates.Delete(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
-		flash(w, "ok", "Update deleted")
+		deleteFlash(w, req, model.KindUpdate, name, nil)
 		http.Redirect(w, req, "/portal/updates", http.StatusFound)
 	}
 }
@@ -165,17 +166,17 @@ func wuCompliance(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		u, err := r.Updates.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		summary, err := r.Updates.ComplianceForUpdate(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Per-machine detail for the compliance view.
@@ -185,20 +186,19 @@ func wuCompliance(r Repos) http.HandlerFunc {
 			Name    string
 			Status  string
 		}
+		// One query for every machine's status on this KB and one for names,
+		// instead of two queries per machine.
+		byMachine, _ := r.Updates.StatusesForKB(req.Context(), u.KBNumber)
+		names := namesFor(req, r)
 		var details []machineStatus
 		for _, m := range machines {
-			statuses, _ := r.Updates.ListMachineStatuses(req.Context(), m.ID)
 			st := "unknown"
-			for _, s := range statuses {
-				if s.KBNumber == u.KBNumber {
-					st = s.Status
-					break
-				}
+			if s, ok := byMachine[m.ID]; ok {
+				st = s
 			}
-			bind, _ := r.Inventory.GetBinding(req.Context(), m.ID)
 			details = append(details, machineStatus{
 				Machine: m,
-				Name:    bind.MachineName,
+				Name:    names.Lookup(model.KindMachine, m.ID).Label(m.ID),
 				Status:  st,
 			})
 		}
@@ -213,33 +213,49 @@ func wuCompliance(r Repos) http.HandlerFunc {
 func wuDeployForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		updates, _ := r.Updates.List(req.Context())
+		var groups []model.MachineGroup
+		if r.Groups != nil {
+			groups, _ = r.Groups.List(req.Context())
+		}
 		render(w, req, r, "windowsupdate_deploy.html", "Deploy Updates", map[string]any{
 			"Updates": updates,
+			"Groups":  groups,
 		})
 	}
+}
+
+// formIDs collects positive IDs from a repeated form field. Each value may
+// itself be a comma/space-separated list, so both the picker's repeated
+// machine_ids inputs and the old single "1,2,3" box keep working.
+func formIDs(values []string) []model.ID {
+	var out []model.ID
+	seen := map[model.ID]bool{}
+	for _, v := range values {
+		for _, s := range strings.FieldsFunc(v, func(c rune) bool { return c == ',' || c == ' ' || c == ';' }) {
+			n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+			if err != nil || n <= 0 || seen[model.ID(n)] {
+				continue
+			}
+			seen[model.ID(n)] = true
+			out = append(out, model.ID(n))
+		}
+	}
+	return out
 }
 
 func wuDeployCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-		var updateIDs []model.ID
-		for _, s := range req.Form["update_ids"] {
-			n, err := strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				continue
-			}
-			updateIDs = append(updateIDs, model.ID(n))
-		}
-		var machineIDs []model.ID
-		for _, s := range req.Form["machine_ids"] {
-			n, err := strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				continue
-			}
-			machineIDs = append(machineIDs, model.ID(n))
+		updateIDs := formIDs(req.Form["update_ids"])
+		// machine_ids: repeated hidden inputs from the picker basket, or the
+		// legacy comma-separated "1,2,3" value — formIDs accepts both.
+		machineIDs := formIDs(req.Form["machine_ids"])
+		var groupID model.ID
+		if ids := formIDs(req.Form["group_id"]); len(ids) > 0 {
+			groupID = ids[0]
 		}
 		user, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 		d := model.UpdateDeployment{
@@ -248,6 +264,7 @@ func wuDeployCreate(r Repos) http.HandlerFunc {
 				NameRegex:  strings.TrimSpace(req.FormValue("name_regex")),
 				OU:         strings.TrimSpace(req.FormValue("ou")),
 				Group:      strings.TrimSpace(req.FormValue("group")),
+				GroupID:    groupID,
 				MachineIDs: machineIDs,
 			},
 			OSFilter:  strings.TrimSpace(req.FormValue("os_filter")),
@@ -255,11 +272,16 @@ func wuDeployCreate(r Repos) http.HandlerFunc {
 		}
 		dep, jobs, err := r.Updates.CreateDeployment(req.Context(), d)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs)))
-		flash(w, "ok", "Deployment created")
+		kbs := notify.UpdateKBNumbers(req.Context(), r.Updates, dep.UpdateIDs)
+		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs), kbs...))
+		if len(kbs) > 0 {
+			flash(w, "ok", "Deployment created: "+strings.Join(kbs, ", ")+" to "+strconv.Itoa(len(jobs))+" machine job(s).")
+		} else {
+			flash(w, "ok", "Deployment created")
+		}
 		http.Redirect(w, req, "/portal/update-deployments/"+idStr(dep.ID), http.StatusFound)
 	}
 }
@@ -268,15 +290,17 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		dep, jobs, err := r.Updates.GetDeployment(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
-		// Build lookup maps for display.
+		// Label jobs from the request's name maps: one query for machine
+		// names and one for KB numbers, however many jobs (was two per job).
+		names := namesFor(req, r)
 		type enrichedJob struct {
 			model.UpdateDeploymentJob
 			MachineName string
@@ -285,11 +309,12 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 		enriched := make([]enrichedJob, len(jobs))
 		for i, j := range jobs {
 			enriched[i].UpdateDeploymentJob = j
-			bind, _ := r.Inventory.GetBinding(req.Context(), j.MachineID)
-			enriched[i].MachineName = bind.MachineName
-			if u, uerr := r.Updates.Get(req.Context(), j.UpdateID); uerr == nil {
-				enriched[i].KBNumber = u.KBNumber
-			}
+			enriched[i].MachineName = names.Lookup(model.KindMachine, j.MachineID).Label(j.MachineID)
+			enriched[i].KBNumber = names.Lookup(model.KindUpdate, j.UpdateID).Label(j.UpdateID)
+		}
+		var kbs []string
+		for _, id := range dep.UpdateIDs {
+			kbs = append(kbs, names.Lookup(model.KindUpdate, id).Label(id))
 		}
 		// Summarize job statuses.
 		counts := map[string]int{}
@@ -297,11 +322,16 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 			counts[j.Status]++
 		}
 		targetJSON, _ := json.MarshalIndent(dep.Target, "", "  ")
-		render(w, req, r, "windowsupdate_deployment_detail.html", "Deployment #"+idStr(dep.ID), map[string]any{
+		title := "Update deployment #" + idStr(dep.ID)
+		if len(kbs) > 0 {
+			title = "Deploy " + strings.Join(kbs, ", ")
+		}
+		render(w, req, r, "windowsupdate_deployment_detail.html", title, map[string]any{
 			"Deployment": dep,
 			"Jobs":       enriched,
 			"Counts":     counts,
 			"TargetJSON": string(targetJSON),
+			"KBs":        kbs,
 		})
 	}
 }

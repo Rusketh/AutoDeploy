@@ -38,7 +38,7 @@ func init() {
 func machineGroupMembership(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		gid, _ := strconv.ParseInt(req.FormValue("group_id"), 10, 64)
@@ -80,7 +80,7 @@ func machineDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := r.Inventory.Delete(req.Context(), id); err != nil {
@@ -97,7 +97,7 @@ func machineDelete(r Repos) http.HandlerFunc {
 func machineBulkDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		n := 0
@@ -134,7 +134,7 @@ func machineCSV(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		machines, err := r.Inventory.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Honour the list page's ?group= filter so the export matches what the
@@ -176,20 +176,25 @@ func machineCSV(r Repos) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
 		cw := csv.NewWriter(w)
+		// Columns are append-only so spreadsheets and scripts built on the
+		// old layout keep working: image_name, reported_name and
+		// display_name were added after last_seen.
 		_ = cw.Write([]string{"id", "name", "agent_id", "manufacturer", "product", "serial",
 			"system_uuid", "bios_vendor", "bios_version", "board_manufacturer", "board_product",
-			"image_id", "first_seen", "last_seen"})
+			"image_id", "first_seen", "last_seen", "image_name", "reported_name", "display_name"})
 		for _, m := range machines {
 			b := bindings[m.ID]
-			imageID := ""
+			imageID, imageName := "", ""
 			if b.ImageID != nil {
 				imageID = strconv.FormatInt(int64(*b.ImageID), 10)
+				imageName = imageNames[*b.ImageID]
 			}
 			_ = cw.Write([]string{
 				strconv.FormatInt(int64(m.ID), 10), b.MachineName, m.AgentID,
 				m.SystemManufacturer, m.SystemProduct, m.SystemSerial, m.SystemUUID,
 				m.BIOSVendor, m.BIOSVersion, m.BoardManufacturer, m.BoardProduct,
 				imageID, m.FirstSeen.Format("2006-01-02 15:04:05"), m.LastSeen.Format("2006-01-02 15:04:05"),
+				imageName, m.ReportedName, model.MachineDisplayName(m, b).Name,
 			})
 		}
 		cw.Flush()
@@ -203,7 +208,7 @@ func machineAction(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		action := req.FormValue("action")
@@ -244,7 +249,7 @@ func machineReimageCancel(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := r.Inventory.ClearReimagePending(req.Context(), id); err != nil {
@@ -317,15 +322,17 @@ func machineList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Inventory.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		// For each machine show its name + image (if any). Name prefers the
-		// agent-reported current computer name (reality), falling back to the
-		// binding's desired name for machines that haven't reported yet.
+		// For each machine show its name + image (if any). Name follows the
+		// shared model.MachineDisplayName precedence (desired name, then the
+		// agent-reported name, then the short UUID); Display also carries the
+		// pending-rename hint.
 		type row struct {
 			Machine        model.MachineRecord
 			Name           string
+			Display        model.MachineName
 			ImageName      string
 			OS             string
 			ReimagePending bool
@@ -439,12 +446,13 @@ func machineList(r Repos) http.HandlerFunc {
 			if b.ImageID != nil {
 				imgName = imageNames[*b.ImageID]
 			}
-			name := m.ReportedName
-			if name == "" {
-				name = b.MachineName
+			disp := model.MachineDisplayName(m, b)
+			name := disp.Name
+			if disp.Unnamed {
+				name = ""
 			}
 			rows = append(rows, row{
-				Machine: m, Name: name, ImageName: imgName,
+				Machine: m, Name: name, Display: disp, ImageName: imgName,
 				OS:             osCaptions[m.ID],
 				ReimagePending: reimaging[m.ID],
 			})
@@ -522,10 +530,7 @@ func sortMachineRecords(v []model.MachineRecord, key, dir string,
 		case "uuid":
 			return m.SystemUUID
 		case "name":
-			if m.ReportedName != "" {
-				return m.ReportedName
-			}
-			return b.MachineName
+			return model.MachineDisplayName(m, b).Name
 		case "model":
 			return m.SystemManufacturer + " " + m.SystemProduct
 		case "serial":
@@ -643,12 +648,12 @@ func machineDetail(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		m, err := r.Inventory.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		binding, _ := r.Inventory.GetBinding(req.Context(), id)
@@ -736,8 +741,10 @@ func machineDetail(r Repos) http.HandlerFunc {
 			}
 			reimagePending = info
 		}
-		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
+		display := model.MachineDisplayName(m, binding)
+		render(w, req, r, "machine_detail.html", display.Name, map[string]any{
 			"ReimagePending": reimagePending,
+			"Display":        display,
 			"M":              m, "Binding": binding, "History": historyRows,
 			"Reimages": reimages,
 			"Detected": detected, "Packages": pkgs,
@@ -762,7 +769,7 @@ func machineDeployStatus(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -797,7 +804,7 @@ func machineBindingSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		b := model.MachineBinding{

@@ -35,8 +35,8 @@
     <tr>
       <td><code>{{.Filename}}</code></td>
       <td class="small muted">{{if .Description}}<span class="badge accent">{{.Description}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="num small muted">{{.Size}}</td>
-      <td class="small muted">{{formatTime .Modified}}</td>
+      <td class="num small muted nowrap" data-sort-value="{{.Size}}" title="{{.Size}} bytes">{{humanBytes .Size}}</td>
+      <td class="small muted">{{timeAgo .Modified}}</td>
       <td class="actions">
         <a class="btn sm" href="/portal/downloads/file/{{.Filename}}" download><svg><use href="#i-ext"/></svg>Download</a>
       </td>

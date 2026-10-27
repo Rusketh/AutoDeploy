@@ -58,11 +58,17 @@ func (w *OfflineWatcher) runOnce(ctx context.Context) {
 	if len(machines) == 0 {
 		return
 	}
+	// One fleet-wide name load per tick so titles use the same display name
+	// (desired name, then reported, then short UUID) as the portal.
+	names, nerr := w.Inventory.NameIndex(ctx)
+	if nerr != nil {
+		w.log().Warn("notify.offline.names.fail", slog.String("error", nerr.Error()))
+	}
 	ids := make([]model.ID, 0, len(machines))
 	for _, m := range machines {
-		name := m.ReportedName
-		if name == "" {
-			name = fmt.Sprintf("machine #%d", int64(m.ID))
+		name := model.MachineDisplayName(m, model.MachineBinding{}).Name
+		if n, ok := names.ByID[m.ID]; ok {
+			name = n.Name
 		}
 		w.Emitter.Emit(ctx, Event{
 			Name:     EventMachineOffline,

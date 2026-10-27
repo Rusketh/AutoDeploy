@@ -28,7 +28,7 @@ func unattendList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Unattend.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		refs := map[model.ID]int{}
@@ -73,12 +73,12 @@ func unattendEdit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		ua, err := r.Unattend.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		unattendForm(r, ua, false)(w, req)
@@ -108,7 +108,7 @@ func unattendUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		ua, err := buildUnattendFromForm(req)
@@ -130,11 +130,8 @@ func unattendUpdate(r Repos) http.HandlerFunc {
 func unattendDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Unattend.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindUnattend, id)
+		deleteFlash(w, req, model.KindUnattend, name, r.Unattend.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/unattends", http.StatusFound)
 	}
 }
@@ -167,17 +164,17 @@ func unattendPreview(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		ua, err := r.Unattend.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		s, err := unattend.Parse(ua.SettingsJSON)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		x, err := unattend.Generate(s)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "unattend_preview.html", "unattend.xml — "+ua.Name, map[string]any{

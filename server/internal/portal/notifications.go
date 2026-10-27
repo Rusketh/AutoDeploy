@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -109,11 +110,11 @@ func notifySettingsPage(r Repos) http.HandlerFunc {
 func notifySettingsSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 
@@ -213,7 +214,7 @@ func notifyPreferencesSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		u, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 
@@ -263,7 +264,7 @@ func webhookFormPage(r Repos, edit bool) http.HandlerFunc {
 func webhookCreateSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		wh := webhookFromForm(req)
@@ -282,7 +283,7 @@ func webhookUpdateSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(req.PathValue("id"), 10, 64)
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		wh := webhookFromForm(req)

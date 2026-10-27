@@ -12,7 +12,7 @@ import (
 
 // bulkFuncs is a minimal funcmap covering the helpers the bulk templates use.
 func bulkFuncs() template.FuncMap {
-	return template.FuncMap{
+	return withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"deref":      func(p *time.Time) time.Time { return *p },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
@@ -24,7 +24,7 @@ func bulkFuncs() template.FuncMap {
 			}
 			return m
 		},
-	}
+	})
 }
 
 func renderBulk(t *testing.T, page string, data map[string]any) string {

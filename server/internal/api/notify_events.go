@@ -14,19 +14,15 @@ import (
 // is always best-effort and asynchronous (the emitter runs its own worker
 // pool); a handler never fails because a notification couldn't be produced.
 
-// machineDisplayName resolves the friendliest label we have for a machine:
-// its desired binding name, then the agent-reported Windows name, then the
-// record id.
+// machineDisplayName resolves the label a machine is shown under, using the
+// shared model.MachineDisplayName precedence: its desired binding name, then
+// the agent-reported Windows name, then the short SMBIOS UUID.
 func machineDisplayName(ctx context.Context, r Repos, m model.MachineRecord) string {
+	var b model.MachineBinding
 	if r.Inventory != nil {
-		if b, err := r.Inventory.GetBinding(ctx, m.ID); err == nil && b.MachineName != "" {
-			return b.MachineName
-		}
+		b, _ = r.Inventory.GetBinding(ctx, m.ID)
 	}
-	if m.ReportedName != "" {
-		return m.ReportedName
-	}
-	return fmt.Sprintf("machine #%d", int64(m.ID))
+	return model.MachineDisplayName(m, b).Name
 }
 
 func machineLink(id model.ID) string {
@@ -39,15 +35,26 @@ func emitFirstSeen(req *http.Request, r Repos, m model.MachineRecord) {
 	if !m.FirstContact {
 		return
 	}
-	label := m.SystemUUID
-	if m.SystemManufacturer != "" || m.SystemProduct != "" {
-		label = fmt.Sprintf("%s %s (%s)", m.SystemManufacturer, m.SystemProduct, m.SystemUUID)
+	// Lead with the display name (an imported asset may already have named
+	// the machine); the make/model and full UUID follow for identification.
+	label := machineDisplayName(req.Context(), r, m)
+	hw := strings.TrimSpace(m.SystemManufacturer + " " + m.SystemProduct)
+	if hw != "" {
+		label = fmt.Sprintf("%s (%s)", label, hw)
+	}
+	body := "A machine reported for the first time and was added to inventory."
+	if m.SystemUUID != "" {
+		body += " SMBIOS UUID " + m.SystemUUID
+		if m.SystemSerial != "" {
+			body += ", serial " + m.SystemSerial
+		}
+		body += "."
 	}
 	r.Emitter.Emit(req.Context(), notify.Event{
 		Name:     notify.EventMachineFirstSeen,
 		Severity: notify.SevInfo,
 		Title:    "New machine seen: " + label,
-		Body:     "A machine reported for the first time and was added to inventory.",
+		Body:     body,
 		Link:     machineLink(m.ID),
 		Actor:    "system",
 	})

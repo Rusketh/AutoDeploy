@@ -179,18 +179,18 @@ func (r *SoftwareLoadoutRepo) Delete(ctx context.Context, id ID) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var images, children int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM image WHERE loadout_id=?`, id).Scan(&images); err != nil {
+	images, err := queryNames(ctx, tx, `SELECT name FROM image WHERE loadout_id=? ORDER BY name`, id)
+	if err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM software_loadout WHERE parent_id=?`, id).Scan(&children); err != nil {
+	children, err := queryNames(ctx, tx, `SELECT name FROM software_loadout WHERE parent_id=? ORDER BY name`, id)
+	if err != nil {
 		return err
 	}
-	refs := images + children
-	if refs > 0 {
-		return fmt.Errorf("loadout %d: %w (referenced by %d objects)", id, ErrInUse, refs)
+	if refs := len(images) + len(children); refs > 0 {
+		return &InUseError{Kind: "loadout", ID: id, Name: rowName(ctx, tx, "software_loadout", id),
+			Refs:   []InUseRef{{Noun: "image", Names: images}, {Noun: "child loadout", Names: children}},
+			legacy: fmt.Sprintf("referenced by %d objects", refs)}
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM software_loadout WHERE id=?`, id)
 	if err != nil {

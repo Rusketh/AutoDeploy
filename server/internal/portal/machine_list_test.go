@@ -156,7 +156,7 @@ func TestMachineSortColumns(t *testing.T) {
 // empty states against template regressions.
 func renderMachineList(t *testing.T, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"add":        func(a, b int) int { return a + b },
@@ -178,7 +178,7 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 			}
 			return "bad"
 		},
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 		"templates/machine_list.html", "templates/_pagination.html")
 	if err != nil {
@@ -200,6 +200,7 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 type machineListRowT struct {
 	Machine        model.MachineRecord
 	Name           string
+	Display        model.MachineName
 	ImageName      string
 	BLSet          bool
 	OS             string
@@ -219,7 +220,7 @@ func TestMachineListRender(t *testing.T) {
 	}
 	row := machineListRowT{Machine: model.MachineRecord{
 		ID: 1, SystemUUID: "abcd1234-0000-0000-0000-000000000000", LastSeen: time.Now(),
-	}}
+	}, Display: model.MachineName{Name: "LAB-01", RenamingFrom: "PC-0001"}}
 
 	t.Run("filter box carries the query; counts show match total", func(t *testing.T) {
 		out := renderMachineList(t, map[string]any{
@@ -243,6 +244,12 @@ func TestMachineListRender(t *testing.T) {
 		// not the visible page).
 		if !strings.Contains(out, `class="sortable`) || !strings.Contains(out, "sort=model") {
 			t.Errorf("want server-sort header links; got:\n%s", out)
+		}
+		// The machine's name (not its UUID) is the link to the machine, with
+		// the pending-rename hint beside it.
+		if !strings.Contains(out, `<a href="/portal/machines/1"><strong>LAB-01</strong></a>`) ||
+			!strings.Contains(out, "renaming from PC-0001") {
+			t.Errorf("want name as the machine link plus rename hint; got:\n%s", out)
 		}
 	})
 

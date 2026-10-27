@@ -106,13 +106,14 @@ func (r *UnattendRepo) Delete(ctx context.Context, id ID) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var refs int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM image WHERE unattend_id=?`, id).Scan(&refs); err != nil {
+	refs, err := queryNames(ctx, tx, `SELECT name FROM image WHERE unattend_id=? ORDER BY name`, id)
+	if err != nil {
 		return err
 	}
-	if refs > 0 {
-		return fmt.Errorf("unattend %d: %w (referenced by %d images)", id, ErrInUse, refs)
+	if len(refs) > 0 {
+		return &InUseError{Kind: "unattend", ID: id, Name: rowName(ctx, tx, "unattend", id),
+			Refs:   []InUseRef{{Noun: "image", Names: refs}},
+			legacy: fmt.Sprintf("referenced by %d images", len(refs))}
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM unattend WHERE id=?`, id)
 	if err != nil {

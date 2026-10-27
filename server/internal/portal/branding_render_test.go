@@ -14,14 +14,14 @@ import (
 // html/template's "#ZgotmplZ" URL-sanitiser sentinel (which is why pasted /
 // uploaded logos never showed). Fails against the pre-fix template.
 func TestBrandingLogoPreviewRenders(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"brandLogo": func(s string) template.URL {
 			if v, ok := branding.SafeLogoURL(s); ok {
 				return template.URL(v)
 			}
 			return template.URL("")
 		},
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/settings_branding.html")
 	if err != nil {
 		t.Fatalf("parse settings_branding.html: %v", err)

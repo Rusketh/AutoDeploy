@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,11 +60,11 @@ func adForm(r Repos) http.HandlerFunc {
 func adSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		// "disable" button — clear every AD setting.
@@ -103,11 +104,11 @@ func adSubmit(r Repos) http.HandlerFunc {
 func adTest(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		stored := r.Runtime.ADConfig(req.Context())
@@ -171,11 +172,11 @@ func opsForm(r Repos) http.HandlerFunc {
 func opsSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if v := req.FormValue("retention_days"); v != "" {

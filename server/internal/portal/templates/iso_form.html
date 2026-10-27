@@ -46,7 +46,7 @@
   Current storage path:
   {{if $iso.StoragePath}}
     <code>{{$iso.StoragePath}}</code><button class="copy" data-copy="{{$iso.StoragePath}}" aria-label="Copy path"><svg><use href="#i-copy"/></svg></button>
-    <span class="badge">{{$iso.SizeBytes}} bytes</span>
+    <span class="badge" title="{{$iso.SizeBytes}} bytes">{{humanBytes $iso.SizeBytes}}</span>
   {{else}}<em>nothing uploaded yet</em>{{end}}
 </p>
 

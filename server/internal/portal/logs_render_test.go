@@ -15,9 +15,9 @@ import (
 // name (with a raw-actor fallback), and the level pills + time-range presets are
 // present for the client-side controller to wire up.
 func TestLogsPageRenders(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/logs.html")
 	if err != nil {
 		t.Fatalf("parse logs.html: %v", err)

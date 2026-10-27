@@ -3,6 +3,7 @@ package portal
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -117,7 +118,7 @@ func pxeDownload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		name := req.PathValue("name")
 		if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
-			http.Error(w, "bad filename", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("bad filename"))
 			return
 		}
 		dir := pxeIPXEDir(r)
@@ -125,16 +126,16 @@ func pxeDownload(r Repos) http.HandlerFunc {
 		f, err := os.Open(abs)
 		if err != nil {
 			if os.IsNotExist(err) {
-				http.Error(w, "not found", http.StatusNotFound)
+				failPage(w, req, r, http.StatusNotFound, errors.New("not found"))
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		defer f.Close()
 		info, err := f.Stat()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")

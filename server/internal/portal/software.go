@@ -3,6 +3,7 @@ package portal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -219,7 +220,7 @@ func softwareList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Software.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		refs := map[model.ID]int{}
@@ -344,7 +345,7 @@ func softwareEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		p, err := r.Software.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		softwareForm(r, p, false)(w, req)
@@ -536,7 +537,7 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 		}
 		existing, err := r.Software.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		p.ID = id
@@ -558,11 +559,8 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 func softwareDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Software.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindSoftware, id)
+		deleteFlash(w, req, model.KindSoftware, name, r.Software.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/software", http.StatusFound)
 	}
 }
@@ -575,7 +573,7 @@ func softwareUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if _, err := r.Software.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		ctx := req.Context()
@@ -584,7 +582,7 @@ func softwareUpload(r Repos) http.HandlerFunc {
 		if err != nil {
 			logging.Event(ctx, "software.upload.bad_request", actor, target,
 				slog.String("error", err.Error()))
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var uploaded int
@@ -697,7 +695,7 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if _, err := r.Software.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		ctx := req.Context()
@@ -706,7 +704,7 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 		if err != nil {
 			logging.Event(ctx, "software.bundle.bad_request", actor, target,
 				slog.String("error", err.Error()))
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var uploaded int
@@ -796,7 +794,7 @@ func softwareUploadDelete(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		pkg, err := r.Software.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		if pkg.StoragePath == "" {

@@ -206,17 +206,78 @@ header.app .brand a {
 header.app .brand a:hover { text-decoration: none; color: var(--accent); }
 .logo { height: 24px; width: auto; }
 
+/* Primary nav: four groups (Fleet / Build / Patching / System). Without JS
+   (no html.js) each group is a label followed by its links in a row, so
+   every page stays reachable. With JS each label is a dropdown button. */
 nav.main {
   display: flex;
-  gap: 1px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  gap: var(--sp-1);
   flex-wrap: nowrap;
   min-width: 0;
+  align-items: center;
 }
-nav.main::-webkit-scrollbar { height: 4px; }
-nav.main::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.nav-group { position: relative; display: flex; align-items: center; gap: 1px; flex-shrink: 0; }
+.nav-trigger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--r);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  cursor: default;
+  position: relative;
+}
+.nav-trigger svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-trigger .chev { width: 14px; height: 14px; display: none; transition: transform var(--tx-fast); }
+.nav-menu { list-style: none; margin: 0; padding: 0; display: flex; gap: 1px; }
+.nav-menu li { margin: 0; display: flex; }
+html.js .nav-trigger { cursor: pointer; }
+html.js .nav-trigger .chev { display: inline-block; }
+html.js .nav-trigger:hover,
+html.js .nav-trigger[aria-expanded="true"] { background: var(--surface-2); color: var(--fg); }
+html.js .nav-trigger[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.nav-trigger.on { color: var(--accent); }
+html.js .nav-trigger.on { background: var(--accent-soft); }
+html.js .nav-trigger.on::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 25%;
+  right: 25%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+html.js .nav-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 210px;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+}
+html.js .nav-group.open .nav-menu { display: flex; }
+html.js .nav-menu a { display: flex; width: 100%; padding: 0.5rem 0.7rem; font-size: var(--fs); }
+html.js .nav-menu a.on::after { display: none; }
+.iconbtn.nav-toggle { display: none; }
+/* No-JS fallback: every link is visible, so let the rows wrap. */
+html:not(.js) header.app { height: auto; padding-top: var(--sp-1); padding-bottom: var(--sp-1); }
+html:not(.js) nav.main { flex-wrap: wrap; row-gap: 2px; }
+html:not(.js) .nav-group { flex-wrap: wrap; }
+html:not(.js) .nav-trigger { padding-right: 0.2rem; }
 nav.main a {
   color: var(--fg-muted);
   padding: 0.45rem 0.75rem;
@@ -827,7 +888,22 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
 @media (max-width: 900px) {
   header.app { grid-template-columns: auto 1fr; height: auto; padding: var(--sp-3) var(--sp-4); }
   header.app .toolset { grid-column: 1 / -1; justify-content: flex-end; }
-  nav.main { grid-column: 1 / -1; }
+  nav.main { grid-column: 1 / -1; flex-wrap: wrap; }
+  .nav-group, .nav-menu { flex-wrap: wrap; }
+  /* With JS the nav folds behind the hamburger: brand left, tools right,
+     and the opened nav below as a full-width list of every group. */
+  html.js header.app { grid-template-columns: auto 1fr; }
+  html.js header.app .toolset { grid-column: 2; grid-row: 1; gap: var(--sp-1); }
+  html.js .iconbtn.nav-toggle { display: inline-flex; }
+  html.js header.app .user-link { display: none; }
+  html.js nav.main { display: none; grid-row: 2; flex-direction: column; align-items: stretch; gap: var(--sp-2); padding: var(--sp-2) 0 var(--sp-1); border-top: 1px solid var(--border); }
+  html.js header.app.nav-open nav.main { display: flex; }
+  html.js .nav-group { flex-direction: column; align-items: stretch; flex: none; height: auto; }
+  html.js .nav-trigger { cursor: default; background: none !important; padding: 0.3rem 0.2rem; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em; }
+  html.js .nav-trigger::after, html.js .nav-trigger .chev { display: none !important; }
+  html.js .nav-menu, html.js .nav-group.open .nav-menu { display: flex; flex-direction: row; flex-wrap: wrap; gap: 2px 0; position: static; box-shadow: none; border: none; padding: 0; min-width: 0; background: none; }
+  html.js .nav-menu li { flex: 0 0 50%; min-width: 0; }
+  html.js .nav-menu a { padding: 0.55rem 0.6rem; }
   main { padding: var(--sp-4); }
   form.std { padding: var(--sp-4); }
   th { position: static; }
