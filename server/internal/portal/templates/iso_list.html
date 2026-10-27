@@ -37,7 +37,7 @@
         {{else if .DeployReady}}<span class="badge ok">ready</span>{{if .SWMParts}} <span class="small muted">split ×{{.SWMParts}}</span>{{end}}
         {{else}}<span class="badge warn">unknown</span>{{end}}
       </td>
-      <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num nowrap" data-sort-value="{{.SizeBytes}}">{{if .SizeBytes}}<span title="{{.SizeBytes}} bytes">{{humanBytes .SizeBytes}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .StoragePath}}<code>{{.StoragePath}}</code><button class="copy" data-copy="{{.StoragePath}}" title="Copy"><svg><use href="#i-copy"/></svg></button>{{else}}<span class="badge warn">not uploaded</span>{{end}}</td>
       <td class="num">{{index $.Data.Refs .ID}}</td>
       <td class="actions">

@@ -1,7 +1,7 @@
 {{define "body"}}
 {{$r := .Data.R}}
 <div class="toolbar">
-  <h2>Resolved configuration — image #{{$r.ImageID}}</h2>
+  <h2>Resolved configuration — {{entityName "image" $r.ImageID}}</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/images"><svg><use href="#i-arrow-left"/></svg>Back to images</a></div>
 </div>
 
@@ -41,7 +41,7 @@
 <div class="section-head"><h3>Software (loadout-resolved ∪ direct links)</h3><div class="line"></div></div>
 {{if $r.Software}}
 <ol class="card spaced" style="padding-left:var(--sp-6)">
-  {{range $r.Software}}<li>package <code>#{{int64 .PackageID}}</code> <span class="muted small">(order {{.OrderValue}})</span></li>{{end}}
+  {{range $r.Software}}<li>{{entityLink "software" .PackageID}} <span class="muted small">(order {{.OrderValue}})</span></li>{{end}}
 </ol>
 {{else}}
 <div class="empty">

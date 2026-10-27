@@ -3,6 +3,7 @@ package portal
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,7 +46,7 @@ func bulkList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ops, err := r.Bulk.ListOperationsWithProgress(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "bulk_list.html", "Bulk operations", map[string]any{"Ops": ops})
@@ -102,12 +103,18 @@ type machineItem struct {
 	Product string `json:"product"`
 }
 
+// machineItems labels picker rows with the shared display name, loading the
+// fleet's names once (not one binding query per machine).
 func machineItems(r Repos, req *http.Request, machines []model.MachineRecord) []machineItem {
+	names := namesFor(req, r)
 	out := make([]machineItem, 0, len(machines))
 	for _, m := range machines {
-		b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+		name := model.MachineDisplayName(m, model.MachineBinding{}).Name
+		if n, ok := names.Machine(m.ID); ok {
+			name = n.Name
+		}
 		out = append(out, machineItem{
-			ID: int64(m.ID), Name: b.MachineName, UUID: m.SystemUUID,
+			ID: int64(m.ID), Name: name, UUID: m.SystemUUID,
 			Make: m.SystemManufacturer, Product: m.SystemProduct,
 		})
 	}
@@ -364,7 +371,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		op, _, err := r.Bulk.GetOperation(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		pkgs, _ := r.Software.List(req.Context())
@@ -377,7 +384,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 		}
 		selJSON, _ := json.Marshal(selInit)
 		groups, _ := r.Groups.List(req.Context())
-		render(w, req, r, "bulk_form.html", fmt.Sprintf("Edit bulk operation #%d", int64(id)), map[string]any{
+		render(w, req, r, "bulk_form.html", "Edit "+bulkTitle(op), map[string]any{
 			"Packages":    pkgs,
 			"Images":      imgs,
 			"Groups":      groups,
@@ -521,15 +528,22 @@ func bulkDetail(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		op, jobs, err := r.Bulk.GetOperation(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		prog, _ := r.Bulk.ProgressFor(req.Context(), id)
 		op.Progress = prog
 		// Resolve each job's machine ID to a display name so the table shows
-		// names, not bare IDs. One fleet-wide lookup; unknown IDs fall back to
-		// the ID in the template.
-		names, _ := r.Inventory.NamesByID(req.Context())
+		// names, not bare IDs. The request's name maps load once; the template
+		// links each job via entityLink, and MachineName stays for callers
+		// that read the view directly.
+		lookup := namesFor(req, r)
+		names := map[model.ID]string{}
+		for _, j := range jobs {
+			if n, ok := lookup.Machine(j.MachineID); ok {
+				names[j.MachineID] = n.Name
+			}
+		}
 		// Group jobs by run number (newest run first) for recurring history.
 		type jobView struct {
 			model.BulkJob
@@ -554,13 +568,41 @@ func bulkDetail(r Repos) http.HandlerFunc {
 		for i := len(order) - 1; i >= 0; i-- {
 			runs = append(runs, byRun[order[i]])
 		}
-		render(w, req, r, "bulk_detail.html", "Bulk operation #"+pathStr(req), map[string]any{
+		// Name what the operation acts on, not just its payload JSON: the
+		// re-image target image and the pushed software package.
+		var image, pkg template.HTML
+		switch op.Action {
+		case model.BulkActionReimage:
+			if op.ReimageImageID != 0 {
+				image = entityLinkHTML(lookup, model.KindImage, op.ReimageImageID)
+			} else {
+				image = template.HTML(`<span class="muted">each machine's bound image</span>`)
+			}
+		case model.BulkActionSoftwarePush:
+			var p struct {
+				PackageID int64 `json:"package_id"`
+			}
+			if json.Unmarshal([]byte(op.Payload), &p) == nil && p.PackageID > 0 {
+				pkg = entityLinkHTML(lookup, model.KindSoftware, model.ID(p.PackageID))
+			}
+		}
+		render(w, req, r, "bulk_detail.html", bulkTitle(op), map[string]any{
 			"Op": op, "Jobs": jobs, "Runs": runs,
+			"Image": image, "Package": pkg,
 		})
 	}
 }
 
 func pathStr(req *http.Request) string { return req.PathValue("id") }
+
+// bulkTitle is a bulk operation's page title: its name, or "<Action> #ID"
+// for rows created before operations had names.
+func bulkTitle(op model.BulkOperation) string {
+	if strings.TrimSpace(op.Name) != "" {
+		return op.Name
+	}
+	return fmt.Sprintf("%s #%d", model.BulkActionLabel(op.Action), int64(op.ID))
+}
 
 // formPrefill builds the values the create/edit form needs to seed the action
 // picker and schedule controls. op is nil for a new operation. loc is the

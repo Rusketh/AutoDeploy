@@ -73,16 +73,16 @@
     <tr>
       <td><input type="checkbox" name="machine_ids" value="{{int64 .Machine.ID}}" class="m-check" onclick="updateDelCount()"></td>
       <td>
-        <a href="/portal/machines/{{int64 .Machine.ID}}"><code>{{slice .Machine.SystemUUID 0 8}}…</code></a>
+        <code title="{{.Machine.SystemUUID}}">{{slice .Machine.SystemUUID 0 8}}…</code>
         <button type="button" class="copy" data-copy="{{.Machine.SystemUUID}}" aria-label="Copy full UUID"><svg><use href="#i-copy"/></svg></button>
       </td>
-      <td>{{if .Name}}<span class="badge accent">{{.Name}}</span>{{else}}<span class="muted">—</span>{{end}}{{if .ReimagePending}} <span class="badge warn" title="A re-image is queued for this machine, waiting for the agent to reboot it."><svg><use href="#i-alert"/></svg>re-image</span>{{end}}</td>
+      <td><a href="/portal/machines/{{int64 .Machine.ID}}">{{if .Display.Unnamed}}<span class="muted" title="No name reported yet">{{.Display.Name}}</span>{{else}}<strong>{{.Display.Name}}</strong>{{end}}</a>{{if .Display.RenamingFrom}}<br><span class="rename-hint small muted" title="The agent still reports {{.Display.RenamingFrom}}; the desired name applies on the next rename or re-image">renaming from {{.Display.RenamingFrom}}</span>{{end}}{{if .ReimagePending}} <span class="badge warn" title="A re-image is queued for this machine, waiting for the agent to reboot it."><svg><use href="#i-alert"/></svg>re-image</span>{{end}}</td>
       <td><strong>{{.Machine.SystemManufacturer}}</strong><br><span class="small muted">{{.Machine.SystemProduct}}</span></td>
       <td class="small">{{.Machine.SystemSerial}}</td>
       <td class="small">{{if .OS}}{{.OS}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .ImageName}}{{.ImageName}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{$adl := adJoinLabel .Machine.ADJoinStatus}}{{if $adl}}<span class="badge {{adJoinBadgeClass .Machine.ADJoinStatus}}"{{if .Machine.ADJoinDetail}} title="{{.Machine.ADJoinDetail}}"{{end}}>{{$adl}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="small muted">{{formatTime .Machine.LastSeen}}</td>
+      <td class="small muted nowrap">{{timeAgo .Machine.LastSeen}}</td>
       <td class="actions"><a class="btn secondary sm" href="/portal/machines/{{int64 .Machine.ID}}">Open</a></td>
     </tr>
     {{end}}

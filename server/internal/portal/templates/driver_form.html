@@ -71,7 +71,7 @@
 </form>
 <div class="flex wrap mt-3 gap-3">
   <span class="small muted">Current:
-    {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge">{{$p.SizeBytes}} bytes</span>{{else}}<em>nothing uploaded</em>{{end}}
+    {{if $p.StoragePath}}<code>{{$p.StoragePath}}</code><button class="copy" data-copy="{{$p.StoragePath}}" aria-label="Copy"><svg><use href="#i-copy"/></svg></button> <span class="badge" title="{{$p.SizeBytes}} bytes">{{humanBytes $p.SizeBytes}}</span>{{else}}<em>nothing uploaded</em>{{end}}
   </span>
   <span class="right">
     <form method="POST" action="/portal/drivers/{{int64 $p.ID}}/extract" class="inline">
@@ -87,7 +87,7 @@
 <div class="section-head">
   <h3>Discovered drivers</h3>
   <div class="line"></div>
-  <span class="small muted">{{$meta.INFCount}} .inf · {{$meta.FileCount}} files · {{$meta.Bytes}} bytes</span>
+  <span class="small muted">{{$meta.INFCount}} .inf · {{$meta.FileCount}} files · <span title="{{$meta.Bytes}} bytes">{{humanBytes $meta.Bytes}}</span></span>
 </div>
 {{if $meta.INFs}}
 <div class="tablewrap">

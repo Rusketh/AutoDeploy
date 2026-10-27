@@ -31,7 +31,7 @@
       <td><input type="checkbox" class="row-check" data-id="{{int64 .ID}}" aria-label="Select {{.Name}}"></td>
       <td><a href="/portal/software/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
       <td class="small muted">{{.Description}}</td>
-      <td class="num">{{if .SizeBytes}}{{.SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num nowrap" data-sort-value="{{.SizeBytes}}">{{if .SizeBytes}}<span title="{{.SizeBytes}} bytes">{{humanBytes .SizeBytes}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="num">{{index $.Data.Refs .ID}}</td>
       <td class="num">{{if $c}}{{$c.TargetCount}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="num">{{if $c}}{{$c.InstalledCount}}{{else}}<span class="muted">—</span>{{end}}</td>

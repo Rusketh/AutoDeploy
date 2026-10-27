@@ -22,7 +22,7 @@ type historyRowT struct {
 // parse or exec error, which is the main guard against template regressions.
 func renderMachineDetail(t *testing.T, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"derefID":    func(p *model.ID) int64 { return int64(*p) },
 		"deref":      func(p *time.Time) time.Time { return *p },
@@ -55,7 +55,7 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 			}
 			return m
 		},
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 		"templates/machine_detail.html", "templates/_action_picker.html")
 	if err != nil {

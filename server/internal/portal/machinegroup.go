@@ -25,7 +25,7 @@ func groupList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		groups, err := r.Groups.ListWithCounts(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "machine_group_list.html", "Machine groups", map[string]any{
@@ -74,7 +74,7 @@ func groupEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		g, err := r.Groups.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		groupFormFor(r, g, false)(w, req)
@@ -154,12 +154,11 @@ func groupDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		g, _ := r.Groups.Get(req.Context(), id)
-		if err := r.Groups.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
+		err := r.Groups.Delete(req.Context(), id)
+		if err == nil {
 			logGroupEvent(req, r, "group.delete", g)
-			flash(w, "ok", "Deleted.")
 		}
+		deleteFlash(w, req, model.KindGroup, g.Name, err)
 		http.Redirect(w, req, "/portal/groups", http.StatusFound)
 	}
 }

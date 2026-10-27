@@ -1,0 +1,107 @@
+{{/* Reusable machine picker basket: search machines (via /portal/bulk/search),
+     add results to a selection, and post the selection as repeated hidden
+     machine_ids inputs inside the enclosing form. The search fields carry no
+     name attribute, so they are never submitted themselves.
+
+     Usage: {{template "machine_picker" (dict "Groups" .Data.Groups "InitJSON" .Data.SelInitJSON "Hint" "…")}}
+       Groups   []model.MachineGroup for the "Machine group" search select (optional)
+       InitJSON JSON array of {id,name,make,product,uuid} to pre-fill (optional)
+       Hint     text shown when the selection is empty (optional) */}}
+{{define "machine_picker"}}
+<div class="machine-picker" data-machine-picker>
+  <div class="row">
+    <label><span class="lbl">Name (regex)</span><input type="text" data-mp-name placeholder="^LAB-"></label>
+    <label><span class="lbl">OU (DN)</span><input type="text" data-mp-ou placeholder="OU=Lab,DC=corp,DC=example"></label>
+    {{if .Groups}}
+    <label><span class="lbl">Machine group</span>
+      <select data-mp-group-id>
+        <option value="0">— any —</option>
+        {{range .Groups}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    {{end}}
+  </div>
+  <div class="actions actions-start">
+    <button type="button" class="secondary" data-mp-search><svg><use href="#i-search"/></svg>Find machines</button>
+    <button type="button" class="ghost" data-mp-add-all hidden>Add all results</button>
+    <span class="small muted" data-mp-status aria-live="polite"></span>
+  </div>
+  <div data-mp-results-wrap hidden>
+    <div class="tablewrap max-h-scroll mt-2">
+      <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
+        <tbody data-mp-results></tbody>
+      </table>
+    </div>
+  </div>
+  <h4 class="mt-3">Selected (<span data-mp-count>0</span>)</h4>
+  <p class="muted small" data-mp-empty>{{if .Hint}}{{.Hint}}{{else}}No machines selected yet.{{end}}</p>
+  <div class="tablewrap max-h-scroll" data-mp-sel-wrap hidden>
+    <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
+      <tbody data-mp-sel></tbody>
+    </table>
+  </div>
+  <div data-mp-inputs></div>
+</div>
+<script>
+(function(){
+  var initJSON = {{if .InitJSON}}{{.InitJSON}}{{else}}"[]"{{end}};
+  var root = document.currentScript.previousElementSibling;
+  if(!root || !root.hasAttribute('data-machine-picker')) return;
+  function q(sel){ return root.querySelector(sel); }
+  function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+  var selection = {}, order = [], last = [];
+  function label(m){ return m.name || ((m.uuid||'').slice(0,8)+'…'); }
+  function render(){
+    var body=q('[data-mp-sel]'), inputs=q('[data-mp-inputs]');
+    body.innerHTML=''; inputs.innerHTML='';
+    order.forEach(function(id){
+      var m=selection[id]; if(!m) return;
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+esc(label(m))+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td>'+
+        '<td class="actions"><button type="button" class="ghost sm" data-mp-remove="'+m.id+'">Remove</button></td>';
+      body.appendChild(tr);
+      var inp=document.createElement('input'); inp.type='hidden'; inp.name='machine_ids'; inp.value=m.id; inputs.appendChild(inp);
+    });
+    var n=Object.keys(selection).length;
+    q('[data-mp-count]').textContent=n;
+    q('[data-mp-empty]').hidden=n>0;
+    q('[data-mp-sel-wrap]').hidden=n===0;
+  }
+  function add(m){ if(!selection[m.id]){ selection[m.id]=m; order.push(m.id); } }
+  function search(){
+    var p=new URLSearchParams({ name_regex:q('[data-mp-name]').value, ou:q('[data-mp-ou]').value });
+    var g=q('[data-mp-group-id]'); if(g) p.set('group_id', g.value);
+    var st=q('[data-mp-status]'); st.textContent='Searching…';
+    fetch('/portal/bulk/search?'+p.toString(),{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(rows){
+        last=Array.isArray(rows)?rows:[];
+        st.textContent=last.length+' match'+(last.length===1?'':'es');
+        q('[data-mp-results-wrap]').hidden=false;
+        q('[data-mp-add-all]').hidden=last.length===0;
+        var b=q('[data-mp-results]'); b.innerHTML='';
+        last.forEach(function(m){
+          var tr=document.createElement('tr');
+          tr.innerHTML='<td>'+esc(label(m))+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td><td><code>'+esc((m.uuid||'').slice(0,8))+'…</code></td>'+
+            '<td class="actions"><button type="button" class="ghost sm" data-mp-add="'+m.id+'">Add</button></td>';
+          b.appendChild(tr);
+        });
+      })
+      .catch(function(){ st.textContent='Search failed.'; });
+  }
+  root.addEventListener('click', function(e){
+    var t=e.target.closest('button'); if(!t||!root.contains(t)) return;
+    if(t.hasAttribute('data-mp-search')){ search(); }
+    else if(t.hasAttribute('data-mp-add-all')){ last.forEach(add); render(); }
+    else if(t.hasAttribute('data-mp-add')){ var id=+t.getAttribute('data-mp-add'); last.forEach(function(m){ if(m.id===id) add(m); }); render(); }
+    else if(t.hasAttribute('data-mp-remove')){ var rid=+t.getAttribute('data-mp-remove'); delete selection[rid]; order=order.filter(function(x){ return x!==rid; }); render(); }
+  });
+  // Enter in a search box searches instead of submitting the outer form.
+  root.addEventListener('keydown', function(e){
+    if(e.key==='Enter' && e.target.matches('input[data-mp-name], input[data-mp-ou]')){ e.preventDefault(); search(); }
+  });
+  try{ (JSON.parse(initJSON)||[]).forEach(add); }catch(_){}
+  render();
+})();
+</script>
+{{end}}

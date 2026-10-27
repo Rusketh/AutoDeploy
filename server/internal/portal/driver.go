@@ -2,6 +2,7 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,7 +32,7 @@ func driverList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Drivers.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "driver_list.html", "Driver packages", map[string]any{"Drivers": v})
@@ -199,7 +200,7 @@ func driverEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		p, err := r.Drivers.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		driverForm(r, p, false)(w, req)
@@ -316,7 +317,7 @@ func driverUpdate(r Repos) http.HandlerFunc {
 		}
 		existing, err := r.Drivers.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		p.ID = id
@@ -337,14 +338,12 @@ func driverUpdate(r Repos) http.HandlerFunc {
 func driverDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Drivers.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			if r.Resolver != nil {
-				r.Resolver.InvalidateDriverCache()
-			}
-			flash(w, "ok", "Deleted.")
+		name := nameBeforeDelete(req, r, model.KindDriver, id)
+		err := r.Drivers.Delete(req.Context(), id)
+		if err == nil && r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
 		}
+		deleteFlash(w, req, model.KindDriver, name, err)
 		http.Redirect(w, req, "/portal/drivers", http.StatusFound)
 	}
 }
@@ -354,12 +353,12 @@ func driverUpload(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		pkg, err := r.Drivers.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		mr, err := req.MultipartReader()
 		if err != nil {
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		for {
@@ -406,11 +405,11 @@ func driverPreviewForm(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		pkg, err := r.Drivers.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		id2 := match.Identity{
@@ -462,7 +461,7 @@ func driverExtract(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if _, err := r.Drivers.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		res, err := payload.ExtractDriverPackage(req.Context(), r.Drivers, r.Blobs, id)

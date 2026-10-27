@@ -82,7 +82,7 @@
       <td class="log-machine">{{if .MachineName}}<span class="machine-name" title="{{.Actor}}">{{.MachineName}}</span>{{else if .Actor}}<code class="muted" title="actor">{{.Actor}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
       <td><code>{{.Component}}</code></td>
       <td><code>{{.Action}}</code></td>
-      <td class="small log-target">{{if .Target}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small log-target"{{if .TargetName}} title="{{.Target}}"{{end}}>{{logTarget .}}</td>
     </tr>
     <tr class="log-detail" hidden>
       <td></td>

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,24 +43,24 @@ var assetsFS embed.FS
 // Repos is the dependency bundle the portal needs. Keeping the same shape
 // as api.Repos so main can pass through a single struct.
 type Repos struct {
-	ISOs      *model.ISORepo
-	Unattend  *model.UnattendRepo
-	Drivers   *model.DriverPackageRepo
-	Software  *model.SoftwarePackageRepo
+	ISOs        *model.ISORepo
+	Unattend    *model.UnattendRepo
+	Drivers     *model.DriverPackageRepo
+	Software    *model.SoftwarePackageRepo
 	Loadouts    *model.SoftwareLoadoutRepo
 	Images      *model.ImageRepo
 	ImageGroups *model.ImageGroupRepo
-	Inventory *model.InventoryRepo
-	Bulk      *model.BulkRepo
-	Logs      *model.LogRepo
-	Users     *auth.Repo
-	Settings  *auth.SettingsRepo
-	Branding  *branding.Repo
-	Mirrors   *model.PayloadMirrorRepo
-	Runtime   *runtime.Settings
-	Resolver  *resolve.Resolver
-	Blobs     *storage.BlobStore
-	AD        *addomain.Service
+	Inventory   *model.InventoryRepo
+	Bulk        *model.BulkRepo
+	Logs        *model.LogRepo
+	Users       *auth.Repo
+	Settings    *auth.SettingsRepo
+	Branding    *branding.Repo
+	Mirrors     *model.PayloadMirrorRepo
+	Runtime     *runtime.Settings
+	Resolver    *resolve.Resolver
+	Blobs       *storage.BlobStore
+	AD          *addomain.Service
 	// DomainJoin stores per-image agent-driven AD join config (the image
 	// edit form reads/writes it).
 	DomainJoin *model.DomainJoinRepo
@@ -185,6 +186,7 @@ func requireSession(r Repos, h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		ctx := context.WithValue(req.Context(), ctxKeyUser{}, u)
+		ctx = withNames(ctx, r)
 		h(w, req.WithContext(ctx))
 	}
 }
@@ -254,7 +256,7 @@ func loginSubmit(r Repos) http.HandlerFunc {
 		}
 		tok, err := r.Users.CreateSession(req.Context(), u.ID, 12*time.Hour)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{
@@ -354,6 +356,7 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		// Recent activity: last 12 log events across all components,
 		// for a quick "what just happened" panel.
 		events, _ := r.Logs.Search(req.Context(), model.LogSearch{Limit: 12})
+		namesFor(req, r).EnrichLogs(events)
 
 		// Top 5 most-recently-seen machines for a "live fleet" panel.
 		topMachines := machines
@@ -451,7 +454,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 	if r.Runtime != nil {
 		loc = r.Runtime.DisplayLocation()
 	}
-	return template.FuncMap{
+	fm := template.FuncMap{
 		"derefID": func(p *model.ID) string {
 			if p == nil {
 				return ""
@@ -575,19 +578,9 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		},
 		// humanBytes formats a byte count as a short suffixed string.
 		// Mirrors the JS upload-progress formatter so values match
-		// between live progress and the saved record.
-		"humanBytes": func(n int64) string {
-			switch {
-			case n < 1024:
-				return fmt.Sprintf("%d B", n)
-			case n < 1024*1024:
-				return fmt.Sprintf("%.1f KiB", float64(n)/1024)
-			case n < 1024*1024*1024:
-				return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
-			default:
-				return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
-			}
-		},
+		// between live progress and the saved record. Accepts any integer
+		// type (sizes are int64 on records, int on some file listings).
+		"humanBytes": func(v any) string { return humanBytes(toInt64(v)) },
 		// relTime formats a past timestamp as "just now", "5m ago",
 		// "3h ago", etc. The "uploaded X ago" line in the payload card
 		// uses it so operators see the recency at a glance without
@@ -612,7 +605,59 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 				return t.Format("2006-01-02")
 			}
 		},
+		// navGroups is the grouped primary navigation with active flags for
+		// the current path (see nav.go).
+		"navGroups": func() []navGroup { return buildNav(req.URL.Path) },
 	}
+	for k, f := range nameFuncs(namesFor(req, r)) {
+		fm[k] = f
+	}
+	for k, f := range timeFuncs(loc, time.Now) {
+		fm[k] = f
+	}
+	return fm
+}
+
+// humanBytes formats a byte count as "512 B", "1.5 KiB", "734.0 MiB",
+// "6.00 GiB".
+func humanBytes(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
+	}
+}
+
+// toInt64 widens the integer types templates pass to humanBytes.
+func toInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case int32:
+		return int64(x)
+	case uint64:
+		return int64(x)
+	case uint32:
+		return int64(x)
+	case uint:
+		return int64(x)
+	}
+	return 0
+}
+
+// layoutPartials are parsed alongside every page: the layout plus the shared
+// partial templates any page may {{template}}.
+var layoutPartials = []string{
+	"templates/_layout.html", "templates/_icons.html",
+	"templates/_action_picker.html", "templates/_pagination.html",
+	"templates/_machine_picker.html",
 }
 
 // render parses _layout + the named page, executes the layout, and
@@ -620,9 +665,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 // current user, the brand, and any flash message.
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
-		assetsFS, "templates/_layout.html", "templates/_icons.html",
-		"templates/_action_picker.html", "templates/_pagination.html",
-		"templates/"+page)
+		assetsFS, append(append([]string{}, layoutPartials...), "templates/"+page)...)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
@@ -653,7 +696,10 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 		"BootstrapPresent": bootstrapPresent,
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", envelope); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Not failPage: it renders through here, and the page may be
+		// half-written already. Log the cause; append a plain marker.
+		slog.Error("portal.render.failed", slog.String("page", page), slog.String("error", err.Error()))
+		http.Error(w, "page render failed", http.StatusInternalServerError)
 	}
 }
 

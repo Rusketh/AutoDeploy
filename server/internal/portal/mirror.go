@@ -34,7 +34,7 @@ func mirrorList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Mirrors.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "mirror_list.html", "Payload mirrors", map[string]any{"Mirrors": v})
@@ -58,7 +58,7 @@ func mirrorEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		m, err := r.Mirrors.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		mirrorForm(r, m, false)(w, req)
@@ -125,11 +125,8 @@ func mirrorUpdate(r Repos) http.HandlerFunc {
 func mirrorDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Mirrors.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindMirror, id)
+		deleteFlash(w, req, model.KindMirror, name, r.Mirrors.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/mirrors", http.StatusFound)
 	}
 }

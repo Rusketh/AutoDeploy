@@ -25,7 +25,7 @@ func loadoutList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Loadouts.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		refs := map[model.ID]int{}
@@ -62,7 +62,7 @@ func loadoutEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		l, err := r.Loadouts.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		loadoutFormFor(r, l, false)(w, req)
@@ -179,11 +179,8 @@ func loadoutClone(r Repos) http.HandlerFunc {
 func loadoutDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Loadouts.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindLoadout, id)
+		deleteFlash(w, req, model.KindLoadout, name, r.Loadouts.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/loadouts", http.StatusFound)
 	}
 }

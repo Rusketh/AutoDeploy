@@ -12,7 +12,7 @@
     <tr>
       <td><strong>{{.Username}}</strong> {{if eq .ID $.Data.Me.ID}}<span class="badge accent">you</span>{{end}}</td>
       <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok"><svg><use href="#i-check"/></svg>active</span>{{end}}</td>
-      <td class="small muted">{{formatTime .CreatedAt}}</td>
+      <td class="small muted">{{timeAgo .CreatedAt}}</td>
       <td class="actions">
         {{if .Disabled}}
         <form method="POST" action="/portal/settings/accounts/{{.ID}}/enable" class="inline"><button class="secondary sm">Enable</button></form>

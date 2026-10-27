@@ -33,7 +33,7 @@
       <td>{{.Title}}</td>
       <td>{{if .OSFilter}}{{.OSFilter}}{{else}}<span class="muted">any</span>{{end}}</td>
       <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="num">{{if .SizeBytes}}{{humanBytes .SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num nowrap" data-sort-value="{{.SizeBytes}}">{{if .SizeBytes}}{{humanBytes .SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .RebootAfter}}yes{{else}}<span class="muted">no</span>{{end}}</td>
       <td>{{if .AutoDeploy}}<span class="badge accent" {{if not .StoragePath}}title="No payload uploaded yet — auto-deploy starts once one is added"{{end}}>auto</span>{{else}}<span class="muted">manual</span>{{end}}</td>
       <td>{{if $c}}{{if $c.Total}}{{$c.Installed}} / {{$c.Total}} <span class="badge {{if eq $c.Installed $c.Total}}ok{{else}}warn{{end}}">{{pct $c.Installed $c.Total}}%</span>{{else}}<span class="muted">N/A</span>{{end}}{{else}}<span class="muted">N/A</span>{{end}}</td>

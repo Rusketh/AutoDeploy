@@ -104,7 +104,7 @@ func brandingForm(r Repos) http.HandlerFunc {
 func brandingSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		logo, ok := branding.SafeLogoURL(req.FormValue("logo_data_url"))

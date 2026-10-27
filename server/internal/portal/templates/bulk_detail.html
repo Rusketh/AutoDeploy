@@ -2,7 +2,7 @@
 {{$op := .Data.Op}}
 {{$st := $op.Status}}
 <div class="toolbar">
-  <h2>{{if $op.Name}}{{$op.Name}}{{else}}Bulk operation #{{int64 $op.ID}}{{end}} <span class="muted small">#{{int64 $op.ID}}</span></h2>
+  <h2>{{if $op.Name}}{{$op.Name}} <span class="muted small">{{idLabel $op.ID}}</span>{{else}}{{entityName "bulk" $op.ID}}{{end}}</h2>
   <div class="right">
     {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 $op.ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>{{end}}
     {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
@@ -46,17 +46,19 @@
   <dt>Action</dt><dd><span class="badge accent">{{$op.Action}}</span></dd>
   <dt>Schedule</dt><dd>
     {{if eq $op.ScheduleKind "once"}}One-time{{else if eq $op.ScheduleKind "recurring"}}Recurring{{else}}Run now{{end}}
-    {{if $op.NextRunAt}} · next run {{formatTime (deref $op.NextRunAt)}}{{end}}
-    {{if $op.LastRunAt}} · last run {{formatTime (deref $op.LastRunAt)}}{{end}}
+    {{if $op.NextRunAt}} · next run {{timeAbs $op.NextRunAt}}{{end}}
+    {{if $op.LastRunAt}} · last run {{timeAbs $op.LastRunAt}}{{end}}
     {{if eq $op.ScheduleKind "recurring"}} · target {{if eq $op.TargetMode "filter"}}re-evaluated each run{{else}}fixed selection{{end}}{{end}}
   </dd>
-  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}group=<code>{{$op.Target.Group}}</code> {{end}}{{if $op.Target.MachineIDs}}{{len $op.Target.MachineIDs}} machine(s){{end}}</dd>
+  {{if .Data.Image}}<dt>Image</dt><dd>{{.Data.Image}}</dd>{{end}}
+  {{if .Data.Package}}<dt>Software</dt><dd>{{.Data.Package}}</dd>{{end}}
+  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}AD group=<code>{{$op.Target.Group}}</code> {{end}}{{if $op.Target.GroupID}}machine group {{entityLink "group" $op.Target.GroupID}} {{end}}{{with $op.Target.MachineIDs}}{{len .}} machine{{if ne (len .) 1}}s{{end}}: {{range $i, $id := .}}{{if lt $i 8}}{{if $i}}, {{end}}{{entityLink "machine" $id}}{{end}}{{end}}{{if gt (len .) 8}} <span class="muted">and {{sub (len .) 8}} more</span>{{end}}{{end}}</dd>
   <dt>Delivery</dt><dd class="small">
     Wake-on-LAN {{if $op.WakeOnLAN}}<span class="badge ok">on</span>{{else}}<span class="badge muted">off</span>{{end}}
     · cancel undelivered jobs after {{$op.CancelAfterLabel}}
   </dd>
   <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
-  <dt>Created</dt><dd>{{formatTime $op.CreatedAt}}</dd>
+  <dt>Created</dt><dd>{{timeAbs $op.CreatedAt}}</dd>
   <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>
 </dl>
 
@@ -77,11 +79,11 @@
   <tbody>
     {{range .Jobs}}
     <tr>
-      <td class="num"><code>#{{int64 .ID}}</code></td>
-      <td><a href="/portal/machines/{{int64 .MachineID}}" title="machine #{{int64 .MachineID}}">{{if .MachineName}}{{.MachineName}}{{else}}<code>#{{int64 .MachineID}}</code>{{end}}</a></td>
+      <td class="num"><code>{{idLabel .ID}}</code></td>
+      <td>{{if .MachineName}}<a href="{{entityURL "machine" .MachineID}}">{{.MachineName}}</a>{{else}}{{entityLink "machine" .MachineID}}{{end}}</td>
       <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{else if eq .Status "cancelled"}}muted{{end}}">{{.Status}}</span></td>
-      <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{formatTime (deref .ClaimedAt)}}{{else}}—{{end}}</td>
-      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{formatTime (deref .CompletedAt)}}{{else}}—{{end}}</td>
+      <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{timeAgo .ClaimedAt}}{{else}}—{{end}}</td>
+      <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}—{{end}}</td>
       <td class="small"><code>{{.ResultJSON}}</code></td>
     </tr>
     {{end}}

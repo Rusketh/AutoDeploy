@@ -3,6 +3,7 @@ package portal
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,11 +47,11 @@ func networkForm(r Repos) http.HandlerFunc {
 func networkSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		extAccess := strings.TrimSpace(req.FormValue("external_access"))
@@ -88,7 +89,7 @@ func networkSubmit(r Repos) http.HandlerFunc {
 func networkUploadCert(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseMultipartForm(4 << 20); err != nil {

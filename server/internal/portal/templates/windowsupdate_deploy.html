@@ -46,50 +46,47 @@
 
   <fieldset>
     <legend>Target machines</legend>
-    <p class="hint mt-0">Machines must match <strong>all</strong> specified filters. Leave a filter empty to skip it.</p>
-    <label><span class="lbl">OS Filter</span>
-      <select name="os_filter">
-        <option value="">Any OS</option>
-        <option value="windows-10">Windows 10</option>
-        <option value="windows-11">Windows 11</option>
-        <option value="server-2019">Server 2019</option>
-        <option value="server-2022">Server 2022</option>
-        <option value="server-2025">Server 2025</option>
-      </select>
-    </label>
-    <label><span class="lbl">Name regex</span>
-      <input type="text" name="name_regex" placeholder="LAB-.*">
-    </label>
-    <label><span class="lbl">OU</span>
-      <input type="text" name="ou" placeholder="OU=Workstations,DC=example,DC=com">
-    </label>
-    <label><span class="lbl">Group</span>
-      <input type="text" name="group" placeholder="Engineering">
-    </label>
-    <label><span class="lbl">Specific machine IDs (comma-separated)</span>
-      <input type="text" id="machine_ids_input" name="" placeholder="1,2,3">
-      <span class="hint">Leave empty to target all machines matching above filters.</span>
-    </label>
+    <p class="hint mt-0">Machines must match <strong>all</strong> of the choices below. Leave a choice empty to skip it; with nothing chosen every machine is targeted.</p>
+    <div class="row">
+      <label><span class="lbl">OS</span>
+        <select name="os_filter">
+          <option value="">Any OS</option>
+          <option value="windows-10">Windows 10</option>
+          <option value="windows-11">Windows 11</option>
+          <option value="server-2019">Server 2019</option>
+          <option value="server-2022">Server 2022</option>
+          <option value="server-2025">Server 2025</option>
+        </select>
+      </label>
+      <label><span class="lbl">Machine group</span>
+        <select name="group_id">
+          <option value="">Any group</option>
+          {{range .Data.Groups}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+    </div>
+
+    <h4 class="mt-3">Specific machines</h4>
+    <p class="hint mt-0">Optional. Find machines and add them to the selection to deploy only to those.</p>
+    {{template "machine_picker" (dict "Hint" "No machines selected — every machine matching the choices above is targeted.")}}
+
+    <details class="mt-3">
+      <summary class="small muted">More filters (name pattern, OU, AD group)</summary>
+      <div class="row mt-2">
+        <label><span class="lbl">Name regex</span>
+          <input type="text" name="name_regex" placeholder="LAB-.*">
+        </label>
+        <label><span class="lbl">OU</span>
+          <input type="text" name="ou" placeholder="OU=Workstations,DC=example,DC=com">
+        </label>
+        <label><span class="lbl">AD group</span>
+          <input type="text" name="group" placeholder="Engineering">
+        </label>
+      </div>
+    </details>
   </fieldset>
   <div class="actions">
-    <button type="submit" onclick="prepIDs()"><svg><use href="#i-bolt"/></svg>Deploy</button>
+    <button type="submit"><svg><use href="#i-bolt"/></svg>Deploy</button>
   </div>
 </form>
-<script>
-function prepIDs() {
-  var input = document.getElementById('machine_ids_input');
-  if (!input.value.trim()) return;
-  var ids = input.value.split(',');
-  var form = input.closest('form');
-  ids.forEach(function(id) {
-    id = id.trim();
-    if (!id) return;
-    var h = document.createElement('input');
-    h.type = 'hidden';
-    h.name = 'machine_ids';
-    h.value = id;
-    form.appendChild(h);
-  });
-}
-</script>
 {{end}}

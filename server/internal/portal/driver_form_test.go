@@ -63,9 +63,9 @@ func TestBuildDriverFromFormGroupsRepeatedKey(t *testing.T) {
 // preview form must offer every identity field driver filters can match,
 // base board included.
 func TestDriverFormRenderBoardFilterHelper(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64": func(id model.ID) int64 { return int64(id) },
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/driver_form.html")
 	if err != nil {
 		t.Fatalf("parse driver_form.html: %v", err)
