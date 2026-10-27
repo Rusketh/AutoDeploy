@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -97,7 +96,7 @@ func failDeploy(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc.Cli
 		Title:       d.Title,
 		Message:     msg,
 		Code:        d.Code,
-		Identity:    screenIdentity(id, f.server),
+		Identity:    screenIdentity(id),
 		Output:      out,
 		LogsShipped: shipped,
 	}
@@ -154,7 +153,7 @@ func printFailure(info ui.FailureInfo) {
 	idParts := []string{}
 	for _, p := range []struct{ k, v string }{
 		{"Machine", info.Identity.Name}, {"Model", info.Identity.Model},
-		{"S/N", info.Identity.Serial}, {"IP", info.Identity.IP}, {"Server", info.Identity.Server},
+		{"S/N", info.Identity.Serial}, {"IP", info.Identity.IP},
 	} {
 		if p.v != "" {
 			idParts = append(idParts, p.k+" "+p.v)
@@ -179,27 +178,14 @@ func printFailure(info ui.FailureInfo) {
 }
 
 // screenIdentity is what the imaging screens print about this machine.
-func screenIdentity(id smbios.Identity, server string) ui.Identity {
+func screenIdentity(id smbios.Identity) ui.Identity {
 	model := strings.TrimSpace(id.SystemManufacturer + " " + id.SystemProduct)
 	return ui.Identity{
 		Name:   machineName,
 		Model:  model,
 		Serial: id.SystemSerial,
 		IP:     firstIPv4(),
-		Server: serverHost(server),
 	}
-}
-
-// serverHost reduces the server URL to host[:port] for display -- the
-// screen shows which server the machine talks to, never a path or query.
-func serverHost(server string) string {
-	if server == "" {
-		return ""
-	}
-	if u, err := url.Parse(server); err == nil && u.Host != "" {
-		return u.Host
-	}
-	return server
 }
 
 // firstIPv4 returns this machine's first non-loopback IPv4 address, or ""

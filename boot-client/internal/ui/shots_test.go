@@ -22,7 +22,6 @@ var shotIdentity = Identity{
 	Model:  "Dell Inc. OptiPlex 7090",
 	Serial: "7XK9Q53",
 	IP:     "10.20.30.142",
-	Server: "autodeploy.corp.example:8443",
 }
 
 func sampleProgress() *ProgressScreen {
@@ -116,7 +115,7 @@ func TestFailureShotsLayout(t *testing.T) {
 			f.Info.Code = "MENU-FETCH"
 			f.Info.Title = "Couldn't start the deployment"
 			f.Info.Message = "Couldn't reach the AutoDeploy server to get the deployment menu: dial tcp 10.0.0.1:8443: connect: no route to host"
-			f.Info.Identity = Identity{Model: "QEMU Standard PC (Q35 + ICH9, 2009)", Serial: "", IP: "", Server: "10.0.0.1:8443"}
+			f.Info.Identity = Identity{Model: "QEMU Standard PC (Q35 + ICH9, 2009)", Serial: "", IP: ""}
 			return f
 		},
 	}

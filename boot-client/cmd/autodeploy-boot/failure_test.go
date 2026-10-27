@@ -37,16 +37,7 @@ func TestDeployFailureOutputOnlyForExitErrors(t *testing.T) {
 	}
 }
 
-func TestServerHostAndStages(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://autodeploy.lan:8443/base?x=1": "autodeploy.lan:8443",
-		"http://10.0.0.5":                      "10.0.0.5",
-		"":                                     "",
-	} {
-		if got := serverHost(in); got != want {
-			t.Errorf("serverHost(%q) = %q, want %q", in, got, want)
-		}
-	}
+func TestStagesAndIdentity(t *testing.T) {
 	if n, m := stageStep("Downloading image"); n != 4 || m != len(deployStages) {
 		t.Errorf("stageStep = %d/%d", n, m)
 	}
@@ -55,8 +46,8 @@ func TestServerHostAndStages(t *testing.T) {
 	}
 	machineName = "LAB-01"
 	defer func() { machineName = "" }()
-	id := screenIdentity(smbios.Identity{SystemManufacturer: "Dell Inc.", SystemProduct: "OptiPlex", SystemSerial: "S1"}, "https://srv:8443")
-	if id.Name != "LAB-01" || id.Model != "Dell Inc. OptiPlex" || id.Serial != "S1" || id.Server != "srv:8443" {
+	id := screenIdentity(smbios.Identity{SystemManufacturer: "Dell Inc.", SystemProduct: "OptiPlex", SystemSerial: "S1"})
+	if id.Name != "LAB-01" || id.Model != "Dell Inc. OptiPlex" || id.Serial != "S1" {
 		t.Errorf("screenIdentity = %+v", id)
 	}
 }

@@ -110,7 +110,7 @@ func startInteractive(ctx context.Context, log *slog.Logger, f bootFlags, c *htt
 
 	// Deploy with a live progress screen. Install the GUI progress sink so
 	// runDeploy's stage reports paint the bar; clear it afterwards.
-	prog, stop := g.progress(ctx, title, screenIdentity(id, f.server))
+	prog, stop := g.progress(ctx, title, screenIdentity(id))
 	setProgressSink(&guiProgressSink{scr: prog, g: g, stop: stop})
 	defer func() {
 		stop()

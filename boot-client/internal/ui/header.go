@@ -18,7 +18,6 @@ type Identity struct {
 	Model  string // manufacturer + product, e.g. "Dell Inc. OptiPlex 7090"
 	Serial string // SMBIOS serial number
 	IP     string // this client's IPv4 address
-	Server string // AutoDeploy server host[:port] (no scheme/path)
 }
 
 // primary is the header's first line: the machine name when known,
@@ -35,7 +34,8 @@ func (id Identity) primary() string {
 
 // details is the header's second line: the facts not already shown as
 // the primary label, joined with a middle dot. Ordered by usefulness, as
-// a narrow panel truncates from the end: serial, IP, server, then model.
+// a narrow panel truncates from the end: serial, IP, then model.
+// The server address is never shown: the screen is on display in the open.
 func (id Identity) details() string {
 	var parts []string
 	if id.Serial != "" {
@@ -43,9 +43,6 @@ func (id Identity) details() string {
 	}
 	if id.IP != "" {
 		parts = append(parts, "IP "+id.IP)
-	}
-	if id.Server != "" {
-		parts = append(parts, "Server "+id.Server)
 	}
 	if id.Name != "" && id.Model != "" {
 		parts = append(parts, id.Model)

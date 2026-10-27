@@ -63,9 +63,9 @@ func (p *ProgressScreen) SetStep(n, total int) {
 // (e.g. the media file being copied), without disturbing the stage, detail
 // or percent. Safe to call frequently from the deploy goroutine.
 //
-// Pass a bare filename or a media-relative path -- NEVER a URL: a URL can
-// carry paths and query tokens that have no business on a screen in the
-// open. (The header deliberately shows just the server's host.)
+// Pass a bare filename or a media-relative path -- NEVER a URL. The progress
+// screen is on display in the open during imaging, so it must not reveal the
+// server address.
 func (p *ProgressScreen) SetFile(file string) {
 	p.mu.Lock()
 	p.file = file
