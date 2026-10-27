@@ -258,9 +258,13 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 						"machine_id": m.ID, "count": len(updateJobs),
 						"kbs": strings.Join(kbs, ","),
 					})
+					// Actor is the SMBIOS UUID, like every other machine-originated
+					// row, so the Logs page resolves it to the machine's name and
+					// the machine-group filter (which matches UUIDs) includes it.
+					// Older rows carry the agent ID; NameLookup resolves both.
 					_ = r.Logs.Append(req.Context(), model.LogEvent{
 						Component: "updates",
-						Actor:     m.AgentID,
+						Actor:     m.SystemUUID,
 						Action:    "update.jobs.claimed",
 						Target:    "machine:" + strconv.FormatInt(int64(m.ID), 10),
 						Fields:    string(fields),

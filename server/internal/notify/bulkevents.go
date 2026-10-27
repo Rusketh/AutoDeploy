@@ -1,7 +1,9 @@
 package notify
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
@@ -20,16 +22,55 @@ func BulkCreatedEvent(op model.BulkOperation) Event {
 }
 
 // UpdateDeployedEvent describes a freshly created Windows Update deployment.
-// Shared by the API and portal create paths.
-func UpdateDeployedEvent(dep model.UpdateDeployment, jobs int) Event {
+// Shared by the API and portal create paths. kbs are the deployed updates' KB
+// numbers (in UpdateIDs order); when given they lead the title so the
+// operator sees what was pushed, not just a count.
+func UpdateDeployedEvent(dep model.UpdateDeployment, jobs int, kbs ...string) Event {
+	title := fmt.Sprintf("Update deployment created (%d update(s), %d machine job(s))",
+		len(dep.UpdateIDs), jobs)
+	var fields map[string]any
+	if len(kbs) > 0 {
+		fields = map[string]any{"kbs": strings.Join(kbs, ",")}
+		shown := kbs
+		more := ""
+		if len(shown) > 4 {
+			more = fmt.Sprintf(" +%d more", len(shown)-4)
+			shown = shown[:4]
+		}
+		title = fmt.Sprintf("Update deployment created: %s%s (%d machine job(s))",
+			strings.Join(shown, ", "), more, jobs)
+	}
 	return Event{
 		Name:     EventUpdateDeployed,
 		Severity: SevInfo,
-		Title: fmt.Sprintf("Update deployment created (%d update(s), %d machine job(s))",
-			len(dep.UpdateIDs), jobs),
-		Link:  fmt.Sprintf("/portal/update-deployments/%d", int64(dep.ID)),
-		Actor: dep.CreatedBy,
+		Title:    title,
+		Link:     fmt.Sprintf("/portal/update-deployments/%d", int64(dep.ID)),
+		Actor:    dep.CreatedBy,
+		Fields:   fields,
 	}
+}
+
+// UpdateKBNumbers maps update IDs to their KB numbers for UpdateDeployedEvent,
+// skipping IDs that no longer resolve. Shared by the API and portal paths.
+func UpdateKBNumbers(ctx context.Context, repo *model.WindowsUpdateRepo, ids []model.ID) []string {
+	if repo == nil || len(ids) == 0 {
+		return nil
+	}
+	all, err := repo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	byID := make(map[model.ID]string, len(all))
+	for _, u := range all {
+		byID[u.ID] = u.KBNumber
+	}
+	var out []string
+	for _, id := range ids {
+		if kb := byID[id]; kb != "" {
+			out = append(out, kb)
+		}
+	}
+	return out
 }
 
 // BulkOutcomeEvent classifies a finished bulk operation run from its job

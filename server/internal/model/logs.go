@@ -26,12 +26,22 @@ type LogEvent struct {
 	// EnrichMachineNames so the portal and the live-tail JSON can show a name
 	// instead of a raw UUID. Empty for non-machine actors (system/operator).
 	MachineName string `json:"machine_name,omitempty"`
+	// TargetName is the display name of the entity Target refers to
+	// ("machine:12" -> "LAB-01", "software/3" -> "7-Zip", "#3 (deleted)" for a
+	// row that no longer exists). Read-time only, set by
+	// NameLookup.EnrichLogs; empty when Target names nothing resolvable.
+	TargetName string `json:"target_name,omitempty"`
+	// TargetKind / TargetID are the parsed Target (a Kind* constant and row
+	// ID) so the portal can link it. Not part of the JSON shape.
+	TargetKind string `json:"-"`
+	TargetID   ID     `json:"-"`
 }
 
 // EnrichMachineNames fills MachineName on each event whose Actor (the agent's
 // system UUID) resolves to a name in the supplied map. Build the map once per
 // request with InventoryRepo.NamesByUUID. Events with an unknown or
-// non-machine actor are left untouched.
+// non-machine actor are left untouched. NameLookup.EnrichLogs supersedes this
+// (it also resolves agent-ID actors and targets).
 func EnrichMachineNames(events []LogEvent, names map[string]string) {
 	if len(names) == 0 {
 		return

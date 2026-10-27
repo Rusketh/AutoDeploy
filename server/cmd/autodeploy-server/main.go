@@ -500,6 +500,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	domainJoin := model.NewDomainJoinRepo(db, bx)
 	setupLock := model.NewSetupLockRepo(db)
 	updates := model.NewWindowsUpdateRepo(db, inventory)
+	updates.SetGroups(groups)
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
 	importedAssets := model.NewImportedAssetRepo(db)

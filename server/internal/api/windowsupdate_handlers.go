@@ -163,7 +163,8 @@ func handleCreateUpdateDeployment(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs)))
+		r.Emitter.Emit(req.Context(), notify.UpdateDeployedEvent(dep, len(jobs),
+			notify.UpdateKBNumbers(req.Context(), r.Updates, dep.UpdateIDs)...))
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"deployment": dep,
 			"jobs":       jobs,

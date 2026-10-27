@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -75,7 +76,15 @@ type ComplianceSummary struct {
 type WindowsUpdateRepo struct {
 	db        *storage.DB
 	Inventory *InventoryRepo
+	// Groups resolves a deployment target's GroupID (an AutoDeploy machine
+	// group) to its members. Optional; injected via SetGroups. Nil makes a
+	// GroupID target match no machines.
+	Groups *MachineGroupRepo
 }
+
+// SetGroups injects the machine-group repo so deployment targets can name a
+// machine group (BulkTarget.GroupID).
+func (r *WindowsUpdateRepo) SetGroups(g *MachineGroupRepo) { r.Groups = g }
 
 // NewWindowsUpdateRepo creates a new WindowsUpdateRepo.
 func NewWindowsUpdateRepo(db *storage.DB, inv *InventoryRepo) *WindowsUpdateRepo {
@@ -290,6 +299,28 @@ func (r *WindowsUpdateRepo) ListMachineStatuses(ctx context.Context, machineID I
 			return nil, err
 		}
 		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// StatusesForKB returns every machine's reported status for one KB, keyed
+// by machine ID, in a single query. Machines that never reported the KB are
+// absent.
+func (r *WindowsUpdateRepo) StatusesForKB(ctx context.Context, kb string) (map[ID]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT machine_id, status FROM machine_update_status WHERE kb_number = ?`, kb)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[ID]string{}
+	for rows.Next() {
+		var id ID
+		var st string
+		if err := rows.Scan(&id, &st); err != nil {
+			return nil, err
+		}
+		out[id] = st
 	}
 	return out, rows.Err()
 }
@@ -811,9 +842,28 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 	for _, id := range t.MachineIDs {
 		idSet[id] = true
 	}
+	// Machine-group target: gate on the group's resolved members. Without a
+	// group repo (or for an empty group) a GroupID matches nothing, the same
+	// safety default BulkRepo uses.
+	var groupSet map[ID]bool
+	if t.GroupID != 0 {
+		groupSet = map[ID]bool{}
+		if r.Groups != nil {
+			members, gerr := r.Groups.Members(ctx, t.GroupID)
+			if gerr != nil && !errors.Is(gerr, ErrNotFound) {
+				return nil, gerr
+			}
+			for _, id := range members {
+				groupSet[id] = true
+			}
+		}
+	}
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
 		if len(idSet) > 0 && !idSet[m.ID] {
+			continue
+		}
+		if groupSet != nil && !groupSet[m.ID] {
 			continue
 		}
 		if strings.TrimSpace(osFilter) != "" {

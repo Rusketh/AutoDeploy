@@ -221,12 +221,13 @@ func handleLogSearch(r Repos) http.HandlerFunc {
 		if ev == nil {
 			ev = []model.LogEvent{}
 		}
-		// Resolve each agent event's actor (an SMBIOS UUID) to a machine
-		// name so the live tail and the API can show a name, not a raw UUID.
+		// Resolve each event's actor (an SMBIOS UUID, or the agent ID older
+		// rows carry) to machine_name and its target ("machine:12",
+		// "software/3") to target_name, so the live tail and API clients can
+		// show names, not raw IDs. Both fields are additive and omitted when
+		// nothing resolves.
 		if r.Inventory != nil {
-			if names, nerr := r.Inventory.NamesByUUID(req.Context()); nerr == nil {
-				model.EnrichMachineNames(ev, names)
-			}
+			model.NewNameLookup(req.Context(), r.Inventory).EnrichLogs(ev)
 		}
 		writeJSON(w, http.StatusOK, ev)
 	}
