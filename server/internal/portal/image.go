@@ -337,7 +337,7 @@ func imageGroupList(r Repos) http.HandlerFunc {
 			}
 		}
 		render(w, req, r, "image_group_list.html", "Image Groups", map[string]any{
-			"Groups":   groups,
+			"Groups":    groups,
 			"GroupRefs": grpRefs,
 		})
 	}

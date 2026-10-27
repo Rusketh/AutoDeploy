@@ -27,15 +27,15 @@ import (
 // Repos is the bundle of repositories the API depends on. Pass one
 // constructed by the caller so this package owns no state.
 type Repos struct {
-	ISOs      *model.ISORepo
-	Unattend  *model.UnattendRepo
-	Drivers   *model.DriverPackageRepo
-	Software  *model.SoftwarePackageRepo
+	ISOs        *model.ISORepo
+	Unattend    *model.UnattendRepo
+	Drivers     *model.DriverPackageRepo
+	Software    *model.SoftwarePackageRepo
 	Loadouts    *model.SoftwareLoadoutRepo
 	Images      *model.ImageRepo
 	ImageGroups *model.ImageGroupRepo
 	Inventory   *model.InventoryRepo
-	Resolver  *resolve.Resolver
+	Resolver    *resolve.Resolver
 	// Phase 11.
 	Users    *auth.Repo
 	Settings *auth.SettingsRepo
