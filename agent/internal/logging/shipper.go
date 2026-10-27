@@ -16,11 +16,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,11 +54,22 @@ type shipperState struct {
 	buffer []LogEvent // fixed-size ring buffer (allocated once in NewShipper)
 	head   int        // index of the oldest element
 	count  int        // number of valid elements in the ring
+	// dropped counts events evicted from a full buffer since the last
+	// Drain; Drain reports it as a synthetic logs.buffer.dropped event so
+	// the portal shows that (and how much) history is missing.
+	dropped int
+	// machineUUID, when set, is sent as the X-AutoDeploy-Machine-UUID
+	// header on every ingest POST (the same header every other client
+	// request carries) so the server can attribute the whole batch to a
+	// machine even for events whose actor names something else.
+	machineUUID string
 }
 
 // NewShipper wraps base. cap is the maximum number of events kept in
-// memory; once full, the oldest events are dropped (so a failing
-// upload can't OOM the boot environment).
+// memory; once full, the oldest INFO/DEBUG events are dropped first, then
+// the oldest of anything (so a failing upload can't OOM the client, and
+// chatty step output can't push the WARN/ERROR events that explain a
+// failure out of the buffer).
 func NewShipper(base slog.Handler, capacity int) *Shipper {
 	if capacity <= 0 {
 		capacity = 1024
@@ -110,16 +123,7 @@ func (s *Shipper) Handle(ctx context.Context, r slog.Record) error {
 
 	st := s.state
 	st.mu.Lock()
-	cap := len(st.buffer)
-	if st.count < cap {
-		// Space available: write at the next free slot.
-		st.buffer[(st.head+st.count)%cap] = ev
-		st.count++
-	} else {
-		// Full: overwrite the oldest slot and advance head.
-		st.buffer[st.head] = ev
-		st.head = (st.head + 1) % cap
-	}
+	st.pushLocked(ev)
 	st.mu.Unlock()
 
 	// Write through to the local sink (stdout + rotating file) last. Its
@@ -155,18 +159,86 @@ func (s *Shipper) WithGroup(name string) slog.Handler {
 	}
 }
 
-// Drain returns and clears every queued event in FIFO order.
+// SetMachineUUID records the machine's SMBIOS UUID. Every later Ship
+// sends it as the X-AutoDeploy-Machine-UUID header, which servers that
+// know it use to attribute the batch to the machine (older servers just
+// ignore the header). Empty clears it.
+func (s *Shipper) SetMachineUUID(uuid string) {
+	st := s.state
+	st.mu.Lock()
+	st.machineUUID = uuid
+	st.mu.Unlock()
+}
+
+// pushLocked appends ev, evicting one event first when the ring is full.
+// Caller holds st.mu.
+func (st *shipperState) pushLocked(ev LogEvent) {
+	if st.count == len(st.buffer) {
+		st.evictLocked()
+	}
+	st.buffer[(st.head+st.count)%len(st.buffer)] = ev
+	st.count++
+}
+
+// evictLocked removes one event from a non-empty ring: the oldest
+// INFO/DEBUG event if there is one, otherwise the oldest event. WARN and
+// ERROR events therefore survive any amount of INFO noise (a step that
+// prints thousands of stdout lines) -- they're what explains a failure.
+// O(n) in the worst case, but only runs when the buffer is full.
+// Caller holds st.mu.
+func (st *shipperState) evictLocked() {
+	if st.count == 0 {
+		return
+	}
+	n := len(st.buffer)
+	victim := 0
+	for i := 0; i < st.count; i++ {
+		if lowPriority(st.buffer[(st.head+i)%n].Level) {
+			victim = i
+			break
+		}
+	}
+	// Shift everything older than the victim one slot newer (overwriting
+	// it), then drop the now-duplicated head slot.
+	for i := victim; i > 0; i-- {
+		st.buffer[(st.head+i)%n] = st.buffer[(st.head+i-1)%n]
+	}
+	st.buffer[st.head] = LogEvent{}
+	st.head = (st.head + 1) % n
+	st.count--
+	st.dropped++
+}
+
+// lowPriority reports whether a slog level string (e.g. "INFO",
+// "DEBUG-4", "INFO+2") is below WARN, i.e. evictable first.
+func lowPriority(level string) bool {
+	return strings.HasPrefix(level, "INFO") || strings.HasPrefix(level, "DEBUG")
+}
+
+// Drain returns and clears every queued event in FIFO order. If events
+// were evicted from a full buffer since the last Drain, a synthetic
+// logs.buffer.dropped WARN event carrying the count leads the batch.
 func (s *Shipper) Drain() []LogEvent {
 	st := s.state
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.count == 0 {
+	if st.count == 0 && st.dropped == 0 {
 		return nil
 	}
-	out := make([]LogEvent, st.count)
+	out := make([]LogEvent, 0, st.count+1)
+	if st.dropped > 0 {
+		out = append(out, LogEvent{
+			OccurredAt: time.Now(),
+			Level:      slog.LevelWarn.String(),
+			Action:     "logs.buffer.dropped",
+			Actor:      st.machineUUID,
+			Fields:     fmt.Sprintf(`{"dropped":%d,"capacity":%d}`, st.dropped, len(st.buffer)),
+		})
+		st.dropped = 0
+	}
 	cap := len(st.buffer)
 	for i := 0; i < st.count; i++ {
-		out[i] = st.buffer[(st.head+i)%cap]
+		out = append(out, st.buffer[(st.head+i)%cap])
 	}
 	// Reset the ring without reallocating the backing array.
 	st.head = 0
@@ -193,6 +265,9 @@ func (s *Shipper) Ship(ctx context.Context, baseURL string, insecureTLS bool) (i
 		tr.TLSClientConfig.InsecureSkipVerify = insecureTLS
 	}
 	client := s.client
+	s.state.mu.Lock()
+	machineUUID := s.state.machineUUID
+	s.state.mu.Unlock()
 	// Server cap is 500 events per request; chunk slightly below to
 	// leave headroom for JSON framing.
 	const chunk = 400
@@ -215,6 +290,9 @@ func (s *Shipper) Ship(ctx context.Context, baseURL string, insecureTLS bool) (i
 			return sent, err
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if machineUUID != "" {
+			req.Header.Set("X-AutoDeploy-Machine-UUID", machineUUID)
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			s.requeue(events[off:])
@@ -232,9 +310,9 @@ func (s *Shipper) Ship(ctx context.Context, baseURL string, insecureTLS bool) (i
 }
 
 // requeue prepends events back into the buffer after a failed Ship,
-// preserving order. If the buffer is at capacity the oldest of the
-// re-queued events drop -- the live-tail events are more useful for
-// diagnosis than ancient ones anyway.
+// preserving order. If that overflows the buffer, events are evicted
+// the same way Handle evicts: oldest INFO/DEBUG first, so the WARN/ERROR
+// events that explain a failure outlive the noise around them.
 func (s *Shipper) requeue(events []LogEvent) {
 	st := s.state
 	st.mu.Lock()
@@ -246,19 +324,20 @@ func (s *Shipper) requeue(events []LogEvent) {
 	for i := 0; i < st.count; i++ {
 		existing[i] = st.buffer[(st.head+i)%cap]
 	}
-	combined := append(events, existing...)
-	if len(combined) > cap {
-		// Keep the newest (tail) entries, drop the oldest (head).
-		combined = combined[len(combined)-cap:]
-	}
+	combined := append(append([]LogEvent(nil), events...), existing...)
 	st.head = 0
-	st.count = len(combined)
-	copy(st.buffer, combined)
+	st.count = 0
+	for _, ev := range combined {
+		st.pushLocked(ev)
+	}
 }
 
 // promote folds a single slog.Attr into either a LogEvent header
-// field (component/actor/target) or the generic fields map.
+// field (component/actor/target) or the generic fields map. Attrs are
+// folded in order (logger With(...) attrs first, then the record's), so
+// a per-call actor/target overrides a logger-wide default.
 func promote(ev *LogEvent, fields map[string]any, a slog.Attr) {
+	a.Value = a.Value.Resolve()
 	switch a.Key {
 	case "component":
 		ev.Component = a.Value.String()
@@ -267,6 +346,56 @@ func promote(ev *LogEvent, fields map[string]any, a slog.Attr) {
 	case "target":
 		ev.Target = a.Value.String()
 	default:
-		fields[a.Key] = a.Value.Any()
+		fields[a.Key] = fieldValue(a.Value)
 	}
+}
+
+// fieldValue converts an attr value to something encoding/json renders
+// usefully. Most kinds pass through; the fix is for KindAny values whose
+// JSON form is meaningless: an error (a *errors.errorString or
+// *fmt.wrapError has no exported fields, so it marshalled as `{}`) becomes
+// its Error() text, and a fmt.Stringer without its own JSON/text encoding
+// becomes its String(). Groups become nested objects.
+func fieldValue(v slog.Value) any {
+	switch v.Kind() {
+	case slog.KindGroup:
+		m := map[string]any{}
+		for _, ga := range v.Group() {
+			m[ga.Key] = fieldValue(ga.Value.Resolve())
+		}
+		return m
+	case slog.KindAny:
+		return stringifyAny(v.Any())
+	default:
+		return v.Any()
+	}
+}
+
+// stringifyAny returns err.Error() / s.String() for errors and plain
+// Stringers, x unchanged otherwise (including anything with its own JSON
+// or text encoding). A nil interface stays nil (JSON null); a typed-nil
+// receiver whose method panics yields a placeholder rather than taking
+// the logger down.
+func stringifyAny(x any) (out any) {
+	switch t := x.(type) {
+	case nil:
+		return nil
+	case json.Marshaler, encoding.TextMarshaler:
+		return x
+	case error:
+		defer func() {
+			if recover() != nil {
+				out = "<nil error>"
+			}
+		}()
+		return t.Error()
+	case fmt.Stringer:
+		defer func() {
+			if recover() != nil {
+				out = "<nil>"
+			}
+		}()
+		return t.String()
+	}
+	return x
 }
