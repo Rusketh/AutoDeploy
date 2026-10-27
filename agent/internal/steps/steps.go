@@ -55,13 +55,25 @@ type OSRunner struct {
 	// filenames resolve against the downloaded/extracted files, not the
 	// service's CWD (C:\Windows\System32).
 	WorkDir string
+
+	// lastStderr holds the final few stderr lines of the most recent Run
+	// (see LastStderr). Runs are sequential, so no locking is needed.
+	lastStderr []string
 }
+
+// stderrTailLines is how many trailing stderr lines LastStderr keeps.
+const stderrTailLines = 5
+
+// LastStderr returns the last few non-empty stderr lines of the most
+// recent Run (nil if it printed none). The agent attaches them to a
+// package.install.fail event so the reason a step failed is on the event
+// itself, not scattered across preceding steps.exec.stderr rows.
+func (r *OSRunner) LastStderr() []string { return r.lastStderr }
 
 // Run implements Runner.
 func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInput string) (int, error) {
 	if r.Log != nil {
 		r.Log.Info("steps.exec",
-			slog.String("actor", "agent"),
 			slog.String("target", name),
 			slog.String("args", fmt.Sprintf("%q", args)),
 			slog.String("dir", r.WorkDir),
@@ -74,12 +86,14 @@ func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInp
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = r.WorkDir
+	tail := &lineTail{max: stderrTailLines}
 	cmd.Stdout = stdoutWriter{r.Log}
-	cmd.Stderr = stderrWriter{r.Log}
+	cmd.Stderr = stderrWriter{log: r.Log, tail: tail}
 	if shellInput != "" {
 		cmd.Stdin = strings.NewReader(shellInput)
 	}
 	err := cmd.Run()
+	r.lastStderr = tail.Lines()
 	if err == nil {
 		return 0, nil
 	}
@@ -106,7 +120,6 @@ func (r *OSRunner) RunScript(ctx context.Context, shell, body string) (int, erro
 	}
 	if r.Log != nil {
 		r.Log.Info("steps.script",
-			slog.String("actor", "agent"),
 			slog.String("shell", shell),
 			slog.String("dir", r.WorkDir),
 			slog.Bool("dry_run", r.DryRun),
@@ -166,7 +179,6 @@ func writeScriptFile(dir, ext, body string) (string, error) {
 func (r *OSRunner) Unzip(_ context.Context, src, dst string) error {
 	if r.Log != nil {
 		r.Log.Info("steps.unzip",
-			slog.String("actor", "agent"),
 			slog.String("source", src),
 			slog.String("destination", dst),
 			slog.Bool("dry_run", r.DryRun),
@@ -247,7 +259,6 @@ func (r *OSRunner) Copy(_ context.Context, src, dst string) error {
 	}
 	if r.Log != nil {
 		r.Log.Info("steps.copy",
-			slog.String("actor", "agent"),
 			slog.String("source", src),
 			slog.String("destination", dst),
 			slog.Bool("dry_run", r.DryRun),
@@ -460,11 +471,113 @@ func (w stdoutWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type stderrWriter struct{ log *slog.Logger }
+type stderrWriter struct {
+	log  *slog.Logger
+	tail *lineTail
+}
 
+// Write logs stderr output at INFO: plenty of healthy installers write
+// progress or notices to stderr, so stderr alone is not a warning -- the
+// step's exit code decides failure (package.step / package.install.fail
+// carry the level). The action name is unchanged for existing matching.
 func (w stderrWriter) Write(p []byte) (int, error) {
 	if w.log != nil {
-		w.log.Warn("steps.exec.stderr", slog.String("line", string(p)))
+		w.log.Info("steps.exec.stderr", slog.String("line", string(p)))
+	}
+	if w.tail != nil {
+		w.tail.Write(p)
 	}
 	return len(p), nil
+}
+
+// lineTail keeps the last max non-empty lines written to it. Writes
+// arrive in arbitrary chunks (os/exec pipes), so a trailing partial line
+// is carried until its newline or Lines.
+type lineTail struct {
+	max     int
+	lines   []string
+	partial string
+}
+
+func (t *lineTail) Write(p []byte) {
+	parts := strings.Split(t.partial+string(p), "\n")
+	t.partial = parts[len(parts)-1]
+	for _, l := range parts[:len(parts)-1] {
+		t.add(l)
+	}
+}
+
+func (t *lineTail) add(l string) {
+	l = strings.TrimSpace(l)
+	if l == "" {
+		return
+	}
+	t.lines = append(t.lines, l)
+	if len(t.lines) > t.max {
+		t.lines = t.lines[len(t.lines)-t.max:]
+	}
+}
+
+// Lines flushes any partial line and returns the retained tail.
+func (t *lineTail) Lines() []string {
+	if t.partial != "" {
+		t.add(t.partial)
+		t.partial = ""
+	}
+	if len(t.lines) == 0 {
+		return nil
+	}
+	return append([]string(nil), t.lines...)
+}
+
+// FailureReason is a one-line, human-readable reason a step failed: its
+// error when it has one, otherwise the exit code (with its meaning when
+// known, see ExitMeaning). Empty for a successful or skipped step.
+func FailureReason(res Result) string {
+	if res.Skipped {
+		return ""
+	}
+	if res.Error != nil {
+		return res.Error.Error()
+	}
+	if isSuccess(res.ExitCode, res.Step.SuccessCodes) {
+		return ""
+	}
+	msg := fmt.Sprintf("exit code %d", res.ExitCode)
+	if m := ExitMeaning(res.ExitCode); m != "" {
+		msg += " (" + m + ")"
+	}
+	if len(res.Step.SuccessCodes) > 0 {
+		msg += fmt.Sprintf(", not one of the step's success codes %v", res.Step.SuccessCodes)
+	}
+	return msg
+}
+
+// ExitMeaning maps the Windows Installer exit codes a package step most
+// often returns (msiexec itself, and the many exe installers that pass
+// its codes through) to a short plain-English meaning; "" when unknown.
+func ExitMeaning(code int) string {
+	switch code {
+	case 0:
+		return "success"
+	case 1602:
+		return "install cancelled"
+	case 1603:
+		return "fatal error during installation"
+	case 1618:
+		return "another installation is already in progress"
+	case 1619:
+		return "installer package could not be opened"
+	case 1620:
+		return "installer package is invalid"
+	case 1625:
+		return "installation blocked by system policy"
+	case 1638:
+		return "another version of this product is already installed"
+	case 1641:
+		return "success, restart initiated"
+	case 3010:
+		return "success, restart required"
+	}
+	return ""
 }

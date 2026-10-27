@@ -84,6 +84,14 @@ func main() {
 	if f.uuid == "" {
 		f.uuid = readSystemUUID()
 	}
+	// Tag every event from here on with the machine's identity once, rather
+	// than per call: actor = SMBIOS UUID (a per-call actor still overrides),
+	// and the shipper sends the UUID as X-AutoDeploy-Machine-UUID so the
+	// server can attribute the batch to the machine.
+	if f.uuid != "" {
+		log = log.With(slog.String("actor", f.uuid))
+		shipper.SetMachineUUID(f.uuid)
+	}
 
 	// Service management subcommands (invoked by SetupComplete.cmd at
 	// deploy time, or manually).
@@ -116,7 +124,6 @@ func main() {
 	}
 
 	log.Info("agent.start",
-		slog.String("actor", "system"),
 		slog.String("target", "self"),
 		slog.String("os", runtime.GOOS),
 		slog.String("arch", runtime.GOARCH),
@@ -218,25 +225,27 @@ func main() {
 		log.Warn("report.open", slog.String("error", err.Error()))
 	}
 	depID := openResp.DeploymentID
+	// Correlate everything this deploy run logs with its deployment row.
+	dlog := withDeployment(log, depID)
 	// The report response also carries the machine's agent_id (servers
 	// that predate /agent/enroll included): adopt it if enrollment didn't.
 	if f.agentID == "" && openResp.AgentID != "" {
-		adoptAgentID(log, &f, openResp.AgentID)
+		adoptAgentID(dlog, &f, openResp.AgentID)
 	}
 	// Inventory this machine the same way the resident loop does —
 	// hardware spec (SMBIOS/WMI) once, plus the observed computer name
 	// and AD path. Without these a manually added machine sat in the
 	// inventory as a bare UUID. Both no-op if no agent_id was acquired.
-	reportHardwareOnce(ctx, log, c, f)
-	reportObservedIdentity(ctx, log, c, f)
+	reportHardwareOnce(ctx, dlog, c, f)
+	reportObservedIdentity(ctx, dlog, c, f)
 
-	packageReports, failed := installPackages(ctx, log, c, f, resp.Items, nil)
+	packageReports, failed := installPackages(ctx, dlog, c, f, resp.Items, nil)
 
 	// Branding (Phase 15 / design §12): write the operator's OEM
 	// identity to HKLM\...\OEMInformation so System Properties shows
 	// the right manufacturer / support URL. Best-effort: failures are
 	// logged but do not break the deployment.
-	applyOEMBranding(ctx, log, c, f)
+	applyOEMBranding(ctx, dlog, c, f)
 
 	// Final report: mark the deployment ok/failed and ship per-package
 	// detection state.
@@ -253,11 +262,11 @@ func main() {
 			"outcome":       outcome,
 			"packages":      packageReports,
 		}, &ignore); err != nil {
-			log.Warn("report.close", slog.String("error", err.Error()))
+			dlog.Warn("report.close", slog.String("error", err.Error()))
 		}
 	}
 
-	log.Info("agent.done", slog.String("actor", f.uuid), slog.String("outcome", outcome))
+	dlog.Info("agent.done", slog.String("outcome", outcome))
 
 	// Resident mode. With an agent_id (enrolled above, or adopted from the
 	// report response) run the full self loop — the same mode a PXE-
@@ -376,27 +385,31 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// opted in, keep the lock marker armed and the branding fresh so the
 	// credential provider shows a branded, live screen. SetupComplete.cmd armed
 	// the marker at deploy time; re-arming here is belt-and-suspenders.
+	// While the initial deployment is open, everything up to its close is
+	// part of that run: tag those events with its deployment_id so the
+	// server can stitch the run's timeline together.
+	dlog := withDeployment(log, resp.DeploymentID)
 	if resp.SetupLock && resp.DeploymentID != 0 {
 		_ = armLockMarker()
-		refreshLockBranding(ctx, log, c)
+		refreshLockBranding(ctx, dlog, c)
 	}
 	if resp.DeploymentID != 0 {
-		reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
+		reportDeployProgress(ctx, dlog, c, f, resp.DeploymentID, "agent-online", 0, 0, "Agent running; Windows installed")
 	}
 	// Name reconciliation: a USB/ISO-imaged machine boots with a random name.
 	// The server hands back the deterministic name it should carry; rename and
 	// reboot BEFORE joining AD or installing software, so the domain object and
 	// everything after it use the final name. Resumes after the reboot.
-	if maybeRename(ctx, log, resp.DesiredName) {
+	if maybeRename(ctx, dlog, resp.DesiredName) {
 		return 0 // a rename reboot is scheduled; the rest resumes after reboot
 	}
-	if maybeDomainJoin(ctx, log, c, f) {
+	if maybeDomainJoin(ctx, dlog, c, f) {
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
 	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
 	// autounattend.xml with the admin password in plaintext, so this must
 	// happen on the deployed machine. Also extends C: into the freed space.
-	cleanupMediaOnce(log)
+	cleanupMediaOnce(dlog)
 	var packageReports []pkgReport
 	var pkgFailed bool
 	if len(resp.Software) > 0 {
@@ -408,9 +421,9 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 			if name != "" {
 				notes = "Installing " + name
 			}
-			reportDeployProgress(ctx, log, c, f, resp.DeploymentID, "installing", done, total, notes)
+			reportDeployProgress(ctx, dlog, c, f, resp.DeploymentID, "installing", done, total, notes)
 		}
-		packageReports, pkgFailed = installPackages(ctx, log, c, f, resp.Software, onProgress)
+		packageReports, pkgFailed = installPackages(ctx, dlog, c, f, resp.Software, onProgress)
 	}
 	identityBody := map[string]any{"system_uuid": f.uuid}
 	// setupLockReboot is set when we close a setup-lock deployment; we reboot at
@@ -434,12 +447,9 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 			"outcome":       outcome,
 			"packages":      packageReports,
 		}, &ignore); err != nil {
-			log.Warn("deploy.close", slog.String("error", err.Error()))
+			dlog.Warn("deploy.close", slog.String("error", err.Error()))
 		} else {
-			log.Info("deploy.closed",
-				slog.String("actor", f.uuid),
-				slog.Int64("deployment_id", resp.DeploymentID),
-				slog.String("outcome", outcome))
+			dlog.Info("deploy.closed", slog.String("outcome", outcome))
 			// Initial rollout finished: drop the setup-lock marker and remember
 			// to reboot at the end of this cycle. A reboot (not just clearing
 			// the marker) is REQUIRED to restore the logon: LogonUI evaluates
@@ -970,7 +980,6 @@ func hostFacts(log *slog.Logger) steps.HostFacts {
 		osFactsCached = facts
 		if log != nil {
 			log.Info("install.host_os",
-				slog.String("actor", "agent"),
 				slog.String("os_caption", caption),
 				slog.String("os_version", version))
 		}
@@ -1039,7 +1048,6 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	}
 	if installed {
 		log.Info("package.skip",
-			slog.String("actor", f.uuid),
 			slog.String("target", pkg.Name),
 			slog.String("reason", "detection rules report already installed"))
 		return &pkgReport{PackageID: pkg.PackageID, Detected: true, Skipped: true}, false
@@ -1201,7 +1209,6 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
 
 	log.Info("package.install.start",
-		slog.String("actor", f.uuid),
 		slog.String("target", pkg.Name),
 		slog.String("host_os", facts.OSCaption),
 		slog.Int("steps", len(rewritten)))
@@ -1233,20 +1240,75 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			// rather than wondering whether it silently failed.
 			slog.Bool("skipped", r.Skipped),
 			slog.String("filter_os", r.Step.FilterOS),
+			slog.String("exit_meaning", stepExitMeaning(r)),
 			slog.Any("error", r.Error),
 		)
 	}
 	if ok {
 		log.Info("package.install.ok",
-			slog.String("actor", f.uuid),
 			slog.String("target", pkg.Name))
 		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
 		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
 	}
-	log.Error("package.install.fail",
-		slog.String("actor", f.uuid),
-		slog.String("target", pkg.Name))
+	log.Error("package.install.fail", packageFailAttrs(pkg.Name, results, runner.LastStderr())...)
 	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
+}
+
+// packageFailAttrs builds package.install.fail's attrs so the event says
+// WHY on its own: the first failing step (1-based index, as package.step
+// numbers them) and its type, exit code, a plain error string, the
+// exit code's meaning when known, and the last stderr lines when the
+// failing step was the last one run (its output is what lastStderr holds).
+func packageFailAttrs(name string, results []steps.Result, lastStderr []string) []any {
+	attrs := []any{slog.String("target", name)}
+	for i, r := range results {
+		if r.Error == nil && !r.Aborted {
+			continue
+		}
+		reason := steps.FailureReason(r)
+		if reason == "" {
+			reason = "step failed"
+		}
+		attrs = append(attrs,
+			slog.Int("step", i+1),
+			slog.Int("steps", len(results)),
+			slog.String("step_type", r.Step.Type),
+			slog.Int("exit_code", r.ExitCode),
+			slog.String("error", reason),
+		)
+		if m := stepExitMeaning(r); m != "" {
+			attrs = append(attrs, slog.String("exit_meaning", m))
+		}
+		if i == len(results)-1 && len(lastStderr) > 0 {
+			attrs = append(attrs, slog.String("stderr_tail", strings.Join(lastStderr, "\n")))
+		}
+		break
+	}
+	return attrs
+}
+
+// stepExitMeaning is steps.ExitMeaning for steps that ran a process. copy,
+// unzip and skipped steps have no real exit code, so they get "".
+func stepExitMeaning(r steps.Result) string {
+	switch r.Step.Type {
+	case "copy", "unzip":
+		return ""
+	}
+	if r.Skipped {
+		return ""
+	}
+	return steps.ExitMeaning(r.ExitCode)
+}
+
+// withDeployment returns log tagged with deployment_id when the run has
+// one (an open deployment row the boot client or report opened), so the
+// server can tie every event of that run to its deployment. depID 0
+// leaves log unchanged.
+func withDeployment(log *slog.Logger, depID int64) *slog.Logger {
+	if depID == 0 {
+		return log
+	}
+	return log.With(slog.Int64("deployment_id", depID))
 }
 
 // applyOEMBranding fetches the operator's branding from the server
@@ -1304,7 +1366,6 @@ func applyOEMBranding(ctx context.Context, log *slog.Logger, c *httpc.Client, f 
 		}
 	}
 	log.Info("brand.oem.applied",
-		slog.String("actor", f.uuid),
 		slog.String("target", root),
 	)
 }
