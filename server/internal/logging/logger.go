@@ -12,6 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
+	"sync/atomic"
 )
 
 type ctxKey int
@@ -46,7 +48,10 @@ func From(ctx context.Context) *slog.Logger {
 }
 
 // Event emits a structured event. Required fields are passed by name so they
-// cannot be forgotten by accident.
+// cannot be forgotten by accident. The level follows the action (see
+// LevelFor): failures are logged at WARN/ERROR so they stand out, everything
+// else at INFO. When a Sink is installed the event is also handed to it
+// (the server persists these to the central log).
 func Event(ctx context.Context, action, actor, target string, attrs ...slog.Attr) {
 	l := From(ctx)
 	all := make([]slog.Attr, 0, len(attrs)+2)
@@ -55,7 +60,44 @@ func Event(ctx context.Context, action, actor, target string, attrs ...slog.Attr
 		slog.String("target", target),
 	)
 	all = append(all, attrs...)
-	l.LogAttrs(ctx, slog.LevelInfo, action, all...)
+	level := LevelFor(action)
+	l.LogAttrs(ctx, level, action, all...)
+	if s := sink.Load(); s != nil {
+		(*s)(ctx, level, action, actor, target, attrs)
+	}
+}
+
+// Sink receives every Event after it is logged. attrs excludes actor and
+// target, which are passed separately.
+type Sink func(ctx context.Context, level slog.Level, action, actor, target string, attrs []slog.Attr)
+
+var sink atomic.Pointer[Sink]
+
+// SetSink installs (or, with nil, removes) the Event sink.
+func SetSink(s Sink) {
+	if s == nil {
+		sink.Store(nil)
+		return
+	}
+	sink.Store(&s)
+}
+
+// LevelFor picks the log level for an action code from its wording: ERROR
+// for failures to write/persist and fatal errors, WARN for other failures
+// and rejections, INFO otherwise.
+func LevelFor(action string) slog.Level {
+	a := strings.ToLower(action)
+	for _, w := range []string{"write_failed", "fatal", "panic"} {
+		if strings.Contains(a, w) {
+			return slog.LevelError
+		}
+	}
+	for _, w := range []string{"fail", "error", "rejected", "bad_request", "denied", "invalid", "mismatch"} {
+		if strings.Contains(a, w) {
+			return slog.LevelWarn
+		}
+	}
+	return slog.LevelInfo
 }
 
 // Secret wraps a sensitive string. Its String and MarshalJSON methods always

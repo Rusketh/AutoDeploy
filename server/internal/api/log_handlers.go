@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/rusketh/autodeploy/server/internal/logging"
 	"github.com/rusketh/autodeploy/server/internal/model"
 )
 
@@ -29,7 +33,8 @@ func RegisterLogs(mux *http.ServeMux, r Repos) {
 	// request body to keep a misbehaving client from flooding the DB,
 	// and rate-limits per source IP.
 	lim := newIngestLimiter(logIngestRateBurst, logIngestRateRefillSec)
-	mux.HandleFunc("POST /api/v1/logs/ingest", handleLogIngest(r, lim))
+	mc := newIngestMachineCache(r.Inventory)
+	mux.HandleFunc("POST /api/v1/logs/ingest", handleLogIngest(r, lim, mc))
 
 	// Portal-side search (authenticated).
 	mux.HandleFunc("GET /api/v1/logs", handleLogSearch(r))
@@ -39,7 +44,11 @@ type ingestReq struct {
 	Events []model.LogEvent `json:"events"`
 }
 
-func handleLogIngest(r Repos, lim *ingestLimiter) http.HandlerFunc {
+// machineUUIDHeader is the header every newer client request carries with
+// the machine's SMBIOS UUID. Older clients don't send it.
+const machineUUIDHeader = "X-AutoDeploy-Machine-UUID"
+
+func handleLogIngest(r Repos, lim *ingestLimiter, mc *ingestMachineCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if !lim.allow(clientIP(req)) {
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
@@ -65,11 +74,129 @@ func handleLogIngest(r Repos, lim *ingestLimiter) http.HandlerFunc {
 				return
 			}
 		}
+		prepareIngestedEvents(req, r, mc, in.Events)
 		if err := r.Logs.AppendBatch(req.Context(), in.Events); err != nil {
 			writeError(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// prepareIngestedEvents derives the server-side columns for a client batch:
+// the machine (from the X-AutoDeploy-Machine-UUID header, else the event's
+// actor when it is a known SMBIOS UUID / agent ID), and the deployment,
+// error, message, hint and outcome (model.PrepareIngestedLog). Whatever a
+// client put in those columns is discarded — the endpoint is open, so an
+// audit "user" or a machine attribution must never be taken from the body.
+// Old clients (no header, no extra fields) get the same treatment from the
+// actor alone; nothing they send is rejected.
+func prepareIngestedEvents(req *http.Request, r Repos, mc *ingestMachineCache, evs []model.LogEvent) {
+	ctx := req.Context()
+	headerMachine := mc.resolve(ctx, req.Header.Get(machineUUIDHeader))
+	var names *model.NameLookup
+	if r.Inventory != nil {
+		names = model.NewNameLookup(ctx, r.Inventory)
+	}
+	for i := range evs {
+		ev := &evs[i]
+		ev.Message, ev.User, ev.Outcome, ev.Error, ev.Hint = "", "", "", "", ""
+		ev.DeploymentID = 0
+		ev.MachineID = headerMachine
+		if ev.MachineID == 0 {
+			ev.MachineID = mc.resolve(ctx, ev.Actor)
+		}
+		model.PrepareIngestedLog(ev, names)
+	}
+}
+
+// ingestMachineCache maps the UUIDs / agent IDs clients log under to machine
+// row IDs, so ingest costs at most one indexed lookup per new identifier
+// rather than one per event. Misses are cached too (briefly), so a stream
+// of events from an unknown actor doesn't query on every batch.
+type ingestMachineCache struct {
+	inv *model.InventoryRepo
+	mu  sync.Mutex
+	m   map[string]ingestMachineEntry
+}
+
+type ingestMachineEntry struct {
+	id  model.ID
+	exp time.Time
+}
+
+const (
+	ingestMachineTTL     = 10 * time.Minute
+	ingestMachineMissTTL = time.Minute
+	ingestMachineMax     = 20000
+)
+
+func newIngestMachineCache(inv *model.InventoryRepo) *ingestMachineCache {
+	return &ingestMachineCache{inv: inv, m: map[string]ingestMachineEntry{}}
+}
+
+// resolve returns the machine ID for an SMBIOS UUID or agent ID, 0 if none.
+func (c *ingestMachineCache) resolve(ctx context.Context, key string) model.ID {
+	key = strings.TrimSpace(key)
+	if c == nil || c.inv == nil || key == "" || len(key) > 128 || key == "system" {
+		return 0
+	}
+	now := time.Now()
+	c.mu.Lock()
+	if e, ok := c.m[key]; ok && now.Before(e.exp) {
+		c.mu.Unlock()
+		return e.id
+	}
+	c.mu.Unlock()
+	id, err := c.inv.MachineIDByActor(ctx, key)
+	ttl := ingestMachineTTL
+	if err != nil {
+		id, ttl = 0, ingestMachineMissTTL
+	}
+	c.mu.Lock()
+	if len(c.m) >= ingestMachineMax {
+		c.m = map[string]ingestMachineEntry{}
+	}
+	c.m[key] = ingestMachineEntry{id: id, exp: now.Add(ttl)}
+	c.mu.Unlock()
+	return id
+}
+
+// LogEventSink returns a logging.Sink that persists server-side
+// logging.Event calls to the central log, so failures the server itself
+// hits (an upload that couldn't be written, …) show up on the Logs page.
+// Best-effort: a write error is ignored.
+func LogEventSink(logs *model.LogRepo) logging.Sink {
+	return func(ctx context.Context, level slog.Level, action, actor, target string, attrs []slog.Attr) {
+		if logs == nil {
+			return
+		}
+		f := map[string]any{}
+		for _, a := range attrs {
+			v := a.Value.Resolve()
+			if err, ok := v.Any().(error); ok {
+				f[a.Key] = err.Error()
+				continue
+			}
+			f[a.Key] = v.Any()
+		}
+		fb, _ := json.Marshal(f)
+		ev := model.LogEvent{
+			Component: "server",
+			Level:     level.String(),
+			Actor:     actor,
+			Action:    action,
+			Target:    target,
+			Fields:    string(fb),
+		}
+		if actor != "" && actor != "system" {
+			ev.User = actor
+		}
+		model.ApplyLogDescription(&ev, model.LogNames{})
+		ev.Level, ev.Category = level.String(), ""
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		_ = logs.Append(wctx, ev)
 	}
 }
 
@@ -192,26 +319,19 @@ func handleLogSearch(r Repos) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		q := req.URL.Query()
-		s := model.LogSearch{
-			Component: q.Get("component"),
-			Actor:     q.Get("actor"),
-			Action:    q.Get("action"),
+		// The same filters as the Logs page (level, machine, user, category,
+		// deployment, from/to, q, before/after), plus the original
+		// component/actor/action/since/until/limit. Results are newest first;
+		// ordered by id when paging with before/after (the live tail polls
+		// with after=<last id seen>).
+		var loc *time.Location
+		if r.Runtime != nil {
+			loc = r.Runtime.DisplayLocation()
 		}
-		if v := q.Get("since"); v != "" {
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				s.Since = t
-			}
-		}
-		if v := q.Get("until"); v != "" {
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				s.Until = t
-			}
-		}
-		if v := q.Get("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				s.Limit = n
-			}
+		lq := model.ParseLogQuery(req.Context(), req.URL.Query(), r.Inventory, loc)
+		s := lq.Search
+		if req.URL.Query().Get("limit") == "" {
+			s.Limit = 0 // the API's historic default (1000)
 		}
 		ev, err := r.Logs.Search(req.Context(), s)
 		if err != nil {
@@ -226,8 +346,14 @@ func handleLogSearch(r Repos) http.HandlerFunc {
 		// "software/3") to target_name, so the live tail and API clients can
 		// show names, not raw IDs. Both fields are additive and omitted when
 		// nothing resolves.
+		// Catalogue fields (message, category, hint) are filled for rows
+		// stored before those columns existed.
 		if r.Inventory != nil {
-			model.NewNameLookup(req.Context(), r.Inventory).EnrichLogs(ev)
+			model.NewNameLookup(req.Context(), r.Inventory).DescribeLogs(ev)
+		} else {
+			for i := range ev {
+				model.ApplyLogDescription(&ev[i], model.LogNames{})
+			}
 		}
 		writeJSON(w, http.StatusOK, ev)
 	}

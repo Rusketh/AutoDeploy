@@ -82,6 +82,7 @@ func machineBulkEditSubmit(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "binding.bulk_edit",
 				Target:    "machines:" + strconv.Itoa(len(machineIDs)),
 				Fields:    string(fields),

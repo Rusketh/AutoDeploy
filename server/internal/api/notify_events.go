@@ -88,15 +88,17 @@ func emitDeployStarted(req *http.Request, r Repos, m model.MachineRecord, imageI
 		ev.Name = notify.EventDeployReimage
 		ev.Severity = notify.SevWarning
 		ev.Title = "Re-image started on " + name
-		ev.Body = strings.TrimSpace("The machine is being wiped and rebuilt (trigger: " + reimageSource + "). " + ev.Body)
+		ev.Body = strings.TrimSpace("The machine is being wiped and rebuilt (" + reimageSourceLabel(reimageSource) + "). " + ev.Body)
 	}
 	r.Emitter.Emit(req.Context(), ev)
 }
 
 // emitDeployOutcome fires deploy.completed / deploy.failed when a deploy
 // reaches a terminal outcome (boot-client staging failure or the agent's
-// final report).
-func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, outcome, notes string) {
+// final report). depID is the run (0 if unknown): a failure's body leads
+// with the first error logged during the run, in the catalogue's plain
+// English with its "what to try" hint, and links to that run's logs.
+func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, depID model.ID, outcome, notes string) {
 	if r.Emitter == nil {
 		return
 	}
@@ -113,6 +115,19 @@ func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, outcom
 		ev.Name = notify.EventDeployFailed
 		ev.Severity = notify.SevError
 		ev.Title = "Deploy failed on " + name
+		if msg, hint, ok := deployFailureSummary(req.Context(), r, depID); ok {
+			body := msg
+			if notes != "" && !strings.Contains(msg, notes) && !strings.Contains(notes, msg) {
+				body += " (" + strings.TrimSuffix(notes, ".") + ")"
+			}
+			if hint != "" {
+				body += "\nWhat to try: " + hint
+			}
+			ev.Body = body
+		}
+		if depID > 0 {
+			ev.Link = fmt.Sprintf("/portal/logs?deployment=%d", int64(depID))
+		}
 	}
 	r.Emitter.Emit(req.Context(), ev)
 }
@@ -132,7 +147,7 @@ func emitLoginFailed(req *http.Request, r Repos, username, ip string) {
 		Severity: notify.SevWarning,
 		Title:    "Failed login attempt for " + username,
 		Body:     "A sign-in with this username was rejected (source IP " + ip + ").",
-		Link:     "/portal/logs",
+		Link:     model.FailedLoginLogsURL(username),
 		Actor:    username,
 	})
 }

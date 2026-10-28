@@ -174,6 +174,7 @@ func logGroupEvent(req *http.Request, r Repos, action string, g model.MachineGro
 	_ = r.Logs.Append(req.Context(), model.LogEvent{
 		Component: "groups",
 		Actor:     user.Username,
+		User:      user.Username,
 		Action:    action,
 		Target:    "group:" + g.Name,
 		Fields:    string(fields),

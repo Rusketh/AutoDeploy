@@ -17,6 +17,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -130,8 +131,9 @@ func Register(mux *http.ServeMux, r Repos) error {
 	get := func(path string, h http.HandlerFunc) {
 		mux.HandleFunc("GET "+path, requireSession(r, h))
 	}
+	// POSTs change state: audited records who changed what (audit.go).
 	post := func(path string, h http.HandlerFunc) {
-		mux.HandleFunc("POST "+path, requireSession(r, h))
+		mux.HandleFunc("POST "+path, requireSession(r, audited(r, path, h)))
 	}
 
 	mux.HandleFunc("GET /portal", func(w http.ResponseWriter, req *http.Request) {
@@ -238,12 +240,14 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			if username == "" {
 				username = "(blank)"
 			}
+			ip := clientAddr(req)
+			recordAuth(req, r, "auth.login.fail", username, map[string]any{"username": username, "ip": ip, "via": "portal"})
 			r.Emitter.Emit(req.Context(), notify.Event{
 				Name:     notify.EventAuthLoginFailed,
 				Severity: notify.SevWarning,
 				Title:    "Failed login attempt for " + username,
-				Body:     "A portal sign-in with this username was rejected.",
-				Link:     "/portal/logs",
+				Body:     "A portal sign-in with this username was rejected (source IP " + ip + ").",
+				Link:     model.FailedLoginLogsURL(username),
 				Actor:    username,
 			})
 			q := url.Values{}
@@ -268,6 +272,7 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			Expires:  time.Now().Add(12 * time.Hour),
 			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
+		recordAuth(req, r, "auth.login.ok", u.Username, map[string]any{"ip": clientAddr(req), "via": "portal"})
 		next := req.FormValue("next")
 		if next == "" || !strings.HasPrefix(next, "/portal/") {
 			next = "/portal/"
@@ -276,8 +281,19 @@ func loginSubmit(r Repos) http.HandlerFunc {
 	}
 }
 
+// clientAddr is the request's source IP (without the port).
+func clientAddr(req *http.Request) string {
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return host
+	}
+	return req.RemoteAddr
+}
+
 func logoutSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		if u, ok := sessionUser(req, r); ok {
+			recordAuth(req, r, "auth.logout", u.Username, map[string]any{"via": "portal"})
+		}
 		if c, err := req.Cookie(sessionCookieName); err == nil {
 			_ = r.Users.DeleteSession(req.Context(), c.Value)
 		}

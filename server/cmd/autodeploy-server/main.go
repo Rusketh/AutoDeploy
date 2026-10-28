@@ -105,6 +105,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	r := repos(db, bx)
+	// Server-side logging.Event calls (upload failures, …) also land in the
+	// central log so the Logs page shows them next to client events.
+	logging.SetSink(api.LogEventSink(r.Logs))
 
 	// Runtime settings: the operator-facing settings the portal can
 	// change. AD config, log retention, payload throttle. The env-var
