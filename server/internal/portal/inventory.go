@@ -383,18 +383,14 @@ func machineList(r Repos) http.HandlerFunc {
 			}
 		}
 
-		// One query each for the whole fleet: bindings, image names, OS
-		// captions and pending-re-image flags. Loading the lot up front
+		// One query each for the whole fleet: bindings, image names and OS
+		// captions (pending-re-image flags only matter for the visible page,
+		// so they're fetched after paging). Loading the lot up front
 		// (rather than per page) is what lets ?q= search and ?sort= order
 		// the entire inventory, and it replaces the old per-visible-row
 		// hardware Get — an N+1 that cost up to a query per row at render time.
 		bindings, imageNames := loadMachineBindings(req, r, v)
 		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
-		allIDs := make([]model.ID, len(v))
-		for i, m := range v {
-			allIDs[i] = m.ID
-		}
-		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), allIDs)
 
 		// Server-side filter: ?q= narrows the whole inventory BEFORE
 		// pagination, so the page count, numbered links and totals all
@@ -402,6 +398,7 @@ func machineList(r Repos) http.HandlerFunc {
 		// current page made the pager lie). Keeping the filter in the
 		// URL is also what lets browser back/forward restore it until
 		// the operator clears it.
+		inView := len(v) // the group (or whole fleet) before the text filter
 		if query != "" {
 			needle := strings.ToLower(query)
 			filtered := make([]model.MachineRecord, 0, len(v))
@@ -438,6 +435,11 @@ func machineList(r Repos) http.HandlerFunc {
 		}
 		page := paginate(req, len(v), defSize)
 		slice := v[page.Offset:page.End]
+		pageIDs := make([]model.ID, len(slice))
+		for i, m := range slice {
+			pageIDs[i] = m.ID
+		}
+		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), pageIDs)
 
 		rows := make([]row, 0, len(slice))
 		for _, m := range slice {
@@ -459,6 +461,7 @@ func machineList(r Repos) http.HandlerFunc {
 		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
+			"Search":            newSearchBox(req, "Search machines", "Search machines").counted(len(v), inView, "machines"),
 			"Sort":              machineSortColumns(req, sortKey, sortDir),
 			"CSVURL":            machineCSVURL(req),
 			"Groups":            groups,
@@ -593,11 +596,7 @@ func machineSortColumns(req *http.Request, activeKey, activeDir string) map[stri
 				dir = "asc"
 			}
 		}
-		q := req.URL.Query()
-		q.Set("sort", key)
-		q.Set("dir", dir)
-		q.Del("page")
-		out[key] = machineSortCol{URL: req.URL.Path + "?" + q.Encode(), State: state}
+		out[key] = machineSortCol{URL: withQuery(req, req.URL.Path, "sort", key, "dir", dir), State: state}
 	}
 	return out
 }

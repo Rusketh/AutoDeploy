@@ -6,7 +6,7 @@
 
 <p class="muted intro">Choose which events generate in-portal and email notifications for your account. Defaults: portal on, email off.</p>
 
-<form class="std" method="POST" action="/portal/settings/notifications/preferences">
+<form class="std" method="POST" action="/portal/settings/notifications/preferences" data-dirty-guard>
   <fieldset><legend>Your email address</legend>
     <label><span class="lbl">Email</span>
       <input type="email" name="email" value="{{.Data.User.Email}}" placeholder="you@example.com">

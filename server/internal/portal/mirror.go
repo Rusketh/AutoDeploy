@@ -37,20 +37,33 @@ func mirrorList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		render(w, req, r, "mirror_list.html", "Payload mirrors", map[string]any{"Mirrors": v})
+		search := newSearchBox(req, "Search mirrors", "Search payload mirrors")
+		shown := filterByQuery(v, search.Query, func(m model.PayloadMirror) []string {
+			return []string{m.Name, m.Description, m.Site, m.BaseURL}
+		})
+		render(w, req, r, "mirror_list.html", "Payload mirrors", map[string]any{
+			"Mirrors": shown,
+			"Search":  search.counted(len(shown), len(v), "mirrors"),
+		})
 	}
 }
 
 func mirrorForm(r Repos, m model.PayloadMirror, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		title := "New payload mirror"
-		if !isNew {
-			title = "Edit mirror: " + m.Name
-		}
-		render(w, req, r, "mirror_form.html", title, map[string]any{
-			"M": m, "IsNew": isNew,
-		})
+		mirrorFormPage(w, req, r, m, isNew, nil)
 	}
+}
+
+// mirrorFormPage renders the mirror form; with fe set it is a rejected
+// save re-rendered with the submitted values (422).
+func mirrorFormPage(w http.ResponseWriter, req *http.Request, r Repos, m model.PayloadMirror, isNew bool, fe *FormError) {
+	title := "New payload mirror"
+	if !isNew {
+		title = "Edit mirror: " + m.Name
+	}
+	renderForm(w, req, r, "mirror_form.html", title, fe, map[string]any{
+		"M": m, "IsNew": isNew,
+	})
 }
 
 func mirrorEdit(r Repos) http.HandlerFunc {
@@ -87,15 +100,13 @@ func mirrorCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		m, err := buildMirror(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/mirrors/new", http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		m.Healthy = true // a freshly created mirror starts healthy
 		out, err := r.Mirrors.Create(req.Context(), m)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/mirrors/new", http.StatusFound)
+			mirrorFormPage(w, req, r, m, true, newFormError(req, model.KindMirror, err))
 			return
 		}
 		flash(w, "ok", "Mirror added.")
@@ -108,16 +119,15 @@ func mirrorUpdate(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		m, err := buildMirror(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/mirrors/%d/edit", id), http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		m.ID = id
 		if err := r.Mirrors.Update(req.Context(), m); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			mirrorFormPage(w, req, r, m, false, newFormError(req, model.KindMirror, err))
+			return
 		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/mirrors/%d/edit", id), http.StatusFound)
 	}
 }

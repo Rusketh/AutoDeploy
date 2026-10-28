@@ -1,10 +1,8 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Payload mirrors</h2>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
   <div class="right">
     <a class="btn" href="/portal/mirrors/new"><svg><use href="#i-plus"/></svg>Add mirror</a>
   </div>
@@ -45,6 +43,8 @@
 </table>
 </div>
 <p class="muted small mt-3">A mirror is any HTTP server that serves the same <code>/payload/...</code> tree the primary serves. When a Boot Client passes the <code>X-AutoDeploy-Site</code> header (or has a remembered site from a previous boot), the manifest rewrites WIM / driver / software URLs to the highest-priority healthy mirror matching that site. Unattend XML stays on the primary.</p>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-globe"/></svg>

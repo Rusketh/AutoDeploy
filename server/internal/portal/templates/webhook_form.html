@@ -4,16 +4,17 @@
   <div class="right"><a class="btn ghost sm" href="/portal/settings/notifications/webhooks"><svg><use href="#i-arrow-left"/></svg>Webhooks</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if .Data.Edit}}/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}{{else}}/portal/settings/notifications/webhooks/new{{end}}">
+<form class="std" method="POST" action="{{if .Data.Edit}}/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}{{else}}/portal/settings/notifications/webhooks/new{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset><legend>Endpoint</legend>
     <label><span class="lbl">Name</span>
-      <input type="text" name="name" value="{{.Data.Webhook.Name}}" required placeholder="e.g. Slack #ops-deploys">
+      <input type="text" name="name" value="{{.Data.Webhook.Name}}" required placeholder="e.g. Slack #ops-deploys" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}
     </label>
     <label><span class="lbl">URL</span>
-      <input type="url" name="url" value="{{.Data.Webhook.URL}}" required placeholder="https://hooks.slack.com/...">
+      <input type="url" name="url" value="{{.Data.Webhook.URL}}" required placeholder="https://hooks.slack.com/..." {{invalidAttr .Data.FormError "url"}}>{{fieldError .Data.FormError "url"}}
     </label>
     <label><span class="lbl">Secret (optional, for HMAC-SHA256 signature)</span>
-      <input type="password" name="secret" placeholder="{{if .Data.Edit}}(stored, leave blank to keep){{else}}shared secret{{end}}">
+      <input type="password" name="secret" placeholder="{{if .Data.Edit}}(stored, leave blank to keep){{else}}shared secret{{end}}" {{invalidAttr .Data.FormError "secret"}}>{{fieldError .Data.FormError "secret"}}
     </label>
     <label class="check">
       <input type="checkbox" name="enabled" value="1"{{if .Data.Webhook.Enabled}} checked{{end}}>

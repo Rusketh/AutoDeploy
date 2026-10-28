@@ -36,8 +36,13 @@ func wuList(r Repos) http.HandlerFunc {
 			return
 		}
 		compliance, _ := r.Updates.AllComplianceSummaries(req.Context())
+		search := newSearchBox(req, "Search updates", "Search Windows Updates")
+		shown := filterByQuery(updates, search.Query, func(u model.WindowsUpdate) []string {
+			return []string{u.KBNumber, u.Title, u.OSFilter, u.Severity}
+		})
 		render(w, req, r, "windowsupdate_list.html", "Windows Updates", map[string]any{
-			"Updates": updates, "Compliance": compliance,
+			"Updates": shown, "Compliance": compliance,
+			"Search": search.counted(len(shown), len(updates), "updates"),
 		})
 	}
 }
@@ -72,7 +77,7 @@ func wuCreate(r Repos) http.HandlerFunc {
 		}
 		created, err := r.Updates.Create(req.Context(), u)
 		if err != nil {
-			failPage(w, req, r, http.StatusBadRequest, err)
+			wuFormRejected(w, req, r, u, true, err)
 			return
 		}
 		flash(w, "ok", "Update "+created.KBNumber+" created")
@@ -86,8 +91,27 @@ func wuCreate(r Repos) http.HandlerFunc {
 // nothing is downloaded without an explicit operator click.
 func wuImportPage(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		render(w, req, r, "windowsupdate_import.html", "Import from Microsoft", nil)
+		render(w, req, r, "windowsupdate_import.html", "Import from Microsoft", map[string]any{"Query": searchQuery(req)})
 	}
+}
+
+// wuFormRejected re-renders the update form with the submitted values and
+// the save error (422). An update is identified by its KB number, so a
+// uniqueness conflict lands on that field.
+func wuFormRejected(w http.ResponseWriter, req *http.Request, r Repos, u model.WindowsUpdate, isNew bool, err error) {
+	fe := newFormError(req, model.KindUpdate, err)
+	if msg := fe.Fields["name"]; msg != "" {
+		delete(fe.Fields, "name")
+		fe.Fields["kb_number"] = "Another update already has this KB number."
+	}
+	title := "New Windows Update"
+	if !isNew {
+		title = "Edit " + u.KBNumber
+	}
+	renderForm(w, req, r, "windowsupdate_form.html", title, fe, map[string]any{
+		"Update": u,
+		"IsNew":  isNew,
+	})
 }
 
 func wuFormEdit(r Repos) http.HandlerFunc {
@@ -137,7 +161,7 @@ func wuSave(r Repos) http.HandlerFunc {
 			u.SupersedesJSON = "[]"
 		}
 		if err := r.Updates.Update(req.Context(), u); err != nil {
-			failPage(w, req, r, http.StatusBadRequest, err)
+			wuFormRejected(w, req, r, u, false, err)
 			return
 		}
 		flash(w, "ok", "Update "+u.KBNumber+" saved")
@@ -202,10 +226,15 @@ func wuCompliance(r Repos) http.HandlerFunc {
 				Status:  st,
 			})
 		}
+		search := newSearchBox(req, "Search machines", "Search machines")
+		shown := filterByQuery(details, search.Query, func(d machineStatus) []string {
+			return []string{d.Name, d.Machine.SystemUUID, d.Status}
+		})
 		render(w, req, r, "windowsupdate_compliance.html", u.KBNumber+" compliance", map[string]any{
 			"Update":   u,
 			"Summary":  summary,
-			"Machines": details,
+			"Machines": shown,
+			"Search":   search.counted(len(shown), len(details), "machines"),
 		})
 	}
 }
@@ -326,9 +355,14 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 		if len(kbs) > 0 {
 			title = "Deploy " + strings.Join(kbs, ", ")
 		}
+		search := newSearchBox(req, "Search jobs", "Search jobs")
+		shown := filterByQuery(enriched, search.Query, func(j enrichedJob) []string {
+			return []string{j.MachineName, j.KBNumber, j.Status}
+		})
 		render(w, req, r, "windowsupdate_deployment_detail.html", title, map[string]any{
 			"Deployment": dep,
-			"Jobs":       enriched,
+			"Jobs":       shown,
+			"Search":     search.counted(len(shown), len(enriched), "jobs"),
 			"Counts":     counts,
 			"TargetJSON": string(targetJSON),
 			"KBs":        kbs,

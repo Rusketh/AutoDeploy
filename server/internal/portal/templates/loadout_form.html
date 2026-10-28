@@ -6,17 +6,18 @@
   <div class="right"><a class="btn ghost sm" href="/portal/loadouts"><svg><use href="#i-arrow-left"/></svg>Back to loadouts</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/loadouts{{else}}/portal/loadouts/{{int64 $l.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/loadouts{{else}}/portal/loadouts/{{int64 $l.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset><legend>Identity</legend>
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$l.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$l.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}</label>
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$l.Description}}" maxlength="200"></label>
     <label><span class="lbl">Parent loadout (optional)</span>
-      <select name="parent_id">
+      <select name="parent_id" {{invalidAttr .Data.FormError "parent_id"}}>
         <option value="">(none)</option>
         {{range .Data.Parents}}
         {{if ne .ID $l.ID}}<option value="{{int64 .ID}}" {{if idEq $l.ParentID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
         {{end}}
-      </select>
+      </select>{{fieldError .Data.FormError "parent_id"}}
       <span class="hint">Child inherits parent's packages additively; opt-out below removes an inherited package.</span>
     </label>
   </fieldset>

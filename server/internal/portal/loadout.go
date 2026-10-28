@@ -28,13 +28,27 @@ func loadoutList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		refs := map[model.ID]int{}
+		// ?q= matches the loadout's name, description and parent's name.
+		names := map[model.ID]string{}
 		for _, l := range v {
+			names[l.ID] = l.Name
+		}
+		search := newSearchBox(req, "Search loadouts", "Search loadouts")
+		shown := filterByQuery(v, search.Query, func(l model.SoftwareLoadout) []string {
+			parent := ""
+			if l.ParentID != nil {
+				parent = names[*l.ParentID]
+			}
+			return []string{l.Name, l.Description, parent}
+		})
+		refs := map[model.ID]int{}
+		for _, l := range shown {
 			n, _ := r.Loadouts.RefCount(req.Context(), l.ID)
 			refs[l.ID] = n
 		}
 		render(w, req, r, "loadout_list.html", "Software loadouts", map[string]any{
-			"Loadouts": v, "Refs": refs,
+			"Loadouts": shown, "Refs": refs,
+			"Search": search.counted(len(shown), len(v), "loadouts"),
 		})
 	}
 }
@@ -45,16 +59,22 @@ func loadoutFormNew(r Repos) http.HandlerFunc {
 
 func loadoutFormFor(r Repos, l model.SoftwareLoadout, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		packages, _ := r.Software.List(req.Context())
-		parents, _ := r.Loadouts.List(req.Context())
-		title := "New loadout"
-		if !isNew {
-			title = "Edit loadout: " + l.Name
-		}
-		render(w, req, r, "loadout_form.html", title, map[string]any{
-			"L": l, "IsNew": isNew, "Packages": packages, "Parents": parents,
-		})
+		loadoutFormPage(w, req, r, l, isNew, nil)
 	}
+}
+
+// loadoutFormPage renders the loadout form; with fe set it is a rejected
+// save re-rendered with the submitted values (422).
+func loadoutFormPage(w http.ResponseWriter, req *http.Request, r Repos, l model.SoftwareLoadout, isNew bool, fe *FormError) {
+	packages, _ := r.Software.List(req.Context())
+	parents, _ := r.Loadouts.List(req.Context())
+	title := "New loadout"
+	if !isNew {
+		title = "Edit loadout: " + l.Name
+	}
+	renderForm(w, req, r, "loadout_form.html", title, fe, map[string]any{
+		"L": l, "IsNew": isNew, "Packages": packages, "Parents": parents,
+	})
 }
 
 func loadoutEdit(r Repos) http.HandlerFunc {
@@ -121,14 +141,12 @@ func loadoutCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		l, err := buildLoadoutFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/loadouts/new", http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		out, err := r.Loadouts.Create(req.Context(), l)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/loadouts/new", http.StatusFound)
+			loadoutFormPage(w, req, r, l, true, newFormError(req, model.KindLoadout, err))
 			return
 		}
 		flash(w, "ok", "Loadout created.")
@@ -141,16 +159,15 @@ func loadoutUpdate(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		l, err := buildLoadoutFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/loadouts/%d/edit", id), http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		l.ID = id
 		if err := r.Loadouts.Update(req.Context(), l); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			loadoutFormPage(w, req, r, l, false, newFormError(req, model.KindLoadout, err))
+			return
 		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/loadouts/%d/edit", id), http.StatusFound)
 	}
 }

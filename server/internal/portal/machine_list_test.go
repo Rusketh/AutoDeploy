@@ -180,7 +180,7 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 		},
 	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-		"templates/machine_list.html", "templates/_pagination.html")
+		"templates/machine_list.html", "templates/_pagination.html", "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse machine_list.html: %v", err)
 	}
@@ -223,11 +223,26 @@ func TestMachineListRender(t *testing.T) {
 	}, Display: model.MachineName{Name: "LAB-01", RenamingFrom: "PC-0001"}}
 
 	t.Run("filter box carries the query; counts show match total", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/portal/machines?q=dell&group=3", nil)
 		out := renderMachineList(t, map[string]any{
 			"Rows": []machineListRowT{row}, "Page": page, "Query": "dell", "TotalAll": 40,
+			"Search": newSearchBox(req, "Search machines", "Search machines").counted(25, 40, "machines"),
 		})
 		if !strings.Contains(out, `name="q"`) || !strings.Contains(out, `value="dell"`) {
 			t.Errorf("want a server filter input carrying the query; got:\n%s", out)
+		}
+		// A GET form with an explicit Search button and a Clear link, and no
+		// per-keystroke behaviour hooks.
+		if !strings.Contains(out, `method="GET" action="/portal/machines"`) ||
+			!strings.Contains(out, `>Search</button>`) || !strings.Contains(out, `>Clear</a>`) {
+			t.Errorf("want a GET search form with Search button + Clear link; got:\n%s", out)
+		}
+		if strings.Contains(out, "data-server-filter") || strings.Contains(out, "data-filter") {
+			t.Errorf("search must not filter as you type; got:\n%s", out)
+		}
+		// The active group rides along as a hidden field.
+		if !strings.Contains(out, `<input type="hidden" name="group" value="3">`) {
+			t.Errorf("want the active group kept as a hidden field; got:\n%s", out)
 		}
 		if !strings.Contains(out, "25 of 40 machines match") {
 			t.Errorf("want filtered count line; got:\n%s", out)
@@ -257,7 +272,7 @@ func TestMachineListRender(t *testing.T) {
 		out := renderMachineList(t, map[string]any{
 			"Rows": []machineListRowT{}, "Page": PageInfo{}, "Query": "zzz", "TotalAll": 40,
 		})
-		if !strings.Contains(out, "No machines match") || !strings.Contains(out, "Clear filter") {
+		if !strings.Contains(out, "No matches for “zzz”") || !strings.Contains(out, "Clear search") {
 			t.Errorf("want filtered empty state; got:\n%s", out)
 		}
 		if strings.Contains(out, "No machines yet") {

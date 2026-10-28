@@ -8,13 +8,13 @@
     <a class="iconbtn" href="/portal/groups/new" title="New group" aria-label="New group"><svg aria-hidden="true"><use href="#i-plus"/></svg></a>
   </div>
   <ul class="group-nav">
-    <li><a href="/portal/machines" class="{{if not .Data.ActiveGroupID}}on{{end}}">
+    <li><a href="{{withQuery "/portal/machines" "group" ""}}" class="{{if not .Data.ActiveGroupID}}on{{end}}">
       <svg aria-hidden="true"><use href="#i-server"/></svg>
       <span class="g-name">All machines</span>
       <span class="g-count">{{.Data.TotalAll}}</span>
     </a></li>
     {{range .Data.Groups}}
-    <li><a href="/portal/machines?group={{int64 .ID}}" class="{{if eq (int64 .ID) $.Data.ActiveGroupID}}on{{end}}"{{if .Description}} title="{{.Description}}"{{end}}>
+    <li><a href="{{withQuery "/portal/machines" "group" (printf "%d" (int64 .ID))}}" class="{{if eq (int64 .ID) $.Data.ActiveGroupID}}on{{end}}"{{if .Description}} title="{{.Description}}"{{end}}>
       <svg aria-hidden="true"><use href="#i-{{if eq .Kind "dynamic"}}bolt{{else}}stack{{end}}"/></svg>
       <span class="g-name">{{.Name}}</span>
       <span class="g-count">{{.MemberCount}}</span>
@@ -26,16 +26,12 @@
 <div class="machines-main">
 <div class="toolbar">
   <h2>{{if .Data.ActiveGroupName}}{{.Data.ActiveGroupName}}{{else}}Machines{{end}}</h2>
-  <form class="filter" method="GET" action="/portal/machines">
-    {{if .Data.ActiveGroupID}}<input type="hidden" name="group" value="{{.Data.ActiveGroupID}}">{{end}}
-    <svg><use href="#i-search"/></svg>
-    <input type="search" name="q" value="{{.Data.Query}}" placeholder="Filter — press /" data-server-filter autocomplete="off" aria-label="Filter machines" title="Searches names, make/model, base board, serials, UUID, OS and bound image">
-  </form>
+  {{template "search_form" .Data.Search}}
   <div class="right">
     <a class="btn secondary sm" href="/portal/machines/bulk-edit"><svg><use href="#i-pencil"/></svg>Bulk edit</a>
     <a class="btn secondary sm" href="{{.Data.CSVURL}}"><svg><use href="#i-download"/></svg>Export CSV</a>
     <span class="small muted">
-      {{if .Data.Query}}{{$page.TotalRow}} of {{.Data.TotalAll}} machine{{if ne .Data.TotalAll 1}}s{{end}} match{{else}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{end}}
+      {{if .Data.Query}}{{$page.TotalRow}} of {{.Data.Search.Total}} machine{{if ne .Data.Search.Total 1}}s{{end}} match{{else}}page {{$page.Current}} of {{$page.Total}} · {{$page.TotalRow}} machine{{if ne $page.TotalRow 1}}s{{end}}{{end}}
     </span>
   </div>
 </div>
@@ -105,11 +101,11 @@ function updateDelCount(){var n=document.querySelectorAll('.m-check:checked').le
   {{else}}
   <p>This dynamic group's filter currently matches no machines. <a href="/portal/groups">Adjust its filter</a> or wait for matching machines to check in.</p>
   {{end}}
-  <p><a class="btn secondary sm" href="/portal/machines">All machines</a></p>
+  <p>{{if .Data.Query}}<a class="btn secondary sm" href="{{withQuery "/portal/machines" "q" ""}}">Clear search</a> {{end}}<a class="btn secondary sm" href="{{withQuery "/portal/machines" "group" ""}}">All machines</a></p>
   {{else if .Data.Query}}
-  <h3>No machines match “{{.Data.Query}}”</h3>
-  <p>The filter searches names, make/model, base board, serials, UUIDs and bound images.</p>
-  <p><a class="btn secondary sm" href="/portal/machines">Clear filter</a></p>
+  <h3>No matches for “{{.Data.Query}}”</h3>
+  <p>The search covers names, make/model, base board, serials, UUIDs, OS and bound images.</p>
+  <p><a class="btn secondary sm" href="{{withQuery "/portal/machines" "q" ""}}">Clear search</a></p>
   {{else}}
   <h3>No machines yet</h3>
   <p>Machines appear here the first time they PXE-boot the AutoDeploy Boot Client. Once they do, bind each one to an image to enable re-imaging.</p>

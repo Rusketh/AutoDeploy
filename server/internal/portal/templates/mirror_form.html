@@ -6,14 +6,15 @@
   <div class="right"><a class="btn ghost sm" href="/portal/mirrors"><svg><use href="#i-arrow-left"/></svg>Back to mirrors</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/mirrors{{else}}/portal/mirrors/{{int64 $m.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/mirrors{{else}}/portal/mirrors/{{int64 $m.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset><legend>Identity</legend>
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$m.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$m.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}</label>
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$m.Description}}" maxlength="200"></label>
   </fieldset>
   <fieldset><legend>Location</legend>
     <label><span class="lbl">Base URL</span>
-      <input type="url" name="base_url" value="{{$m.BaseURL}}" required placeholder="https://mirror-eu.corp.example">
+      <input type="url" name="base_url" value="{{$m.BaseURL}}" required placeholder="https://mirror-eu.corp.example" {{invalidAttr .Data.FormError "base_url"}}>{{fieldError .Data.FormError "base_url"}}
       <span class="hint">Operators serve the same <code>/payload/...</code> tree from this host (rsync from the primary's data dir, or a pull-through reverse proxy).</span>
     </label>
     <label><span class="lbl">Site (used for routing)</span>

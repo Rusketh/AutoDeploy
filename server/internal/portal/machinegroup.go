@@ -28,9 +28,14 @@ func groupList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		search := newSearchBox(req, "Search groups", "Search machine groups")
+		shown := filterByQuery(groups, search.Query, func(g model.MachineGroup) []string {
+			return []string{g.Name, g.Kind, g.Description}
+		})
 		render(w, req, r, "machine_group_list.html", "Machine groups", map[string]any{
-			"Groups": groups,
+			"Groups": shown,
 			"Names":  groupNameMap(groups),
+			"Search": search.counted(len(shown), len(groups), "groups"),
 		})
 	}
 }
@@ -41,32 +46,43 @@ func groupFormNew(r Repos) http.HandlerFunc {
 
 func groupFormFor(r Repos, g model.MachineGroup, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		all, _ := r.Groups.List(req.Context())
-		// Candidate children are every other group (a group can't nest itself).
-		candidates := make([]model.MachineGroup, 0, len(all))
-		for _, c := range all {
-			if c.ID != g.ID {
-				candidates = append(candidates, c)
-			}
-		}
-		childSet := map[model.ID]bool{}
-		for _, c := range g.Children {
-			childSet[c] = true
-		}
-		var members []model.MachineRecord
-		if !isNew {
-			members, _ = r.Groups.MemberRecords(req.Context(), g.ID)
-		}
-		title := "New machine group"
-		if !isNew {
-			title = "Edit group: " + g.Name
-		}
-		render(w, req, r, "machine_group_form.html", title, map[string]any{
-			"G": g, "IsNew": isNew,
-			"Candidates": candidates, "ChildSet": childSet,
-			"Members": members,
-		})
+		groupFormPage(w, req, r, g, isNew, nil)
 	}
+}
+
+// groupFormPage renders the machine group form; with fe set it is a
+// rejected save re-rendered with the submitted values (422).
+func groupFormPage(w http.ResponseWriter, req *http.Request, r Repos, g model.MachineGroup, isNew bool, fe *FormError) {
+	all, _ := r.Groups.List(req.Context())
+	// Candidate children are every other group (a group can't nest itself).
+	candidates := make([]model.MachineGroup, 0, len(all))
+	for _, c := range all {
+		if c.ID != g.ID {
+			candidates = append(candidates, c)
+		}
+	}
+	childSet := map[model.ID]bool{}
+	for _, c := range g.Children {
+		childSet[c] = true
+	}
+	var members []model.MachineRecord
+	if !isNew {
+		members, _ = r.Groups.MemberRecords(req.Context(), g.ID)
+	}
+	title := "New machine group"
+	if !isNew {
+		title = "Edit group: " + g.Name
+	}
+	if fe != nil && fe.Fields["name_regex"] != "" {
+		// The group form calls its name-pattern field filter_name.
+		fe.Fields["filter_name"] = fe.Fields["name_regex"]
+		delete(fe.Fields, "name_regex")
+	}
+	renderForm(w, req, r, "machine_group_form.html", title, fe, map[string]any{
+		"G": g, "IsNew": isNew,
+		"Candidates": candidates, "ChildSet": childSet,
+		"Members": members,
+	})
 }
 
 func groupEdit(r Repos) http.HandlerFunc {
@@ -114,14 +130,12 @@ func groupCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		g, err := buildGroupFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/groups/new", http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		out, err := r.Groups.Create(req.Context(), g)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/groups/new", http.StatusFound)
+			groupFormPage(w, req, r, g, true, newFormError(req, model.KindGroup, err))
 			return
 		}
 		logGroupEvent(req, r, "group.create", out)
@@ -135,17 +149,16 @@ func groupUpdate(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		g, err := buildGroupFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/groups/%d/edit", id), http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		g.ID = id
 		if err := r.Groups.Update(req.Context(), g); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			logGroupEvent(req, r, "group.update", g)
-			flash(w, "ok", "Saved.")
+			groupFormPage(w, req, r, g, false, newFormError(req, model.KindGroup, err))
+			return
 		}
+		logGroupEvent(req, r, "group.update", g)
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/groups/%d/edit", id), http.StatusFound)
 	}
 }
