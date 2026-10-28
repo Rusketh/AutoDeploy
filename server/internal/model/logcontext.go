@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 )
 
 // DescribeLogs prepares events for display: EnrichLogs (machine and target
@@ -66,15 +67,28 @@ func PrepareIngestedLog(ev *LogEvent, l *NameLookup) {
 		}
 	}
 	var names LogNames
-	if kind, id, _, ok := ParseLogTarget(ev.Target); ok && kind != KindMachine && id > 0 && l != nil {
-		if res := l.Lookup(kind, id); res.Loaded {
-			names.Target = res.Label(id)
+	machineTarget := false
+	if kind, id, _, ok := ParseLogTarget(ev.Target); ok {
+		if kind == KindMachine {
+			machineTarget = true
+		} else if id > 0 && l != nil {
+			if res := l.Lookup(kind, id); res.Loaded {
+				names.Target = res.Label(id)
+			}
 		}
 	}
 	level := ev.Level
 	ApplyLogDescription(ev, names)
 	ev.Level = level
 	ev.Category = ""
+	// Only keep a message that is final: an uncatalogued action's humanised
+	// code, or one naming a machine target we didn't resolve here, is left
+	// NULL so the read path renders it with names (and with any catalogue
+	// entry a later release adds).
+	if (!HasLogCatalogEntry(ev.Action) && fieldString(parseLogFields(ev.Fields), "message") == "") ||
+		(machineTarget && strings.Contains(ev.Message, ev.Target)) {
+		ev.Message = ""
+	}
 }
 
 // Record appends a server-side event (an audit entry, a deployment
@@ -136,6 +150,84 @@ func (r *InventoryRepo) GetDeployment(ctx context.Context, id ID) (DeploymentRec
 		d.CompletedAt = &t
 	}
 	return d, nil
+}
+
+// DeployTimeline is the condensed story of one deployment run: its key
+// events oldest first (boot stages → setup phases → package results) and
+// the first error, with its hint, as the headline.
+type DeployTimeline struct {
+	Events []LogEvent
+	// Headline is the first ERROR of the run (nil when none).
+	Headline *LogEvent
+	// Total is how many log events the run has in all.
+	Total int
+	// Hidden is how many key events were cut to keep the timeline short.
+	Hidden int
+}
+
+// maxTimelineEvents caps the key events a timeline shows.
+const maxTimelineEvents = 40
+
+// timelineActions are the milestones a deployment timeline keeps (every
+// WARN/ERROR event is kept too).
+var timelineActions = map[string]bool{
+	"deploy.started": true, "deploy.reimage": true, "boot.start": true,
+	"manifest.received": true, "deploy.disk.resolved": true, "deploy.disk.auto": true,
+	"deploy.stage.start": true, "download.media.ok": true, "deploy.stage.ok": true,
+	"deploy.staged": true, "deploy.setup": true, "agent.start": true,
+	"domainjoin.ok": true, "rename.desired": true, "package.install.ok": true,
+	"package.skip": true, "update.install.ok": true, "agent.done": true,
+	"deploy.finished": true, "deploy.failed": true, "deploy.fail.choice": true,
+}
+
+// maxTimelineScan bounds how many of a run's rows a timeline reads.
+const maxTimelineScan = 2000
+
+// DeploymentTimeline builds a run's timeline. m is the run's machine (its
+// identifiers let rows from older, untagged clients join the run by time);
+// names resolves machine and target names (may be nil).
+func (r *LogRepo) DeploymentTimeline(ctx context.Context, d DeploymentRecord, m MachineRecord, names *NameLookup) (DeployTimeline, error) {
+	end := time.Now()
+	if d.CompletedAt != nil {
+		end = *d.CompletedAt
+	}
+	s := LogSearch{
+		DeploymentID: d.ID, ByID: true, Limit: maxTimelineScan,
+		Window: &LogWindow{From: d.StartedAt.Add(-10 * time.Minute), To: end.Add(15 * time.Minute), Machine: LogMachineFor(m)},
+	}
+	evs, err := r.Search(ctx, s)
+	if err != nil {
+		return DeployTimeline{}, err
+	}
+	names.DescribeLogs(evs)
+	tl := DeployTimeline{Total: len(evs)}
+	for i := len(evs) - 1; i >= 0; i-- { // oldest first
+		ev := evs[i]
+		if LogOutputAction(ev.Action) {
+			continue
+		}
+		if ev.Level == "ERROR" && tl.Headline == nil && ev.Action != "deploy.failed" {
+			e := ev
+			tl.Headline = &e
+		}
+		if timelineActions[ev.Action] || ev.Level == "ERROR" || ev.Level == "WARN" {
+			tl.Events = append(tl.Events, ev)
+		}
+	}
+	if tl.Headline == nil {
+		for _, ev := range tl.Events {
+			if ev.Action == "deploy.failed" {
+				e := ev
+				tl.Headline = &e
+				break
+			}
+		}
+	}
+	if len(tl.Events) > maxTimelineEvents {
+		tl.Hidden = len(tl.Events) - maxTimelineEvents
+		tl.Events = tl.Events[:maxTimelineEvents]
+	}
+	return tl, nil
 }
 
 // LogMachineFor builds the LogSearch machine filter for a machine row.

@@ -290,7 +290,11 @@ func auditFailureMessage(user, kind, verb, name, why string) string {
 	if name != "" {
 		msg += fmt.Sprintf(" “%s”", name)
 	}
-	msg += " — not saved"
+	if verb == "delete" || verb == "bulk_delete" {
+		msg += " — not deleted"
+	} else {
+		msg += " — not saved"
+	}
 	if why != "" {
 		msg += ": " + why
 	}

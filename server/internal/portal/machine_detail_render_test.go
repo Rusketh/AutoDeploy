@@ -14,7 +14,8 @@ import (
 // DeploymentRecord plus a derived Stalled flag.
 type historyRowT struct {
 	model.DeploymentRecord
-	Stalled bool
+	Stalled  bool
+	Timeline *model.DeployTimeline
 }
 
 // renderMachineDetail parses machine_detail.html with enough of the real
@@ -57,7 +58,7 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 		},
 	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-		"templates/machine_detail.html", "templates/_action_picker.html")
+		"templates/machine_detail.html", "templates/_action_picker.html", "templates/_deployment_timeline.html")
 	if err != nil {
 		t.Fatalf("parse machine_detail.html: %v", err)
 	}

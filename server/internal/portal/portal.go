@@ -372,7 +372,7 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		// Recent activity: last 12 log events across all components,
 		// for a quick "what just happened" panel.
 		events, _ := r.Logs.Search(req.Context(), model.LogSearch{Limit: 12})
-		namesFor(req, r).EnrichLogs(events)
+		namesFor(req, r).DescribeLogs(events)
 
 		// Top 5 most-recently-seen machines for a "live fleet" panel.
 		topMachines := machines
@@ -505,7 +505,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return template.URL("")
 		},
-		"join": strings.Join,
+		"join":  strings.Join,
+		"lower": strings.ToLower,
 		"hasItems": func(s any) bool {
 			switch v := s.(type) {
 			case nil:
@@ -673,7 +674,7 @@ func toInt64(v any) int64 {
 var layoutPartials = []string{
 	"templates/_layout.html", "templates/_icons.html",
 	"templates/_action_picker.html", "templates/_pagination.html",
-	"templates/_machine_picker.html",
+	"templates/_machine_picker.html", "templates/_deployment_timeline.html",
 }
 
 // render parses _layout + the named page, executes the layout, and

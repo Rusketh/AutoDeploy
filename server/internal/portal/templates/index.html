@@ -197,10 +197,9 @@
         {{range .Data.Events}}
         <tr>
           <td class="small muted nowrap">{{timeAgo .OccurredAt}}</td>
-          <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}{{end}}">{{.Level}}</span></td>
-          <td><code>{{.Component}}</code></td>
-          <td><code>{{.Action}}</code></td>
-          <td class="small">{{if .Target}}{{logTarget .}}{{else if .MachineName}}{{.MachineName}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="nowrap small"><span class="dot {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}muted{{end}}" aria-hidden="true"></span> {{if eq .Level "ERROR"}}Error{{else if eq .Level "WARN"}}Warning{{else}}Info{{end}}</td>
+          <td class="small nowrap">{{if .MachineID}}{{entityLink "machine" .MachineID}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="small activity-msg">{{.Message}} <code class="log-code">{{.Action}}</code></td>
         </tr>
         {{end}}
       </tbody>

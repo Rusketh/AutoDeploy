@@ -431,6 +431,20 @@ const logSelectCols = `id, occurred_at, component, level, actor, action, target,
 // Search returns events matching the given filters, newest first, up to
 // limit rows.
 func (r *LogRepo) Search(ctx context.Context, s LogSearch) ([]LogEvent, error) {
+	return r.search(ctx, s, false)
+}
+
+// SearchOldestFirst reads the limit rows just above s.AfterID (oldest
+// first) and returns them newest first: the "Newer" page of a cursor walk.
+func (r *LogRepo) SearchOldestFirst(ctx context.Context, s LogSearch) ([]LogEvent, error) {
+	out, err := r.search(ctx, s, true)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, err
+}
+
+func (r *LogRepo) search(ctx context.Context, s LogSearch, ascending bool) ([]LogEvent, error) {
 	where, args := s.where()
 	if s.BeforeID > 0 {
 		where = append(where, "id<?")
@@ -444,7 +458,9 @@ func (r *LogRepo) Search(ctx context.Context, s LogSearch) ([]LogEvent, error) {
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	if s.ByID || s.BeforeID > 0 || s.AfterID > 0 {
+	if ascending {
+		q += " ORDER BY id ASC LIMIT ?"
+	} else if s.ByID || s.BeforeID > 0 || s.AfterID > 0 {
 		q += " ORDER BY id DESC LIMIT ?"
 	} else {
 		q += " ORDER BY occurred_at DESC LIMIT ?"

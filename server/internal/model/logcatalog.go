@@ -186,7 +186,7 @@ var logCatalog = map[string]logEntry{
 	"deploy.disk.multiple":       e(LogCatDeployment, "Several disks found[ ({candidates})][; using {using}]"),
 	"deploy.disk.missing":        eFail(LogCatDeployment, "The requested disk[ {requested}] wasn't found[ (found: {candidates})]", "Check the image's target-disk setting matches this machine's hardware."),
 	"deploy.disk.none":           bootFail("No disk found to install Windows on"),
-	"deploy.disk.resolved":       e(LogCatDeployment, "Target disk[ {requested}] resolved to {using}"),
+	"deploy.disk.resolved":       e(LogCatDeployment, "Using disk {using}[ (requested: {requested})]"),
 	"deploy.progress":            e(LogCatDeployment, "{stage}[: {detail}][ ({percent}%)] || Deployment progress update"),
 	"deploy.progress.file":       e(LogCatDeployment, "Downloading {file}"),
 	"deploy.status.report":       e(LogCatDeployment, "Couldn't report the deployment status[ “{status}”] to the server[: {error}]"),
@@ -283,8 +283,8 @@ var logCatalog = map[string]logEntry{
 	"domainjoin.skip":           e(LogCatDomain, "Not joining a domain[ ({reason})]"),
 	"domainjoin.fetch":          e(LogCatDomain, "Couldn't fetch the domain-join settings[: {error}]"),
 	"domainjoin.response":       e(LogCatDomain, "Domain-join settings received[ (domain {domain})]"),
-	"domainjoin.already_member": e(LogCatDomain, "Already a member of[ {current_domain}] the domain"),
-	"domainjoin.fail":           eFail(LogCatDomain, "Couldn't join[ {domain}] the domain[: {error}]", "Check the join account's password and rights, that the target OU exists, and that the machine can reach a domain controller (DNS)."),
+	"domainjoin.already_member": e(LogCatDomain, "Already a member of the domain[ {current_domain}]"),
+	"domainjoin.fail":           eFail(LogCatDomain, "Couldn't join the domain[ {domain}][: {error}]", "Check the join account's password and rights, that the target OU exists, and that the machine can reach a domain controller (DNS)."),
 	"domainjoin.ok":             eOK(LogCatDomain, "Joined the domain[ {domain}][ in {ou}]"),
 	"detect.error":              e(LogCatSoftware, "Couldn't check whether[ {package}] is installed[: {error}]"),
 	"detect.file.not_detected":  e(LogCatSoftware, "Detection rule: file not found"),
@@ -299,7 +299,7 @@ var logCatalog = map[string]logEntry{
 	"package.bundle.download":   eFail(LogCatSoftware, "Couldn't download the files bundle[ {bundle}] for {package}[: {error}] || Couldn't download a files bundle[: {error}]", hintNetwork),
 	"package.bundle.extract":    eFail(LogCatSoftware, "Couldn't unpack the files bundle[ {bundle}] for {package}[: {error}] || Couldn't unpack a files bundle[: {error}]", "Re-upload the bundle in the portal; the zip may be damaged."),
 	"package.bundle.ok":         e(LogCatSoftware, "Files bundle[ {bundle}] ready for {package} || Files bundle ready"),
-	"package.install.start":     e(LogCatSoftware, "Installing {target}[ ({steps} steps)] || Installing a package"),
+	"package.install.start":     e(LogCatSoftware, "Installing {target}[ ({steps_label})] || Installing a package"),
 	"package.install.ok":        eOK(LogCatSoftware, "Installed {target} || Package installed"),
 	"package.install.fail":      {Msg: "{target} failed to install[ at step {step} of {steps}][ — exit code {exit_code}][ ({exit_meaning})] || A package failed to install", Cat: LogCatSoftware, HintFn: packageFailHint, Outcome: "failed"},
 	"steps.exec":                e(LogCatSoftware, "Running {target}[ {args}]"),
@@ -327,7 +327,7 @@ var logCatalog = map[string]logEntry{
 
 	// ---- Server: deployments, audit ------------------------------------
 	"deploy.started":               e(LogCatDeployment, "Deployment started[ with image {image}]"),
-	"deploy.reimage":               e(LogCatDeployment, "Re-image started[ with image {image}][ (by {source})]"),
+	"deploy.reimage":               e(LogCatDeployment, "Re-image started[ with image {image}][ ({source})]"),
 	"deploy.staged":                e(LogCatDeployment, "Windows install media staged; restarting into Windows Setup"),
 	"deploy.setup":                 e(LogCatDeployment, "Windows Setup reached {phase} || Windows Setup progress"),
 	"deploy.finished":              eOK(LogCatDeployment, "Deployment finished[ — {notes}]"),
@@ -338,14 +338,14 @@ var logCatalog = map[string]logEntry{
 	"auth.bootstrap_admin":         e(LogCatSecurity, "Created the first admin account (password written to admin-bootstrap.txt)"),
 	"secret.access":                e(LogCatSecurity, "The {secret} for {target} was handed to the {by} (value not logged) || A secret was read[: {target}][ by {by}] (value not logged)"),
 	"machine.binding.update":       e(LogCatAdmin, "{user} changed the binding of {target}"),
-	"machine.reimage.request":      {Msg: "{user} requested a re-image of {target}", Cat: LogCatAdmin, Level: "WARN"},
+	"machine.reimage.request":      {Msg: "{user} requested a re-image of {target}", Cat: LogCatAdmin},
 	"machine.reimage.cancel":       e(LogCatAdmin, "{user} cancelled the pending re-image of {target}"),
 	"machine.action":               e(LogCatAdmin, "{user} queued “{action}” on {target}"),
-	"machine.delete":               {Msg: "{user} deleted machine {name} || {user} deleted machine {target}", Cat: LogCatAdmin, Level: "WARN"},
+	"machine.delete":               {Msg: "{user} deleted machine {name} || {user} deleted machine {target}", Cat: LogCatAdmin},
 	"settings.update":              e(LogCatAdmin, "{user} changed the {section} settings || {user} changed settings"),
 	"bulk.create":                  e(LogCatAdmin, "{user} created bulk operation {target}"),
 	"bulk.clear":                   e(LogCatAdmin, "{user} cleared the completed bulk operations"),
-	"machine.bulk_delete":          {Msg: "{user} deleted[ {count}] machines from inventory", Cat: LogCatAdmin, Level: "WARN"},
+	"machine.bulk_delete":          {Msg: "{user} deleted[ {count}] machines from inventory", Cat: LogCatAdmin},
 	"machine.group_membership":     e(LogCatAdmin, "{user} changed the group membership of[ {count}] machines"),
 	"update_deployment.create":     e(LogCatUpdates, "{user} started a Windows update deployment[ ({count} updates)]"),
 	"portal.request.failed":        e(LogCatSystem, "A portal request failed[: {error}]"),
@@ -360,10 +360,10 @@ var logCatalog = map[string]logEntry{
 	"bulksched.scheduler_started":  e(LogCatAdmin, "Bulk operation scheduler started"),
 	"binding.bulk_edit":            e(LogCatAdmin, "{user} bulk-edited[ {machines}] machine bindings[ ({updated} changed)] || Machine bindings bulk-edited"),
 	"asset.import":                 e(LogCatAdmin, "{user} imported assets[ from {file}][ ({inserted} new, {updated} updated)] || Assets imported"),
-	"asset.wipe":                   {Msg: "{user} wiped[ {removed}] imported assets || Imported assets wiped", Cat: LogCatAdmin, Level: "WARN"},
+	"asset.wipe":                   {Msg: "{user} wiped[ {removed}] imported assets || Imported assets wiped", Cat: LogCatAdmin},
 	"group.create":                 e(LogCatAdmin, "{user} created machine group {target}"),
 	"group.update":                 e(LogCatAdmin, "{user} updated machine group {target}"),
-	"group.delete":                 {Msg: "{user} deleted machine group {target}", Cat: LogCatAdmin, Level: "WARN"},
+	"group.delete":                 {Msg: "{user} deleted machine group {target}", Cat: LogCatAdmin},
 	"software.upload.bad_request":  eFail(LogCatSoftware, "Software upload rejected: the request was malformed[: {error}]", "Retry the upload from the portal."),
 	"software.upload.stream_error": eFail(LogCatSoftware, "Software upload was interrupted[: {error}]", "Retry the upload; check the connection to the server."),
 	"software.upload.rejected":     eFail(LogCatSoftware, "Software upload refused[: {error}]", "Check the file name and size limits."),
@@ -469,7 +469,6 @@ func init() {
 				// The row is gone by the time it is shown, so prefer the
 				// name captured before the delete.
 				en.Msg = "{user} deleted " + noun + " “{name}” || {user} deleted " + noun + " {target}"
-				en.Level = "WARN"
 			}
 			logCatalog[a] = en
 		}
@@ -653,6 +652,15 @@ func (v logVars) get(name string) string {
 		return ""
 	case "message":
 		return fieldString(v.f, "message")
+	case "steps_label":
+		n, ok := fieldInt(v.f, "steps")
+		switch {
+		case !ok || n <= 0:
+			return ""
+		case n == 1:
+			return "1 step"
+		}
+		return strconv.Itoa(n) + " steps"
 	}
 	return fieldString(v.f, name)
 }
