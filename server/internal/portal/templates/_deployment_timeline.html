@@ -1,0 +1,32 @@
+{{/* deployment_timeline renders one deployment run's key log events
+     (boot stages → setup phases → package results), oldest first, with the
+     run's first error and its hint as a headline. Pass a
+     *model.DeployTimeline plus the run ID:
+       {{template "deployment_timeline" (dict "T" .Timeline "Run" .ID)}} */}}
+{{define "deployment_timeline"}}
+{{$t := .T}}
+<div class="deploy-timeline">
+  {{with $t.Headline}}
+  <div class="timeline-headline">
+    <span class="dot bad" aria-hidden="true"></span>
+    <div>
+      <strong>{{.Message}}</strong>
+      {{if .Hint}}<div class="small">What to try: {{.Hint}}</div>{{end}}
+    </div>
+  </div>
+  {{end}}
+  <ol class="timeline">
+    {{range $t.Events}}
+    <li class="tl-{{lower .Level}}{{if eq .Outcome "ok"}} tl-ok{{end}}">
+      <span class="dot {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else if eq .Outcome "ok"}}ok{{else}}muted{{end}}" aria-hidden="true"></span>
+      <span class="tl-when small muted">{{timeAgo .OccurredAt}}</span>
+      <span class="tl-msg">{{.Message}}</span>
+    </li>
+    {{end}}
+  </ol>
+  <p class="small muted">
+    {{if $t.Hidden}}{{$t.Hidden}} more key events not shown. {{end}}
+    <a href="/portal/logs?deployment={{.Run}}">All {{$t.Total}} log event{{if ne $t.Total 1}}s{{end}} of this run →</a>
+  </p>
+</div>
+{{end}}

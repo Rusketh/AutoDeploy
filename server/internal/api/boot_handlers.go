@@ -35,6 +35,10 @@ type BootMenuResponse struct {
 	// skipping the interactive menu. Zero means show the menu as usual.
 	AutoDeployImageID model.ID        `json:"auto_deploy_image_id,omitempty"`
 	Identity          BootMenuRequest `json:"identity_echo"`
+	// MachineName is the name the machine is known by (binding name, else
+	// the reported computer name), shown in the boot screens' header.
+	// Omitted for machines with no name yet. Older boot clients ignore it.
+	MachineName string `json:"machine_name,omitempty"`
 }
 
 // BootMenuItem is one deployable configuration.
@@ -105,6 +109,11 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 				return
 			}
 			emitDeployStarted(req, r, m, in.ImageID, reimageSource)
+			if reimageSource != "" {
+				recordDeployEvent(req, r, m, id, in.ImageID, "deploy.reimage", map[string]any{"source": reimageSourceLabel(reimageSource)})
+			} else {
+				recordDeployEvent(req, r, m, id, in.ImageID, "deploy.started", nil)
+			}
 			// Clear any remote-reimage flag now the deploy has begun, so it
 			// fires exactly once and the machine doesn't re-image on every
 			// subsequent network boot.
@@ -136,12 +145,17 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			if notes == "" && in.Status == "staged" {
 				notes = "media staged; rebooting into Setup"
 			}
+			// The run being closed, for its log rows (best-effort).
+			open, _ := r.Inventory.LatestOpenDeployment(req.Context(), m.ID)
 			if err := r.Inventory.UpdateLatestDeployment(req.Context(), m.ID, outcome, notes, in.Status); err != nil {
 				writeError(w, err)
 				return
 			}
 			if outcome == "failed" {
-				emitDeployOutcome(req, r, m, "failed", notes)
+				recordDeployEvent(req, r, m, open.ID, open.ImageID, "deploy.failed", map[string]any{"notes": notes})
+				emitDeployOutcome(req, r, m, open.ID, "failed", notes)
+			} else {
+				recordDeployEvent(req, r, m, open.ID, open.ImageID, "deploy.staged", nil)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
 			return
@@ -158,6 +172,13 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			if err := r.Inventory.UpdateLatestInProgressNote(req.Context(), m.ID, notes, in.Status); err != nil {
 				writeError(w, err)
 				return
+			}
+			if open, err := r.Inventory.LatestOpenDeployment(req.Context(), m.ID); err == nil {
+				phase := "the specialize pass"
+				if in.Status == "first-logon" {
+					phase = "first logon"
+				}
+				recordDeployEvent(req, r, m, open.ID, nil, "deploy.setup", map[string]any{"phase": phase})
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID})
 			return
@@ -216,9 +237,14 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 		// Upsert the machine record from reported identity so the
 		// inventory tracks every machine that boots into AutoDeploy —
 		// even ones that have no binding yet.
+		machineName := ""
 		if r.Inventory != nil && in.SystemUUID != "" {
 			if m, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity); err == nil {
 				emitFirstSeen(req, r, m)
+				b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+				if n := model.MachineDisplayName(m, b); !n.Unnamed {
+					machineName = n.Name
+				}
 			}
 		}
 		images, err := r.Images.List(req.Context())
@@ -226,7 +252,7 @@ func handleBootMenu(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		resp := BootMenuResponse{Identity: in}
+		resp := BootMenuResponse{Identity: in, MachineName: machineName}
 
 		// Partition images: ungrouped → resp.Items; grouped → resp.Groups.
 		if r.ImageGroups != nil {

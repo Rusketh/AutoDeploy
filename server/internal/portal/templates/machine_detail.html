@@ -107,7 +107,7 @@
   <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
 
-<div class="section-head"><h3>Deployment</h3><div class="line"></div></div>
+<div class="section-head"><h3>Deployment</h3><div class="line"></div><a class="btn ghost sm" href="/portal/logs?machine={{int64 $m.ID}}"><svg><use href="#i-list"/></svg>View this machine's logs</a></div>
 
 {{/* Live progress bar — shown while a deployment is in flight (imaging or
      installing software). The JS poller in app.js drives it from
@@ -145,14 +145,16 @@
 <details class="detail-section">
   <summary>View full deployment history ({{.Data.DeployCount}})</summary>
   <div class="tablewrap">
-  <table data-sortable>
+  {{/* Not sortable: each run's timeline row must stay under its run. */}}
+  <table>
     <thead><tr>
-      <th data-sort="num">Started</th>
-      <th data-sort="num">Completed</th>
+      <th>Started</th>
+      <th>Completed</th>
       <th>Image</th>
       <th>Phase</th>
       <th>Outcome</th>
       <th data-nosort>Notes</th>
+      <th data-nosort>Logs</th>
     </tr></thead>
     <tbody>
       {{range .Data.History}}
@@ -163,7 +165,12 @@
         <td class="small muted">{{if .Phase}}{{.Phase}}{{else}}—{{end}}</td>
         <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
         <td class="small">{{.Notes}}</td>
+        <td class="small nowrap"><a href="/portal/logs?deployment={{int64 .ID}}">Logs</a></td>
       </tr>
+      {{$run := int64 .ID}}{{with .Timeline}}<tr class="timeline-row"><td colspan="7">
+        <details{{if .Headline}} open{{end}}><summary class="small">Timeline of this run{{if .Headline}} — failed{{end}}</summary>
+        {{template "deployment_timeline" (dict "T" . "Run" $run)}}</details>
+      </td></tr>{{end}}
       {{end}}
     </tbody>
   </table>

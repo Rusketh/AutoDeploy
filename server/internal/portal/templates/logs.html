@@ -1,119 +1,155 @@
 {{define "body"}}
-{{$q := .Data.Query}}
+{{$d := .Data}}{{$q := $d.Query}}
 <div class="toolbar">
   <h2>Logs</h2>
   <div class="right">
-    <button class="btn ghost sm" id="toggle-tail" type="button"><svg><use href="#i-bolt"/></svg>Live tail</button>
+    <button class="btn ghost sm" id="toggle-tail" type="button" aria-controls="tail-panel" aria-expanded="false"><svg><use href="#i-bolt"/></svg>Live tail</button>
   </div>
 </div>
 
-<details id="tail-panel" open>
-  <summary class="small muted">
-    Live tail — newest events stream in every few seconds
-  </summary>
-  <div id="logs-tail" class="logs-tail" data-url="/api/v1/logs?limit=50" data-interval-ms="4000" aria-live="polite">
-    <div class="row"><span class="ts">…</span><span class="lvl">INFO</span><span class="mc muted">—</span><span class="msg muted">waiting for events</span></div>
-  </div>
-</details>
-
-<h3>Search</h3>
-<form class="std" method="GET" action="/portal/logs" id="log-search">
+{{/* One server-side search. Every search is a plain GET navigation, so the
+     browser's Back / Forward step through earlier searches. */}}
+<form class="std log-search" method="GET" action="/portal/logs" id="log-search" role="search" data-search-form>
   <div class="row">
-    <label><span class="lbl">Component</span><input type="text" name="component" value="{{$q.Component}}" placeholder="server / boot / agent"></label>
-    <label><span class="lbl">Actor</span><input type="text" name="actor" value="{{$q.Actor}}" placeholder="UUID or username"></label>
-    <label><span class="lbl">Action</span><input type="text" name="action" value="{{$q.Action}}" placeholder="package.install.ok"></label>
-  </div>
-  <div class="row">
-    <label><span class="lbl">Since</span><input type="datetime-local" name="since" id="log-since"></label>
-    <label><span class="lbl">Limit</span><input type="number" name="limit" value="{{if $q.Limit}}{{$q.Limit}}{{else}}200{{end}}" min="1" max="10000"></label>
-    <label><span class="lbl">Machine group</span>
-      <select name="group">
-        <option value="">— any machine —</option>
-        {{range .Data.Groups}}<option value="{{.ID}}" {{if eq .ID $.Data.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}
+    <label class="grow"><span class="lbl">Search</span>
+      <input type="text" name="q" value="{{$q.Text}}" data-search placeholder="Message, action, package, error text…" autocomplete="off"></label>
+    <label><span class="lbl">Level</span>
+      <select name="level">
+        {{range $d.Levels}}<option value="{{index . 0}}" {{if eq (index . 0) $q.Level}}selected{{end}}>{{index . 1}}</option>{{end}}
+      </select>
+    </label>
+    <label><span class="lbl">Category</span>
+      <select name="category">
+        <option value="">Any category</option>
+        {{range $d.Categories}}<option value="{{.}}" {{if eq . $q.Category}}selected{{end}}>{{.}}</option>{{end}}
       </select>
     </label>
   </div>
+  <div class="row">
+    <label><span class="lbl">Machine</span>
+      <input type="text" name="machine" value="{{$q.Machine}}" list="log-machines" placeholder="Name, UUID or ID" autocomplete="off">
+      {{if $q.MachineUnknown}}<span class="hint warn-text">No machine matches “{{$q.Machine}}” — showing events whose actor is that text.</span>{{end}}
+    </label>
+    <label><span class="lbl">User</span>
+      <input type="text" name="user" value="{{$q.User}}" list="log-users" placeholder="Portal user" autocomplete="off"></label>
+    <label><span class="lbl">Machine group</span>
+      <select name="group">
+        <option value="">Any machine</option>
+        {{range $d.Groups}}<option value="{{int64 .ID}}" {{if eq .ID $d.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label><span class="lbl">From <span class="muted">({{$d.Zone}})</span></span>
+      <input type="datetime-local" name="from" value="{{$q.From}}"></label>
+    <label><span class="lbl">To <span class="muted">({{$d.Zone}})</span></span>
+      <input type="datetime-local" name="to" value="{{$q.To}}"></label>
+    <label><span class="lbl">Deployment run</span>
+      <input type="text" name="deployment" value="{{$q.Deployment}}" inputmode="numeric" placeholder="Run number, e.g. 42"></label>
+  </div>
+  {{if $d.Legacy}}
+  <div class="log-chips" aria-label="Other filters">
+    {{range $d.Legacy}}<span class="chip">{{.Label}}: <code>{{.Value}}</code><input type="hidden" name="{{.Name}}" value="{{.Value}}"><a href="{{.RemoveURL}}" class="chip-x" aria-label="Remove {{.Label}} filter" title="Remove this filter">×</a></span>{{end}}
+  </div>
+  {{end}}
   <div class="actions">
-    <button type="submit"><svg><use href="#i-search"/></svg>Search</button>
     <span class="log-presets" role="group" aria-label="Quick time range">
       <span class="lbl muted">Last</span>
-      <button type="button" class="btn ghost sm" data-since-preset="15">15m</button>
-      <button type="button" class="btn ghost sm" data-since-preset="60">1h</button>
-      <button type="button" class="btn ghost sm" data-since-preset="1440">24h</button>
-      <button type="button" class="btn ghost sm" data-since-preset="10080">7d</button>
+      {{range $d.Presets}}<a class="btn ghost sm" href="{{.URL}}">{{.Label}}</a>{{end}}
     </span>
+    {{if $q.Active}}<a class="btn ghost" href="{{$d.ClearURL}}">Clear</a>{{end}}
+    <button type="submit"><svg><use href="#i-search"/></svg>Search</button>
   </div>
+  <datalist id="log-machines">{{range $d.MachineNames}}<option value="{{.}}">{{end}}</datalist>
+  <datalist id="log-users">{{range $d.Users}}<option value="{{.}}">{{end}}</datalist>
 </form>
 
-<div class="section-head">
-  <h3>{{len .Data.Events}} event{{if ne (len .Data.Events) 1}}s{{end}}</h3>
-  <div class="line"></div>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter rows — press /" id="log-filter">
+{{with $q.DeploymentRec}}
+<div class="card log-context mb-4">
+  <strong>Deployment run {{idLabel .ID}}</strong>
+  on {{entityLink "machine" .MachineID}}{{if .ImageID}} with {{entityLink "image" .ImageID}}{{end}}
+  · started {{timeAgo .StartedAt}}
+  · <span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{if eq .Outcome "in_progress"}}in progress{{else}}{{.Outcome}}{{end}}</span>
+  <span class="muted small">Includes events from older clients logged on this machine during the run.</span>
+</div>
+{{end}}
+
+<section id="tail-panel" class="log-tail-panel" hidden>
+  <p class="small muted">Live tail — new events matching this search appear here every few seconds.</p>
+  <div id="logs-tail" class="logs-tail" data-url="{{$d.TailURL}}" data-since-id="{{$d.NewestID}}" data-interval-ms="4000" data-manual="1" aria-live="polite">
+    <div class="row empty-row"><span class="msg muted">Waiting for new events…</span></div>
   </div>
+</section>
+
+<div class="section-head">
+  <h3>{{if $d.Total}}Showing {{$d.Start}}–{{$d.End}} of {{$d.Total}}{{else}}No events{{end}}</h3>
+  <div class="line"></div>
+  <nav class="log-pager" aria-label="Pages">
+    {{with $d.NewestURL}}<a class="btn ghost sm" href="{{.}}">« Newest</a>{{end}}
+    {{with $d.NewerURL}}<a class="btn ghost sm" href="{{.}}" rel="prev">← Newer</a>{{end}}
+    {{with $d.OlderURL}}<a class="btn ghost sm" href="{{.}}" rel="next">Older →</a>{{end}}
+  </nav>
 </div>
 
-<div class="log-levels" role="group" aria-label="Filter by level">
-  <button type="button" class="pill on" data-level-pill="all">All</button>
-  <button type="button" class="pill lvl-info" data-level-pill="INFO">Info</button>
-  <button type="button" class="pill lvl-warn" data-level-pill="WARN">Warn</button>
-  <button type="button" class="pill lvl-error" data-level-pill="ERROR">Error</button>
-</div>
-
-{{if .Data.Events}}
+{{if $d.Rows}}
 <div class="logwrap">
 <table id="log-rows" class="logs-table">
   <thead><tr>
     <th class="log-exp" aria-label="Expand"></th>
-    <th>Time</th>
+    <th>When</th>
     <th>Level</th>
     <th>Machine</th>
-    <th>Component</th>
-    <th>Action</th>
-    <th>Target</th>
+    <th class="log-cat-col">Category</th>
+    <th>What happened</th>
   </tr></thead>
   <tbody>
-    {{range .Data.Events}}
-    <tr class="log-row" data-log-row data-level="{{.Level}}" tabindex="0" role="button" aria-expanded="false">
+    {{range $d.Rows}}{{$e := .Event}}
+    <tr class="log-row lvl-{{lower $e.Level}}{{if .Output}} log-output-row{{end}}" data-log-row tabindex="0" role="button" aria-expanded="false">
       <td class="log-exp"><span class="chev" aria-hidden="true"></span></td>
-      <td class="small nowrap" title="{{formatTime .OccurredAt}}">{{formatTime .OccurredAt}}</td>
-      <td><span class="badge {{if eq .Level "ERROR"}}bad{{else if eq .Level "WARN"}}warn{{else}}accent{{end}}">{{.Level}}</span></td>
-      <td class="log-machine">{{if .MachineName}}<span class="machine-name" title="{{.Actor}}">{{.MachineName}}</span>{{else if .Actor}}<code class="muted" title="actor">{{.Actor}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td><code>{{.Component}}</code></td>
-      <td><code>{{.Action}}</code></td>
-      <td class="small log-target"{{if .TargetName}} title="{{.Target}}"{{end}}>{{logTarget .}}</td>
+      <td class="small nowrap log-when">{{timeAgo $e.OccurredAt}}</td>
+      <td class="nowrap log-level"><span class="dot {{if eq $e.Level "ERROR"}}bad{{else if eq $e.Level "WARN"}}warn{{else}}muted{{end}}" aria-hidden="true"></span> <span class="lvl-text">{{if eq $e.Level "ERROR"}}Error{{else if eq $e.Level "WARN"}}Warning{{else if eq $e.Level "DEBUG"}}Debug{{else}}Info{{end}}</span></td>
+      <td class="log-machine">{{if $e.MachineID}}{{entityLink "machine" $e.MachineID}}{{else if $e.MachineName}}<span class="machine-name">{{$e.MachineName}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small log-cat-col"><span class="log-cat">{{$e.Category}}</span></td>
+      <td class="log-msg">
+        <span class="msg-text">{{$e.Message}}</span>
+        {{if and (not .Output) $e.Hint (or (eq $e.Level "ERROR") (eq $e.Level "WARN"))}}<span class="log-hint-inline small">{{$e.Hint}}</span>{{end}}
+        <code class="log-code" title="Action code">{{$e.Action}}</code>
+      </td>
     </tr>
     <tr class="log-detail" hidden>
       <td></td>
-      <td colspan="6"><pre class="log-fields">{{.Fields}}</pre></td>
+      <td colspan="5">
+        {{if .Output}}
+        <pre class="log-output">{{range .Output}}<span class="ln{{if or (eq .Action "steps.exec.stderr") (eq .Action "imaging.exec.stderr")}} ln-stderr{{end}}">{{.Message}}</span>
+{{end}}</pre>
+        {{else}}
+        {{if $e.Hint}}<div class="log-hint"><strong>What to try:</strong> {{$e.Hint}}</div>{{end}}
+        <dl class="kv log-kv">
+          {{range .Details}}<dt>{{.Key}}</dt><dd>{{if .Pre}}<pre class="log-pre">{{.Value}}</pre>{{else}}{{.Value}}{{end}}</dd>{{end}}
+        </dl>
+        <details class="log-raw"><summary class="small">Raw</summary><pre class="log-fields">{{.Raw}}</pre></details>
+        {{end}}
+      </td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
+<div class="log-pager log-pager-bottom">
+  {{with $d.NewerURL}}<a class="btn ghost sm" href="{{.}}">← Newer</a>{{end}}
+  {{with $d.OlderURL}}<a class="btn ghost sm" href="{{.}}">Older →</a>{{end}}
+</div>
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-search"/></svg>
   <h3>No events</h3>
-  <p>Nothing matched this search. Widen the time range or clear the filters above.</p>
+  <p>{{if $q.Active}}Nothing matched this search. Widen the time range or <a href="{{$d.ClearURL}}">clear the filters</a>.{{else}}Nothing has been logged yet. Events from the server, Boot Client and agent appear here as they happen.{{end}}</p>
 </div>
 {{end}}
 
 <p class="muted small mt-3">
   <svg class="icon-inline"><use href="#i-shield"/></svg>
-  Secrets are never logged. <code>secret.access</code> events record retrievals — actor + target — but not the value.
+  Recorded: deployment and software events from the Boot Client and agent; portal sign-ins and sign-outs (including failed attempts); changes made through the portal (images, ISOs, software, loadouts, answer files, drivers, machines and their bindings, re-image requests, bulk operations, accounts and settings);
+  and <code>secret.access</code> rows when an agent is handed a domain-join password. Secret values themselves are never logged.
 </p>
-
-<script>
-(function(){
-  var btn = document.getElementById('toggle-tail');
-  var panel = document.getElementById('tail-panel');
-  if(!btn||!panel) return;
-  btn.addEventListener('click', function(){
-    panel.open = !panel.open;
-    btn.classList.toggle('on', panel.open);
-  });
-})();
-</script>
 {{end}}

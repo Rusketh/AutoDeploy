@@ -99,6 +99,7 @@ func importUpload(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "asset.import",
 				Target:    "imported_asset:" + strconv.Itoa(inserted+updated),
 				Fields:    string(fields),
@@ -135,6 +136,7 @@ func importWipe(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "asset.wipe",
 				Target:    "imported_asset",
 				Fields:    string(fields),

@@ -204,6 +204,10 @@ func machineCSV(r Repos) http.HandlerFunc {
 // machineAction runs a single-machine bulk action (rename / script /
 // software push) straight from the machine's page, reusing the bulk
 // machinery with a machine-id target.
+// machineTimelineRuns is how many of a machine's most recent deployments get
+// a log timeline on its detail page.
+const machineTimelineRuns = 5
+
 func machineAction(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
@@ -664,11 +668,18 @@ func machineDetail(r Repos) http.HandlerFunc {
 		type historyRow struct {
 			model.DeploymentRecord
 			Stalled bool
+			// Timeline is the run's key log events (most recent runs only).
+			Timeline *model.DeployTimeline
 		}
 		machineStalled := time.Since(m.LastSeen) > deployStallAfter
 		historyRows := make([]historyRow, len(history))
 		for i, h := range history {
 			historyRows[i] = historyRow{DeploymentRecord: h, Stalled: h.Outcome == "in_progress" && machineStalled}
+			if i < machineTimelineRuns && r.Logs != nil {
+				if tl, terr := r.Logs.DeploymentTimeline(req.Context(), h, m, namesFor(req, r)); terr == nil && len(tl.Events) > 0 {
+					historyRows[i].Timeline = &tl
+				}
+			}
 		}
 		reimages, _ := r.Inventory.ListReimageEvents(req.Context(), id)
 

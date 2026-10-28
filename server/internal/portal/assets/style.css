@@ -1044,7 +1044,9 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
 .bulk-bar.on { display: flex; }
 .bulk-bar .count { font-weight: 600; }
 
-/* ---------- Logs page tail ---------- */
+/* ---------- Logs page: live tail ---------- */
+.log-tail-panel { margin: var(--sp-4) 0; }
+.log-tail-panel > p { margin: 0 0 var(--sp-2); }
 .logs-tail {
   background: var(--surface-2);
   color: var(--fg);
@@ -1052,35 +1054,39 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
   border-radius: var(--r-lg);
   padding: var(--sp-3);
   font: 12px/1.45 var(--font-mono);
-  max-height: 60vh;
+  max-height: 40vh;
   overflow-y: auto;
 }
-.logs-tail .row { padding: 2px 4px; border-bottom: 1px dashed var(--border); display: grid; grid-template-columns: 96px 52px 150px auto; gap: 0.5rem; align-items: baseline; }
+.logs-tail .row { padding: 2px 4px; border-bottom: 1px dashed var(--border); display: grid; grid-template-columns: 64px 56px 140px minmax(0, 1fr); gap: 0.5rem; align-items: baseline; }
+.logs-tail .row.empty-row { display: block; }
 .logs-tail .row:last-child { border-bottom: none; }
 .logs-tail .row .ts { color: var(--fg-muted); }
 .logs-tail .row .mc { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs-tail .row .msg { font-family: var(--font-sans); overflow-wrap: anywhere; }
 .logs-tail .row.error { background: var(--bad-soft); }
 .logs-tail .row.warn  { background: var(--warn-soft); }
 
-/* ---------- Logs page table ---------- */
-.log-presets { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: var(--sp-3); }
+/* ---------- Logs page: search form ---------- */
+.log-search .grow { flex: 2 1 18rem; }
+.log-search .hint { display: block; margin-top: var(--sp-1); font-size: var(--fs-xs); }
+.warn-text { color: var(--warn); }
+.log-search .actions { flex-wrap: wrap; gap: var(--sp-2); }
+.log-presets { display: inline-flex; align-items: center; gap: var(--sp-1); margin-right: auto; flex-wrap: wrap; }
 .log-presets .lbl { margin-right: var(--sp-1); }
-
-.log-levels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: var(--sp-2) 0 var(--sp-3); }
-.log-levels .pill {
-  padding: 0.3rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--fg-muted);
-  font: 600 var(--fs-sm)/1 var(--font-sans);
-  cursor: pointer;
-  transition: background var(--tx-fast), border-color var(--tx-fast), color var(--tx-fast);
+.log-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-1) 0 var(--sp-3); }
+.log-chips .chip {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-2); font-size: var(--fs-sm);
 }
-.log-levels .pill:hover { border-color: var(--border-strong); color: var(--fg); }
-.log-levels .pill.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.log-levels .pill.lvl-warn.on  { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
-.log-levels .pill.lvl-error.on { background: var(--bad-soft);  border-color: var(--bad);  color: var(--bad); }
+.log-chips .chip-x { text-decoration: none; color: var(--fg-muted); padding: 0 0.35rem; border-radius: 999px; }
+.log-chips .chip-x:hover { background: var(--border); color: var(--fg); }
+.log-context { margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+
+/* ---------- Logs page: table ---------- */
+.log-pager { display: inline-flex; gap: var(--sp-1); flex-wrap: wrap; }
+.log-pager-bottom { display: flex; justify-content: flex-end; margin-top: var(--sp-2); }
 
 .logwrap {
   background: var(--surface);
@@ -1088,7 +1094,7 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
   overflow: auto;
-  max-height: 70vh;
+  max-height: 75vh;
 }
 .logwrap > table { border: none; border-radius: 0; box-shadow: none; }
 .logs-table thead th {
@@ -1100,8 +1106,29 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
 .logs-table td { vertical-align: top; }
 .logs-table .nowrap { white-space: nowrap; }
 .logs-table th.log-exp, .logs-table td.log-exp { width: 1.6rem; padding-left: var(--sp-3); padding-right: 0; text-align: center; }
+.log-level .dot, .activity .dot { margin-right: 0.3rem; vertical-align: 1px; box-shadow: none; }
+.log-level .lvl-text { font-size: var(--fs-sm); }
+.log-row.lvl-error .lvl-text { color: var(--bad); font-weight: 600; }
+.log-row.lvl-warn .lvl-text { color: var(--warn); font-weight: 600; }
+.log-row.lvl-error > td { background: color-mix(in srgb, var(--bad-soft) 55%, transparent); }
+.log-machine { white-space: nowrap; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
 .log-machine .machine-name { font-weight: 600; }
-.log-target { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-cat { color: var(--fg-muted); }
+.log-msg { min-width: 16rem; overflow-wrap: anywhere; }
+.log-msg .msg-text { color: var(--fg); }
+.log-output-row .msg-text { color: var(--fg-muted); font-style: italic; }
+.log-hint-inline { display: block; color: var(--fg-muted); margin-top: 2px; }
+.log-code {
+  display: inline-block;
+  margin-left: var(--sp-2);
+  padding: 0 0.35rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--fg-subtle);
+  font-size: 11px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
 
 .log-row { cursor: pointer; }
 .log-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1116,14 +1143,70 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
 .log-row.open .chev { transform: rotate(90deg); }
 .log-row.open > td { border-bottom: none; }
 
-.log-detail > td { background: var(--surface-2); padding: 0; }
-.log-fields {
+.log-detail > td { background: var(--surface-2); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
+.log-hint {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+dl.log-kv { margin: 0; background: transparent; border: none; box-shadow: none; padding: 0; }
+dl.log-kv dd { overflow-wrap: anywhere; }
+.log-pre, .log-output, .log-fields {
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
   font: 12px/1.5 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.log-output { max-height: 50vh; overflow: auto; }
+.log-row.open .log-hint-inline { display: none; }
+.log-raw { margin-top: var(--sp-2); }
+.log-raw summary { cursor: pointer; color: var(--fg-muted); }
+.log-raw pre { margin-top: var(--sp-1); }
+
+/* ---------- Deployment run timeline (machine detail) ---------- */
+.timeline-row > td { background: var(--surface-2); }
+.timeline-row summary { cursor: pointer; color: var(--fg-muted); }
+.deploy-timeline { padding: var(--sp-2) 0 0; }
+.timeline-headline {
+  display: flex; gap: var(--sp-3); align-items: baseline;
+  margin-bottom: var(--sp-3); padding: var(--sp-2) var(--sp-3);
+  background: var(--bad-soft); border-radius: var(--r); color: var(--fg);
+}
+.timeline-headline { border-left: 3px solid var(--bad); }
+.timeline-headline strong { color: var(--fg); }
+.timeline { list-style: none; margin: 0 0 var(--sp-2); padding: 0 0 0 var(--sp-1); border-left: 2px solid var(--border); }
+.timeline li { display: grid; grid-template-columns: 12px 5.5rem minmax(0, 1fr); gap: var(--sp-2); align-items: baseline; padding: 3px 0 3px var(--sp-2); margin-left: -7px; }
+.timeline li .dot { width: 8px; height: 8px; box-shadow: none; }
+.timeline li.tl-error .tl-msg { color: var(--bad); font-weight: 600; }
+.timeline li.tl-warn .tl-msg { color: var(--warn); }
+.timeline .tl-msg { overflow-wrap: anywhere; }
+
+/* Phone: drop the category column and let the message wrap under the
+   other cells instead of forcing a sideways scroll. */
+@media (max-width: 640px) {
+  .logs-table .log-cat-col, .logs-table th.log-exp, .logs-table td.log-exp { display: none; }
+  .logs-table thead { display: none; }
+  .logs-table tr.log-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+  .logs-table tr.log-row > td { padding: 0; border: none; background: transparent; }
+  .logs-table tr.log-row > td.log-msg { grid-column: 1 / -1; min-width: 0; margin-top: 2px; }
+  .log-machine { max-width: none; }
+  .logs-table tr.log-detail { display: block; }
+  .logs-table tr.log-detail[hidden] { display: none; }
+  .logs-table tr.log-detail > td:first-child { display: none; }
+  .logs-table tr.log-detail > td { display: block; }
+  .logwrap { max-height: none; }
+  dl.log-kv { grid-template-columns: minmax(5rem, max-content) minmax(0, 1fr); gap: 0.3rem 0.75rem; }
+  .logs-tail .row { grid-template-columns: 56px minmax(0, 1fr); }
+  .logs-tail .row .lvl { display: none; }
+  .logs-tail .row .msg { grid-column: 1 / -1; }
 }
 
 /* ---- Upload progress ----

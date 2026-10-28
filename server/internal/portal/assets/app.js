@@ -480,150 +480,116 @@
     });
   }
 
-  // ---- Logs tail ----------------------------------------------------
-  // A page that opts in puts an element with id="logs-tail" and we
-  // poll /api/v1/logs?... at the configured interval, prepending new
-  // events. Stops automatically when the tab is hidden.
+  // ---- Logs: live tail ----------------------------------------------
+  // The Logs page's tail panel polls the JSON API with the page's own
+  // filters (data-url) plus after=<newest id seen>, prepending new events.
+  // It runs only while the panel is open (the "Live tail" button) and the
+  // tab is visible. A page that renders #logs-tail without data-manual
+  // starts tailing straight away.
   const tail = document.getElementById('logs-tail');
   if (tail) {
-    const url = tail.getAttribute('data-url') || '/api/v1/logs?limit=50';
+    const baseURL = tail.getAttribute('data-url') || '/api/v1/logs?limit=50';
     let lastID = parseInt(tail.getAttribute('data-since-id') || '0', 10) || 0;
+    // On a later page (or an empty one) the newest id isn't known: the first
+    // poll only learns it, so the tail shows events from now on.
+    let primed = lastID > 0;
     let timer = null;
     const intervalMs = parseInt(tail.getAttribute('data-interval-ms') || '4000', 10);
-    // Format a log timestamp as date+time in the operator's configured zone
-    // (body[data-tz]) so the live tail matches the server-rendered table
-    // ("11 Jun 2026, 14:47:21"), not the browser's local clock.
+    const panel = document.getElementById('tail-panel');
+    const btn = document.getElementById('toggle-tail');
     const tailTZ = document.body.getAttribute('data-tz') || 'UTC';
     function tailTs(iso) {
       try {
-        return new Date(iso).toLocaleString('en-GB', {
-          timeZone: tailTZ, day: 'numeric', month: 'short', year: 'numeric',
-          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        return new Date(iso).toLocaleTimeString('en-GB', {
+          timeZone: tailTZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
         });
-      } catch (e) { return new Date(iso).toLocaleString(); }
+      } catch (e) { return new Date(iso).toLocaleTimeString(); }
     }
+    function lvlLabel(l) { return l === 'ERROR' ? 'Error' : (l === 'WARN' ? 'Warning' : 'Info'); }
     function poll() {
+      const sep = baseURL.indexOf('?') === -1 ? '?' : '&';
+      const url = lastID > 0 ? baseURL + sep + 'after=' + lastID : baseURL;
       fetch(url, { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : []; })
         .then(function (events) {
           if (!Array.isArray(events)) return;
-          // Server returns newest-first; iterate reversed for prepend.
+          if (!primed) {
+            events.forEach(function (ev) { if (ev.id > lastID) lastID = ev.id; });
+            primed = true;
+            return;
+          }
+          // Newest first from the server; prepend oldest first.
           events.slice().reverse().forEach(function (ev) {
             if (!ev.id || ev.id <= lastID) return;
             lastID = ev.id;
+            const empty = tail.querySelector('.empty-row');
+            if (empty) empty.remove();
             const row = document.createElement('div');
             row.className = 'row ' + (ev.level === 'ERROR' ? 'error' : (ev.level === 'WARN' ? 'warn' : ''));
-            const machine = ev.machine_name || ev.actor || '';
+            const machine = ev.machine_name || '';
+            const mc = machine
+              ? (ev.machine_id ? '<a href="/portal/machines/' + encodeURIComponent(ev.machine_id) + '">' + escapeHTML(machine) + '</a>' : escapeHTML(machine))
+              : '<span class="muted">—</span>';
             row.innerHTML =
-              '<span class="ts">' + escapeHTML(tailTs(ev.occurred_at)) + '</span>' +
-              '<span class="lvl">' + escapeHTML(ev.level || '') + '</span>' +
-              '<span class="mc">' + (machine ? escapeHTML(machine) : '<span class="muted">—</span>') + '</span>' +
-              '<span class="msg"><code>' + escapeHTML(ev.component) + '</code> ' + escapeHTML(ev.action) +
-              (ev.target ? ' <span class="muted" title="' + escapeHTML(ev.target) + '">(' +
-                escapeHTML(ev.target_name || ev.target) + ')</span>' : '') + '</span>';
+              '<span class="ts" title="' + escapeHTML(ev.occurred_at || '') + '">' + escapeHTML(tailTs(ev.occurred_at)) + '</span>' +
+              '<span class="lvl">' + escapeHTML(lvlLabel(ev.level)) + '</span>' +
+              '<span class="mc">' + mc + '</span>' +
+              '<span class="msg">' + escapeHTML(ev.message || ev.action || '') +
+              ' <code class="log-code">' + escapeHTML(ev.action || '') + '</code></span>';
             tail.insertBefore(row, tail.firstChild);
           });
-          // Cap visible rows so the page doesn't grow forever.
           while (tail.childElementCount > 200) tail.removeChild(tail.lastChild);
         })
         .catch(function () {});
     }
-    function start() { if (!timer) { poll(); timer = setInterval(poll, intervalMs); } }
+    function running() { return !panel || !panel.hidden; }
+    function start() { if (!timer && running() && !document.hidden) { poll(); timer = setInterval(poll, intervalMs); } }
     function stop()  { if (timer) { clearInterval(timer); timer = null; } }
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) stop(); else start();
     });
-    start();
+    if (btn && panel) {
+      btn.addEventListener('click', function () {
+        panel.hidden = !panel.hidden;
+        btn.classList.toggle('on', !panel.hidden);
+        btn.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+        if (panel.hidden) stop(); else start();
+      });
+    }
+    if (!tail.hasAttribute('data-manual')) start();
   }
 
-  // ---- Logs table: expand rows, level pills, text filter, presets ----
-  // The logs table renders each event as a summary row plus a hidden detail
-  // row holding the Fields JSON. Clicking (or Enter/Space on) a summary row
-  // toggles its detail, which is pretty-printed on first open. Level pills
-  // and the text box filter the summary rows (and collapse hidden ones);
-  // the "Last N" buttons set the Since field and re-run the server search.
+  // ---- Logs table: expandable rows -----------------------------------
+  // Each event is a summary row plus a hidden detail row (key/value table,
+  // a Raw toggle, or a folded command output). Click, Enter or Space on a
+  // summary row toggles its detail. Searching is server-side (the form
+  // above the table); there is no client-side filtering here.
   (function initLogsTable() {
     const table = document.getElementById('log-rows');
     if (!table) return;
-    const rows = Array.prototype.slice.call(table.querySelectorAll('tr.log-row'));
-
     function detailOf(row) {
       const d = row.nextElementSibling;
       return d && d.classList.contains('log-detail') ? d : null;
     }
-    function setOpen(row, open) {
-      const d = detailOf(row);
+    function toggle(row) {
+      const open = row.getAttribute('aria-expanded') !== 'true';
       row.classList.toggle('open', open);
       row.setAttribute('aria-expanded', open ? 'true' : 'false');
-      if (!d) return;
-      if (open) {
-        const pre = d.querySelector('.log-fields');
-        if (pre && !pre.dataset.pretty) {
-          pre.dataset.pretty = '1';
-          try { pre.textContent = JSON.stringify(JSON.parse(pre.textContent), null, 2); } catch (_) {}
-        }
-        d.hidden = false;
-      } else {
-        d.hidden = true;
-      }
+      const d = detailOf(row);
+      if (d) d.hidden = !open;
     }
     table.addEventListener('click', function (e) {
+      if (e.target.closest('a')) return; // links inside a row navigate
       const row = e.target.closest('tr.log-row');
-      if (!row) return;
-      setOpen(row, row.getAttribute('aria-expanded') !== 'true');
+      if (row) toggle(row);
     });
     table.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('a')) return;
       const row = e.target.closest('tr.log-row');
       if (!row) return;
       e.preventDefault();
-      setOpen(row, row.getAttribute('aria-expanded') !== 'true');
-    });
-
-    let activeLevel = 'all';
-    let query = '';
-    function apply() {
-      rows.forEach(function (row) {
-        const lvlOK = activeLevel === 'all' || row.getAttribute('data-level') === activeLevel;
-        const txtOK = !query || (row.innerText || '').toLowerCase().indexOf(query) !== -1;
-        const ok = lvlOK && txtOK;
-        row.style.display = ok ? '' : 'none';
-        const d = detailOf(row);
-        if (!ok) { setOpen(row, false); if (d) d.style.display = 'none'; }
-        else if (d) { d.style.display = ''; }
-      });
-    }
-    const pills = document.querySelectorAll('[data-level-pill]');
-    pills.forEach(function (p) {
-      p.addEventListener('click', function () {
-        activeLevel = p.getAttribute('data-level-pill');
-        pills.forEach(function (q) { q.classList.toggle('on', q === p); });
-        apply();
-      });
-    });
-    const filterInp = document.getElementById('log-filter');
-    if (filterInp) {
-      filterInp.addEventListener('input', function () {
-        query = filterInp.value.trim().toLowerCase();
-        apply();
-      });
-    }
-
-    // Time-range presets: compute (now - minutes) and submit the search form.
-    // Formatted in UTC because the server parses the Since field as UTC, so
-    // this makes "Last 1h" filter the actual last hour regardless of zone.
-    document.querySelectorAll('[data-since-preset]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const since = document.getElementById('log-since');
-        const form = document.getElementById('log-search');
-        if (!since || !form) return;
-        const mins = parseInt(btn.getAttribute('data-since-preset'), 10) || 0;
-        const d = new Date(Date.now() - mins * 60000);
-        const pad = function (n) { return String(n).padStart(2, '0'); };
-        since.value = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) +
-          'T' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
-        form.submit();
-      });
+      toggle(row);
     });
   })();
 

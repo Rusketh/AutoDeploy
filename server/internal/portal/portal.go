@@ -17,6 +17,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -131,8 +132,9 @@ func Register(mux *http.ServeMux, r Repos) error {
 	get := func(path string, h http.HandlerFunc) {
 		mux.HandleFunc("GET "+path, requireSession(r, h))
 	}
+	// POSTs change state: audited records who changed what (audit.go).
 	post := func(path string, h http.HandlerFunc) {
-		mux.HandleFunc("POST "+path, requireSession(r, h))
+		mux.HandleFunc("POST "+path, requireSession(r, audited(r, path, h)))
 	}
 
 	mux.HandleFunc("GET /portal", func(w http.ResponseWriter, req *http.Request) {
@@ -235,12 +237,14 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			if username == "" {
 				username = "(blank)"
 			}
+			ip := clientAddr(req)
+			recordAuth(req, r, "auth.login.fail", username, map[string]any{"username": username, "ip": ip, "via": "portal"})
 			r.Emitter.Emit(req.Context(), notify.Event{
 				Name:     notify.EventAuthLoginFailed,
 				Severity: notify.SevWarning,
 				Title:    "Failed login attempt for " + username,
-				Body:     "A portal sign-in with this username was rejected.",
-				Link:     "/portal/logs",
+				Body:     "A portal sign-in with this username was rejected (source IP " + ip + ").",
+				Link:     model.FailedLoginLogsURL(username),
 				Actor:    username,
 			})
 			q := url.Values{}
@@ -257,12 +261,24 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			return
 		}
 		setSessionCookie(w, req, tok, time.Now())
+		recordAuth(req, r, "auth.login.ok", u.Username, map[string]any{"ip": clientAddr(req), "via": "portal"})
 		http.Redirect(w, req, safeNext(req.FormValue("next")), http.StatusFound)
 	}
 }
 
+// clientAddr is the request's source IP (without the port).
+func clientAddr(req *http.Request) string {
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return host
+	}
+	return req.RemoteAddr
+}
+
 func logoutSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		if u, ok := sessionUser(req, r); ok {
+			recordAuth(req, r, "auth.logout", u.Username, map[string]any{"via": "portal"})
+		}
 		if c, err := req.Cookie(sessionCookieName); err == nil {
 			_ = r.Users.DeleteSession(req.Context(), c.Value)
 		}
@@ -341,7 +357,7 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		// Recent activity: last 12 log events across all components,
 		// for a quick "what just happened" panel.
 		events, _ := r.Logs.Search(req.Context(), model.LogSearch{Limit: 12})
-		namesFor(req, r).EnrichLogs(events)
+		namesFor(req, r).DescribeLogs(events)
 
 		// Top 5 most-recently-seen machines for a "live fleet" panel.
 		topMachines := machines
@@ -474,7 +490,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return template.URL("")
 		},
-		"join": strings.Join,
+		"join":  strings.Join,
+		"lower": strings.ToLower,
 		"hasItems": func(s any) bool {
 			switch v := s.(type) {
 			case nil:
@@ -650,6 +667,7 @@ var layoutPartials = []string{
 	"templates/_layout.html", "templates/_icons.html",
 	"templates/_action_picker.html", "templates/_pagination.html",
 	"templates/_machine_picker.html", "templates/_search.html", "templates/_form_error.html",
+	"templates/_deployment_timeline.html",
 }
 
 // render parses _layout + the named page, executes the layout, and
