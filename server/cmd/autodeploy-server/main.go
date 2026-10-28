@@ -82,6 +82,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	auth.SessionIdleTimeout = cfg.SessionIdleTimeout
+	auth.SessionMaxLifetime = cfg.SessionMaxLifetime
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return err

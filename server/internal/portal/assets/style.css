@@ -600,6 +600,48 @@ button svg, .btn svg { width: 16px; height: 16px; }
 .err { color: var(--bad); }
 .warn { color: var(--warn); }
 
+/* Session expiry warning (app.js sessionWarning): non-blocking, bottom. */
+.session-bar {
+  position: fixed; z-index: 50;
+  left: 50%; bottom: var(--sp-4); transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 32px);
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border-strong); border-left: 4px solid var(--warn);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+  font-size: var(--fs-sm);
+}
+.session-bar > svg { width: 18px; height: 18px; color: var(--warn); flex: 0 0 auto; }
+.session-bar > span { flex: 1 1 220px; }
+.session-bar [hidden] { display: none !important; }
+.session-bar.expired { border-left-color: var(--bad); }
+.session-bar.expired > svg { color: var(--bad); }
+@media (max-width: 600px) {
+  .session-bar { left: 16px; right: 16px; transform: none; width: auto; bottom: 16px; }
+}
+
+/* Rejected-save errors re-rendered into the form (forms.go). */
+.form-error {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bad-soft); color: var(--bad);
+  border-left: 4px solid var(--bad); border-radius: var(--r);
+  font-weight: 500;
+}
+.form-error svg { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 2px; }
+.field-error {
+  display: block; margin-top: var(--sp-1);
+  color: var(--bad); font-size: var(--fs-sm); font-weight: 500;
+}
+[aria-invalid="true"] { border-color: var(--bad) !important; box-shadow: 0 0 0 3px var(--bad-soft); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .form-error,
+  :root:not([data-theme="light"]) .field-error { color: #ff9b93; }
+}
+:root[data-theme="dark"] .form-error, :root[data-theme="dark"] .field-error { color: #ff9b93; }
+
 /* Pending re-image banner on the machine page: a prominent, dismissible
    notice that a remote re-image is queued and waiting for the agent. */
 .reimage-banner {
@@ -744,6 +786,28 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
   color: var(--fg-muted);
   pointer-events: none;
 }
+/* List search: a GET form — field, Search button, Clear link. */
+.filter.search-form {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 1 420px;
+  min-width: 0;
+}
+.search-field { position: relative; flex: 1 1 auto; min-width: 0; }
+.search-field > svg {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+.search-form button { flex: 0 0 auto; }
+.search-clear { flex: 0 0 auto; white-space: nowrap; }
+.search-count { white-space: nowrap; }
 
 /* ---------- Repeatable rows ---------- */
 .rep {
@@ -912,6 +976,7 @@ dialog.modal .actions { display: flex; justify-content: flex-end; gap: var(--sp-
   table { font-size: var(--fs-sm); }
   th, td { padding: 0.45rem 0.55rem; }
   .toolbar .filter { flex: 1 1 100%; }
+  .toolbar .right { flex-wrap: wrap; }
 }
 
 /* Honour reduced motion */

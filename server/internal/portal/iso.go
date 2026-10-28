@@ -31,14 +31,19 @@ func isoList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		search := newSearchBox(req, "Search ISOs", "Search ISOs")
+		shown := filterByQuery(v, search.Query, func(i model.ISO) []string {
+			return []string{i.Name, i.Description, i.OSType, i.StoragePath}
+		})
 		// Per-row reference counts so the operator sees what's in use.
 		refs := map[model.ID]int{}
-		for _, iso := range v {
+		for _, iso := range shown {
 			n, _ := r.ISOs.RefCount(req.Context(), iso.ID)
 			refs[iso.ID] = n
 		}
 		render(w, req, r, "iso_list.html", "ISOs", map[string]any{
-			"ISOs": v, "Refs": refs,
+			"ISOs": shown, "Refs": refs,
+			"Search": search.counted(len(shown), len(v), "ISOs"),
 		})
 	}
 }
@@ -75,14 +80,15 @@ func isoCreate(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusBadRequest, errors.New("bad form"))
 			return
 		}
-		out, err := r.ISOs.Create(req.Context(), model.ISO{
+		iso := model.ISO{
 			Name:        req.FormValue("name"),
 			Description: req.FormValue("description"),
 			OSType:      req.FormValue("os_type"),
-		})
+		}
+		out, err := r.ISOs.Create(req.Context(), iso)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/isos/new", http.StatusFound)
+			renderForm(w, req, r, "iso_form.html", "New ISO", newFormError(req, model.KindISO, err),
+				map[string]any{"ISO": iso, "IsNew": true})
 			return
 		}
 		flash(w, "ok", "ISO created — upload the file next.")
@@ -106,14 +112,16 @@ func isoUpdate(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
+		title := "Edit ISO: " + existing.Name
 		existing.Name = req.FormValue("name")
 		existing.Description = req.FormValue("description")
 		existing.OSType = req.FormValue("os_type")
 		if err := r.ISOs.Update(req.Context(), existing); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			renderForm(w, req, r, "iso_form.html", title, newFormError(req, model.KindISO, err),
+				map[string]any{"ISO": existing, "IsNew": false})
+			return
 		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/isos/%d/edit", id), http.StatusFound)
 	}
 }

@@ -9,6 +9,6 @@ import "net/http"
 // SoftwarePackage the operator can edit afterwards.
 func softwareImportPage(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		render(w, req, r, "software_import.html", "Import from winget", nil)
+		render(w, req, r, "software_import.html", "Import from winget", map[string]any{"Query": searchQuery(req)})
 	}
 }

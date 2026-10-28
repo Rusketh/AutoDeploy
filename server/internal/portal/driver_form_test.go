@@ -66,7 +66,7 @@ func TestDriverFormRenderBoardFilterHelper(t *testing.T) {
 	funcs := withPortalFuncs(template.FuncMap{
 		"int64": func(id model.ID) int64 { return int64(id) },
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/driver_form.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/driver_form.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse driver_form.html: %v", err)
 	}

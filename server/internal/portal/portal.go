@@ -125,6 +125,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	mux.HandleFunc("GET /portal/login", loginForm(r))
 	mux.HandleFunc("POST /portal/login", loginSubmit(r))
 	mux.HandleFunc("POST /portal/logout", logoutSubmit(r))
+	mux.HandleFunc("POST /portal/session/keepalive", requireSession(r, sessionKeepAlive(r)))
 
 	// Protected pages. We wrap each handler in requireSession because
 	// net/http's ServeMux does not have route-level middleware.
@@ -176,18 +177,17 @@ func Register(mux *http.ServeMux, r Repos) error {
 }
 
 // requireSession redirects to /portal/login if the request has no valid
-// session cookie. The "next" parameter remembers where the user was
-// trying to go.
+// session cookie (see redirectToLogin for where "next" points), and
+// otherwise records the request as session activity (session.go).
 func requireSession(r Repos, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		u, ok := sessionUser(req, r)
+		u, info, ok := sessionFromRequest(w, req, r)
 		if !ok {
-			to := url.Values{}
-			to.Set("next", req.URL.RequestURI())
-			http.Redirect(w, req, "/portal/login?"+to.Encode(), http.StatusFound)
+			redirectToLogin(w, req)
 			return
 		}
 		ctx := context.WithValue(req.Context(), ctxKeyUser{}, u)
+		ctx = context.WithValue(ctx, ctxKeySession{}, info)
 		ctx = withNames(ctx, r)
 		h(w, req.WithContext(ctx))
 	}
@@ -213,16 +213,13 @@ func loginForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		// If already logged in, bounce to where they were going.
 		if _, ok := sessionUser(req, r); ok {
-			next := req.URL.Query().Get("next")
-			if next == "" {
-				next = "/portal/"
-			}
-			http.Redirect(w, req, next, http.StatusFound)
+			http.Redirect(w, req, safeNext(req.URL.Query().Get("next")), http.StatusFound)
 			return
 		}
 		render(w, req, r, "login.html", "Sign in", map[string]any{
-			"Next":  req.URL.Query().Get("next"),
-			"Error": req.URL.Query().Get("error"),
+			"Next":   req.URL.Query().Get("next"),
+			"Error":  req.URL.Query().Get("error"),
+			"Notice": loginNotice(req.URL.Query().Get("expired")),
 		})
 	}
 }
@@ -258,26 +255,14 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/login?"+q.Encode(), http.StatusFound)
 			return
 		}
-		tok, err := r.Users.CreateSession(req.Context(), u.ID, 12*time.Hour)
+		tok, err := r.Users.CreateSession(req.Context(), u.ID, auth.SessionIdleTimeout)
 		if err != nil {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookieName,
-			Value:    tok,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(12 * time.Hour),
-			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
-		})
+		setSessionCookie(w, req, tok, time.Now())
 		recordAuth(req, r, "auth.login.ok", u.Username, map[string]any{"ip": clientAddr(req), "via": "portal"})
-		next := req.FormValue("next")
-		if next == "" || !strings.HasPrefix(next, "/portal/") {
-			next = "/portal/"
-		}
-		http.Redirect(w, req, next, http.StatusFound)
+		http.Redirect(w, req, safeNext(req.FormValue("next")), http.StatusFound)
 	}
 }
 
@@ -625,11 +610,18 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		// navGroups is the grouped primary navigation with active flags for
 		// the current path (see nav.go).
 		"navGroups": func() []navGroup { return buildNav(req.URL.Path) },
+		// withQuery builds a link to path that keeps the current search
+		// (and the rest of the view) with the given name/value pairs set;
+		// an empty value drops that parameter. See search.go.
+		"withQuery": func(path string, kv ...string) string { return withQuery(req, path, kv...) },
 	}
 	for k, f := range nameFuncs(namesFor(req, r)) {
 		fm[k] = f
 	}
 	for k, f := range timeFuncs(loc, time.Now) {
+		fm[k] = f
+	}
+	for k, f := range formErrorFuncs() {
 		fm[k] = f
 	}
 	return fm
@@ -674,7 +666,8 @@ func toInt64(v any) int64 {
 var layoutPartials = []string{
 	"templates/_layout.html", "templates/_icons.html",
 	"templates/_action_picker.html", "templates/_pagination.html",
-	"templates/_machine_picker.html", "templates/_deployment_timeline.html",
+	"templates/_machine_picker.html", "templates/_search.html", "templates/_form_error.html",
+	"templates/_deployment_timeline.html",
 }
 
 // render parses _layout + the named page, executes the layout, and
@@ -690,6 +683,13 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 	user, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 	brand, _ := r.Branding.Get(req.Context())
 	kind, msg := readFlash(w, req)
+	// A page re-rendered after a rejected save can carry its error in
+	// the message bar (for forms without a slot of their own).
+	if m, ok := data.(map[string]any); ok {
+		if s, _ := m["FlashErr"].(string); s != "" {
+			kind, msg = "err", s
+		}
+	}
 	// Bootstrap-admin warning: the file holds a cleartext password
 	// and is meant to be read once then deleted. If it is still
 	// present after an operator has logged in we surface a banner
@@ -711,6 +711,8 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 		"FlashMsg":         msg,
 		"Path":             req.URL.Path,
 		"BootstrapPresent": bootstrapPresent,
+		"SessionExpires":   sessionExpiresMillis(req),
+		"ServerNow":        time.Now().UnixMilli(), // lets the page correct for clock skew
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", envelope); err != nil {
 		// Not failPage: it renders through here, and the page may be

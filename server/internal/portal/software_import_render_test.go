@@ -35,7 +35,7 @@ func TestSoftwareListOffersImportAndManual(t *testing.T) {
 		"humanBytes": func(n int64) string { return "X" },
 		"pct":        func(a, b int) int { return 0 },
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_list.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_list.html", "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

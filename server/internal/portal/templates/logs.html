@@ -9,10 +9,10 @@
 
 {{/* One server-side search. Every search is a plain GET navigation, so the
      browser's Back / Forward step through earlier searches. */}}
-<form class="std log-search" method="GET" action="/portal/logs" id="log-search" role="search">
+<form class="std log-search" method="GET" action="/portal/logs" id="log-search" role="search" data-search-form>
   <div class="row">
     <label class="grow"><span class="lbl">Search</span>
-      <input type="text" name="q" value="{{$q.Text}}" placeholder="Message, action, package, error text…" autocomplete="off"></label>
+      <input type="text" name="q" value="{{$q.Text}}" data-search placeholder="Message, action, package, error text…" autocomplete="off"></label>
     <label><span class="lbl">Level</span>
       <select name="level">
         {{range $d.Levels}}<option value="{{index . 0}}" {{if eq (index . 0) $q.Level}}selected{{end}}>{{index . 1}}</option>{{end}}

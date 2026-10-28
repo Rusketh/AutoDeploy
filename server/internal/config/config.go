@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config is the resolved server configuration.
@@ -52,6 +53,11 @@ type Config struct {
 	// classic PXE setup can fetch the iPXE bootstrap binaries
 	// (undionly.kpxe, ipxe.efi, …) without a separate TFTP daemon.
 	TFTPAddr string
+
+	// Portal sign-in sessions: they expire after SessionIdleTimeout with
+	// no activity, and in any case SessionMaxLifetime after sign-in.
+	SessionIdleTimeout time.Duration
+	SessionMaxLifetime time.Duration
 }
 
 // Load reads configuration from the environment.
@@ -89,6 +95,18 @@ func Load() (Config, error) {
 	}
 	c.PayloadMaxInFlight = maxIF
 	c.TFTPAddr = getenv("AUTODEPLOY_TFTP_ADDR", "")
+	idle, err := time.ParseDuration(getenv("AUTODEPLOY_SESSION_IDLE_TIMEOUT", "12h"))
+	if err != nil || idle <= 0 {
+		return Config{}, errors.New("AUTODEPLOY_SESSION_IDLE_TIMEOUT must be a positive duration such as 12h or 90m")
+	}
+	maxLife, err := time.ParseDuration(getenv("AUTODEPLOY_SESSION_MAX_LIFETIME", "168h"))
+	if err != nil || maxLife <= 0 {
+		return Config{}, errors.New("AUTODEPLOY_SESSION_MAX_LIFETIME must be a positive duration such as 168h")
+	}
+	if maxLife < idle {
+		maxLife = idle
+	}
+	c.SessionIdleTimeout, c.SessionMaxLifetime = idle, maxLife
 	return c, nil
 }
 

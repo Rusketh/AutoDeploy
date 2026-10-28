@@ -29,7 +29,7 @@ func renderSoftwareForm(t *testing.T, data map[string]any) string {
 			return m
 		},
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_form.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_form.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse software_form.html: %v", err)
 	}

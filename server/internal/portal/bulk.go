@@ -49,7 +49,14 @@ func bulkList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		render(w, req, r, "bulk_list.html", "Bulk operations", map[string]any{"Ops": ops})
+		search := newSearchBox(req, "Search operations", "Search bulk operations")
+		shown := filterByQuery(ops, search.Query, func(o model.BulkOperation) []string {
+			return []string{o.Name, o.Description, o.Action, o.Status, o.CreatedBy}
+		})
+		render(w, req, r, "bulk_list.html", "Bulk operations", map[string]any{
+			"Ops":    shown,
+			"Search": search.counted(len(shown), len(ops), "operations"),
+		})
 	}
 }
 
@@ -323,8 +330,7 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		loc := displayLoc(r)
 		p, err := parseBulkForm(req, loc)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
+			bulkFormRejected(w, req, r, nil, err)
 			return
 		}
 		user, _ := sessionUser(req, r)
@@ -344,8 +350,7 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			CancelAfterMinutes: p.CancelAfterMinutes,
 		})
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/bulk/new", http.StatusFound)
+			bulkFormRejected(w, req, r, nil, err)
 			return
 		}
 		r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
@@ -402,8 +407,7 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		p, err := parseBulkForm(req, displayLoc(r))
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
+			bulkEditRejected(w, req, r, id, err)
 			return
 		}
 		if err := r.Bulk.UpdateOperation(req.Context(), model.BulkOperation{
@@ -421,13 +425,108 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 			WakeOnLAN:          p.WakeOnLAN,
 			CancelAfterMinutes: p.CancelAfterMinutes,
 		}); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d/edit", int64(id)), http.StatusFound)
+			bulkEditRejected(w, req, r, id, err)
 			return
 		}
 		flash(w, "ok", "Operation updated.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
 	}
+}
+
+// bulkEditRejected re-renders a scheduled operation's edit form after a
+// failed save.
+func bulkEditRejected(w http.ResponseWriter, req *http.Request, r Repos, id model.ID, err error) {
+	op, _, gerr := r.Bulk.GetOperation(req.Context(), id)
+	if gerr != nil {
+		failPage(w, req, r, http.StatusNotFound, gerr)
+		return
+	}
+	bulkFormRejected(w, req, r, &op, err)
+}
+
+// bulkFormRejected re-renders the bulk form (new, or editing op) with
+// everything the operator submitted — read straight from the request, so
+// it works whichever field failed — plus the error, with HTTP 422. The
+// form has no per-field slots, so the message shows in the page's
+// message bar.
+func bulkFormRejected(w http.ResponseWriter, req *http.Request, r Repos, op *model.BulkOperation, err error) {
+	fe := newFormError(req, model.KindBulk, err)
+	fe.Message = "Couldn't save: " + strings.TrimSuffix(friendlyError(model.KindBulk, http.StatusUnprocessableEntity, err), ".") + ". Nothing was queued."
+	pkgs, _ := r.Software.List(req.Context())
+	imgs, _ := r.Images.List(req.Context())
+	groups, _ := r.Groups.List(req.Context())
+	var sel []machineItem
+	if ids := formIDs(req.Form["machine_ids"]); len(ids) > 0 {
+		ms, _ := r.Bulk.PreviewTargets(req.Context(), model.BulkTarget{MachineIDs: ids})
+		sel = machineItems(r, req, ms)
+	}
+	selJSON, _ := json.Marshal(sel)
+	if sel == nil {
+		selJSON = []byte("[]")
+	}
+	data := map[string]any{
+		"Packages":    pkgs,
+		"Images":      imgs,
+		"Groups":      groups,
+		"FormAction":  "/portal/bulk",
+		"Editing":     false,
+		"AP":          bulkPrefillFromRequest(req),
+		"SelInitJSON": string(selJSON),
+		"FlashErr":    fe.Message,
+	}
+	title := "New bulk operation"
+	if op != nil {
+		data["FormAction"] = fmt.Sprintf("/portal/bulk/%d/edit", int64(op.ID))
+		data["Editing"] = true
+		data["Op"] = *op
+		title = "Edit " + bulkTitle(*op)
+	}
+	renderForm(w, req, r, "bulk_form.html", title, fe, data)
+}
+
+// bulkPrefillFromRequest is formPrefill's view of a submitted form: the
+// same keys and value types, taken from the posted fields.
+func bulkPrefillFromRequest(req *http.Request) map[string]any {
+	ap := formPrefill(nil, time.UTC)
+	str := func(key, field string) {
+		if v := req.FormValue(field); v != "" {
+			ap[key] = v
+		}
+	}
+	num := func(key, field string) {
+		if n, err := strconv.ParseInt(strings.TrimSpace(req.FormValue(field)), 10, 64); err == nil {
+			ap[key] = n
+		}
+	}
+	ap["Name"] = strings.TrimSpace(req.FormValue("name"))
+	ap["Description"] = strings.TrimSpace(req.FormValue("description"))
+	str("Action", "action")
+	str("RenameFind", "rename_find")
+	str("RenameReplace", "rename_replace")
+	str("ScriptShell", "script_shell")
+	ap["ScriptBody"] = req.FormValue("script_body")
+	num("SoftwarePackageID", "software_package_id")
+	num("ReimageImageID", "reimage_image_id")
+	str("ScheduleKind", "schedule_kind")
+	str("TargetMode", "target_mode")
+	str("RunAtLocal", "run_at")
+	if n, err := strconv.Atoi(strings.TrimSpace(req.FormValue("recur_every"))); err == nil && n > 0 {
+		ap["RecurEvery"] = n
+	}
+	str("RecurUnit", "recur_unit")
+	str("RecurAt", "recur_at")
+	if n, err := strconv.Atoi(req.FormValue("recur_weekday")); err == nil {
+		ap["RecurWeekday"] = n
+	}
+	str("RecurCron", "recur_cron")
+	str("FilterName", "filter_name")
+	str("FilterOU", "filter_ou")
+	str("FilterGroup", "filter_group")
+	num("FilterGroupID", "filter_group_id")
+	ap["WakeOnLAN"] = req.FormValue("wake_on_lan") != ""
+	str("CancelAfterValue", "cancel_after_value")
+	str("CancelAfterUnit", "cancel_after_unit")
+	return ap
 }
 
 func bulkCancel(r Repos) http.HandlerFunc {

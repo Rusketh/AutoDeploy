@@ -126,103 +126,209 @@
     return (c.getAttribute('data-sort-value') || c.innerText || c.textContent || '').trim();
   }
 
-  // ---- Filter-as-you-type -------------------------------------------
-  // <input data-filter="#table-id">  -> hides table rows whose textContent
-  // doesn't contain the (case-insensitive, whitespace-collapsed) query.
-  // The value is mirrored into the URL hash (replaceState, so no history
-  // spam), which is what lets back/forward — and a reload — restore the
-  // filter until the operator clears it.
-  document.querySelectorAll('input[data-filter]').forEach(function (inp) {
-    const target = document.querySelector(inp.getAttribute('data-filter'));
-    if (!target) return;
-    const hashKey = 'f-' + (target.id || 'tbl');
-    try {
-      const saved = new URLSearchParams(location.hash.slice(1)).get(hashKey);
-      if (saved && !inp.value) inp.value = saved;
-    } catch (_) {}
-    inp.addEventListener('input', function () {
-      applyFilter(target, inp.value);
-      writeFilterHash(hashKey, inp.value);
+  // ---- List search ----------------------------------------------------
+  // <form data-search-form> is a plain GET form (input name="q" + Search
+  // button + Clear link) and the server does the filtering. Nothing runs
+  // while the operator types: the search happens on Enter or the button,
+  // as a normal navigation, so every search is its own history entry and
+  // Back/Forward step through them. The box is rendered from ?q=, so it
+  // always matches the results. The only JS here keeps the URL tidy and
+  // upgrades old bookmarks.
+  document.querySelectorAll('form[data-search-form]').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;
+      // Drop empty fields (an empty search is "show everything"), so a
+      // cleared box lands on the plain list URL rather than "?q=".
+      e.preventDefault();
+      var u = new URL(form.getAttribute('action') || location.pathname, location.href);
+      new FormData(form).forEach(function (v, k) {
+        if (typeof v === 'string' && v.trim() !== '') u.searchParams.set(k, k === 'q' ? v.trim() : v);
+      });
+      location.assign(u.pathname + u.search);
     });
-    // Apply once in case the hash (or the markup) carried a value.
-    if (inp.value) applyFilter(target, inp.value);
   });
-  function writeFilterHash(key, val) {
+  // Old bookmarks carried the client-side filter in the hash
+  // (#f-tbl=foo). Turn that into the server-side ?q= once, replacing the
+  // entry so Back doesn't bounce through the old URL.
+  (function upgradeFilterHash() {
+    var form = document.querySelector('form[data-search-form]');
+    if (!form || !location.hash || location.hash.indexOf('f-') === -1) return;
+    var saved = '';
     try {
-      const p = new URLSearchParams(location.hash.slice(1));
-      if (val) p.set(key, val); else p.delete(key);
-      const s = p.toString();
-      history.replaceState(null, '', location.pathname + location.search + (s ? '#' + s : ''));
-    } catch (_) {}
-  }
-  function applyFilter(table, raw) {
-    const q = raw.trim().toLowerCase();
-    let matched = 0;
-    table.querySelectorAll('tbody tr').forEach(function (tr) {
-      if (!q) { tr.style.display = ''; matched++; return; }
-      const hay = (tr.innerText || '').toLowerCase();
-      const ok = hay.indexOf(q) !== -1;
-      tr.style.display = ok ? '' : 'none';
-      if (ok) matched++;
-    });
-    const counter = document.querySelector('[data-filter-count="' + table.id + '"]');
-    if (counter) counter.textContent = matched;
-  }
+      new URLSearchParams(location.hash.slice(1)).forEach(function (v, k) {
+        if (!saved && k.indexOf('f-') === 0 && v.trim()) saved = v.trim();
+      });
+    } catch (_) { return; }
+    var u = new URL(location.href);
+    u.hash = '';
+    if (!saved || u.searchParams.get('q')) {
+      history.replaceState(history.state, '', u.pathname + u.search);
+      return;
+    }
+    u.searchParams.set('q', saved);
+    u.searchParams.delete('page');
+    location.replace(u.pathname + u.search);
+  })();
 
-  // ---- Server-side list filter ---------------------------------------
-  // <input data-server-filter name="q"> inside a GET form. The list is
-  // filtered and paginated server-side, so the filter must live in the
-  // URL — that's also what makes browser back/forward keep it until the
-  // operator clears it. Typing navigates after a short debounce using
-  // location.replace (no history spam from intermediate keystrokes);
-  // Enter navigates immediately with a real history entry; Escape (or
-  // the clear button) clears. Focus is restored after each navigation
-  // so typing flows through the reloads.
-  (function initServerFilter() {
-    var inp = document.querySelector('input[data-server-filter]');
-    if (!inp) return;
-    var FOCUS_KEY = 'ad-filter-focus';
-    try {
-      if (sessionStorage.getItem(FOCUS_KEY) === location.pathname) {
-        sessionStorage.removeItem(FOCUS_KEY);
-        inp.focus();
-        var n = inp.value.length;
-        if (inp.setSelectionRange) inp.setSelectionRange(n, n);
+  // ---- Unsaved-changes guard -------------------------------------------
+  // <form data-dirty-guard> (the create/edit and settings forms): once the
+  // operator has edited a field, leaving the page — a link, Back, closing
+  // the tab — asks first. Only real user input counts (isTrusted events),
+  // so a page script filling or rearranging fields doesn't arm it, and a
+  // field changed back to its original value doesn't either. Submitting
+  // the form disarms it. A form re-rendered after a rejected save holds
+  // unsaved values by definition, so it starts armed.
+  (function initDirtyGuard() {
+    var forms = Array.prototype.slice.call(document.querySelectorAll('form[data-dirty-guard]'));
+    if (!forms.length) return;
+    function snapshot(form) {
+      var parts = [];
+      try {
+        new FormData(form).forEach(function (v, k) {
+          parts.push(k + '=' + (typeof v === 'string' ? v : (v && v.name) || ''));
+        });
+      } catch (_) {}
+      return parts.join('&');
+    }
+    var state = new Map(); // form -> { base, touched, armed }
+    forms.forEach(function (form) {
+      var st = { base: snapshot(form), touched: false, armed: !!form.querySelector('[data-form-error]') };
+      state.set(form, st);
+      var mark = function (e) { if (e.isTrusted) st.touched = true; };
+      form.addEventListener('input', mark, true);
+      form.addEventListener('change', mark, true);
+    });
+    // Page scripts may still be populating fields until load; re-take the
+    // baseline for forms the operator hasn't touched yet.
+    window.addEventListener('load', function () {
+      state.forEach(function (st, form) { if (!st.touched) st.base = snapshot(form); });
+    });
+    function disarm(form) {
+      var st = state.get(form);
+      if (st) { st.touched = false; st.armed = false; st.base = snapshot(form); }
+    }
+    // Bubble listener on window: runs after the form's own onsubmit and
+    // the confirm-dialog handler, so a cancelled submit keeps the guard.
+    window.addEventListener('submit', function (e) {
+      if (!e.defaultPrevented && e.target instanceof HTMLFormElement) disarm(e.target);
+    });
+    // form.submit() fires no submit event (the confirm dialog uses it).
+    var nativeSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () {
+      disarm(this);
+      return nativeSubmit.call(this);
+    };
+    function isDirty() {
+      var dirty = false;
+      state.forEach(function (st, form) {
+        if (st.armed || (st.touched && snapshot(form) !== st.base)) dirty = true;
+      });
+      return dirty;
+    }
+    window.addEventListener('beforeunload', function (e) {
+      if (!isDirty()) return;
+      e.preventDefault();
+      e.returnValue = ''; // the browser shows its own "Leave site?" text
+      return '';
+    });
+  })();
+
+  // A form re-rendered after a rejected save: put the cursor in the first
+  // field with an error (or bring the form's error message into view).
+  (function focusFormError() {
+    var bad = document.querySelector('form [aria-invalid="true"]');
+    if (bad) { bad.focus(); return; }
+    var msg = document.querySelector('[data-form-error]');
+    if (msg && msg.scrollIntoView) msg.scrollIntoView({ block: 'center' });
+  })();
+
+  // ---- Session expiry warning --------------------------------------------
+  // The server slides the session's idle expiry on each page view or form
+  // post and puts it in <meta name="ad-session-expires"> (Unix ms, with
+  // the server's clock in data-now so a skewed client clock doesn't
+  // matter). A few minutes before it lapses a non-blocking banner offers
+  // "Stay signed in", which POSTs the keep-alive endpoint and re-arms.
+  (function sessionWarning() {
+    var meta = document.querySelector('meta[name="ad-session-expires"]');
+    if (!meta) return;
+    var expiresAt = parseInt(meta.getAttribute('content'), 10);
+    var serverNow = parseInt(meta.getAttribute('data-now'), 10);
+    if (!expiresAt) return;
+    var skew = serverNow ? Date.now() - serverNow : 0; // client minus server
+    var WARN_MS = 5 * 60 * 1000;
+    var bar = null, tick = null, timer = null;
+    function remaining() { return expiresAt + skew - Date.now(); }
+    function fmt(ms) {
+      var s = Math.max(0, Math.ceil(ms / 1000));
+      return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+    }
+    function ensureBar() {
+      if (bar) return bar;
+      bar = document.createElement('div');
+      bar.className = 'session-bar';
+      bar.setAttribute('role', 'status');
+      bar.setAttribute('aria-live', 'polite');
+      bar.innerHTML = '<svg aria-hidden="true"><use href="#i-clock"/></svg>' +
+        '<span data-session-msg></span>' +
+        '<button type="button" class="sm" data-session-stay>Stay signed in</button>' +
+        '<a class="btn secondary sm" data-session-login hidden>Sign in again</a>';
+      document.body.appendChild(bar);
+      bar.querySelector('[data-session-stay]').addEventListener('click', stay);
+      var login = bar.querySelector('[data-session-login]');
+      login.href = '/portal/login?' + new URLSearchParams({ next: location.pathname + location.search, expired: '1' }).toString();
+      return bar;
+    }
+    function render() {
+      var left = remaining();
+      var b = ensureBar();
+      var msg = b.querySelector('[data-session-msg]');
+      if (left <= 0) {
+        msg.textContent = 'Your session has expired. Anything you haven’t saved on this page will be lost if you submit it now.';
+        b.querySelector('[data-session-stay]').hidden = true;
+        b.querySelector('[data-session-login]').hidden = false;
+        b.classList.add('expired');
+        clearInterval(tick); tick = null;
+        return;
       }
-    } catch (_) {}
-    function urlFor(value) {
-      var u = new URL(location.href);
-      if (value) u.searchParams.set('q', value); else u.searchParams.delete('q');
-      u.searchParams.delete('page'); // a changed filter restarts at page 1
-      return u.pathname + u.search;
+      msg.textContent = 'You’ll be signed out in ' + fmt(left) + ' because of inactivity.';
     }
-    function go(value, push) {
-      var dest = urlFor(value);
-      if (dest === location.pathname + location.search) return;
-      try { sessionStorage.setItem(FOCUS_KEY, location.pathname); } catch (_) {}
-      if (push) location.assign(dest); else location.replace(dest);
+    function show() {
+      render();
+      if (!tick) tick = setInterval(render, 1000);
     }
-    var timer = null;
-    inp.addEventListener('input', function (e) {
+    function hide() {
+      clearInterval(tick); tick = null;
+      if (bar) { bar.remove(); bar = null; }
+    }
+    function arm() {
       clearTimeout(timer);
-      // Synthetic input events come from the clear button — apply now.
-      if (!e.isTrusted) { go(inp.value, false); return; }
-      timer = setTimeout(function () { go(inp.value, false); }, 450);
-    });
-    inp.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        clearTimeout(timer);
-        go(inp.value, true);
-      } else if (e.key === 'Escape' && inp.value) {
-        e.preventDefault();
-        clearTimeout(timer);
-        inp.value = '';
-        go('', false);
-      }
-    });
-    // No-JS fallback is the form's own GET submit; don't double-navigate.
-    if (inp.form) inp.form.addEventListener('submit', function () { clearTimeout(timer); });
+      var wait = remaining() - WARN_MS;
+      if (wait <= 0) { show(); return; }
+      // setTimeout clamps very long delays; re-check at least hourly.
+      timer = setTimeout(arm, Math.min(wait, 60 * 60 * 1000));
+    }
+    function stay() {
+      var btn = bar && bar.querySelector('[data-session-stay]');
+      if (btn) btn.disabled = true;
+      fetch('/portal/session/keepalive', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'fetch' }
+      }).then(function (r) {
+        if (!r.ok) throw new Error('expired');
+        return r.json();
+      }).then(function (body) {
+        if (body && body.expires_at) {
+          expiresAt = body.expires_at;
+          if (body.now) skew = Date.now() - body.now;
+        }
+        hide();
+        arm();
+      }).catch(function () {
+        expiresAt = Date.now() - skew - 1;
+        render();
+      });
+    }
+    arm();
   })();
 
   // ---- Items-per-page selector ----------------------------------------
@@ -582,7 +688,7 @@
       return;
     }
     if (e.key === '/') {
-      const inp = document.querySelector('input[data-filter], input[data-server-filter]');
+      const inp = document.querySelector('input[data-search], input[data-filter], input[data-server-filter]');
       if (inp) { e.preventDefault(); inp.focus(); inp.select(); }
       return;
     }
@@ -1285,9 +1391,11 @@
   // Works for both shapes in the templates: a bare <input class="filter">
   // (wrapped so the × can be positioned) and the <div class="filter">
   // search box (already position:relative). Clearing dispatches a
-  // synthetic input event, which the client-side filter applies
-  // instantly and the server-side filter treats as "navigate now".
+  // synthetic input event for any client-side filter listening. List
+  // search forms are skipped: they have their own Clear link, and
+  // editing the box must never navigate by itself.
   document.querySelectorAll('.filter').forEach(function (el) {
+    if (el.matches('form[data-search-form]')) return;
     var input, host;
     if (el.tagName === 'INPUT') {
       input = el;

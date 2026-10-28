@@ -27,6 +27,8 @@ sudo systemctl restart autodeploy
 | `AUTODEPLOY_AD_SKIP_TLS_VERIFY` | `false` | Skip LDAP TLS verification (testing only). |
 | `AUTODEPLOY_PAYLOAD_MAX_IN_FLIGHT` | `128` | Maximum concurrent payload (`/payload/*`) streams. Requests beyond this limit queue for up to 2 minutes before timing out. See [Scaling](../operations/scaling.md). |
 | `AUTODEPLOY_LOG_RETENTION_DAYS` | `0` | Delete audit-log entries older than this many days. `0` keeps everything. |
+| `AUTODEPLOY_SESSION_IDLE_TIMEOUT` | `12h` | Portal sign-in sessions end after this long without activity (a page view or form submit). The portal warns about five minutes beforehand and offers **Stay signed in**. Go duration syntax, e.g. `90m`, `8h`. |
+| `AUTODEPLOY_SESSION_MAX_LIFETIME` | `168h` | Hard limit on a sign-in session, however active: after this long since sign-in the operator must sign in again. Never shorter than the idle timeout. |
 
 The Active Directory, payload-throttle, log-retention, and network values seed portal settings on
 first boot and can then be managed from **[Settings](../portal/settings.md)**. Network changes

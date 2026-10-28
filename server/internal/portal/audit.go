@@ -258,7 +258,11 @@ func recordAudit(req *http.Request, r Repos, spec auditSpec, kind string, id mod
 	if failed {
 		ev.Level = "WARN"
 		ev.Outcome = "failed"
-		ev.Message = auditFailureMessage(u.Username, kind, verb, name, flashMsg)
+		why := flashMsg
+		if why == "" && status == http.StatusUnprocessableEntity {
+			why = "the form had errors" // re-rendered with inline errors
+		}
+		ev.Message = auditFailureMessage(u.Username, kind, verb, name, why)
 	} else {
 		ev.Outcome = "ok"
 	}

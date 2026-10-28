@@ -1,10 +1,8 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Windows Updates</h2>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
   <div class="right">
     <a class="btn secondary" href="/portal/update-deployments/new"><svg><use href="#i-bolt"/></svg>Deploy updates</a>
     <a class="btn secondary" href="/portal/updates/import"><svg><use href="#i-search"/></svg>Import from Microsoft</a>
@@ -49,6 +47,8 @@
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-disc"/></svg>

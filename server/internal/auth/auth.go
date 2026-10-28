@@ -212,6 +212,102 @@ func (r *Repo) LookupSession(ctx context.Context, token string) (int64, error) {
 	return userID, nil
 }
 
+// Session lifetime. A session expires after SessionIdleTimeout without
+// activity: each authenticated request (TouchSession) pushes expires_at
+// forward again, but never past SessionMaxLifetime from sign-in
+// (created_at). Sessions issued before sliding expiry keep their stored
+// expires_at and simply start sliding on their next request.
+var (
+	SessionIdleTimeout = 12 * time.Hour
+	SessionMaxLifetime = 7 * 24 * time.Hour
+	// sessionTouchEvery throttles the sliding update to one write per
+	// session per interval, however busy the operator is.
+	sessionTouchEvery = time.Minute
+)
+
+// SessionInfo describes a live session.
+type SessionInfo struct {
+	UserID    int64
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	// Extended reports that TouchSession moved ExpiresAt forward on this
+	// call (so the caller can refresh the cookie).
+	Extended bool
+}
+
+// SessionDeadline is the hard cap for a session created at created.
+func SessionDeadline(created time.Time) time.Time {
+	return created.Add(SessionMaxLifetime)
+}
+
+// TouchSession validates token like LookupSession and records activity:
+// the expiry slides to now+SessionIdleTimeout (capped at the session's
+// absolute deadline), written at most once per sessionTouchEvery. An
+// expired session is deleted and reported as an error.
+func (r *Repo) TouchSession(ctx context.Context, token string) (SessionInfo, error) {
+	return r.touchSession(ctx, token, sessionTouchEvery)
+}
+
+// ExtendSession is TouchSession without the throttle, for an explicit
+// "Stay signed in": the expiry always moves to the full idle window.
+func (r *Repo) ExtendSession(ctx context.Context, token string) (SessionInfo, error) {
+	return r.touchSession(ctx, token, time.Nanosecond)
+}
+
+func (r *Repo) touchSession(ctx context.Context, token string, every time.Duration) (SessionInfo, error) {
+	info, err := r.lookupSessionInfo(ctx, token)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	now := time.Now()
+	next := now.Add(SessionIdleTimeout)
+	if !info.CreatedAt.IsZero() {
+		if dl := SessionDeadline(info.CreatedAt); next.After(dl) {
+			next = dl
+		}
+	}
+	if next.Sub(info.ExpiresAt) >= every {
+		if _, err := r.DB.ExecContext(ctx,
+			`UPDATE user_session SET expires_at=? WHERE token=?`, next, token); err != nil {
+			return SessionInfo{}, err
+		}
+		info.ExpiresAt = next
+		info.Extended = true
+	}
+	return info, nil
+}
+
+// SessionStatus validates token without recording activity, for
+// background requests (polling) that mustn't keep an idle session alive.
+func (r *Repo) SessionStatus(ctx context.Context, token string) (SessionInfo, error) {
+	return r.lookupSessionInfo(ctx, token)
+}
+
+func (r *Repo) lookupSessionInfo(ctx context.Context, token string) (SessionInfo, error) {
+	if token == "" {
+		return SessionInfo{}, errors.New("no session")
+	}
+	var info SessionInfo
+	var created sql.NullTime
+	err := r.DB.QueryRowContext(ctx,
+		`SELECT user_id, created_at, expires_at FROM user_session WHERE token=?`,
+		token).Scan(&info.UserID, &created, &info.ExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionInfo{}, errors.New("invalid session")
+	}
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	if created.Valid {
+		info.CreatedAt = created.Time
+	}
+	if time.Now().After(info.ExpiresAt) {
+		_, _ = r.DB.ExecContext(ctx, `DELETE FROM user_session WHERE token=?`, token)
+		return SessionInfo{}, errors.New("session expired")
+	}
+	return info, nil
+}
+
 // DeleteSession revokes a session token (logout).
 func (r *Repo) DeleteSession(ctx context.Context, token string) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM user_session WHERE token=?`, token)

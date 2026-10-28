@@ -14,7 +14,7 @@
 {{end}}
 </p>
 
-<form class="std" method="POST" action="/portal/settings/active-directory">
+<form class="std" method="POST" action="/portal/settings/active-directory" data-dirty-guard>
   <fieldset><legend>Connection</legend>
     <label><span class="lbl">LDAP URL</span>
       <input type="url" name="url" value="{{$cfg.URL}}" placeholder="ldaps://dc.corp.example:636">

@@ -349,6 +349,7 @@ var logCatalog = map[string]logEntry{
 	"machine.group_membership":     e(LogCatAdmin, "{user} changed the group membership of[ {count}] machines"),
 	"update_deployment.create":     e(LogCatUpdates, "{user} started a Windows update deployment[ ({count} updates)]"),
 	"portal.request.failed":        e(LogCatSystem, "A portal request failed[: {error}]"),
+	"portal.form.invalid":          e(LogCatAdmin, "A form was rejected[ ({kind})][: {error}]"),
 	"package.step":                 e(LogCatSoftware, "{package}: step {step}[ ({type})] finished[ — exit code {exit_code}][ ({exit_meaning})][: {error}] || A package step finished"),
 	"server.start":                 e(LogCatSystem, "Server started[ (version {version})]"),
 	"http.listen":                  e(LogCatSystem, "Listening for HTTP[ on {addr}]"),

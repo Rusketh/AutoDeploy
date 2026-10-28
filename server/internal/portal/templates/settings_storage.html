@@ -16,7 +16,7 @@
   </span>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/storage">
+<form class="std" method="POST" action="/portal/settings/storage" data-dirty-guard>
   {{range .Data.Entries}}
   <fieldset>
     <legend>{{.Category}}</legend>

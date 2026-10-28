@@ -10,7 +10,6 @@ import (
 )
 
 const sessionCookieName = "autodeploy_session"
-const sessionTTL = 12 * time.Hour
 
 // RegisterAuth mounts login, logout and account management endpoints.
 func RegisterAuth(mux *http.ServeMux, r Repos) {
@@ -82,7 +81,9 @@ func handleLogin(r Repos) http.HandlerFunc {
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		tok, err := r.Users.CreateSession(req.Context(), u.ID, sessionTTL)
+		// A new session starts with the idle lifetime; portal activity
+		// slides it forward up to auth.SessionMaxLifetime.
+		tok, err := r.Users.CreateSession(req.Context(), u.ID, auth.SessionIdleTimeout)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -93,7 +94,7 @@ func handleLogin(r Repos) http.HandlerFunc {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(sessionTTL),
+			Expires:  auth.SessionDeadline(time.Now()),
 			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
 		recordAPIAuth(req, r, "auth.login.ok", u.Username, ip)
