@@ -120,7 +120,7 @@
       <td></td>
       <td colspan="5">
         {{if .Output}}
-        <pre class="log-output">{{range .Output}}<span class="ln{{if or (eq .Action "steps.exec.stderr") (eq .Action "imaging.exec.stderr")}} err{{end}}">{{.Message}}</span>
+        <pre class="log-output">{{range .Output}}<span class="ln{{if or (eq .Action "steps.exec.stderr") (eq .Action "imaging.exec.stderr")}} ln-stderr{{end}}">{{.Message}}</span>
 {{end}}</pre>
         {{else}}
         {{if $e.Hint}}<div class="log-hint"><strong>What to try:</strong> {{$e.Hint}}</div>{{end}}

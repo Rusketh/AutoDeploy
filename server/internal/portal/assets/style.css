@@ -1106,7 +1106,7 @@ a.pager-num:hover { border-color: var(--accent); color: var(--accent); }
 .logs-table td { vertical-align: top; }
 .logs-table .nowrap { white-space: nowrap; }
 .logs-table th.log-exp, .logs-table td.log-exp { width: 1.6rem; padding-left: var(--sp-3); padding-right: 0; text-align: center; }
-.log-level .dot { margin-right: 0.3rem; vertical-align: 1px; }
+.log-level .dot, .activity .dot { margin-right: 0.3rem; vertical-align: 1px; box-shadow: none; }
 .log-level .lvl-text { font-size: var(--fs-sm); }
 .log-row.lvl-error .lvl-text { color: var(--bad); font-weight: 600; }
 .log-row.lvl-warn .lvl-text { color: var(--warn); font-weight: 600; }
@@ -1596,4 +1596,3 @@ fieldset.disabled::after { content: " (does not apply to selected target OS)"; c
 .sel-group { display: inline-flex; align-items: center; gap: var(--sp-2); padding-left: var(--sp-3); margin-left: var(--sp-1); border-left: 1px solid var(--border); }
 .sel-group select { min-width: 9rem; }
 .sel-count { margin-right: var(--sp-1); }
-.activity .dot { margin-right: 4px; }
