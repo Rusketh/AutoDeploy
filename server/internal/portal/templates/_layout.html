@@ -6,6 +6,7 @@
 <title>{{.Title}} — {{.Brand.ProductName}}</title>
 <link rel="stylesheet" href="/portal/assets/style.css">
 <link rel="icon" type="image/svg+xml" href="/portal/assets/favicon.svg">
+{{if .SessionExpires}}<meta name="ad-session-expires" content="{{.SessionExpires}}" data-now="{{.ServerNow}}">{{end}}
 <style>:root{--accent:{{.Brand.PrimaryColor}};--accent-hover:{{.Brand.PrimaryColor}};}</style>
 <script>
   /* Apply saved theme before first paint so the page doesn't flash. */

@@ -10,7 +10,7 @@
 {{if .Data.On}}<span class="badge ok"><svg><use href="#i-check"/></svg>enabled</span>{{else}}<span class="badge"><svg><use href="#i-info"/></svg>disabled</span>{{end}}
 </p>
 
-<form class="std" method="POST" action="/portal/settings/access-pin">
+<form class="std" method="POST" action="/portal/settings/access-pin" data-dirty-guard>
   <fieldset>
     <legend>New PIN</legend>
     <label>

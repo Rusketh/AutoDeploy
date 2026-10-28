@@ -5,7 +5,7 @@
   <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
 </div>
 
-<form class="std" method="POST" action="{{.Data.FormAction}}" id="bulk-form" onsubmit="return onSubmit()">
+<form class="std" method="POST" action="{{.Data.FormAction}}" id="bulk-form" onsubmit="return onSubmit()" data-dirty-guard>
 
   <div class="section-head"><h3>Details</h3><div class="line"></div></div>
   <p class="hint">Give this task a short name (and optional notes) so it's easy to find and sort later. Leave blank and AutoDeploy fills in a sensible default from the action and target.</p>

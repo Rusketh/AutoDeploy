@@ -35,7 +35,14 @@ func driverList(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		render(w, req, r, "driver_list.html", "Driver packages", map[string]any{"Drivers": v})
+		search := newSearchBox(req, "Search driver packages", "Search driver packages")
+		shown := filterByQuery(v, search.Query, func(d model.DriverPackage) []string {
+			return []string{d.Name, d.Description}
+		})
+		render(w, req, r, "driver_list.html", "Driver packages", map[string]any{
+			"Drivers": shown,
+			"Search":  search.counted(len(shown), len(v), "driver packages"),
+		})
 	}
 }
 
@@ -66,11 +73,21 @@ func driverForm(r Repos, p model.DriverPackage, isNew bool) http.HandlerFunc {
 	}
 }
 
+// driverFormRejected re-renders the driver form with the submitted values
+// and the save error (422).
+func driverFormRejected(w http.ResponseWriter, req *http.Request, r Repos, p model.DriverPackage, isNew bool, err error) {
+	driverFormRenderErr(w, req, r, p, isNew, nil, "", newFormError(req, model.KindDriver, err))
+}
+
 // driverFormRender is the shared rendering path for the driver edit
 // page. preview is the optional filter-evaluation result; extractMsg
 // is an optional flash-style line shown next to the metadata table
 // (set by the extract handler).
 func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model.DriverPackage, isNew bool, preview map[string]any, extractMsg string) {
+	driverFormRenderErr(w, req, r, p, isNew, preview, extractMsg, nil)
+}
+
+func driverFormRenderErr(w http.ResponseWriter, req *http.Request, r Repos, p model.DriverPackage, isNew bool, preview map[string]any, extractMsg string, fe *FormError) {
 	uf := make([]uiFilter, 0, len(p.Filters))
 	for _, f := range p.Filters {
 		// A key may carry several values; render one editable row per
@@ -128,7 +145,7 @@ func driverFormRender(w http.ResponseWriter, req *http.Request, r Repos, p model
 			metadata = &res
 		}
 	}
-	render(w, req, r, "driver_form.html", title, map[string]any{
+	renderForm(w, req, r, "driver_form.html", title, fe, map[string]any{
 		"Driver":      p,
 		"Filters":     uf,
 		"AllowedKeys": allowedKeysList(),
@@ -288,14 +305,12 @@ func driverCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		p, err := buildDriverFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/drivers/new", http.StatusFound)
+			driverFormRejected(w, req, r, p, true, err)
 			return
 		}
 		out, err := r.Drivers.Create(req.Context(), p)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/drivers/new", http.StatusFound)
+			driverFormRejected(w, req, r, p, true, err)
 			return
 		}
 		if r.Resolver != nil {
@@ -310,27 +325,26 @@ func driverUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		p, err := buildDriverFromForm(req)
-		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", id), http.StatusFound)
-			return
-		}
-		existing, err := r.Drivers.Get(req.Context(), id)
-		if err != nil {
-			failPage(w, req, r, http.StatusNotFound, err)
+		existing, gerr := r.Drivers.Get(req.Context(), id)
+		if gerr != nil {
+			failPage(w, req, r, http.StatusNotFound, gerr)
 			return
 		}
 		p.ID = id
 		p.StoragePath = existing.StoragePath
 		p.SizeBytes = existing.SizeBytes
-		if err := r.Drivers.Update(req.Context(), p); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			if r.Resolver != nil {
-				r.Resolver.InvalidateDriverCache()
-			}
-			flash(w, "ok", "Saved.")
+		if err != nil {
+			driverFormRejected(w, req, r, p, false, err)
+			return
 		}
+		if err := r.Drivers.Update(req.Context(), p); err != nil {
+			driverFormRejected(w, req, r, p, false, err)
+			return
+		}
+		if r.Resolver != nil {
+			r.Resolver.InvalidateDriverCache()
+		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/drivers/%d/edit", id), http.StatusFound)
 	}
 }

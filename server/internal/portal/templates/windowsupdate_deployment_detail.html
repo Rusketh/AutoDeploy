@@ -45,14 +45,14 @@
   <pre class="mt-2 code-block">{{.Data.TargetJSON}}</pre>
 </details>
 
-{{if .Data.Jobs}}
+{{if or .Data.Jobs .Data.Search.Query}}
 <div class="toolbar mt-4">
   <h3>Jobs</h3>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter jobs" data-filter="#jtbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
 </div>
+{{end}}
+{{if .Data.Jobs}}
 <div class="tablewrap">
 <table id="jtbl" data-sortable>
   <thead><tr>
@@ -77,6 +77,8 @@
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty mt-4">
   <svg class="empty-icon"><use href="#i-list"/></svg>

@@ -1,0 +1,33 @@
+{{/*
+  Shared list search. Invoke with a portal.SearchBox:
+    {{template "search_form" .Data.Search}}   the GET form (input + Search + Clear)
+    {{template "search_count" .Data.Search}}  "3 of 12 images match" (only while searching)
+    {{template "search_empty" .Data.Search}}  the "No matches" empty state
+  The search runs on Enter or the Search button only — a normal GET
+  navigation, so every search is a history entry and the box is always
+  rendered from the URL.
+*/}}
+{{define "search_form"}}
+<form class="filter search-form" method="GET" action="{{.Action}}" role="search" data-search-form>
+  {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+  <span class="search-field">
+    <svg aria-hidden="true"><use href="#i-search"/></svg>
+    <input type="search" name="q" value="{{.Query}}" placeholder="{{.Placeholder}}" aria-label="{{.Label}}" autocomplete="off" data-search{{if .Title}} title="{{.Title}}"{{end}}>
+  </span>
+  <button type="submit" class="secondary sm">Search</button>
+  {{if .Query}}<a class="search-clear small" href="{{.ClearURL}}">Clear</a>{{end}}
+</form>
+{{end}}
+
+{{define "search_count"}}
+{{if .Query}}<span class="small muted search-count" role="status">{{.Matched}} of {{.Total}} {{.Noun}} match “{{.Query}}”</span>{{end}}
+{{end}}
+
+{{define "search_empty"}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-search"/></svg>
+  <h3>No matches for “{{.Query}}”</h3>
+  <p>Nothing in the {{.Total}} {{.Noun}} here matches. Try a shorter or different search.</p>
+  <p><a class="btn secondary sm" href="{{.ClearURL}}">Clear search</a></p>
+</div>
+{{end}}

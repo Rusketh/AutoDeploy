@@ -7,7 +7,7 @@
   </div>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/branding">
+<form class="std" method="POST" action="/portal/settings/branding" data-dirty-guard>
   <fieldset>
     <legend>Names and contact</legend>
     <label><span class="lbl">Product name</span><input type="text" name="product_name" value="{{$b.ProductName}}" required></label>

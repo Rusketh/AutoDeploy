@@ -5,9 +5,10 @@
   <h2>{{if $isNew}}New machine group{{else}}Edit group: {{$g.Name}}{{end}}</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/groups"><svg><use href="#i-arrow-left"/></svg>Back to groups</a></div>
 </div>
-<form class="std" method="POST" action="{{if $isNew}}/portal/groups{{else}}/portal/groups/{{int64 $g.ID}}{{end}}" id="group-form">
+<form class="std" method="POST" action="{{if $isNew}}/portal/groups{{else}}/portal/groups/{{int64 $g.ID}}{{end}}" id="group-form" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <div class="row">
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$g.Name}}" required autofocus></label>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$g.Name}}" required autofocus {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}</label>
   </div>
   <div class="row">
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$g.Description}}" placeholder="Optional"></label>
@@ -23,7 +24,7 @@
     <legend>Filter</legend>
     <p class="small muted">All set criteria must match (AND). Leave a field blank to ignore it.</p>
     <div class="row">
-      <label><span class="lbl">Name matches (regex)</span><input type="text" name="filter_name" value="{{$g.Filter.NameRegex}}" placeholder="^LAB-"></label>
+      <label><span class="lbl">Name matches (regex)</span><input type="text" name="filter_name" value="{{$g.Filter.NameRegex}}" placeholder="^LAB-" {{invalidAttr .Data.FormError "filter_name"}}>{{fieldError .Data.FormError "filter_name"}}</label>
       <label><span class="lbl">OS contains</span><input type="text" name="filter_os" value="{{$g.Filter.OS}}" placeholder="Windows 11"></label>
     </div>
     <div class="row">

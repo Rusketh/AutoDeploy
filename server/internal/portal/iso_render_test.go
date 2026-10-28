@@ -20,7 +20,7 @@ func renderBody(t *testing.T, page string, data map[string]any) string {
 		"list":       func(args ...any) []any { return args },
 		"humanBytes": func(n int64) string { return "X" },
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/"+page)
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/"+page, "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse %s: %v", page, err)
 	}

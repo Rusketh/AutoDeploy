@@ -4,7 +4,7 @@
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/network">
+<form class="std" method="POST" action="/portal/settings/network" data-dirty-guard>
   <fieldset><legend>Listen addresses</legend>
     <p class="hint mt-0">Changes to listen addresses take effect on next server restart.</p>
     <label><span class="lbl">HTTP address</span>

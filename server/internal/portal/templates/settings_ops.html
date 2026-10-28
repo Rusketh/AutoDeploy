@@ -4,7 +4,7 @@
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/operational">
+<form class="std" method="POST" action="/portal/settings/operational" data-dirty-guard>
   <fieldset><legend>Log retention</legend>
     <label><span class="lbl">Keep log events for (days)</span>
       <input type="number" name="retention_days" value="{{.Data.RetentionDays}}" min="0" max="3650">

@@ -35,14 +35,14 @@
   {{if .Data.Update.Description}}<p class="muted">{{.Data.Update.Description}}</p>{{end}}
 </div>
 
-{{if .Data.Machines}}
+{{if or .Data.Machines .Data.Search.Query}}
 <div class="toolbar mt-4">
   <h3>Per-machine status</h3>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter machines" data-filter="#ctbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
 </div>
+{{end}}
+{{if .Data.Machines}}
 <div class="tablewrap">
 <table id="ctbl" data-sortable>
   <thead><tr>
@@ -61,6 +61,8 @@
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty mt-4">
   <svg class="empty-icon"><use href="#i-server"/></svg>

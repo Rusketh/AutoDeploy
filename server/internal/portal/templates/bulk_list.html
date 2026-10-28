@@ -1,10 +1,8 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Bulk operations</h2>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
   <div class="right">
     <form method="post" action="/portal/bulk/clear-completed" data-confirm="Remove all completed and cancelled operations? This deletes their job history.">
       <button type="submit" class="ghost sm"><svg><use href="#i-trash"/></svg>Clear completed</button>
@@ -71,6 +69,8 @@
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-bolt"/></svg>

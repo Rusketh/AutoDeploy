@@ -6,18 +6,20 @@
   <div class="right"><a class="btn ghost sm" href="/portal/images"><svg><use href="#i-arrow-left"/></svg>Back to images</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/images{{else}}/portal/images/{{int64 $im.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/images{{else}}/portal/images/{{int64 $im.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset><legend>Identity</legend>
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$im.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$im.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}</label>
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$im.Description}}" maxlength="200"></label>
   </fieldset>
 
   <fieldset><legend>Inheritance</legend>
     <label><span class="lbl">Parent image (optional)</span>
-      <select name="parent_id">
+      <select name="parent_id" {{invalidAttr .Data.FormError "parent_id"}}>
         <option value="">(none)</option>
         {{range .Data.Images}}{{if ne .ID $im.ID}}<option value="{{int64 .ID}}" {{if idEq $im.ParentID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}
       </select>
+      {{fieldError .Data.FormError "parent_id"}}
       <span class="hint">ISO and Unattend resolve nearest-wins up this chain. Software is additive.</span>
     </label>
   </fieldset>
@@ -83,7 +85,8 @@
     <label><span class="lbl">Join account</span>
       <input type="text" name="dj_user" value="{{$dj.JoinUser}}" placeholder="CORP\\join or join@corp.example.com"></label>
     <label><span class="lbl">Join account password</span>
-      <input type="password" name="dj_password" autocomplete="new-password" placeholder="{{if $dj.HasPassword}}•••••••• (unchanged){{else}}required to enable join{{end}}">
+      <input type="password" name="dj_password" autocomplete="new-password" placeholder="{{if $dj.HasPassword}}•••••••• (unchanged){{else}}required to enable join{{end}}" {{invalidAttr .Data.FormError "dj_password"}}>
+      {{fieldError .Data.FormError "dj_password"}}
       <span class="hint">Stored encrypted; handed only to the deploying agent, never written to the unattend XML. Leave blank to keep the current password. Use a least-privilege join account.</span></label>
   </fieldset>
 

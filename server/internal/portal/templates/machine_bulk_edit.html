@@ -4,7 +4,7 @@
   <div class="right"><a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>Back to machines</a></div>
 </div>
 
-<form class="std" method="POST" action="/portal/machines/bulk-edit" id="bulk-edit-form" onsubmit="return onSubmit()">
+<form class="std" method="POST" action="/portal/machines/bulk-edit" id="bulk-edit-form" onsubmit="return onSubmit()" data-dirty-guard>
 
   <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
   <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. The changes apply only to the selected machines.</p>

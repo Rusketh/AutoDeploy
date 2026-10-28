@@ -1,0 +1,14 @@
+{{/*
+  Top-of-form error for a save that was rejected and re-rendered with the
+  submitted values (see forms.go). Invoke inside the form:
+    {{template "form_error" .Data.FormError}}
+  Per-field messages render with {{fieldError .Data.FormError "name"}}.
+*/}}
+{{define "form_error"}}
+{{with .}}{{if .Message}}
+<div class="form-error" role="alert" data-form-error>
+  <svg aria-hidden="true"><use href="#i-alert"/></svg>
+  <span>{{.Message}}</span>
+</div>
+{{end}}{{end}}
+{{end}}

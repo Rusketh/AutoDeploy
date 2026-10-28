@@ -81,7 +81,7 @@
 {{end}}
 
 <div class="section-head"><h3>Binding</h3><div class="line"></div></div>
-<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding">
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding" data-dirty-guard>
   <label><span class="lbl">Machine name — desired (AD object + unattend ComputerName). The agent keeps this in sync if the machine is renamed; a %placeholder% template is left as-is.</span>
     <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="LAB-01">
   </label>

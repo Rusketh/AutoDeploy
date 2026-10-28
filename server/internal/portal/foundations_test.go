@@ -213,7 +213,7 @@ func TestErrorPageBody(t *testing.T) {
 
 func renderBodyWith(t *testing.T, page string, data map[string]any) string {
 	t.Helper()
-	tmpl, err := template.New("").Funcs(withPortalFuncs(nil)).ParseFS(assetsFS, "templates/"+page)
+	tmpl, err := template.New("").Funcs(withPortalFuncs(nil)).ParseFS(assetsFS, "templates/"+page, "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatal(err)
 	}

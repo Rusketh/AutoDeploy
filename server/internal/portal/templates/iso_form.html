@@ -6,21 +6,22 @@
   <div class="right"><a class="btn ghost sm" href="/portal/isos"><svg><use href="#i-arrow-left"/></svg>Back to ISOs</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/isos{{else}}/portal/isos/{{int64 $iso.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/isos{{else}}/portal/isos/{{int64 $iso.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset>
     <legend>Identity</legend>
     <label><span class="lbl">Name</span>
-      <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128">
+      <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}
       <span class="hint">Letters, digits, dots, dashes, underscores, spaces.</span>
     </label>
     <label><span class="lbl">OS type</span>
-      <select name="os_type" required>
+      <select name="os_type" required {{invalidAttr .Data.FormError "os_type"}}>
         {{$ot := $iso.OSType}}
         <option value="">(select)</option>
         {{range $t := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
           <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{$t}}</option>
         {{end}}
-      </select>
+      </select>{{fieldError .Data.FormError "os_type"}}
     </label>
     <label><span class="lbl">Description</span>
       <input type="text" name="description" value="{{$iso.Description}}" maxlength="200">

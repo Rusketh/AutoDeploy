@@ -252,13 +252,22 @@ func webhookFormPage(r Repos, edit bool) http.HandlerFunc {
 			wh.Events = []string{"*"}
 			wh.MinSeverity = "info"
 		}
-		render(w, req, r, "webhook_form.html", "Webhook", map[string]any{
-			"Webhook":    wh,
-			"Edit":       edit,
-			"Categories": notify.EventCategories,
-			"AllEvents":  notify.AllEventNames(),
-		})
+		webhookFormRender(w, req, r, wh, edit, nil)
 	}
+}
+
+// webhookFormRender renders the webhook form; with fe set it is a
+// rejected save re-rendered with the submitted values (422). The signing
+// secret is never echoed back.
+func webhookFormRender(w http.ResponseWriter, req *http.Request, r Repos, wh model.Webhook, edit bool, fe *FormError) {
+	wh.Secret = ""
+	keepSecretNote(fe, req, "secret")
+	renderForm(w, req, r, "webhook_form.html", "Webhook", fe, map[string]any{
+		"Webhook":    wh,
+		"Edit":       edit,
+		"Categories": notify.EventCategories,
+		"AllEvents":  notify.AllEventNames(),
+	})
 }
 
 func webhookCreateSubmit(r Repos) http.HandlerFunc {
@@ -270,8 +279,7 @@ func webhookCreateSubmit(r Repos) http.HandlerFunc {
 		wh := webhookFromForm(req)
 		id, err := r.WebhookRepo.Create(req.Context(), wh)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/settings/notifications/webhooks/new", http.StatusFound)
+			webhookFormRender(w, req, r, wh, false, newFormError(req, model.KindWebhook, err))
 			return
 		}
 		flash(w, "ok", "Webhook created.")
@@ -289,10 +297,10 @@ func webhookUpdateSubmit(r Repos) http.HandlerFunc {
 		wh := webhookFromForm(req)
 		wh.ID = model.ID(id)
 		if err := r.WebhookRepo.Update(req.Context(), wh); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Webhook saved.")
+			webhookFormRender(w, req, r, wh, true, newFormError(req, model.KindWebhook, err))
+			return
 		}
+		flash(w, "ok", "Webhook saved.")
 		http.Redirect(w, req, "/portal/settings/notifications/webhooks/"+req.PathValue("id"), http.StatusFound)
 	}
 }
