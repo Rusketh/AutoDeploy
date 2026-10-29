@@ -22,7 +22,7 @@
     {{range .Data.Categories}}
       <optgroup label="{{.Label}}">
       {{range .Events}}
-        <option value="{{.}}"{{if eq $.Data.Event .}} selected{{end}}>{{.}}</option>
+        <option value="{{.}}"{{if eq $.Data.Event .}} selected{{end}}>{{eventLabel .}}</option>
       {{end}}
       </optgroup>
     {{end}}
@@ -58,7 +58,7 @@
         {{if .Link}}<a href="{{.Link}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}
         {{if .Body}}<br><span class="small muted">{{.Body}}</span>{{end}}
       </td>
-      <td><code class="small">{{.Event}}</code></td>
+      <td class="small">{{eventLabel .Event}}</td>
       <td class="small muted">{{timeAgo .OccurredAt}}</td>
       <td>
         {{if not .ReadAt}}<span class="badge">new</span>{{end}}
