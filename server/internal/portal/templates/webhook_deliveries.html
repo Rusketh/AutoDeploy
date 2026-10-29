@@ -9,7 +9,7 @@
 <p class="muted">Recent delivery attempts to <code>{{.Data.Webhook.URL}}</code>.</p>
 
 {{if .Data.Deliveries}}
-<table>
+<div class="tablewrap"><table>
   <thead>
     <tr>
       <th>Time</th>
@@ -40,7 +40,7 @@
     </tr>
   {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="muted">No deliveries recorded yet.</p>
 {{end}}

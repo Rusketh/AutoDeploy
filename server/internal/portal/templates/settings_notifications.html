@@ -78,7 +78,7 @@
   <a class="btn sm" href="/portal/settings/notifications/webhooks/new"><svg><use href="#i-plus"/></svg>Add webhook</a>
 </div>
 {{if .Data.Webhooks}}
-<table>
+<div class="tablewrap"><table>
   <thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Status</th></tr></thead>
   <tbody>
   {{range .Data.Webhooks}}
@@ -90,7 +90,7 @@
     </tr>
   {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="muted">No webhooks configured. <a href="/portal/settings/notifications/webhooks/new">Add one</a> to receive event notifications via HTTP POST.</p>
 {{end}}
