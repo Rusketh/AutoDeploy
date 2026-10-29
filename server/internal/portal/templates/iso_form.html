@@ -17,9 +17,15 @@
     <label><span class="lbl">OS type</span>
       <select name="os_type" required {{invalidAttr .Data.FormError "os_type"}}>
         {{$ot := $iso.OSType}}
+        {{$known := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
+        {{$names := list "Windows 10" "Windows 11" "Windows Server 2019" "Windows Server 2022" "Windows Server 2025"}}
         <option value="">(select)</option>
-        {{range $t := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
-          <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{$t}}</option>
+        {{$isKnown := false}}{{range $known}}{{if eq $ot .}}{{$isKnown = true}}{{end}}{{end}}
+        {{/* A value saved through the API (or by an older version) that isn't
+             in the list stays selected rather than silently becoming "(select)". */}}
+        {{if and $ot (not $isKnown)}}<option value="{{$ot}}" selected>{{$ot}}</option>{{end}}
+        {{range $i, $t := $known}}
+          <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{index $names $i}}</option>
         {{end}}
       </select>{{fieldError .Data.FormError "os_type"}}
     </label>
@@ -106,7 +112,7 @@
         {{else}}<span class="badge bad">missing</span> — this media may not boot under UEFI.{{end}}
       </li>
       {{if $iso.PrepError}}<li>Prep error: <code>{{$iso.PrepError}}</code></li>{{end}}
-      {{if $iso.MediaPreparedAt}}<li class="muted">Prepared {{$iso.MediaPreparedAt}}</li>{{end}}
+      {{if $iso.MediaPreparedAt}}<li class="muted">Prepared {{timeAbs $iso.MediaPreparedAt}}</li>{{end}}
     </ul>
   {{end}}
 </div>
