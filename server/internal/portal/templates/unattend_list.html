@@ -28,9 +28,9 @@
         <form method="POST" action="/portal/unattends/{{int64 .ID}}/clone">
           <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
         </form>
-        <form method="POST" action="/portal/unattends/{{int64 .ID}}/delete" data-confirm="Delete this unattend? Will fail if images still link it.">
+        {{$n := index $.Data.Refs .ID}}{{if $n}}<span class="disabled-reason" title="In use by {{$n}} image{{if ne $n 1}}s{{end}} — unlink it from them first"><button class="danger sm" type="button" disabled aria-disabled="true" aria-label="Delete (unavailable: In use by {{$n}} image{{if ne $n 1}}s{{end}} — unlink it from them first)"><svg><use href="#i-trash"/></svg>Delete</button></span>{{else}}<form method="POST" action="/portal/unattends/{{int64 .ID}}/delete" data-confirm="Delete unattend “{{.Name}}”?">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
-        </form>
+        </form>{{end}}
       </td>
     </tr>
     {{end}}

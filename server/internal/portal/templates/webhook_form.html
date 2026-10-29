@@ -71,7 +71,7 @@
   </form>
   <a class="btn sm ghost" href="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/deliveries">View deliveries</a>
   <form method="POST" action="/portal/settings/notifications/webhooks/{{.Data.Webhook.ID}}/delete"
-        onsubmit="return confirm('Delete this webhook?');">
+        data-confirm="Delete webhook “{{.Data.Webhook.Name}}”?">
     <button type="submit" class="danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
   </form>
 </div>

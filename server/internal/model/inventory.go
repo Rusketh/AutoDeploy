@@ -772,7 +772,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		 FROM deployment_history
 		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)
-		 ORDER BY started_at DESC`, args...)
+		 ORDER BY started_at DESC, id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -905,7 +905,7 @@ func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE deployment_history SET outcome=?, notes=?, phase=?, `+completed+`
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
-		            ORDER BY started_at DESC LIMIT 1)`,
+		            ORDER BY started_at DESC, id DESC LIMIT 1)`,
 		outcome, notes, phase, machineID)
 	return err
 }
@@ -921,7 +921,7 @@ func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineI
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE deployment_history SET notes=?, phase=?
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
-		            ORDER BY started_at DESC LIMIT 1)
+		            ORDER BY started_at DESC, id DESC LIMIT 1)
 		  AND outcome='in_progress'`,
 		notes, phase, machineID)
 	return err
@@ -975,7 +975,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=? AND outcome='in_progress'
-		ORDER BY started_at DESC
+		ORDER BY started_at DESC, id DESC
 		LIMIT 1`, machineID)
 	var d DeploymentRecord
 	var imageID sql.NullInt64
@@ -1001,7 +1001,7 @@ func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]Deploym
 		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=?
-		ORDER BY started_at DESC`, machineID)
+		ORDER BY started_at DESC, id DESC`, machineID)
 	if err != nil {
 		return nil, err
 	}

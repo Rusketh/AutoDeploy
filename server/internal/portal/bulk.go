@@ -711,7 +711,7 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 	ap := map[string]any{
 		"Name":              "",
 		"Description":       "",
-		"Action":            "rename",
+		"Action":            "", // no action preselected: the operator must choose one
 		"RenameFind":        "",
 		"RenameReplace":     "",
 		"ScriptShell":       "powershell",

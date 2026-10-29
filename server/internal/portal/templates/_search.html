@@ -8,14 +8,14 @@
   rendered from the URL.
 */}}
 {{define "search_form"}}
-<form class="filter search-form" method="GET" action="{{.Action}}" role="search" data-search-form>
+<form class="filter search-form" method="GET" action="{{.Action}}" role="search" data-search-form{{if .ID}} id="{{.ID}}"{{end}}>
   {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
   <span class="search-field">
     <svg aria-hidden="true"><use href="#i-search"/></svg>
     <input type="search" name="q" value="{{.Query}}" placeholder="{{.Placeholder}}" aria-label="{{.Label}}" autocomplete="off" data-search{{if .Title}} title="{{.Title}}"{{end}}>
   </span>
   <button type="submit" class="secondary sm">Search</button>
-  {{if .Query}}<a class="search-clear small" href="{{.ClearURL}}">Clear</a>{{end}}
+  {{if or .Query .Filtered}}<a class="search-clear small" href="{{.ClearURL}}">Clear</a>{{end}}
 </form>
 {{end}}
 

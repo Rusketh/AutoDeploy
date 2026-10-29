@@ -205,6 +205,7 @@ type machineListRowT struct {
 	BLSet          bool
 	OS             string
 	ReimagePending bool
+	Status         machineStatus
 }
 
 func TestMachineListRender(t *testing.T) {

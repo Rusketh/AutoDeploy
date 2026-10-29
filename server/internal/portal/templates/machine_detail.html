@@ -1,11 +1,19 @@
 {{define "body"}}
 {{$m := .Data.M}}
 {{$b := .Data.Binding}}
-<div class="toolbar">
-  <h2>{{with .Data.Display}}{{.Name}}{{if .RenamingFrom}} <span class="rename-hint small muted" title="The agent still reports {{.RenamingFrom}}; the desired name applies on the next rename or re-image">renaming from {{.RenamingFrom}}</span>{{end}}{{end}}</h2>
+{{$name := .Data.Display.Name}}
+<div class="toolbar machine-head">
+  <div class="machine-title">
+    <h2>{{$name}}</h2>
+    <div class="head-badges">
+      {{with .Data.Status}}<span class="status-badge" title="{{.Title}}"><span class="dot {{.Dot}}" aria-hidden="true"></span>{{.Label}}</span>{{end}}
+      <span class="status-badge quiet">Last seen {{timeAgo $m.LastSeen}}</span>
+      {{with .Data.Display}}{{if .RenamingFrom}}<span class="rename-hint small muted" title="The agent still reports {{.RenamingFrom}}; the desired name applies on the next rename or re-image">renaming from {{.RenamingFrom}}</span>{{end}}{{end}}
+    </div>
+  </div>
   <div class="right">
     <a class="btn ghost sm" href="/portal/machines"><svg><use href="#i-arrow-left"/></svg>All machines</a>
-    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this machine from inventory? This removes its binding, history and detection state.');">
+    <form method="post" action="/portal/machines/{{int64 $m.ID}}/delete" class="inline-form" data-confirm="Delete “{{$name}}” from inventory? This removes its binding, deployment history and detection state. It reappears as a new machine if it boots AutoDeploy again.">
       <button type="submit" class="btn danger sm"><svg><use href="#i-trash"/></svg>Delete</button>
     </form>
   </div>
@@ -25,11 +33,71 @@
     {{end}}
   </div>
   <form method="post" action="/portal/machines/{{int64 $m.ID}}/reimage/cancel" class="inline-form rb-action"
-        onsubmit="return confirm('Cancel the pending re-image for this machine?');">
+        data-confirm="Cancel the pending re-image for “{{$name}}”? It will not re-image on its next boot.">
     <button type="submit" class="btn ghost sm"><svg><use href="#i-x"/></svg>Cancel re-image</button>
   </form>
 </div>
 {{end}}{{end}}
+
+{{/* Current state: the latest deployment, first. Live progress shows only
+     for a run that is genuinely active (the latest run, still in progress,
+     machine still checking in); a failed or stalled run says so in plain
+     words with its first error instead. */}}
+<section class="card current-state mb-4" aria-labelledby="cs-title">
+  <div class="card-head">
+    <h3 id="cs-title">Current state</h3>
+    <div class="cs-links">
+      {{with .Data.LatestDeploy}}<a class="btn ghost sm" href="/portal/logs?deployment={{int64 .ID}}"><svg><use href="#i-list"/></svg>Logs of this run</a>{{end}}
+      <a class="btn ghost sm" href="/portal/logs?machine={{int64 $m.ID}}"><svg><use href="#i-list"/></svg>All logs for this machine</a>
+    </div>
+  </div>
+  {{with .Data.LatestDeploy}}
+  <div class="cs-summary">
+    <span class="status-badge cs-outcome">{{if $.Data.LatestStalled}}<span class="dot warn" aria-hidden="true"></span>Stalled{{else}}<span class="dot {{outcomeDot .Outcome}}" aria-hidden="true"></span>{{outcomeLabel .Outcome}}{{end}}</span>
+    <span>Latest deployment{{if .ImageID}} of {{entityLink "image" .ImageID}}{{end}}</span>
+    <span class="small muted">started {{timeAgo .StartedAt}}{{if .CompletedAt}} · finished {{timeAgo .CompletedAt}}{{end}}</span>
+  </div>
+  <dl class="kv cs-kv">
+    {{if not $.Data.DeployActive}}<dt>Stage</dt><dd>{{phaseLabel .Phase .Outcome}}</dd>{{end}}
+    {{if and .Notes (not $.Data.LatestHeadline)}}<dt>Notes</dt><dd>{{.Notes}}</dd>{{end}}
+  </dl>
+  {{end}}
+
+  <div class="deploy-progress{{if not .Data.DeployActive}} idle{{end}}" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}}>
+    <div class="deploy-progress-head">
+      <strong class="deploy-phase">{{.Data.DeployLabel}}</strong>
+      <span class="deploy-pct muted small">{{if not .Data.DeployIndeterminate}}{{.Data.DeployPercent}}%{{end}}</span>
+    </div>
+    <progress class="deploy-bar" max="100" {{if not .Data.DeployIndeterminate}}value="{{.Data.DeployPercent}}"{{end}}></progress>
+  </div>
+
+  {{with .Data.LatestHeadline}}
+  <div class="timeline-headline">
+    <span class="dot bad" aria-hidden="true"></span>
+    <div>
+      <strong>{{.Message}}</strong>
+      {{if .Hint}}<div class="small">What to try: {{.Hint}}</div>{{end}}
+    </div>
+  </div>
+  {{end}}
+  {{if .Data.LatestStalled}}
+  <p class="small muted cs-note">No check-in from this machine for over {{.Data.StallAfter}} while the deployment was running. Windows Setup may have failed, or the machine is switched off. Check its screen, then re-image it or wait for it to check back in.</p>
+  {{end}}
+  {{if not .Data.LatestDeploy}}
+  <p class="muted cs-note">No deployments recorded yet. A deployment starts when the machine network-boots AutoDeploy and an image is chosen or bound.</p>
+  {{end}}
+
+  <dl class="kv cs-kv cs-foot">
+    <dt>Deployments</dt><dd>{{.Data.DeployCount}}</dd>
+    <dt>Last re-image</dt>
+    <dd>
+      {{with .Data.LastReimage}}
+        {{timeAgo .CreatedAt}}
+        {{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{end}}
+      {{else}}<span class="muted">Never re-imaged</span>{{end}}
+    </dd>
+  </dl>
+</section>
 
 <div class="grid stats mb-4">
   <div class="stat">
@@ -38,7 +106,7 @@
   </div>
   <div class="stat">
     <span class="num">{{.Data.KBInstalled}} / {{.Data.KBTotal}}</span>
-    <span class="lbl"><svg><use href="#i-disc"/></svg>KBs installed</span>
+    <span class="lbl"><svg><use href="#i-disc"/></svg>Updates installed</span>
   </div>
   {{with $m.Hardware}}{{if .OSCaption}}
   <div class="stat">
@@ -46,112 +114,19 @@
     <span class="lbl"><svg><use href="#i-server"/></svg>OS · {{.OSVersion}}</span>
   </div>
   {{end}}{{end}}
-  <div class="stat">
-    <span class="num">{{relTime $m.LastSeen}}</span>
-    <span class="lbl"><svg><use href="#i-list"/></svg>Last seen</span>
-  </div>
 </div>
-
-<dl class="kv">
-  <dt>Reported name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
-  {{if and $b.MachineName (ne $b.MachineName $m.ReportedName)}}<dt>Desired name</dt><dd>{{$b.MachineName}}{{if .Data.Display.RenamingFrom}} <span class="small muted">(applies on the next rename or re-image)</span>{{end}}</dd>{{end}}
-  {{if $m.ADDistinguishedName}}<dt>AD location</dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
-  {{$adl := adJoinLabel $m.ADJoinStatus}}{{if $adl}}<dt>AD join</dt><dd><span class="badge {{adJoinBadgeClass $m.ADJoinStatus}}">{{$adl}}</span>{{if $m.ADJoinDetail}} <span class="small muted">{{$m.ADJoinDetail}}</span>{{end}}{{if $m.ADJoinReportedAt}} <span class="small muted">· reported {{timeAgo $m.ADJoinReportedAt}}</span>{{end}}</dd>{{end}}
-  <dt>SMBIOS UUID</dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
-  <dt>Make / Model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
-  <dt>Serial</dt><dd>{{$m.SystemSerial}}</dd>
-  <dt>AutoDeploy ID</dt><dd><code>{{$m.AgentID}}</code></dd>
-  <dt>BIOS</dt><dd>{{$m.BIOSVendor}} {{$m.BIOSVersion}}</dd>
-  <dt>Board</dt><dd>{{$m.BoardManufacturer}} {{$m.BoardProduct}} ({{$m.BoardSerial}})</dd>
-  <dt>First seen</dt><dd>{{timeAbs $m.FirstSeen}}</dd>
-  <dt>Last seen</dt><dd>{{timeAbs $m.LastSeen}}</dd>
-</dl>
-
-{{with $m.Hardware}}
-<div class="section-head"><h3>Hardware</h3><div class="line"></div></div>
-<dl class="kv">
-  {{if .CPUModel}}<dt>CPU</dt><dd>{{.CPUModel}}{{if .CPUCores}} — {{.CPUCores}} cores / {{.CPUThreads}} threads{{end}}</dd>{{end}}
-  {{if .MemoryDisplay}}<dt>Memory</dt><dd>{{.MemoryDisplay}}</dd>{{end}}
-  {{if .Disks}}<dt>Disks</dt><dd>{{range .Disks}}{{.Model}}{{if .SizeDisplay}} ({{.SizeDisplay}}){{end}}<br>{{end}}</dd>{{end}}
-  {{if .GPUs}}<dt>GPU</dt><dd>{{range .GPUs}}{{.}}<br>{{end}}</dd>{{end}}
-  {{if .NICs}}<dt>Network</dt><dd>{{range .NICs}}{{.Name}} — {{.MAC}}{{if .IPs}} ({{range $i, $ip := .IPs}}{{if $i}}, {{end}}{{$ip}}{{end}}){{end}}<br>{{end}}</dd>{{end}}
-  {{if .OSCaption}}<dt>OS</dt><dd>{{.OSCaption}} {{.OSVersion}}</dd>{{end}}
-  {{if not .ReportedAt.IsZero}}<dt>Reported</dt><dd>{{formatTime .ReportedAt}}</dd>{{end}}
-</dl>
-{{end}}
-
-<div class="section-head"><h3>Binding</h3><div class="line"></div></div>
-<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding" data-dirty-guard>
-  <label><span class="lbl">Machine name — desired (AD object + unattend ComputerName). The agent keeps this in sync if the machine is renamed; a %placeholder% template is left as-is.</span>
-    <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="LAB-01">
-  </label>
-  <label><span class="lbl">Bound image (re-image will rebuild to the current definition of this)</span>
-    <select name="image_id">
-      <option value="">(none)</option>
-      {{range .Data.Images}}<option value="{{int64 .ID}}" {{if idEq $b.ImageID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
-    </select>
-  </label>
-  <label><span class="lbl">Target OU (DN)</span>
-    <input type="text" name="target_ou" value="{{$b.TargetOU}}" placeholder="OU=Lab,DC=corp,DC=example">
-  </label>
-  <label><span class="lbl">AD group memberships (one per line)</span>
-    <textarea name="groups" rows="3">{{range $i, $g := $b.GroupMemberships}}{{if $i}}
-{{end}}{{$g}}{{end}}</textarea>
-  </label>
-  <div class="actions"><button type="submit"><svg><use href="#i-check"/></svg>Save binding</button></div>
-</form>
-
-<div class="section-head"><h3>Run an action on this machine</h3><div class="line"></div></div>
-<form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
-  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "AP" .Data.AP)}}
-  <div class="actions"><button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
-</form>
-
-<div class="section-head"><h3>Deployment</h3><div class="line"></div><a class="btn ghost sm" href="/portal/logs?machine={{int64 $m.ID}}"><svg><use href="#i-list"/></svg>View this machine's logs</a></div>
-
-{{/* Live progress bar — shown while a deployment is in flight (imaging or
-     installing software). The JS poller in app.js drives it from
-     /portal/machines/{id}/deploy-status and reloads the page on completion. */}}
-<div class="card deploy-progress mb-4" data-machine-id="{{int64 $m.ID}}" {{if not .Data.DeployActive}}hidden{{end}}>
-  <div class="deploy-progress-head">
-    <strong class="deploy-phase">{{.Data.DeployLabel}}</strong>
-    <span class="deploy-pct muted small">{{if not .Data.DeployIndeterminate}}{{.Data.DeployPercent}}%{{end}}</span>
-  </div>
-  <progress class="deploy-bar" max="100" {{if not .Data.DeployIndeterminate}}value="{{.Data.DeployPercent}}"{{end}}></progress>
-</div>
-
-{{/* At-a-glance summary: the headline facts without scrolling a table.
-     Full detail lives in the expanders below. */}}
-<dl class="kv">
-  <dt>Latest deployment</dt>
-  <dd>
-    {{with .Data.LatestDeploy}}
-      {{if eq .Outcome "in_progress"}}{{if $.Data.MachineStalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}
-      {{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}
-      <span class="small muted">{{if .CompletedAt}}{{relTime (deref .CompletedAt)}}{{else}}started {{relTime .StartedAt}}{{end}}</span>
-    {{else}}<span class="muted">No deployments recorded yet.</span>{{end}}
-  </dd>
-  <dt>Total deployments</dt><dd>{{.Data.DeployCount}}</dd>
-  <dt>Last re-image</dt>
-  <dd>
-    {{with .Data.LastReimage}}
-      <span class="small muted">{{relTime .CreatedAt}}</span>
-      {{if eq .Source "remote_flag"}}<span class="badge">remote</span>{{else if eq .Source "boot_menu"}}<span class="badge">boot menu</span>{{end}}
-    {{else}}<span class="muted">Never re-imaged</span>{{end}}
-  </dd>
-</dl>
 
 {{if .Data.History}}
 <details class="detail-section">
-  <summary>View full deployment history ({{.Data.DeployCount}})</summary>
+  <summary>Deployment history ({{.Data.DeployCount}})</summary>
   <div class="tablewrap">
   {{/* Not sortable: each run's timeline row must stay under its run. */}}
   <table>
     <thead><tr>
       <th>Started</th>
-      <th>Completed</th>
+      <th>Finished</th>
       <th>Image</th>
-      <th>Phase</th>
+      <th>Stage</th>
       <th>Outcome</th>
       <th data-nosort>Notes</th>
       <th data-nosort>Logs</th>
@@ -160,15 +135,15 @@
       {{range .Data.History}}
       <tr>
         <td class="small muted" data-sort-value="{{.StartedAt.Unix}}">{{timeAgo .StartedAt}}</td>
-        <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge warn">in progress</span>{{end}}</td>
+        <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
         <td>{{entityLink "image" .ImageID}}</td>
-        <td class="small muted">{{if .Phase}}{{.Phase}}{{else}}—{{end}}</td>
-        <td>{{if .Stalled}}<span class="badge muted" title="No check-in for over 45 minutes — the machine may have failed Setup or be powered off.">stalled</span>{{else}}<span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{.Outcome}}</span>{{end}}</td>
+        <td class="small">{{phaseLabel .Phase .Outcome}}</td>
+        <td>{{if .Stalled}}<span class="badge warn" title="No check-in for over {{$.Data.StallAfter}} — the machine may have failed Setup or be powered off.">Stalled</span>{{else}}<span class="badge {{outcomeBadge .Outcome}}">{{outcomeLabel .Outcome}}</span>{{end}}</td>
         <td class="small">{{.Notes}}</td>
         <td class="small nowrap"><a href="/portal/logs?deployment={{int64 .ID}}">Logs</a></td>
       </tr>
       {{$run := int64 .ID}}{{with .Timeline}}<tr class="timeline-row"><td colspan="7">
-        <details{{if .Headline}} open{{end}}><summary class="small">Timeline of this run{{if .Headline}} — failed{{end}}</summary>
+        <details><summary class="small">Timeline of this run{{if .Headline}} — failed{{end}}</summary>
         {{template "deployment_timeline" (dict "T" . "Run" $run)}}</details>
       </td></tr>{{end}}
       {{end}}
@@ -180,7 +155,7 @@
 
 {{if .Data.Reimages}}
 <details class="detail-section">
-  <summary>View re-image history ({{len .Data.Reimages}})</summary>
+  <summary>Re-image history ({{len .Data.Reimages}})</summary>
   <div class="tablewrap">
   <table data-sortable>
     <thead><tr>
@@ -202,18 +177,81 @@
 </details>
 {{end}}
 
-<div class="section-head"><h3>Detected software state</h3><div class="line"></div></div>
+<div class="section-head"><h3>Identity &amp; hardware</h3><div class="line"></div></div>
+<dl class="kv">
+  <dt>Reported name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
+  {{if and $b.MachineName (ne $b.MachineName $m.ReportedName)}}<dt>Desired name</dt><dd>{{$b.MachineName}}{{if .Data.Display.RenamingFrom}} <span class="small muted">(applies on the next rename or re-image)</span>{{end}}</dd>{{end}}
+  {{if $m.ADDistinguishedName}}<dt><abbr title="Distinguished name (DN): the machine's full path in Active Directory, e.g. CN=LAB-01,OU=Lab,DC=corp,DC=example">AD location</abbr></dt><dd><code>{{$m.ADDistinguishedName}}</code></dd>{{end}}
+  {{$adl := adJoinLabel $m.ADJoinStatus}}{{if $adl}}<dt>AD join</dt><dd><span class="badge {{adJoinBadgeClass $m.ADJoinStatus}}">{{$adl}}</span>{{if $m.ADJoinDetail}} <span class="small muted">{{$m.ADJoinDetail}}</span>{{end}}{{if $m.ADJoinReportedAt}} <span class="small muted">· reported {{timeAgo $m.ADJoinReportedAt}}</span>{{end}}</dd>{{end}}
+  <dt><abbr title="The hardware ID stored in the machine's firmware (SMBIOS). AutoDeploy uses it to recognise the machine on every boot.">SMBIOS UUID</abbr></dt><dd><code>{{$m.SystemUUID}}</code><button class="copy" type="button" data-copy="{{$m.SystemUUID}}" aria-label="Copy UUID"><svg><use href="#i-copy"/></svg></button></dd>
+  <dt>Make / model</dt><dd><strong>{{$m.SystemManufacturer}}</strong> <span class="muted">{{$m.SystemProduct}}</span></dd>
+  <dt>Serial</dt><dd>{{if $m.SystemSerial}}{{$m.SystemSerial}}{{else}}<span class="muted">—</span>{{end}}</dd>
+  <dt><abbr title="AutoDeploy's own ID for this machine, stored by the agent">AutoDeploy ID</abbr></dt><dd>{{if $m.AgentID}}<code>{{$m.AgentID}}</code>{{else}}<span class="muted">— not enrolled yet</span>{{end}}</dd>
+  <dt>BIOS</dt><dd>{{if or $m.BIOSVendor $m.BIOSVersion}}{{$m.BIOSVendor}} {{$m.BIOSVersion}}{{else}}<span class="muted">—</span>{{end}}</dd>
+  <dt>Board</dt><dd>{{if or $m.BoardManufacturer $m.BoardProduct}}{{$m.BoardManufacturer}} {{$m.BoardProduct}}{{if $m.BoardSerial}} ({{$m.BoardSerial}}){{end}}{{else}}<span class="muted">—</span>{{end}}</dd>
+  <dt>First seen</dt><dd>{{timeAbs $m.FirstSeen}}</dd>
+  <dt>Last seen</dt><dd>{{timeAbs $m.LastSeen}}</dd>
+  {{with $m.Hardware}}
+  {{if .CPUModel}}<dt>CPU</dt><dd>{{.CPUModel}}{{if .CPUCores}} — {{.CPUCores}} cores / {{.CPUThreads}} threads{{end}}</dd>{{end}}
+  {{if .MemoryDisplay}}<dt>Memory</dt><dd>{{.MemoryDisplay}}</dd>{{end}}
+  {{if .Disks}}<dt>Disks</dt><dd>{{range .Disks}}{{.Model}}{{if .SizeDisplay}} ({{.SizeDisplay}}){{end}}<br>{{end}}</dd>{{end}}
+  {{if .GPUs}}<dt>GPU</dt><dd>{{range .GPUs}}{{.}}<br>{{end}}</dd>{{end}}
+  {{if .NICs}}<dt>Network</dt><dd>{{range .NICs}}{{.Name}} — {{.MAC}}{{if .IPs}} ({{range $i, $ip := .IPs}}{{if $i}}, {{end}}{{$ip}}{{end}}){{end}}<br>{{end}}</dd>{{end}}
+  {{if .OSCaption}}<dt>OS</dt><dd>{{.OSCaption}} {{.OSVersion}}</dd>{{end}}
+  {{if not .ReportedAt.IsZero}}<dt>Hardware reported</dt><dd>{{formatTime .ReportedAt}}</dd>{{end}}
+  {{end}}
+</dl>
+
+<div class="section-head" id="binding"><h3>Binding</h3><div class="line"></div></div>
+<p class="small muted section-lead">What this machine should become the next time it is deployed. Saving doesn't change the running machine.</p>
+{{$be := .Data.BindingError}}
+<form class="std" method="POST" action="/portal/machines/{{int64 $m.ID}}/binding" data-dirty-guard>
+  {{template "form_error" $be}}
+  <label><span class="lbl">Computer name</span>
+    <input type="text" name="machine_name" value="{{$b.MachineName}}" placeholder="e.g. LAB-01" {{invalidAttr $be "machine_name"}}>
+    {{fieldError $be "machine_name"}}
+    <span class="hint">Windows computer name and AD object name, up to 15 characters. Placeholders such as <code>%serial(4)%</code> are filled in at deploy time. The agent keeps this in sync if the machine is renamed.</span>
+  </label>
+  <label><span class="lbl">Image</span>
+    <select name="image_id" {{invalidAttr $be "image_id"}}>
+      <option value="">(none)</option>
+      {{range .Data.Images}}<option value="{{int64 .ID}}" {{if idEq $b.ImageID (int64 .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+    {{fieldError $be "image_id"}}
+    <span class="hint">A re-image rebuilds the machine from this image's current definition.</span>
+  </label>
+  <label><span class="lbl">Target OU</span>
+    <input type="text" name="target_ou" value="{{$b.TargetOU}}" placeholder="e.g. OU=Lab,DC=corp,DC=example" {{invalidAttr $be "target_ou"}}>
+    {{fieldError $be "target_ou"}}
+    <span class="hint">The Active Directory organisational unit (OU) to join the machine into, written as a distinguished name (DN). Leave empty to use the domain default.</span>
+  </label>
+  <label><span class="lbl">AD groups</span>
+    <textarea name="groups" rows="3" placeholder="e.g. Lab-Computers">{{range $i, $g := $b.GroupMemberships}}{{if $i}}
+{{end}}{{$g}}{{end}}</textarea>
+    <span class="hint">One group per line. Added when the machine joins the domain.</span>
+  </label>
+  <div class="actions"><button type="submit"><svg><use href="#i-check"/></svg>Save binding</button></div>
+</form>
+
+<div class="section-head" id="actions"><h3>Run an action</h3><div class="line"></div></div>
+{{$ae := .Data.ActionError}}
+<form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
+  {{template "form_error" $ae}}
+  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "AP" .Data.AP "ConfirmName" $name "Err" $ae)}}
+  <div class="actions"><button type="submit" class="danger" data-needs-action disabled title="Choose an action first"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
+</form>
+
+<div class="section-head"><h3>Detected software</h3><div class="line"></div></div>
 {{if .Data.Detected}}
 <div class="tablewrap">
 <table data-sortable>
-  <thead><tr><th>Package</th><th>Detected</th><th data-sort="num">Last evaluated</th></tr></thead>
+  <thead><tr><th>Package</th><th>Detected</th><th data-sort="num">Last checked</th></tr></thead>
   <tbody>
-    {{$pkgs := .Data.Packages}}
     {{range .Data.Detected}}
     {{$pid := .SoftwarePackageID}}
     <tr>
       <td>{{entityLink "software" $pid}}</td>
-      <td>{{if .Detected}}<span class="badge ok"><svg><use href="#i-check"/></svg>present</span>{{else}}<span class="badge bad">absent</span>{{end}}</td>
+      <td>{{if .Detected}}<span class="badge ok"><svg><use href="#i-check"/></svg>Present</span>{{else}}<span class="badge bad">Missing</span>{{end}}</td>
       <td class="small muted" data-sort-value="{{.LastEvaluatedAt.Unix}}">{{timeAgo .LastEvaluatedAt}}</td>
     </tr>
     {{end}}
@@ -224,16 +262,16 @@
 <p class="muted">No detection state reported yet.</p>
 {{end}}
 
-<div class="section-head"><h3>Windows Update status</h3><div class="line"></div></div>
+<div class="section-head"><h3>Windows Updates</h3><div class="line"></div></div>
 {{if .Data.KBStatuses}}
 <div class="tablewrap">
 <table data-sortable>
-  <thead><tr><th>KB Number</th><th>Status</th><th data-sort="num">Reported</th></tr></thead>
+  <thead><tr><th>Update</th><th>Status</th><th data-sort="num">Reported</th></tr></thead>
   <tbody>
     {{range .Data.KBStatuses}}
     <tr>
       <td><strong>{{.KBNumber}}</strong></td>
-      <td><span class="badge {{if eq .Status "installed"}}ok{{else if eq .Status "pending"}}warn{{else if eq .Status "failed"}}bad{{else}}{{end}}">{{.Status}}</span></td>
+      <td><span class="badge {{if eq .Status "installed"}}ok{{else if eq .Status "pending"}}warn{{else if eq .Status "failed"}}bad{{else}}{{end}}">{{kbStatusLabel .Status}}</span></td>
       <td class="small muted" data-sort-value="{{.ReportedAt.Unix}}">{{timeAgo .ReportedAt}}</td>
     </tr>
     {{end}}
@@ -241,6 +279,6 @@
 </table>
 </div>
 {{else}}
-<p class="muted">No KB status reported yet.</p>
+<p class="muted">No update status reported yet.</p>
 {{end}}
 {{end}}
