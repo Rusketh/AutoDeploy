@@ -45,8 +45,9 @@
         {{$whEvents := $.Data.Webhook.Events}}
         {{range .Events}}
           <label class="check ml-2">
-            <input type="checkbox" name="events" value="{{.}}">
-            <code>{{.}}</code>
+            {{$ev := .}}
+            <input type="checkbox" name="events" value="{{.}}"{{range $whEvents}}{{if eq . $ev}} checked{{end}}{{end}}>
+            {{eventLabel .}} <code class="small muted">{{.}}</code>
           </label>
         {{end}}
       </div>

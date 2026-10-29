@@ -21,20 +21,30 @@ The list shows, per machine:
 
 | Column | Notes |
 |--------|-------|
-| UUID | The SMBIOS UUID (truncated; click to open, or copy the full value) |
-| Name | The machine's current computer name (agent-reported, or desired name from binding) |
+| Name | The machine's current computer name (agent-reported, or desired name from binding); a machine that hasn't reported one yet shows the start of its UUID in grey |
+| Status | One word for where the machine is: **Online**, **Idle**, **Deploying**, **Stalled**, **Failed**, **Re-image pending**, **Offline** |
 | Make / model | Manufacturer and product, from SMBIOS |
 | Serial | System serial |
 | OS | The running OS (e.g. "Microsoft Windows 10 Pro"), from the agent's hardware report |
 | Image | The bound image's name |
 | AD | Active Directory join status the agent reports — **Joined**, **Join failed**, or **Trust broken** (hover for detail); a dash means not applicable / not yet reported. See [AD join status & alerts](../operations/active-directory.md#join-status--alerts). |
 | Last seen | When the machine last contacted the server |
+| UUID | The SMBIOS UUID (truncated; copy the full value from the machine page) |
 
-Use the **filter** box to narrow the list. Filtering happens server-side across the whole
-inventory — names, make/model, base-board identity, serials, UUIDs, the reported OS and the
-bound image's name — so the page numbers and totals always describe what you're looking at. The
-filter is kept in the page URL, which means the browser's back/forward buttons restore it; it
-stays until you clear it (the **×** in the box, <kbd>Esc</kbd>, or the **Clear filter** link).
+Type in the **Search machines** box and press **Search** (or Enter) to narrow the list. The search
+runs on the server across the whole inventory — names, make/model, base-board identity, serials,
+UUIDs, the reported OS and the bound image's name — so the page numbers and totals always describe
+what you're looking at. Nothing happens while you type. Each search is its own page address, so the
+browser's Back / Forward buttons step through earlier searches and you can bookmark one; **Clear**
+removes it. Old bookmarks such as `/portal/machines?q=lab` keep working.
+
+The **status chips** above the list (*Failed 1*, *Re-image pending 2*, *Deploying 1*, *Online 3*,
+…) show how many machines are in each state; click one to list just those. The **Image**,
+**AD join**, **Model** and **Last deployed** pickers narrow further — choose and click **Apply**
+(**Clear filters** resets them). The dashboard's *Needs attention* panel links straight to these
+filtered views.
+
+On a phone the list turns into one card per machine with the same fields.
 
 Click a **column header** to sort. Sorting is also server-side, ordering the entire (filtered)
 fleet rather than just the visible page; click the active column again to flip the direction.

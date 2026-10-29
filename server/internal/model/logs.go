@@ -585,6 +585,12 @@ var dbTimeLayouts = []string{
 // than failing the whole query — one odd row should not break the page.
 func parseDBTime(str string) time.Time {
 	str = strings.TrimSpace(str)
+	// A time.Time bound straight into a TEXT column is stored as its String()
+	// form, monotonic clock reading included ("... +0000 UTC m=+361.6"):
+	// notifications written by every version so far look like this.
+	if i := strings.Index(str, " m="); i > 0 {
+		str = str[:i]
+	}
 	if str == "" {
 		return time.Time{}
 	}

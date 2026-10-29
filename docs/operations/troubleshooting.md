@@ -49,6 +49,17 @@ is missing. See [Payloads → ISOs](../portal/payloads.md#isos).
   See [UEFI Secure Boot](../install/pxe-and-boot.md#uefi-secure-boot).
 - See [PXE & boot setup](../install/pxe-and-boot.md).
 
+## A deploy stops on a red "Deployment failed" screen
+
+The screen names the problem and shows a short error code; the machine's page in the portal shows
+the same message under **Current state**, and **Logs of this run** opens every event of that
+deployment. The [boot screens](../install/pxe-and-boot.md#what-the-imaging-screens-show) section
+lists the keys (R retry, Enter restart, Esc shell). Common codes: `NO-DISK` (see
+[no usable target disk](#no-usable-target-disk-found-the-kernel-sees-no-disk)), `PARTITION` (see
+[partitioning fails](#a-deploy-fails-at-partitioning-zap--exit-status-2-wrong-disk)),
+`MEDIA-DOWNLOAD` / `PAYLOAD` (network or mirror trouble — see the next sections), `MANIFEST` (the
+image can't be resolved — open its **Resolved** view in the portal).
+
 ## A booting machine doesn't show the deploy menu
 
 If an [access PIN](../portal/settings.md#access-pin) is set, the boot client must submit a valid

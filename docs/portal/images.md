@@ -16,7 +16,7 @@ The list shows each image's **name**, its **parent**, **ISO**, **unattend**, **l
 
 ## Composing an image
 
-Go to **Images → New** and assemble the recipe.
+Go to **Build → Images**, click **New image** and assemble the recipe.
 
 ![Creating an image](../images/image-new.png)
 

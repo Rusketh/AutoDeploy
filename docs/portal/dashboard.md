@@ -5,16 +5,32 @@ configured and what's happening across your fleet, plus shortcuts to the things 
 
 ![AutoDeploy dashboard](../images/dashboard.png)
 
+## Finding your way around
+
+The navigation bar groups the portal's pages into four menus:
+
+| Menu | Pages |
+|------|-------|
+| **Fleet** | Machines, Groups, Bulk operations, Import |
+| **Build** | Images, ISOs, Unattends, Drivers, Software, Loadouts |
+| **Patching** | Windows Updates, Mirrors |
+| **System** | Logs, Settings |
+
+Click a menu (or focus it and press Enter or <kbd>↓</kbd>) to open it; <kbd>↑</kbd>/<kbd>↓</kbd> move
+between its pages and <kbd>Esc</kbd> closes it. On a phone the menus fold behind the ☰ button.
+Without JavaScript every page link is shown directly. Press <kbd>?</kbd> for keyboard shortcuts.
+
 ## Quick actions
 
-Buttons in the top bar jump into common tasks: new **Image**, new **ISO**, new **Unattend**, and
-the **Downloads** page.
+Buttons at the top of the dashboard jump into common tasks: new **Image**, new **ISO**, new
+**Unattend**, and the **Downloads** page.
 
-## Counters
+## Needs attention
 
-A row of counters shows how many of each building block you have — **Images**, **ISOs**,
-**Unattends**, **Driver packages**, **Software**, **Loadouts**, and **Machines**. Each one links to
-its list page, so it doubles as navigation.
+The first panel lists only what needs you: **failed deployments** in the last 7 days, **stalled**
+deployments, **re-images pending**, machines whose **AD join** failed or trust broke, ISOs that
+failed to prepare, and machines **offline** for more than a week. Each line links to the matching
+filtered [machine list](machines.md). When nothing needs attention it says **All clear**.
 
 ## Last 24 hours
 
@@ -45,14 +61,14 @@ count. This gives you a quick view of your fleet's OS makeup. Click **View fleet
 
 ## Recently seen machines
 
-The machines that have most recently network-booted or had their agent check in, with their
-product, manufacturer, serial, and when they were last seen. Click one to open its
-[detail page](machines.md).
+The machines that have most recently network-booted or had their agent check in — by name, with
+their make, model and serial, their status (*Online*, *Deploying*, *Re-image pending*, …) and when
+they were last seen. Click one to open its [detail page](machines.md).
 
 ## Recent activity
 
-The newest entries from the [audit log](logs.md) — each with its time, level, component, action,
-and target. For the full, searchable history, open **Logs**.
+The newest entries from the [activity log](logs.md) — each with its time, level, the machine (by
+name) and a plain-English description. For the full, searchable history, open **View all**.
 
 ## Quick start
 
@@ -60,9 +76,14 @@ A short checklist links you through the first-run flow: upload an ISO, create an
 driver packages, define software, group them into loadouts, compose an image, then PXE-boot and
 bind a machine.
 
+## Library
+
+How many of each building block you have — **Machines**, **Images**, **ISOs**, **Unattends**,
+**Driver packages**, **Software** and **Loadouts** — each linking to its list.
+
 ## Light and dark theme
 
-The portal supports both a light and a dark theme. Use the theme toggle in the top navigation bar
+The portal supports both a light and a dark theme. Use the theme toggle (the half-filled circle) at the right of the navigation bar
 to switch (it cycles auto / light / dark); the portal remembers your choice.
 
 ![AutoDeploy dashboard in dark theme](../images/dashboard-dark.png)

@@ -599,7 +599,7 @@ func bulkCancel(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if err := r.Bulk.CancelOperation(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
+			flash(w, "err", friendlyError(model.KindBulk, http.StatusBadRequest, err))
 		} else {
 			flash(w, "ok", "Operation cancelled. Queued and running jobs were stopped.")
 		}
@@ -611,7 +611,7 @@ func bulkPause(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if err := r.Bulk.PauseOperation(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
+			flash(w, "err", friendlyError(model.KindBulk, http.StatusBadRequest, err))
 		} else {
 			flash(w, "ok", "Recurring operation paused.")
 		}
@@ -623,7 +623,7 @@ func bulkResume(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if err := r.Bulk.ResumeOperation(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
+			flash(w, "err", friendlyError(model.KindBulk, http.StatusBadRequest, err))
 		} else {
 			flash(w, "ok", "Recurring operation resumed.")
 		}
@@ -635,7 +635,7 @@ func bulkRunNow(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if jobs, err := r.Bulk.RunOperationNow(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
+			flash(w, "err", friendlyError(model.KindBulk, http.StatusBadRequest, err))
 		} else {
 			_ = r.Bulk.AdvanceSchedule(req.Context(), id, time.Now())
 			if op, _, oerr := r.Bulk.GetOperation(req.Context(), id); oerr == nil &&

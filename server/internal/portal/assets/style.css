@@ -125,6 +125,8 @@
 html, body { height: 100%; }
 body {
   font: var(--fs)/var(--lh) var(--font-sans);
+  /* Inter's contextual alternates turn "x64" after a digit into "×64". */
+  font-feature-settings: "calt" 0;
   color: var(--fg);
   background: var(--bg);
   margin: 0;
@@ -363,12 +365,17 @@ a.card:hover, .card.hover:hover {
   transform: translateY(-1px);
 }
 
+/* Fieldsets default to min-width: min-content, so a long word or file name
+   inside one pushes the whole page wider than a phone. */
+fieldset { min-width: 0; overflow-wrap: break-word; }
+
 /* ---------- Tables ---------- */
 .tablewrap {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  overflow: hidden;
+  /* Scroll a table that is wider than a phone instead of clipping it. */
+  overflow-x: auto;
   box-shadow: var(--shadow-sm);
 }
 table {
@@ -451,6 +458,7 @@ form.std label > span.hint, .hint {
   line-height: 1.45;
 }
 form.std input[type="text"],
+form.std input[type="search"],
 form.std input[type="password"],
 form.std input[type="number"],
 form.std input[type="url"],
@@ -638,9 +646,10 @@ button svg, .btn svg { width: 16px; height: 16px; }
 [aria-invalid="true"] { border-color: var(--bad) !important; box-shadow: 0 0 0 3px var(--bad-soft); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .form-error,
+  :root:not([data-theme="light"]) .flash-err,
   :root:not([data-theme="light"]) .field-error { color: #ff9b93; }
 }
-:root[data-theme="dark"] .form-error, :root[data-theme="dark"] .field-error { color: #ff9b93; }
+:root[data-theme="dark"] .form-error, :root[data-theme="dark"] .flash-err, :root[data-theme="dark"] .field-error { color: #ff9b93; }
 
 /* Pending re-image banner on the machine page: a prominent, dismissible
    notice that a remote re-image is queued and waiting for the agent. */
@@ -734,7 +743,7 @@ button svg, .btn svg { width: 16px; height: 16px; }
 /* ---------- Detail definition lists ---------- */
 dl.kv {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 0.4rem 1.25rem;
   margin: 0;
   padding: var(--sp-4);
@@ -744,7 +753,7 @@ dl.kv {
   box-shadow: var(--shadow-sm);
 }
 dl.kv dt { color: var(--fg-muted); font-weight: 500; font-size: var(--fs-sm); }
-dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
+dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--fg); font-variant-numeric: tabular-nums; }
 
 /* ---------- Toolbar ---------- */
 .toolbar {
@@ -771,6 +780,17 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
   font: inherit;
   transition: border-color var(--tx-fast), box-shadow var(--tx-fast);
 }
+/* Bare search boxes (the winget / Microsoft Update Catalog import pages). */
+form[role="search"] > input[type="search"] {
+  min-width: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+form[role="search"] > input[type="search"]:focus,
 .filter input:focus {
   outline: none;
   border-color: var(--accent);
@@ -821,7 +841,11 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
   margin-bottom: var(--sp-2);
   background: var(--surface);
 }
-.rep > * { flex: 1; }
+.rep > * { flex: 1; min-width: 0; }
+.rep > .order-input { flex: 0 0 5.5rem; }
+/* The package picker keeps a usable width; on a phone it takes its own line. */
+.rep { flex-wrap: wrap; }
+.rep > select { flex: 1 1 12rem; }
 .rep button.rem {
   flex: 0 0 auto;
   background: transparent;
@@ -858,7 +882,7 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
 .badge.ok   { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .badge.bad  { background: var(--bad-soft);  color: var(--bad);  border-color: transparent; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
-.badge.muted { background: var(--grey-100); color: var(--fg-muted); border-color: transparent; }
+.badge.muted { background: var(--surface-2); color: var(--fg-muted); border-color: transparent; }
 .badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 .badge svg { width: 12px; height: 12px; }
 
@@ -871,7 +895,7 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
 .dot.ok   { background: var(--good); box-shadow: 0 0 0 4px var(--good-soft); }
 .dot.bad  { background: var(--bad);  box-shadow: 0 0 0 4px var(--bad-soft); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
-.dot.muted { background: var(--fg-muted); box-shadow: 0 0 0 4px var(--grey-100); }
+.dot.muted { background: var(--fg-muted); box-shadow: 0 0 0 4px var(--surface-2); }
 
 /* Empty state */
 .empty {
@@ -918,7 +942,7 @@ dl.kv dd { margin: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
   gap: var(--sp-3);
   margin: var(--sp-5) 0 var(--sp-3);
 }
-.section-head h3 { margin: 0; flex: 0 0 auto; }
+.section-head h3 { margin: 0; flex: 0 1 auto; min-width: 0; }
 .section-head .line { flex: 1; border-top: 1px solid var(--border); }
 
 /* Skeleton loader */
@@ -1248,9 +1272,11 @@ dl.log-kv dd { overflow-wrap: anywhere; }
   padding: 0;
   margin: var(--sp-2) 0 var(--sp-3);
 }
-.action-tile {
+/* .action-picker raises specificity over form.std label { display: block }. */
+.action-picker .action-tile {
   display: flex;
   flex-direction: column;
+  margin: 0;
   align-items: center;
   gap: 0.35rem;
   padding: var(--sp-3) var(--sp-4);
@@ -1392,7 +1418,7 @@ pre.snippet { background: var(--surface-2); padding: var(--sp-2); border-radius:
 .filter-bar select, .filter-bar input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--bg); color: var(--fg); }
 .actions-start, form.std .actions.actions-start { justify-content: flex-start; }
 .machine-picker [hidden] { display: none !important; }
-.actions-center { justify-content: center; }
+.actions-center { justify-content: center; flex-wrap: wrap; }
 tr.unread td { font-weight: 600; }
 .col-progress { min-width: 150px; }
 
@@ -1474,6 +1500,13 @@ table.activity { background: transparent; }
 table.activity tr:hover td { background: var(--surface-2); }
 table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .activity-num { width: 60px; }
+/* Phones: the feed's time / level / machine sit on one line with the
+   message underneath at full width, instead of a squeezed fourth column. */
+@media (max-width: 600px) {
+  table.activity-feed tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--sp-2); padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+  table.activity-feed td { border: none; padding: 0 0.5rem; }
+  table.activity-feed td.activity-msg { flex: 1 1 100%; padding-top: 2px; overflow-wrap: anywhere; }
+}
 
 .quickstart {
   margin: 0;
@@ -1525,7 +1558,8 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .dropzone.uploading { pointer-events: none; border-style: solid; border-color: var(--accent); }
 
 /* ---------- Form page utilities ---------- */
-.code-name { font-size: 0.95rem; }
+.code-name { font-size: 0.95rem; overflow-wrap: anywhere; }
+.filetree-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; }
 .upload-empty-form { margin: var(--sp-3) auto 0; max-width: 460px; }
 .toolbar-code { font-size: 0.7em; }
 .order-input { max-width: 6rem; }
@@ -1588,7 +1622,7 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 fieldset.disabled { opacity: 0.6; }
 fieldset.disabled::after { content: " (does not apply to selected target OS)"; color: var(--fg-muted); font-size: var(--fs-sm); }
 @media (max-width: 800px) {
-  .unattend-shell { grid-template-columns: 1fr; }
+  .unattend-shell { grid-template-columns: minmax(0, 1fr); }
   .unattend-toc { position: static; flex-direction: row; flex-wrap: wrap; }
   .checkgrid { grid-template-columns: 1fr; }
 }

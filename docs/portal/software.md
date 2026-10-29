@@ -24,7 +24,7 @@ The list shows each package's **name**, **description**, and fleet compliance da
 
 ### Creating a package
 
-Go to **Software → New**. Give it a name and description, save, then upload the file (or files) it
+Go to **Build → Software** and click **New software package**. Give it a name and description, save, then upload the file (or files) it
 needs and define its detection rules and install steps.
 
 ![Creating a software package](../images/software-new.png)
@@ -155,7 +155,7 @@ if any), a **Packages** count, and a **Used by** count.
 
 ### Creating a loadout
 
-Go to **Loadouts → New**, give it a **Name** (required) and optional **Description**, optionally
+Go to **Build → Loadouts**, click **New loadout**, give it a **Name** (required) and optional **Description**, optionally
 pick a **parent loadout**, then add the **software packages** to include. Each package row has an
 **install order** and an **opt-out** checkbox.
 

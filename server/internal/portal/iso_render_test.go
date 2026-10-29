@@ -96,6 +96,20 @@ func TestISOFormBootMediaStates(t *testing.T) {
 	}
 }
 
+// An OS type saved through the API (or an older version) that isn't one of
+// the form's choices stays selected instead of reading "(select)", and the
+// known choices are labelled for people.
+func TestISOFormKeepsUnlistedOSType(t *testing.T) {
+	out := renderBody(t, "iso_form.html", map[string]any{"ISO": model.ISO{ID: 1, Name: "Win11", OSType: "windows11"}, "IsNew": false})
+	if !strings.Contains(out, `<option value="windows11" selected>`) {
+		t.Errorf("unlisted os_type not kept selected")
+	}
+	out = renderBody(t, "iso_form.html", map[string]any{"ISO": model.ISO{ID: 1, Name: "Win11", OSType: "windows-11"}, "IsNew": false})
+	if !strings.Contains(out, `<option value="windows-11" selected>Windows 11</option>`) {
+		t.Errorf("known os_type not selected with its label")
+	}
+}
+
 func TestISOListStatusColumn(t *testing.T) {
 	now := time.Now()
 	isos := []model.ISO{

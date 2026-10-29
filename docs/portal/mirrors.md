@@ -11,7 +11,7 @@ The list shows each mirror's **name**, **site**, **base URL**, and **health**.
 
 ## Adding a mirror
 
-Go to **Mirrors → New** and fill in:
+Go to **Patching → Mirrors**, click **Add mirror** and fill in:
 
 | Field | Notes |
 |-------|-------|
