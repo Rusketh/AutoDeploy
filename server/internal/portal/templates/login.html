@@ -4,6 +4,11 @@
     {{if .Brand.LogoDataURL}}<img src="{{.Brand.LogoDataURL}}" alt="logo" class="logo login-logo">{{end}}
     Sign in to {{.Brand.ProductName}}
   </h2>
+  {{with .Data.Notice}}
+  <div class="flash flash-warn flash-inline" role="status">
+    <svg><use href="#i-clock"/></svg><span>{{.}}</span>
+  </div>
+  {{end}}
   {{with .Data.Error}}
   <div class="flash flash-err flash-inline">
     <svg><use href="#i-alert"/></svg><span>{{.}}</span>

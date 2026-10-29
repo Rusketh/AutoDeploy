@@ -1,10 +1,8 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Images</h2>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
   <div class="right">
     <a class="btn ghost" href="/portal/images/groups"><svg><use href="#i-stack"/></svg>Manage groups</a>
     <a class="btn" href="/portal/images/new"><svg><use href="#i-plus"/></svg>New image</a>
@@ -42,15 +40,17 @@
         <form method="POST" action="/portal/images/{{int64 .ID}}/clone">
           <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
         </form>
-        <form method="POST" action="/portal/images/{{int64 .ID}}/delete" data-confirm="Delete this image? Will fail if other images inherit from it.">
+        {{$n := index $.Data.Children .ID}}{{if $n}}<span class="disabled-reason" title="{{$n}} image{{if ne $n 1}}s inherit{{else}} inherits{{end}} from it — change their parent first"><button class="danger sm" type="button" disabled aria-disabled="true" aria-label="Delete (unavailable: {{$n}} image{{if ne $n 1}}s inherit{{else}} inherits{{end}} from it — change their parent first)"><svg><use href="#i-trash"/></svg>Delete</button></span>{{else}}<form method="POST" action="/portal/images/{{int64 .ID}}/delete" data-confirm="Delete image “{{.Name}}”? Machines bound to it are left without an image.">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
-        </form>
+        </form>{{end}}
       </td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-image"/></svg>

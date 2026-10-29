@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,43 +37,51 @@ func storageForm(r Repos) http.HandlerFunc {
 func storageSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-		var firstErr string
+		// Check every path before saving any: a relative path is rejected
+		// beside its field and nothing changes.
+		fe := &FormError{Fields: map[string]string{}}
 		for _, c := range runtime.StorageCategories {
 			val := strings.TrimSpace(req.FormValue("storage_" + c.Category))
-			// Operator confirms a path is absolute before save; reject
-			// relative paths early with a clear message rather than
-			// have BlobStore.SetCategoryRoot do it silently.
 			if val != "" && !filepath.IsAbs(val) {
-				if firstErr == "" {
-					firstErr = fmt.Sprintf("%s: path must be absolute (got %q)", c.Category, val)
-				}
-				continue
+				fe.Fields["storage_"+c.Category] = "Use a full path starting from the root, e.g. /srv/autodeploy/" + c.Category + "."
 			}
-			if err := r.Runtime.SetStoragePath(req.Context(), c.Category, val); err != nil {
-				if firstErr == "" {
-					firstErr = fmt.Sprintf("%s: %v", c.Category, err)
+		}
+		if len(fe.Fields) == 0 {
+			for _, c := range runtime.StorageCategories {
+				val := strings.TrimSpace(req.FormValue("storage_" + c.Category))
+				if err := r.Runtime.SetStoragePath(req.Context(), c.Category, val); err != nil {
+					fe.Fields["storage_"+c.Category] = friendlyError("", http.StatusUnprocessableEntity, err)
 				}
-				continue
 			}
+		}
+		if len(fe.Fields) > 0 {
+			fe.Message = "Couldn't save — fix the highlighted paths below. Nothing was changed."
+			entries := collectStorageEntries(r)
+			for i := range entries {
+				entries[i].Override = strings.TrimSpace(req.FormValue("storage_" + entries[i].Category))
+			}
+			renderForm(w, req, r, "settings_storage.html", "Storage", fe, map[string]any{
+				"Entries": entries,
+				"DataDir": dataDirFor(r),
+			})
+			return
 		}
 		// Push the new values into the live BlobStore. Any per-
 		// category error here means the path is unwritable (likely
-		// missing or wrong-permission); we keep going so the
-		// settings are persisted, surface the warning, and let the
-		// operator fix the filesystem.
+		// missing or wrong-permission); the settings are persisted, so
+		// surface the warning and let the operator fix the filesystem.
+		var firstErr string
 		if r.Blobs != nil {
-			if errs := r.Runtime.ApplyStorageOverrides(r.Blobs); len(errs) > 0 && firstErr == "" {
-				for cat, e := range errs {
-					firstErr = fmt.Sprintf("%s: %v", cat, e)
-					break
-				}
+			for cat, e := range r.Runtime.ApplyStorageOverrides(r.Blobs) {
+				firstErr = fmt.Sprintf("Saved, but %s can't be used yet: %v", cat, e)
+				break
 			}
 		}
 		if firstErr != "" {

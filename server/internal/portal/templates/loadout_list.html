@@ -1,10 +1,8 @@
 {{define "body"}}
 <div class="toolbar">
   <h2>Software loadouts</h2>
-  <div class="filter">
-    <svg><use href="#i-search"/></svg>
-    <input type="search" placeholder="Filter — press /" data-filter="#tbl">
-  </div>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
   <div class="right">
     <a class="btn" href="/portal/loadouts/new"><svg><use href="#i-plus"/></svg>New loadout</a>
   </div>
@@ -25,7 +23,7 @@
     <tr>
       <td><a href="/portal/loadouts/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
       <td class="small muted">{{.Description}}</td>
-      <td>{{if .ParentID}}<code>#{{derefID .ParentID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{entityLink "loadout" .ParentID}}</td>
       <td class="num">{{len .Packages}}</td>
       <td class="num">{{index $.Data.Refs .ID}}</td>
       <td class="actions">
@@ -33,15 +31,17 @@
         <form method="POST" action="/portal/loadouts/{{int64 .ID}}/clone">
           <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
         </form>
-        <form method="POST" action="/portal/loadouts/{{int64 .ID}}/delete" data-confirm="Delete this loadout?">
+        {{$n := index $.Data.Refs .ID}}{{if $n}}<span class="disabled-reason" title="In use by {{$n}} image{{if ne $n 1}}s{{end}} or child loadout{{if ne $n 1}}s{{end}} — unlink it first"><button class="danger sm" type="button" disabled aria-disabled="true" aria-label="Delete (unavailable: In use by {{$n}} image{{if ne $n 1}}s{{end}} or child loadout{{if ne $n 1}}s{{end}} — unlink it first)"><svg><use href="#i-trash"/></svg>Delete</button></span>{{else}}<form method="POST" action="/portal/loadouts/{{int64 .ID}}/delete" data-confirm="Delete loadout “{{.Name}}”?">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
-        </form>
+        </form>{{end}}
       </td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
 {{else}}
 <div class="empty">
   <svg class="empty-icon"><use href="#i-stack"/></svg>

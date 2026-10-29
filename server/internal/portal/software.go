@@ -3,6 +3,7 @@ package portal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -219,81 +220,92 @@ func softwareList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Software.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		search := newSearchBox(req, "Search software", "Search software packages")
+		shown := filterByQuery(v, search.Query, func(p model.SoftwarePackage) []string {
+			return []string{p.Name, p.Description}
+		})
 		refs := map[model.ID]int{}
-		for _, p := range v {
+		for _, p := range shown {
 			n, _ := r.Software.RefCount(req.Context(), p.ID)
 			refs[p.ID] = n
 		}
 		compliance, _ := r.Software.AllComplianceSummaries(req.Context())
 		render(w, req, r, "software_list.html", "Software packages", map[string]any{
-			"Packages": v, "Refs": refs, "Compliance": compliance,
+			"Packages": shown, "Refs": refs, "Compliance": compliance,
+			"Search": search.counted(len(shown), len(v), "software packages"),
 		})
 	}
 }
 
 func softwareForm(r Repos, p model.SoftwarePackage, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		var rules []swspec.DetectionRule
-		var steps []swspec.InstallStep
-		if p.DetectionJSON != "" {
-			rules, _ = swspec.ParseDetection(p.DetectionJSON)
-		}
-		if p.StepsJSON != "" {
-			steps, _ = swspec.ParseSteps(p.StepsJSON)
-		}
-		title := "New software package"
-		if !isNew {
-			title = "Edit software package: " + p.Name
-		}
-		// Multi-file file list. Driven entirely by what's on disk:
-		// no separate DB table needed since the filesystem is the
-		// source of truth and BlobStore.Resolve already enforces
-		// path containment.
-		var files []*fileNode
-		if !isNew && r.Blobs != nil {
-			// Lazy migration: if the package still references a
-			// legacy single-file payload.bin but no files dir yet
-			// exists, move it under files/<payload_filename> so
-			// the new UI shows it. Best-effort; failure is non-
-			// fatal (the legacy single-file path is still listed
-			// below in a banner so operators aren't blindsided).
-			migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
-			// ListTree (recursive) so folder-structured payloads
-			// render as a tree; ListDir skipped sub-directories, which
-			// made an uploaded folder look like it never arrived.
-			entries, _ := r.Blobs.ListTree(softwarePackageFilesDir(p.ID))
-			files = buildFileTree(entries)
-		}
-		var bundles []storage.DirEntry
-		if !isNew && r.Blobs != nil {
-			bundles, _ = r.Blobs.ListDir(softwarePackageBundleDir(p.ID))
-		}
-		// Other packages, for the dependency picker, plus a set of the
-		// currently-selected dependency IDs so the template can mark them.
-		all, _ := r.Software.List(req.Context())
-		others := make([]model.SoftwarePackage, 0, len(all))
-		for _, pk := range all {
-			if pk.ID != p.ID {
-				others = append(others, pk)
-			}
-		}
-		depSel := make(map[model.ID]bool, len(p.DependsOn))
-		for _, d := range p.DependsOn {
-			depSel[d] = true
-		}
-		var succeeds model.ID
-		if p.SucceedsID != nil {
-			succeeds = *p.SucceedsID
-		}
-		render(w, req, r, "software_form.html", title, map[string]any{
-			"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
-			"Files": files, "Bundles": bundles, "AllPackages": others, "DepSelected": depSel,
-			"Succeeds": succeeds,
-		})
+		softwareFormPage(w, req, r, p, isNew, nil)
 	}
+}
+
+// softwareFormPage renders the software package form; with fe set it is
+// a rejected save re-rendered with the submitted values (422).
+func softwareFormPage(w http.ResponseWriter, req *http.Request, r Repos, p model.SoftwarePackage, isNew bool, fe *FormError) {
+	var rules []swspec.DetectionRule
+	var steps []swspec.InstallStep
+	if p.DetectionJSON != "" {
+		rules, _ = swspec.ParseDetection(p.DetectionJSON)
+	}
+	if p.StepsJSON != "" {
+		steps, _ = swspec.ParseSteps(p.StepsJSON)
+	}
+	title := "New software package"
+	if !isNew {
+		title = "Edit software package: " + p.Name
+	}
+	// Multi-file file list. Driven entirely by what's on disk:
+	// no separate DB table needed since the filesystem is the
+	// source of truth and BlobStore.Resolve already enforces
+	// path containment.
+	var files []*fileNode
+	if !isNew && r.Blobs != nil {
+		// Lazy migration: if the package still references a
+		// legacy single-file payload.bin but no files dir yet
+		// exists, move it under files/<payload_filename> so
+		// the new UI shows it. Best-effort; failure is non-
+		// fatal (the legacy single-file path is still listed
+		// below in a banner so operators aren't blindsided).
+		migrateLegacyPayloadIfNeeded(req.Context(), r, &p)
+		// ListTree (recursive) so folder-structured payloads
+		// render as a tree; ListDir skipped sub-directories, which
+		// made an uploaded folder look like it never arrived.
+		entries, _ := r.Blobs.ListTree(softwarePackageFilesDir(p.ID))
+		files = buildFileTree(entries)
+	}
+	var bundles []storage.DirEntry
+	if !isNew && r.Blobs != nil {
+		bundles, _ = r.Blobs.ListDir(softwarePackageBundleDir(p.ID))
+	}
+	// Other packages, for the dependency picker, plus a set of the
+	// currently-selected dependency IDs so the template can mark them.
+	all, _ := r.Software.List(req.Context())
+	others := make([]model.SoftwarePackage, 0, len(all))
+	for _, pk := range all {
+		if pk.ID != p.ID {
+			others = append(others, pk)
+		}
+	}
+	depSel := make(map[model.ID]bool, len(p.DependsOn))
+	for _, d := range p.DependsOn {
+		depSel[d] = true
+	}
+	var succeeds model.ID
+	if p.SucceedsID != nil {
+		succeeds = *p.SucceedsID
+	}
+	renderForm(w, req, r, "software_form.html", title, fe, map[string]any{
+		"Pkg": p, "Rules": rules, "Steps": steps, "IsNew": isNew,
+		"Files": files, "Bundles": bundles, "AllPackages": others, "DepSelected": depSel,
+		"Succeeds": succeeds,
+	})
 }
 
 // migrateLegacyPayloadIfNeeded moves a pre-multi-file package's
@@ -344,17 +356,22 @@ func softwareEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		p, err := r.Software.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		softwareForm(r, p, false)(w, req)
 	}
 }
 
+// buildSoftwareFromForm reads the package form. On a validation failure
+// (a bad detection rule or install step) it still returns everything the
+// operator submitted, alongside the first error, so the form can be
+// re-rendered without losing their work.
 func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 	if err := req.ParseForm(); err != nil {
 		return model.SoftwarePackage{}, err
 	}
+	var firstErr error
 	pkg := model.SoftwarePackage{
 		Name:        strings.TrimSpace(req.FormValue("name")),
 		Description: strings.TrimSpace(req.FormValue("description")),
@@ -363,7 +380,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 	// Detection rules. The template emits a list of "rule_index[]" and
 	// per-rule fields named rule_<idx>_<field>.
 	rules := []swspec.DetectionRule{}
-	for _, idx := range req.Form["rule_index[]"] {
+	for i, idx := range req.Form["rule_index[]"] {
 		r := swspec.DetectionRule{
 			Type:           req.FormValue("rule_" + idx + "_type"),
 			FilePath:       req.FormValue("rule_" + idx + "_file_path"),
@@ -378,8 +395,8 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 			ScriptBody:     req.FormValue("rule_" + idx + "_script_body"),
 			WingetID:       req.FormValue("rule_" + idx + "_winget_id"),
 		}
-		if err := r.Validate(); err != nil {
-			return model.SoftwarePackage{}, fmt.Errorf("detection rule: %w", err)
+		if err := r.Validate(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("detection rule %d: %w", i+1, err)
 		}
 		rules = append(rules, r)
 	}
@@ -391,7 +408,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 
 	// Install steps.
 	steps := []swspec.InstallStep{}
-	for _, idx := range req.Form["step_index[]"] {
+	for i, idx := range req.Form["step_index[]"] {
 		s := swspec.InstallStep{
 			Type:              req.FormValue("step_" + idx + "_type"),
 			Description:       req.FormValue("step_" + idx + "_desc"),
@@ -441,8 +458,8 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 				}
 			}
 		}
-		if err := s.Validate(); err != nil {
-			return model.SoftwarePackage{}, fmt.Errorf("install step: %w", err)
+		if err := s.Validate(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("install step %d: %w", i+1, err)
 		}
 		steps = append(steps, s)
 	}
@@ -475,7 +492,7 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 		}
 	}
 
-	return pkg, nil
+	return pkg, firstErr
 }
 
 // splitArgs is a tiny POSIX-ish splitter that respects double-quoted
@@ -510,14 +527,12 @@ func softwareCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		p, err := buildSoftwareFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/software/new", http.StatusFound)
+			softwareFormPage(w, req, r, p, true, newFormError(req, model.KindSoftware, err))
 			return
 		}
 		out, err := r.Software.Create(req.Context(), p)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/software/new", http.StatusFound)
+			softwareFormPage(w, req, r, p, true, newFormError(req, model.KindSoftware, err))
 			return
 		}
 		flash(w, "ok", "Software package created — upload the installer next.")
@@ -529,14 +544,9 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		p, err := buildSoftwareFromForm(req)
-		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
-			return
-		}
-		existing, err := r.Software.Get(req.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+		existing, gerr := r.Software.Get(req.Context(), id)
+		if gerr != nil {
+			failPage(w, req, r, http.StatusNotFound, gerr)
 			return
 		}
 		p.ID = id
@@ -546,11 +556,14 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 		p.StoragePath = existing.StoragePath
 		p.PayloadFilename = existing.PayloadFilename
 		p.SizeBytes = existing.SizeBytes
-		if err := r.Software.Update(req.Context(), p); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+		if err == nil {
+			err = r.Software.Update(req.Context(), p)
 		}
+		if err != nil {
+			softwareFormPage(w, req, r, p, false, newFormError(req, model.KindSoftware, err))
+			return
+		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/software/%d/edit", id), http.StatusFound)
 	}
 }
@@ -558,11 +571,8 @@ func softwareUpdate(r Repos) http.HandlerFunc {
 func softwareDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Software.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindSoftware, id)
+		deleteFlash(w, req, model.KindSoftware, name, r.Software.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/software", http.StatusFound)
 	}
 }
@@ -575,7 +585,7 @@ func softwareUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if _, err := r.Software.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		ctx := req.Context()
@@ -584,7 +594,7 @@ func softwareUpload(r Repos) http.HandlerFunc {
 		if err != nil {
 			logging.Event(ctx, "software.upload.bad_request", actor, target,
 				slog.String("error", err.Error()))
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var uploaded int
@@ -697,7 +707,7 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
 		if _, err := r.Software.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		ctx := req.Context()
@@ -706,7 +716,7 @@ func softwareBundleUpload(r Repos) http.HandlerFunc {
 		if err != nil {
 			logging.Event(ctx, "software.bundle.bad_request", actor, target,
 				slog.String("error", err.Error()))
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var uploaded int
@@ -796,7 +806,7 @@ func softwareUploadDelete(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		pkg, err := r.Software.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		if pkg.StoragePath == "" {

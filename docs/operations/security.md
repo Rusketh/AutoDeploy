@@ -7,9 +7,16 @@ booting. For the values mentioned here, see the [configuration reference](../ref
 
 - Operators sign in with a **username and password**. Passwords are hashed with **bcrypt**;
   the plaintext is never stored.
-- A successful login sets an **`autodeploy_session`** cookie (HttpOnly, SameSite=Lax), valid for
-  **12 hours**. The `Secure` flag is set automatically when the server detects TLS — either a
-  direct HTTPS connection or a reverse proxy that sets `X-Forwarded-Proto: https`.
+- A successful login sets an **`autodeploy_session`** cookie (HttpOnly, SameSite=Lax). The `Secure`
+  flag is set automatically when the server detects TLS — either a direct HTTPS connection or a
+  reverse proxy that sets `X-Forwarded-Proto: https`.
+- Sessions **slide**: a session ends after **12 hours without activity**
+  (`AUTODEPLOY_SESSION_IDLE_TIMEOUT`), and every page view or save pushes that back — but never past
+  **7 days** from sign-in (`AUTODEPLOY_SESSION_MAX_LIFETIME`). About five minutes before an idle
+  session ends the portal shows a bar with **Stay signed in**. When a session has ended, signing in
+  again returns you to the page you were on (a form you were submitting is reopened, not re-posted),
+  and background requests from portal pages get `401` instead of a sign-in page. See
+  [Configuration](../reference/configuration.md).
 - **Login rate limiting:** each IP address is limited to **10 login attempts per minute**. Further
   attempts receive `429 Too Many Requests` until the window expires.
 - Manage accounts under **[Settings → Accounts](../portal/settings.md#accounts)**: create users,

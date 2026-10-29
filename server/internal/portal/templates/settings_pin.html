@@ -1,4 +1,5 @@
 {{define "body"}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2><svg class="icon-h2"><use href="#i-shield"/></svg>Access PIN</h2>
   <div class="right">
@@ -6,20 +7,23 @@
   </div>
 </div>
 
-<p>Current state:
-{{if .Data.On}}<span class="badge ok"><svg><use href="#i-check"/></svg>enabled</span>{{else}}<span class="badge"><svg><use href="#i-info"/></svg>disabled</span>{{end}}
+<p>Now:
+{{if .Data.On}}<span class="badge ok"><svg><use href="#i-check"/></svg>PIN required</span> — machines must enter it before the deploy menu opens.
+{{else}}<span class="badge"><svg><use href="#i-info"/></svg>PIN off</span> — any machine that network-boots can open the deploy menu.{{end}}
 </p>
 
-<form class="std" method="POST" action="/portal/settings/access-pin">
+<form class="std" method="POST" action="/portal/settings/access-pin" data-dirty-guard>
+  {{template "form_error" $fe}}
   <fieldset>
     <legend>New PIN</legend>
-    <label>
-      <input type="password" name="pin" autocomplete="new-password" placeholder="Leave blank to disable">
-      <span class="hint">
-        Hashed at rest with bcrypt. Server-side rate-limit: 5 failures in 15 minutes per machine UUID returns 429.
-        The Boot Client prompts for this PIN before showing the deploy menu.
-      </span>
+    <label><span class="lbl">PIN</span>
+      <input type="password" name="pin" autocomplete="new-password" placeholder="Leave blank to turn the PIN off" {{invalidAttr $fe "pin"}}>
+      {{fieldError $fe "pin"}}
+      <span class="hint">The Boot Client asks for this before showing the deploy menu.</span>
     </label>
+    <details class="help small"><summary>How is it protected?</summary>
+      <p>The PIN is stored only as a bcrypt hash. After 5 wrong tries in 15 minutes a machine is locked out for a while (HTTP 429).</p>
+    </details>
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/settings">Cancel</a>

@@ -1,9 +1,12 @@
 package payload
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,7 +24,7 @@ func TestBuildXorrisoArgs_DualBoot(t *testing.T) {
 	// mkisofs emulation with the media features a Windows tree needs.
 	for _, want := range []string{
 		"-as mkisofs", "-iso-level 3", "-J -joliet-long", "-R", "-V AUTODEPLOY",
-		"-b boot/etfsboot.com", "-no-emul-boot", "-boot-info-table",
+		"-b boot/etfsboot.com", "-no-emul-boot", "-boot-load-size 8",
 		"-eltorito-alt-boot", "-e efi/microsoft/boot/efisys.bin",
 		"-o /out/image.iso", "-graft-points",
 		"/=/media", "/=/overlay",
@@ -34,6 +37,11 @@ func TestBuildXorrisoArgs_DualBoot(t *testing.T) {
 	// and the media is pre-split for FAT32, so UDF must never be requested.
 	if strings.Contains(joined, "-udf") {
 		t.Errorf("must not request -udf (unsupported by xorriso -as mkisofs): %s", joined)
+	}
+	// -boot-info-table patches bytes 8..63 of the BIOS boot image in the ISO;
+	// for Windows' etfsboot.com that overwrites its code and BIOS boot fails.
+	if strings.Contains(joined, "-boot-info-table") {
+		t.Errorf("must not pass -boot-info-table (corrupts etfsboot.com): %s", joined)
 	}
 	// The overlay tree must be grafted AFTER the media tree so it wins on a
 	// path conflict (the injected autounattend.xml overrides any in the media).
@@ -72,10 +80,27 @@ func TestFindBootImages(t *testing.T) {
 		t.Errorf("uefi = %q, want EFI/MICROSOFT/BOOT/EFISYS.BIN (real casing)", uefi)
 	}
 
-	// A tree with neither returns empties (still exportable, non-bootable ISO).
+	// A tree with neither returns empties (ExportImageISO then refuses).
 	b2, u2 := FindBootImages(t.TempDir())
 	if b2 != "" || u2 != "" {
 		t.Errorf("empty tree returned boot images: %q %q", b2, u2)
+	}
+}
+
+func TestFindBootImages_PrefersNoPrompt(t *testing.T) {
+	// With both UEFI images present, the no-prompt one wins: efisys.bin waits
+	// for "Press any key" and an unattended VM / BMC boot would skip Setup.
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "efi", "microsoft", "boot", "efisys.bin"), "p")
+	mustWrite(t, filepath.Join(root, "efi", "microsoft", "boot", "efisys_noprompt.bin"), "n")
+	if _, uefi := FindBootImages(root); uefi != "efi/microsoft/boot/efisys_noprompt.bin" {
+		t.Errorf("uefi = %q, want efisys_noprompt.bin", uefi)
+	}
+	// Only the prompting image: still used.
+	root2 := t.TempDir()
+	mustWrite(t, filepath.Join(root2, "EFI", "Microsoft", "Boot", "efisys.bin"), "p")
+	if _, uefi := FindBootImages(root2); uefi != "EFI/Microsoft/Boot/efisys.bin" {
+		t.Errorf("uefi = %q, want EFI/Microsoft/Boot/efisys.bin", uefi)
 	}
 }
 
@@ -132,10 +157,14 @@ func TestAuthorISO_RealXorriso(t *testing.T) {
 	media := t.TempDir()
 	mustWrite(t, filepath.Join(media, "sources", "boot.wim"), "wim")
 	mustWrite(t, filepath.Join(media, "sources", "install.swm"), "swm")
-	// Real boot images are a few KiB; -boot-info-table patches a 56-byte table
-	// into the BIOS image, so a too-small stub makes xorriso MISHAP.
-	mustWrite(t, filepath.Join(media, "BOOT", "ETFSBOOT.COM"), strings.Repeat("b", 4096))
+	// Real boot images are a few KiB. The BIOS image carries recognisable,
+	// non-repeating bytes so the extracted copy can be compared exactly: any
+	// in-ISO patching (-boot-info-table rewrites bytes 8..63) is caught.
+	etfs := recognisableBytes("ETFSBOOT", 4096)
+	mustWrite(t, filepath.Join(media, "BOOT", "ETFSBOOT.COM"), string(etfs))
 	mustWrite(t, filepath.Join(media, "EFI", "MICROSOFT", "BOOT", "EFISYS.BIN"), strings.Repeat("u", 4096))
+	noprompt := recognisableBytes("NOPROMPT", 8192)
+	mustWrite(t, filepath.Join(media, "EFI", "MICROSOFT", "BOOT", "EFISYS_NOPROMPT.BIN"), string(noprompt))
 	// Real media carries the UEFI fallback loader (this is also how Rufus makes
 	// the USB bootable); include it so the tree matches a real export.
 	mustWrite(t, filepath.Join(media, "EFI", "BOOT", "BOOTX64.EFI"), strings.Repeat("e", 4096))
@@ -166,6 +195,90 @@ func TestAuthorISO_RealXorriso(t *testing.T) {
 	if fi.Size() < 32*1024 {
 		t.Errorf("ISO suspiciously small: %d bytes", fi.Size())
 	}
+	if _, ok := FinishedExport(out); !ok {
+		t.Error("FinishedExport rejects a real xorriso ISO")
+	}
+
+	// The El Torito catalog has a BIOS and a UEFI no-emulation entry pointing
+	// at the real-cased images (the no-prompt UEFI loader preferred).
+	report := xorrisoOut(t, "-indev", out, "-report_el_torito", "plain")
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`El Torito boot img :\s+1\s+BIOS\s+y\s+none`),
+		regexp.MustCompile(`El Torito boot img :\s+2\s+UEFI\s+y\s+none`),
+		regexp.MustCompile(`El Torito img path :\s+1\s+/BOOT/ETFSBOOT\.COM`),
+		regexp.MustCompile(`El Torito img path :\s+2\s+/EFI/MICROSOFT/BOOT/EFISYS_NOPROMPT\.BIN`),
+	} {
+		if !want.MatchString(report) {
+			t.Errorf("El Torito report missing %s\n%s", want, report)
+		}
+	}
+	// etfsboot.com in the ISO must be byte-identical to the source: no
+	// boot-info-table (or anything else) patched into it.
+	got := xorrisoExtract(t, out, "/BOOT/ETFSBOOT.COM")
+	if !bytes.Equal(got, etfs) {
+		t.Errorf("etfsboot.com was modified inside the ISO (first diff at byte %d)", firstDiff(got, etfs))
+	}
+	if got := xorrisoExtract(t, out, "/EFI/MICROSOFT/BOOT/EFISYS_NOPROMPT.BIN"); !bytes.Equal(got, noprompt) {
+		t.Error("efisys_noprompt.bin was modified inside the ISO")
+	}
+}
+
+// recognisableBytes returns n bytes of tag-prefixed, position-dependent data,
+// so a byte-level comparison pinpoints any patched region.
+func recognisableBytes(tag string, n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i*7 + i/251)
+	}
+	copy(b, tag)
+	return b
+}
+
+func firstDiff(a, b []byte) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return min(len(a), len(b))
+}
+
+// xorrisoOut runs the real xorriso and returns its stdout.
+func xorrisoOut(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := exec.Command(isoBuilderBin, args...).Output()
+	if err != nil {
+		t.Fatalf("xorriso %v: %v", args, err)
+	}
+	return string(out)
+}
+
+// xorrisoExtract copies isoPath (an absolute path inside the ISO) out of the
+// image and returns its bytes.
+func xorrisoExtract(t *testing.T, iso, isoPath string) []byte {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "x")
+	if err := exec.Command(isoBuilderBin, "-osirrox", "on", "-indev", iso, "-extract", isoPath, dst).Run(); err != nil {
+		t.Fatalf("extract %s: %v", isoPath, err)
+	}
+	b, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// xorrisoRootNames lists the names directly under dir inside the ISO.
+func xorrisoRootNames(t *testing.T, iso, dir string) []string {
+	t.Helper()
+	var names []string
+	for _, l := range strings.Split(xorrisoOut(t, "-indev", iso, "-ls", dir), "\n") {
+		l = strings.TrimSpace(l)
+		if len(l) >= 2 && l[0] == '\'' && l[len(l)-1] == '\'' {
+			names = append(names, l[1:len(l)-1])
+		}
+	}
+	return names
 }
 
 func mustWrite(t *testing.T, path, content string) {

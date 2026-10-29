@@ -1,46 +1,44 @@
 {{define "body"}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2><svg class="icon-h2"><use href="#i-gear"/></svg>Operational settings</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/operational">
+<form class="std" method="POST" action="/portal/settings/operational" data-dirty-guard>
+  {{template "form_error" $fe}}
   <fieldset><legend>Log retention</legend>
-    <label><span class="lbl">Keep log events for (days)</span>
-      <input type="number" name="retention_days" value="{{.Data.RetentionDays}}" min="0" max="3650">
-      <span class="hint">0 disables pruning — log_event grows forever. The retention scheduler ticks hourly and prunes rows older than the cutoff.</span>
+    <label><span class="lbl">Keep logs for (days)</span>
+      <input type="number" name="retention_days" value="{{.Data.RetentionDays}}" min="0" max="3650" {{invalidAttr $fe "retention_days"}}>
+      {{fieldError $fe "retention_days"}}
+      <span class="hint">Older log entries are deleted once an hour. 0 keeps them forever (the log keeps growing).</span>
     </label>
   </fieldset>
-  <fieldset><legend>Display time zone</legend>
+  <fieldset><legend>Time zone</legend>
     <label><span class="lbl">Portal time zone</span>
-      <input type="text" name="display_timezone" value="{{.Data.Timezone}}" list="tz-list" placeholder="UTC" autocomplete="off" spellcheck="false">
+      <input type="text" name="display_timezone" value="{{.Data.Timezone}}" list="tz-list" placeholder="UTC" autocomplete="off" spellcheck="false" {{invalidAttr $fe "display_timezone"}}>
       <datalist id="tz-list">
         {{range .Data.CommonZones}}<option value="{{.}}">{{end}}
       </datalist>
-      <span class="hint">
-        IANA name (e.g. <code>Europe/London</code>, <code>America/New_York</code>) used to render dates and times — including each machine's last check-in — across the portal.
-        Leave blank for <strong>UTC</strong>. Daylight saving is handled automatically. <strong>Applies immediately</strong> on save.
-      </span>
+      {{fieldError $fe "display_timezone"}}
+      <span class="hint">Dates and times across the portal are shown in this zone, e.g. <code>Europe/London</code>. Blank means UTC. Applies immediately; daylight saving is handled for you.</span>
     </label>
   </fieldset>
-  <fieldset><legend>Agent check-in interval</legend>
-    <label><span class="lbl">Resident agent poll interval (seconds)</span>
-      <input type="number" name="agent_poll_seconds" value="{{.Data.CheckInSeconds}}" min="5" max="86400">
-      <span class="hint">
-        How often each deployed agent polls <code>/api/v1/agent/self</code> for pending jobs, re-image flags and software, and reports its name / AD location.
-        The default is 300 (5 minutes). Lower it (e.g. 30) while testing so changes apply quickly; raise it for a large fleet. Minimum 5s.
-        <strong>Each agent applies the new value on its next poll</strong> — so a change can take up to the current interval to take effect.
-      </span>
+  <fieldset><legend>Agent check-in</legend>
+    <label><span class="lbl">Check in every (seconds)</span>
+      <input type="number" name="agent_poll_seconds" value="{{.Data.CheckInSeconds}}" min="5" max="86400" {{invalidAttr $fe "agent_poll_seconds"}}>
+      {{fieldError $fe "agent_poll_seconds"}}
+      <span class="hint">How often each installed agent asks for new jobs. Default 300 (5 minutes); minimum 5.</span>
     </label>
+    <details class="help small"><summary>Choosing a value</summary>
+      <p>Lower it (e.g. 30) while testing so changes reach machines quickly; raise it for a large fleet to reduce load. Each agent picks up the new value at its next check-in, so a change can take up to the current interval to apply.</p>
+    </details>
   </fieldset>
-  <fieldset><legend>Payload throttle</legend>
-    <label><span class="lbl">Maximum concurrent <code>/payload/*</code> streams</span>
-      <input type="number" name="payload_max_in_flight" value="{{.Data.Throttle}}" min="0" max="65535">
-      <span class="hint">
-        Caps concurrent payload (WIM / driver / software) downloads so a thundering herd queues rather than thrashing file descriptors.
-        0 = unlimited (don't pick this on production). The default is 128; raise for hosts with bigger fd budgets, lower if mirrors are absorbing most of the load.
-        <strong>Takes effect on next server restart.</strong>
-      </span>
+  <fieldset><legend>Download limit</legend>
+    <label><span class="lbl">Most downloads at once</span>
+      <input type="number" name="payload_max_in_flight" value="{{.Data.Throttle}}" min="0" max="65535" {{invalidAttr $fe "payload_max_in_flight"}}>
+      {{fieldError $fe "payload_max_in_flight"}}
+      <span class="hint">Image, driver and software downloads beyond this wait their turn. Default 128; 0 means no limit. <strong>Applies after a server restart.</strong></span>
     </label>
   </fieldset>
   <div class="actions">

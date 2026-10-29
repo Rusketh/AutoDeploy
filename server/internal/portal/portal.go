@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,24 +44,24 @@ var assetsFS embed.FS
 // Repos is the dependency bundle the portal needs. Keeping the same shape
 // as api.Repos so main can pass through a single struct.
 type Repos struct {
-	ISOs      *model.ISORepo
-	Unattend  *model.UnattendRepo
-	Drivers   *model.DriverPackageRepo
-	Software  *model.SoftwarePackageRepo
+	ISOs        *model.ISORepo
+	Unattend    *model.UnattendRepo
+	Drivers     *model.DriverPackageRepo
+	Software    *model.SoftwarePackageRepo
 	Loadouts    *model.SoftwareLoadoutRepo
 	Images      *model.ImageRepo
 	ImageGroups *model.ImageGroupRepo
-	Inventory *model.InventoryRepo
-	Bulk      *model.BulkRepo
-	Logs      *model.LogRepo
-	Users     *auth.Repo
-	Settings  *auth.SettingsRepo
-	Branding  *branding.Repo
-	Mirrors   *model.PayloadMirrorRepo
-	Runtime   *runtime.Settings
-	Resolver  *resolve.Resolver
-	Blobs     *storage.BlobStore
-	AD        *addomain.Service
+	Inventory   *model.InventoryRepo
+	Bulk        *model.BulkRepo
+	Logs        *model.LogRepo
+	Users       *auth.Repo
+	Settings    *auth.SettingsRepo
+	Branding    *branding.Repo
+	Mirrors     *model.PayloadMirrorRepo
+	Runtime     *runtime.Settings
+	Resolver    *resolve.Resolver
+	Blobs       *storage.BlobStore
+	AD          *addomain.Service
 	// DomainJoin stores per-image agent-driven AD join config (the image
 	// edit form reads/writes it).
 	DomainJoin *model.DomainJoinRepo
@@ -123,14 +125,16 @@ func Register(mux *http.ServeMux, r Repos) error {
 	mux.HandleFunc("GET /portal/login", loginForm(r))
 	mux.HandleFunc("POST /portal/login", loginSubmit(r))
 	mux.HandleFunc("POST /portal/logout", logoutSubmit(r))
+	mux.HandleFunc("POST /portal/session/keepalive", requireSession(r, sessionKeepAlive(r)))
 
 	// Protected pages. We wrap each handler in requireSession because
 	// net/http's ServeMux does not have route-level middleware.
 	get := func(path string, h http.HandlerFunc) {
 		mux.HandleFunc("GET "+path, requireSession(r, h))
 	}
+	// POSTs change state: audited records who changed what (audit.go).
 	post := func(path string, h http.HandlerFunc) {
-		mux.HandleFunc("POST "+path, requireSession(r, h))
+		mux.HandleFunc("POST "+path, requireSession(r, audited(r, path, h)))
 	}
 
 	mux.HandleFunc("GET /portal", func(w http.ResponseWriter, req *http.Request) {
@@ -173,18 +177,18 @@ func Register(mux *http.ServeMux, r Repos) error {
 }
 
 // requireSession redirects to /portal/login if the request has no valid
-// session cookie. The "next" parameter remembers where the user was
-// trying to go.
+// session cookie (see redirectToLogin for where "next" points), and
+// otherwise records the request as session activity (session.go).
 func requireSession(r Repos, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		u, ok := sessionUser(req, r)
+		u, info, ok := sessionFromRequest(w, req, r)
 		if !ok {
-			to := url.Values{}
-			to.Set("next", req.URL.RequestURI())
-			http.Redirect(w, req, "/portal/login?"+to.Encode(), http.StatusFound)
+			redirectToLogin(w, req)
 			return
 		}
 		ctx := context.WithValue(req.Context(), ctxKeyUser{}, u)
+		ctx = context.WithValue(ctx, ctxKeySession{}, info)
+		ctx = withNames(ctx, r)
 		h(w, req.WithContext(ctx))
 	}
 }
@@ -209,16 +213,13 @@ func loginForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		// If already logged in, bounce to where they were going.
 		if _, ok := sessionUser(req, r); ok {
-			next := req.URL.Query().Get("next")
-			if next == "" {
-				next = "/portal/"
-			}
-			http.Redirect(w, req, next, http.StatusFound)
+			http.Redirect(w, req, safeNext(req.URL.Query().Get("next")), http.StatusFound)
 			return
 		}
 		render(w, req, r, "login.html", "Sign in", map[string]any{
-			"Next":  req.URL.Query().Get("next"),
-			"Error": req.URL.Query().Get("error"),
+			"Next":   req.URL.Query().Get("next"),
+			"Error":  req.URL.Query().Get("error"),
+			"Notice": loginNotice(req.URL.Query().Get("expired")),
 		})
 	}
 }
@@ -236,12 +237,14 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			if username == "" {
 				username = "(blank)"
 			}
+			ip := clientAddr(req)
+			recordAuth(req, r, "auth.login.fail", username, map[string]any{"username": username, "ip": ip, "via": "portal"})
 			r.Emitter.Emit(req.Context(), notify.Event{
 				Name:     notify.EventAuthLoginFailed,
 				Severity: notify.SevWarning,
 				Title:    "Failed login attempt for " + username,
-				Body:     "A portal sign-in with this username was rejected.",
-				Link:     "/portal/logs",
+				Body:     "A portal sign-in with this username was rejected (source IP " + ip + ").",
+				Link:     model.FailedLoginLogsURL(username),
 				Actor:    username,
 			})
 			q := url.Values{}
@@ -252,30 +255,30 @@ func loginSubmit(r Repos) http.HandlerFunc {
 			http.Redirect(w, req, "/portal/login?"+q.Encode(), http.StatusFound)
 			return
 		}
-		tok, err := r.Users.CreateSession(req.Context(), u.ID, 12*time.Hour)
+		tok, err := r.Users.CreateSession(req.Context(), u.ID, auth.SessionIdleTimeout)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookieName,
-			Value:    tok,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(12 * time.Hour),
-			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
-		})
-		next := req.FormValue("next")
-		if next == "" || !strings.HasPrefix(next, "/portal/") {
-			next = "/portal/"
-		}
-		http.Redirect(w, req, next, http.StatusFound)
+		setSessionCookie(w, req, tok, time.Now())
+		recordAuth(req, r, "auth.login.ok", u.Username, map[string]any{"ip": clientAddr(req), "via": "portal"})
+		http.Redirect(w, req, safeNext(req.FormValue("next")), http.StatusFound)
 	}
+}
+
+// clientAddr is the request's source IP (without the port).
+func clientAddr(req *http.Request) string {
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return host
+	}
+	return req.RemoteAddr
 }
 
 func logoutSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		if u, ok := sessionUser(req, r); ok {
+			recordAuth(req, r, "auth.logout", u.Username, map[string]any{"via": "portal"})
+		}
 		if c, err := req.Cookie(sessionCookieName); err == nil {
 			_ = r.Users.DeleteSession(req.Context(), c.Value)
 		}
@@ -330,8 +333,14 @@ func dashboardPage(r Repos) http.HandlerFunc {
 			ISOs, Unattends, Drivers, Software, Loadouts, Images, Machines int
 		}
 		var c counts
+		isoPrepFailed := 0
 		if l, err := r.ISOs.List(req.Context()); err == nil {
 			c.ISOs = len(l)
+			for _, iso := range l {
+				if strings.TrimSpace(iso.PrepError) != "" {
+					isoPrepFailed++
+				}
+			}
 		}
 		if l, err := r.Unattend.List(req.Context()); err == nil {
 			c.Unattends = len(l)
@@ -354,6 +363,7 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		// Recent activity: last 12 log events across all components,
 		// for a quick "what just happened" panel.
 		events, _ := r.Logs.Search(req.Context(), model.LogSearch{Limit: 12})
+		namesFor(req, r).DescribeLogs(events)
 
 		// Top 5 most-recently-seen machines for a "live fleet" panel.
 		topMachines := machines
@@ -410,7 +420,11 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		if r.Updates != nil {
 			updateSummary, _ = r.Updates.FleetUpdateSummary(req.Context())
 		}
+		now := time.Now()
+		facts := loadFleetFacts(req, r, machines, now)
 		render(w, req, r, "index.html", "Dashboard", map[string]any{
+			"Attention":   needsAttention(machines, facts, isoPrepFailed, now),
+			"Status":      facts.Status,
 			"Counts":      c,
 			"Events":      events,
 			"TopMachines": topMachines,
@@ -451,7 +465,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 	if r.Runtime != nil {
 		loc = r.Runtime.DisplayLocation()
 	}
-	return template.FuncMap{
+	fm := template.FuncMap{
 		"derefID": func(p *model.ID) string {
 			if p == nil {
 				return ""
@@ -486,7 +500,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 			}
 			return template.URL("")
 		},
-		"join": strings.Join,
+		"join":  strings.Join,
+		"lower": strings.ToLower,
 		"hasItems": func(s any) bool {
 			switch v := s.(type) {
 			case nil:
@@ -513,6 +528,11 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		// adJoinLabel / adJoinBadgeClass render a machine's AD join status as a
 		// human label and a badge colour class. An empty (unknown / N/A) status
 		// yields an empty label so the caller can show a muted dash instead.
+		// makeModel joins manufacturer and product without repeating a
+		// manufacturer the product already starts with ("HP EliteDesk").
+		"makeModel": makeModel,
+		// eventLabel names a notification event in plain English.
+		"eventLabel": notify.EventLabel,
 		"adJoinLabel": func(status string) string {
 			switch status {
 			case model.ADJoinJoined:
@@ -575,19 +595,9 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		},
 		// humanBytes formats a byte count as a short suffixed string.
 		// Mirrors the JS upload-progress formatter so values match
-		// between live progress and the saved record.
-		"humanBytes": func(n int64) string {
-			switch {
-			case n < 1024:
-				return fmt.Sprintf("%d B", n)
-			case n < 1024*1024:
-				return fmt.Sprintf("%.1f KiB", float64(n)/1024)
-			case n < 1024*1024*1024:
-				return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
-			default:
-				return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
-			}
-		},
+		// between live progress and the saved record. Accepts any integer
+		// type (sizes are int64 on records, int on some file listings).
+		"humanBytes": func(v any) string { return humanBytes(toInt64(v)) },
 		// relTime formats a past timestamp as "just now", "5m ago",
 		// "3h ago", etc. The "uploaded X ago" line in the payload card
 		// uses it so operators see the recency at a glance without
@@ -612,7 +622,73 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 				return t.Format("2006-01-02")
 			}
 		},
+		// navGroups is the grouped primary navigation with active flags for
+		// the current path (see nav.go).
+		"navGroups": func() []navGroup { return buildNav(req.URL.Path) },
+		// withQuery builds a link to path that keeps the current search
+		// (and the rest of the view) with the given name/value pairs set;
+		// an empty value drops that parameter. See search.go.
+		"withQuery": func(path string, kv ...string) string { return withQuery(req, path, kv...) },
 	}
+	for k, f := range nameFuncs(namesFor(req, r)) {
+		fm[k] = f
+	}
+	for k, f := range timeFuncs(loc, time.Now) {
+		fm[k] = f
+	}
+	for k, f := range formErrorFuncs() {
+		fm[k] = f
+	}
+	for k, f := range deployFuncs() {
+		fm[k] = f
+	}
+	for k, f := range bulkTemplateFuncs(loc) {
+		fm[k] = f
+	}
+	return fm
+}
+
+// humanBytes formats a byte count as "512 B", "1.5 KiB", "734.0 MiB",
+// "6.00 GiB".
+func humanBytes(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
+	}
+}
+
+// toInt64 widens the integer types templates pass to humanBytes.
+func toInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case int32:
+		return int64(x)
+	case uint64:
+		return int64(x)
+	case uint32:
+		return int64(x)
+	case uint:
+		return int64(x)
+	}
+	return 0
+}
+
+// layoutPartials are parsed alongside every page: the layout plus the shared
+// partial templates any page may {{template}}.
+var layoutPartials = []string{
+	"templates/_layout.html", "templates/_icons.html",
+	"templates/_action_picker.html", "templates/_pagination.html",
+	"templates/_machine_picker.html", "templates/_search.html", "templates/_form_error.html",
+	"templates/_deployment_timeline.html", "templates/_bulk_progress.html",
 }
 
 // render parses _layout + the named page, executes the layout, and
@@ -620,9 +696,7 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 // current user, the brand, and any flash message.
 func render(w http.ResponseWriter, req *http.Request, r Repos, page, title string, data any) {
 	tmpl, err := template.New("").Funcs(funcsFor(req, r)).ParseFS(
-		assetsFS, "templates/_layout.html", "templates/_icons.html",
-		"templates/_action_picker.html", "templates/_pagination.html",
-		"templates/"+page)
+		assetsFS, append(append([]string{}, layoutPartials...), "templates/"+page)...)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template parse: %v", err), http.StatusInternalServerError)
 		return
@@ -630,6 +704,13 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 	user, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 	brand, _ := r.Branding.Get(req.Context())
 	kind, msg := readFlash(w, req)
+	// A page re-rendered after a rejected save can carry its error in
+	// the message bar (for forms without a slot of their own).
+	if m, ok := data.(map[string]any); ok {
+		if s, _ := m["FlashErr"].(string); s != "" {
+			kind, msg = "err", s
+		}
+	}
 	// Bootstrap-admin warning: the file holds a cleartext password
 	// and is meant to be read once then deleted. If it is still
 	// present after an operator has logged in we surface a banner
@@ -651,9 +732,14 @@ func render(w http.ResponseWriter, req *http.Request, r Repos, page, title strin
 		"FlashMsg":         msg,
 		"Path":             req.URL.Path,
 		"BootstrapPresent": bootstrapPresent,
+		"SessionExpires":   sessionExpiresMillis(req),
+		"ServerNow":        time.Now().UnixMilli(), // lets the page correct for clock skew
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", envelope); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Not failPage: it renders through here, and the page may be
+		// half-written already. Log the cause; append a plain marker.
+		slog.Error("portal.render.failed", slog.String("page", page), slog.String("error", err.Error()))
+		http.Error(w, "page render failed", http.StatusInternalServerError)
 	}
 }
 
@@ -843,4 +929,17 @@ func pathID(req *http.Request) (model.ID, error) {
 		return 0, fmt.Errorf("invalid id %q", raw)
 	}
 	return model.ID(n), nil
+}
+
+// makeModel is "<manufacturer> <product>", or just the product when it
+// already names the manufacturer (HP reports "HP EliteDesk 800 G6").
+func makeModel(manufacturer, product string) string {
+	manufacturer, product = strings.TrimSpace(manufacturer), strings.TrimSpace(product)
+	switch {
+	case product == "":
+		return manufacturer
+	case manufacturer == "" || strings.HasPrefix(strings.ToLower(product), strings.ToLower(manufacturer)):
+		return product
+	}
+	return manufacturer + " " + product
 }

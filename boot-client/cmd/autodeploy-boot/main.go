@@ -49,6 +49,7 @@ import (
 	"github.com/rusketh/autodeploy/boot-client/internal/imaging"
 	"github.com/rusketh/autodeploy/boot-client/internal/logging"
 	"github.com/rusketh/autodeploy/boot-client/internal/smbios"
+	"github.com/rusketh/autodeploy/boot-client/internal/ui"
 )
 
 type bootFlags struct {
@@ -109,10 +110,16 @@ func main() {
 	id, err := smbios.ReadFromSysfs(f.sysfs)
 	if err != nil {
 		log.Error("smbios.read", slog.String("error", err.Error()))
-		os.Exit(0) // fail-safe: no SMBIOS → normal boot
+		shipLogs(log, shipper, f.server, f.insecureTLS) // os.Exit skips the defer
+		os.Exit(0)                                      // fail-safe: no SMBIOS → normal boot
 	}
+	// Tag every event from here on with the machine's identity once rather
+	// than per call: actor = SMBIOS UUID (a per-call actor still overrides),
+	// and the shipper sends the UUID as X-AutoDeploy-Machine-UUID so the
+	// server can attribute each batch to the machine.
+	log = log.With(slog.String("actor", id.SystemUUID))
+	shipper.SetMachineUUID(id.SystemUUID)
 	log.Info("boot.start",
-		slog.String("actor", id.SystemUUID),
 		slog.String("target", "self"),
 		slog.String("manufacturer", id.SystemManufacturer),
 		slog.String("product", id.SystemProduct),
@@ -134,16 +141,18 @@ func main() {
 	case "deploy":
 		if f.server == "" {
 			log.Error("deploy", slog.String("error", "server URL required"))
-			os.Exit(0)
+			os.Exit(0) // no server: nothing to ship to
 		}
 		imageID, err := strconv.ParseInt(flag.Arg(1), 10, 64)
 		if err != nil || imageID <= 0 {
 			log.Error("deploy", slog.String("error", "deploy <image-id> required"))
+			shipLogs(log, shipper, f.server, f.insecureTLS)
 			os.Exit(0)
 		}
 		runDeploy(log, f, id, imageID, shipper)
 	default:
 		log.Error("boot.unknown_cmd", slog.String("cmd", cmd))
+		shipLogs(log, shipper, f.server, f.insecureTLS)
 		os.Exit(0)
 	}
 }
@@ -171,6 +180,10 @@ type menuResponse struct {
 	// AutoDeployImageID is set when the server has flagged this machine for
 	// remote re-image. Non-zero means deploy it immediately, no menu.
 	AutoDeployImageID int64 `json:"auto_deploy_image_id,omitempty"`
+	// MachineName is the computer name the server knows this machine by,
+	// shown in the imaging screens' identity header. Optional: servers that
+	// don't send it leave the header showing the model instead.
+	MachineName string `json:"machine_name,omitempty"`
 }
 
 type manifestItem struct {
@@ -226,9 +239,19 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	// driver filter on e.g. board_product from the portal's inventory
 	// before the machine has ever been deployed.
 	if err := c.PostJSON(ctx, "/api/v1/clients/menu", identityBody(id), &resp); err != nil {
-		log.Error("menu.fetch", slog.String("error", err.Error()))
-		os.Exit(0) // fail-safe
+		// Nothing has been touched yet, so this only explains and offers a
+		// retry (the network may simply not be up yet); no deployment row
+		// exists to report it against.
+		failDeploy(ctx, log, f, nil, id, 0, shipper, deployFailure{
+			Action: "menu.fetch",
+			Code:   "MENU-FETCH",
+			Title:  "Couldn't start the deployment",
+			What:   "Couldn't reach the AutoDeploy server to get the deployment menu",
+			Err:    err,
+			Exit:   0, // fail-safe
+		})
 	}
+	machineName = resp.MachineName
 	// Remote re-image: the server flagged this machine to auto-deploy. Skip
 	// BOTH the access-PIN gate and the interactive menu -- the operator
 	// already authorised this re-image server-side, and there's no human at
@@ -236,7 +259,6 @@ func runMenu(log *slog.Logger, f bootFlags, id smbios.Identity, shipper *logging
 	// flag when runDeploy reports "staging", so this fires exactly once.
 	if resp.AutoDeployImageID != 0 {
 		log.Info("menu.auto_reimage",
-			slog.String("actor", id.SystemUUID),
 			slog.Int64("image_id", resp.AutoDeployImageID))
 		runDeploy(log, f, id, resp.AutoDeployImageID, shipper)
 		return
@@ -349,16 +371,31 @@ func runConsoleMenu(ctx context.Context, log *slog.Logger, f bootFlags, c *httpc
 // reportDeployStatus tells the server a deploy is staging / staged /
 // failed, so the dashboard shows a machine before its OS (and agent) come
 // up. Best-effort: a reporting failure never blocks or fails the deploy.
-func reportDeployStatus(ctx context.Context, c *httpc.Client, log *slog.Logger, id smbios.Identity, imageID int64, status, notes string) {
+//
+// Returns the deployment row's id when the server sends one back (it does
+// for "staging", which opens the row), else 0, so the caller can tag the
+// rest of the run's events with it.
+func reportDeployStatus(ctx context.Context, c *httpc.Client, log *slog.Logger, id smbios.Identity, imageID int64, status, notes string) int64 {
 	body := map[string]any{
 		"identity": identityBody(id),
 		"image_id": imageID,
 		"status":   status,
 		"notes":    notes,
 	}
-	if err := c.PostJSON(ctx, "/api/v1/clients/deploy-status", body, nil); err != nil {
-		log.Warn("deploy.status.report", slog.String("status", status), slog.String("error", err.Error()))
+	var resp struct {
+		DeploymentID int64 `json:"deployment_id"`
 	}
+	// Only "staging" answers with the row id; decode nothing for the other
+	// statuses so a server that replies with an empty body isn't an error.
+	var out any
+	if status == "staging" {
+		out = &resp
+	}
+	if err := c.PostJSON(ctx, "/api/v1/clients/deploy-status", body, out); err != nil {
+		log.Warn("deploy.status.report", slog.String("status", status), slog.String("error", err.Error()))
+		return 0
+	}
+	return resp.DeploymentID
 }
 
 // Stall budgets for resilient downloads -- how long DownloadFile keeps
@@ -743,9 +780,18 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	stopShip := startPeriodicLogShip(log, shipper, f.server, f.insecureTLS)
 	defer stopShip()
 	c := httpc.New(f.server, id.SystemUUID, f.insecureTLS).WithSite(f.site)
+	deployStarted = time.Now()
 	// Open a deployment row right away so a machine that fails before its
-	// OS ever boots is still visible on the dashboard.
-	reportDeployStatus(ctx, c, log, id, imageID, "staging", "")
+	// OS ever boots is still visible on the dashboard. The server answers
+	// with the row's id: tag every later event of this run with it so the
+	// portal can show the run's logs as one timeline.
+	if depID := reportDeployStatus(ctx, c, log, id, imageID, "staging", ""); depID != 0 {
+		log = log.With(slog.Int64("deployment_id", depID))
+	}
+	// fail ends the run on a failure: see failDeploy.
+	fail := func(df deployFailure) {
+		failDeploy(ctx, log, f, c, id, imageID, shipper, df)
+	}
 
 	// Resolve the target disk up front, BEFORE any download, so a machine
 	// with no /dev/sda fails fast with a clear reason instead of downloading
@@ -757,18 +803,19 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	disk := resolveTargetDisk(f.disk, "/sys", "/dev", log)
 	if disk == "" {
 		if !f.dryRun {
-			reportStage("Preparing", "No usable target disk found", -1)
-			reportDeployStatus(ctx, c, log, id, imageID, "failed",
-				"no usable target disk found — the kernel sees no internal disk. On Intel machines "+
-					"set the BIOS storage/SATA mode to AHCI (disable RAID/RST or VMD), or pass "+
-					"autodeploy.disk=<device>")
-			// Ship the buffered logs (which include resolveTargetDisk's listing
-			// of every block device the kernel enumerated) before exiting:
-			// os.Exit skips the deferred shippers, and that listing is exactly
-			// what distinguishes a disk hidden by RAID/VMD (empty list) from a
+			// failDeploy ships the buffered logs (which include
+			// resolveTargetDisk's listing of every block device the kernel
+			// enumerated) before exiting: that listing is exactly what
+			// distinguishes a disk hidden by RAID/VMD (empty list) from a
 			// detection gap (the disk is listed but was filtered out).
-			shipLogs(log, shipper, f.server, f.insecureTLS)
-			os.Exit(0) // fail-safe: nothing was touched, so boot normally
+			fail(deployFailure{
+				Action: "deploy.disk.none",
+				Code:   "NO-DISK",
+				What: "No usable target disk found — the kernel sees no internal disk. On Intel machines " +
+					"set the BIOS storage/SATA mode to AHCI (disable RAID/RST or VMD), or pass " +
+					"autodeploy.disk=<device>",
+				Exit: 0, // fail-safe: nothing was touched, so boot normally
+			})
 		}
 		// A dry run wipes nothing; keep going so the flow is still exercised.
 		// Fall back to a placeholder device so the dry-run log reads sensibly.
@@ -791,20 +838,28 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// POST identity so the server can match driver packages.
 	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
 		identityBody(id), &m); err != nil {
-		log.Error("manifest.fetch", slog.String("error", err.Error()))
-		reportDeployStatus(ctx, c, log, id, imageID, "failed", "manifest fetch failed: "+err.Error())
-		os.Exit(0)
+		fail(deployFailure{
+			Action: "manifest.fetch",
+			Code:   "MANIFEST",
+			What:   "Couldn't get the deployment manifest from the server (manifest fetch failed)",
+			Err:    err,
+			Exit:   0,
+		})
 	}
 	log.Info("manifest.received",
-		slog.String("actor", id.SystemUUID),
 		slog.String("target", fmt.Sprintf("image:%d", imageID)),
 		slog.Int("items", len(m.Items)),
 		slog.Any("warnings", m.Warnings),
 	)
 
 	if err := os.MkdirAll(f.work, 0o755); err != nil {
-		log.Error("workdir.create", slog.String("error", err.Error()))
-		os.Exit(0)
+		fail(deployFailure{
+			Action: "workdir.create",
+			Code:   "WORKDIR",
+			What:   "Couldn't create the boot client's scratch directory",
+			Err:    err,
+			Exit:   0,
+		})
 	}
 
 	// Harden any USB Ethernet adapter before the multi-MB/GB payload
@@ -837,16 +892,28 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 			reportFile(itemLabel(it))
 			dst := filepath.Join(f.work, "payload-unattend-"+sanitise(it.URL))
 			if err := download(ctx, c, log, it, dst); err != nil {
-				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
-				os.Exit(0)
+				fail(deployFailure{
+					Action: "download",
+					Code:   "PAYLOAD",
+					What:   "Couldn't download the answer file (unattend) from the server",
+					Err:    err,
+					Attrs:  []any{slog.String("url", it.URL)},
+					Exit:   0,
+				})
 			}
 			unattendPath = dst
 		case "driver":
 			reportFile(itemLabel(it))
 			dst := filepath.Join(f.work, "payload-driver-"+sanitise(it.URL))
 			if err := download(ctx, c, log, it, dst); err != nil {
-				log.Error("download", slog.String("url", it.URL), slog.String("error", err.Error()))
-				os.Exit(0)
+				fail(deployFailure{
+					Action: "download",
+					Code:   "PAYLOAD",
+					What:   fmt.Sprintf("Couldn't download the driver package %q from the server", itemLabel(it)),
+					Err:    err,
+					Attrs:  []any{slog.String("url", it.URL)},
+					Exit:   0,
+				})
 			}
 			drivers = append(drivers, imaging.MediaDriver{BlobPath: dst, WinPEDirs: it.WinPEDirs})
 		case "software":
@@ -857,9 +924,13 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	}
 
 	if mediaItem == nil {
-		log.Error("deploy.no_media", slog.String("reason", "manifest has no iso-media; fail-safe"))
-		reportDeployStatus(ctx, c, log, id, imageID, "failed", "manifest has no deployable media")
-		os.Exit(0)
+		fail(deployFailure{
+			Action: "deploy.no_media",
+			Code:   "NO-MEDIA",
+			What:   "This image has no install media attached (the manifest has no deployable media). Check the image's ISO in the portal",
+			Attrs:  []any{slog.String("reason", "manifest has no iso-media; fail-safe")},
+			Exit:   0,
+		})
 	}
 
 	// Fetch the agent and render its SetupComplete.cmd. Best-effort: if no
@@ -913,7 +984,6 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	}
 	runner := &imaging.OSRunner{Log: log, DryRun: f.dryRun}
 	log.Info("deploy.stage.start",
-		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk),
 		slog.Bool("dry_run", f.dryRun))
 
@@ -926,9 +996,13 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 		reportFile("media file index")
 		idx, err := fetchMediaIndex(ctx, c, *mediaItem)
 		if err != nil {
-			log.Error("deploy.media_index.fail", slog.String("error", err.Error()))
-			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media index fetch failed: "+err.Error())
-			os.Exit(0) // fail-safe: disk untouched, normal boot
+			fail(deployFailure{
+				Action: "deploy.media_index.fail",
+				Code:   "MEDIA-INDEX",
+				What:   "Couldn't get the install media's file list from the server (media index fetch failed). The disk was not touched",
+				Err:    err,
+				Exit:   0, // fail-safe: disk untouched, normal boot
+			})
 		}
 		mediaIdx = idx
 	}
@@ -938,29 +1012,41 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	reportStage("Preparing disk", "Partitioning and formatting", -1)
 	mountPath, err := imaging.PreparePartition(ctx, plan, runner)
 	if err != nil {
-		log.Error("deploy.partition.fail", slog.String("error", err.Error()))
-		reportDeployStatus(ctx, c, log, id, imageID, "failed", "partition failed: "+err.Error())
-		os.Exit(1)
+		fail(deployFailure{
+			Action: "deploy.partition.fail",
+			Code:   "PARTITION",
+			What:   "Couldn't prepare the disk (partitioning failed)",
+			Err:    err,
+			Output: runner.LastStderr(),
+			Exit:   1,
+		})
 	}
 	if !f.dryRun {
 		reportStage("Downloading image", "Copying install media to disk", 0)
 		if err := downloadMediaFiles(ctx, c, log, *mediaItem, mountPath, mediaIdx); err != nil {
-			log.Error("download.media",
-				slog.String("url", mediaItem.URL), slog.String("error", err.Error()))
-			reportDeployStatus(ctx, c, log, id, imageID, "failed", "media download failed: "+err.Error())
-			// os.Exit below skips main()'s deferred shipLogs, so flush the
-			// retry history to the server here -- a download failure is the one
-			// event we most need to see, and otherwise it leaves no log trace.
-			shipLogs(log, shipper, f.server, f.insecureTLS)
-			os.Exit(1) // partition already wiped; do not reboot into a broken disk
+			// failDeploy flushes the retry history to the server -- a
+			// download failure is the one event we most need to see.
+			fail(deployFailure{
+				Action: "download.media",
+				Code:   "MEDIA-DOWNLOAD",
+				What:   "Couldn't copy the install media from the server to the disk (media download failed). The disk was already wiped, so Windows won't boot until a deploy succeeds",
+				Err:    err,
+				Attrs:  []any{slog.String("url", mediaItem.URL)},
+				Exit:   1, // partition already wiped; the operator chooses what next
+			})
 		}
 	}
 	reportStage("Finalising", "Writing answer file, drivers and agent", -1)
 	reportFile("")
 	if err := imaging.FinalizeMedia(ctx, plan, runner, mountPath); err != nil {
-		log.Error("deploy.stage.fail", slog.String("error", err.Error()))
-		reportDeployStatus(ctx, c, log, id, imageID, "failed", "media staging failed: "+err.Error())
-		os.Exit(1) // do NOT reboot: caller's environment can investigate
+		fail(deployFailure{
+			Action: "deploy.stage.fail",
+			Code:   "MEDIA-STAGE",
+			What:   "Couldn't finish writing the install media (answer file, drivers or agent) to the disk",
+			Err:    err,
+			Output: runner.LastStderr(),
+			Exit:   1, // do NOT reboot on our own: the operator chooses
+		})
 	}
 	// Best-effort: register the firmware boot entry. The media is fully
 	// staged by now, and it carries the \EFI\BOOT\BOOTX64.EFI fallback, so
@@ -972,7 +1058,6 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 			slog.String("note", `relying on \EFI\BOOT\BOOTX64.EFI fallback; if the machine doesn't boot the staged media, add a UEFI boot entry for it manually`))
 	}
 	log.Info("deploy.stage.ok",
-		slog.String("actor", id.SystemUUID),
 		slog.String("target", f.disk))
 	reportDeployStatus(ctx, c, log, id, imageID, "staged", "")
 	reportStage("Ready", "Rebooting into Windows Setup", 100)
@@ -991,8 +1076,17 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	// fails in the initramfs with "Failed to talk to init daemon". Works
 	// the same for busybox's reboot applet.
 	if err := runner.Exec(ctx, "reboot", "-f"); err != nil {
-		log.Error("reboot", slog.String("error", err.Error()))
-		os.Exit(1)
+		// The media is staged and the deployment reported "staged"; only the
+		// reboot itself failed, so don't flip the row to failed.
+		failDeploy(ctx, log, f, nil, id, imageID, shipper, deployFailure{
+			Action: "reboot",
+			Code:   "REBOOT",
+			Title:  "Couldn't restart the machine",
+			What:   "The install media is ready, but the machine couldn't be restarted into Windows Setup. Restart it manually",
+			Err:    err,
+			Output: runner.LastStderr(),
+			Exit:   1,
+		})
 	}
 }
 
@@ -1461,17 +1555,15 @@ func runAccessPIN(ctx context.Context, log *slog.Logger, c *httpc.Client, id smb
 		}
 		if r.LockedOut {
 			log.Warn("pin.locked_out",
-				slog.String("actor", id.SystemUUID),
 				slog.String("target", "self"))
 			fmt.Println("Too many failed attempts. Booting normally.")
 			return false
 		}
 		if r.Granted {
-			log.Info("pin.granted", slog.String("actor", id.SystemUUID))
+			log.Info("pin.granted")
 			return true
 		}
 		log.Warn("pin.failed",
-			slog.String("actor", id.SystemUUID),
 			slog.Int("attempt", attempt))
 	}
 	fmt.Println("Three failed PIN attempts. Booting normally.")
@@ -1499,8 +1591,13 @@ func submitPIN(ctx context.Context, c *httpc.Client, id smbios.Identity, pin str
 // progressSink receives deploy stage updates so an interactive UI can show
 // them. nil = no UI attached (the console deploy logs to slog as before).
 type progressSink interface {
-	Stage(stage, detail string, percent int)
+	// Stage reports the current stage; step/steps is its "Step N of M"
+	// position (0 when the stage isn't one of deployStages).
+	Stage(stage, detail string, percent, step, steps int)
 	File(name string)
+	// Fail replaces the progress view with the failure view and returns
+	// the technician's choice (ui.FailureNone when there is no way to ask).
+	Fail(info ui.FailureInfo) ui.FailureChoice
 }
 
 var activeProgress progressSink
@@ -1513,7 +1610,8 @@ func setProgressSink(p progressSink) { activeProgress = p }
 // negative percent means "indeterminate".
 func reportStage(stage, detail string, percent int) {
 	if activeProgress != nil {
-		activeProgress.Stage(stage, detail, percent)
+		step, steps := stageStep(stage)
+		activeProgress.Stage(stage, detail, percent, step, steps)
 	}
 }
 
@@ -1901,9 +1999,12 @@ func startPeriodicLogShip(log *slog.Logger, shipper *logging.Shipper, server str
 	}
 }
 
-func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) {
+// shipLogs (documented above startPeriodicLogShip) returns whether the
+// buffered events reached the server (false when there is no server to
+// ship to), so the failure screen can say where the logs went.
+func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecureTLS bool) bool {
 	if server == "" || shipper == nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1913,9 +2014,10 @@ func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecur
 			slog.String("error", err.Error()),
 			slog.Int("buffered", n),
 		)
-		return
+		return false
 	}
 	log.Info("logs.ship.ok", slog.Int("events", n))
+	return true
 }
 
 // sanitise turns a URL fragment into a filename-safe string.

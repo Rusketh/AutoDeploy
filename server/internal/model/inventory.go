@@ -684,66 +684,37 @@ func (r *InventoryRepo) List(ctx context.Context) ([]MachineRecord, error) {
 	return out, rows.Err()
 }
 
-// NamesByUUID maps each machine's SMBIOS system UUID to its best display
-// name -- the agent-reported computer name, falling back to the operator-
-// set binding name. This is the same precedence the machine list uses
-// (ReportedName, then MachineName). Used to resolve a log event's actor
-// (which carries the system UUID) to a human-readable machine name.
-// Records with an empty UUID or no resolvable name are omitted.
+// NamesByUUID maps each machine's SMBIOS system UUID to its display name
+// (MachineDisplayName precedence). Used to resolve a log event's actor
+// (which carries the system UUID) to a human-readable machine name. The map
+// is also keyed by each machine's agent ID, which older log rows carry as
+// their actor. Records with no known name are omitted.
 func (r *InventoryRepo) NamesByUUID(ctx context.Context) (map[string]string, error) {
-	records, err := r.List(ctx)
+	idx, err := r.NameIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]ID, 0, len(records))
-	for _, m := range records {
-		ids = append(ids, m.ID)
-	}
-	bindings, err := r.ListBindingsForMachines(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(records))
-	for _, m := range records {
-		if m.SystemUUID == "" {
-			continue
-		}
-		name := m.ReportedName
-		if name == "" {
-			name = bindings[m.ID].MachineName
-		}
-		if name != "" {
-			out[m.SystemUUID] = name
+	out := make(map[string]string, len(idx.ByActor))
+	for actor, id := range idx.ByActor {
+		if n := idx.ByID[id]; !n.Unnamed {
+			out[actor] = n.Name
 		}
 	}
 	return out, nil
 }
 
-// NamesByID maps each machine's ID to its best display name, using the same
-// precedence as NamesByUUID (agent-reported computer name, then the operator-
-// set binding name). Machines with no resolvable name are omitted. Used to
-// label rows that reference a machine by ID, such as bulk-operation jobs.
+// NamesByID maps each machine's ID to its display name (MachineDisplayName
+// precedence). Machines with no known name are omitted. Used to label rows
+// that reference a machine by ID, such as bulk-operation jobs.
 func (r *InventoryRepo) NamesByID(ctx context.Context) (map[ID]string, error) {
-	records, err := r.List(ctx)
+	idx, err := r.NameIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]ID, 0, len(records))
-	for _, m := range records {
-		ids = append(ids, m.ID)
-	}
-	bindings, err := r.ListBindingsForMachines(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[ID]string, len(records))
-	for _, m := range records {
-		name := m.ReportedName
-		if name == "" {
-			name = bindings[m.ID].MachineName
-		}
-		if name != "" {
-			out[m.ID] = name
+	out := make(map[ID]string, len(idx.ByID))
+	for id, n := range idx.ByID {
+		if !n.Unnamed {
+			out[id] = n.Name
 		}
 	}
 	return out, nil
@@ -801,7 +772,7 @@ func (r *InventoryRepo) ListHistoryForMachines(ctx context.Context, machineIDs [
 		`SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		 FROM deployment_history
 		 WHERE machine_id IN (`+strings.Join(placeholders, ",")+`)
-		 ORDER BY started_at DESC`, args...)
+		 ORDER BY started_at DESC, id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -934,7 +905,7 @@ func (r *InventoryRepo) UpdateLatestDeployment(ctx context.Context, machineID ID
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE deployment_history SET outcome=?, notes=?, phase=?, `+completed+`
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
-		            ORDER BY started_at DESC LIMIT 1)`,
+		            ORDER BY started_at DESC, id DESC LIMIT 1)`,
 		outcome, notes, phase, machineID)
 	return err
 }
@@ -950,7 +921,7 @@ func (r *InventoryRepo) UpdateLatestInProgressNote(ctx context.Context, machineI
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE deployment_history SET notes=?, phase=?
 		WHERE id = (SELECT id FROM deployment_history WHERE machine_id=?
-		            ORDER BY started_at DESC LIMIT 1)
+		            ORDER BY started_at DESC, id DESC LIMIT 1)
 		  AND outcome='in_progress'`,
 		notes, phase, machineID)
 	return err
@@ -1004,7 +975,7 @@ func (r *InventoryRepo) LatestOpenDeployment(ctx context.Context, machineID ID) 
 		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=? AND outcome='in_progress'
-		ORDER BY started_at DESC
+		ORDER BY started_at DESC, id DESC
 		LIMIT 1`, machineID)
 	var d DeploymentRecord
 	var imageID sql.NullInt64
@@ -1030,7 +1001,7 @@ func (r *InventoryRepo) HistoryFor(ctx context.Context, machineID ID) ([]Deploym
 		SELECT id, machine_id, image_id, started_at, completed_at, outcome, notes, phase, progress_done, progress_total
 		FROM deployment_history
 		WHERE machine_id=?
-		ORDER BY started_at DESC`, machineID)
+		ORDER BY started_at DESC, id DESC`, machineID)
 	if err != nil {
 		return nil, err
 	}

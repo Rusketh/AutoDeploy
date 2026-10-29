@@ -9,7 +9,7 @@
 <p class="muted">Recent delivery attempts to <code>{{.Data.Webhook.URL}}</code>.</p>
 
 {{if .Data.Deliveries}}
-<table>
+<div class="tablewrap"><table>
   <thead>
     <tr>
       <th>Time</th>
@@ -22,17 +22,17 @@
   <tbody>
   {{range .Data.Deliveries}}
     <tr>
-      <td class="small">{{formatTime .AttemptedAt}}</td>
-      <td><code class="small">{{.Event}}</code></td>
+      <td class="small">{{timeAgo .AttemptedAt}}</td>
+      <td class="small">{{eventLabel .Event}}</td>
       <td>
         {{if .StatusCode}}
           {{if and (ge (derefInt .StatusCode) 200) (lt (derefInt .StatusCode) 300)}}
             <span class="dot ok"></span> {{derefInt .StatusCode}}
           {{else}}
-            <span class="dot err"></span> {{derefInt .StatusCode}}
+            <span class="dot bad"></span> {{derefInt .StatusCode}}
           {{end}}
         {{else}}
-          <span class="dot err"></span> —
+          <span class="dot bad"></span> No response
         {{end}}
       </td>
       <td class="small muted">{{.DurationMs}}ms</td>
@@ -40,7 +40,7 @@
     </tr>
   {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="muted">No deliveries recorded yet.</p>
 {{end}}

@@ -6,7 +6,7 @@
 
 <p class="muted intro">Choose which events generate in-portal and email notifications for your account. Defaults: portal on, email off.</p>
 
-<form class="std" method="POST" action="/portal/settings/notifications/preferences">
+<form class="std" method="POST" action="/portal/settings/notifications/preferences" data-dirty-guard>
   <fieldset><legend>Your email address</legend>
     <label><span class="lbl">Email</span>
       <input type="email" name="email" value="{{.Data.User.Email}}" placeholder="you@example.com">
@@ -16,13 +16,13 @@
 
   {{range .Data.Categories}}
   <fieldset><legend>{{.Label}}</legend>
-    <table style="width:100%;">
+    <div class="tablewrap"><table style="width:100%;">
       <thead><tr><th>Event</th><th style="width:80px;text-align:center;">Portal</th><th style="width:80px;text-align:center;">Email</th></tr></thead>
       <tbody>
       {{range .Events}}
         {{$p := index $.Data.Prefs .}}
         <tr>
-          <td><code>{{.}}</code></td>
+          <td>{{eventLabel .}}</td>
           <td style="text-align:center;">
             <input type="checkbox" name="portal_{{.}}" value="1"{{if or (not $p.Event) $p.Portal}} checked{{end}}>
           </td>
@@ -32,7 +32,7 @@
         </tr>
       {{end}}
       </tbody>
-    </table>
+    </table></div>
   </fieldset>
   {{end}}
 

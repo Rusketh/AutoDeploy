@@ -26,7 +26,7 @@ consumes a group cares how that set was produced.
 
 The [Machines](machines.md) page lists your groups down the **left sidebar**,
 each with its kind icon and a live member count, above an **All machines** entry.
-Click a group to filter the inventory to just its members — the filter box, sort,
+Click a group to filter the inventory to just its members — the search, sort,
 pager and CSV export all stay scoped to that group. The **+** at the top of the
 sidebar creates a new group; **Manage groups** opens the full list.
 
@@ -36,7 +36,7 @@ straight from the inventory you're looking at.
 
 ### The Groups page
 
-**Groups** in the top navigation lists every group with its kind, member count,
+**Fleet → Groups** lists every group with its kind, member count,
 and nested-subgroup count, and is where you create, edit, and delete them.
 
 ## Creating a group

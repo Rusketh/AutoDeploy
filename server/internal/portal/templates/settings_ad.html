@@ -1,63 +1,69 @@
 {{define "body"}}
 {{$cfg := .Data.Cfg}}
 {{$env := .Data.Env}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2><svg class="icon-h2"><use href="#i-globe"/></svg>Active Directory</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
-<p>Current state:
-{{if $cfg.URL}}
-<span class="badge ok"><svg><use href="#i-check"/></svg>enabled</span> — <code>{{$cfg.URL}}</code>
+<p>Now:
+{{if .Data.Stored}}
+<span class="badge ok"><svg><use href="#i-check"/></svg>configured</span>
 {{else}}
-<span class="badge"><svg><use href="#i-info"/></svg>disabled</span>
+<span class="badge"><svg><use href="#i-info"/></svg>not configured</span> — domain-joined deploys can't prepare their computer accounts.
 {{end}}
 </p>
 
-<form class="std" method="POST" action="/portal/settings/active-directory">
+{{with .Data.Test}}
+<div class="flash {{if .OK}}flash-ok{{else}}flash-err{{end}} flash-inline" role="status">
+  <svg><use href="#{{if .OK}}i-check{{else}}i-alert{{end}}"/></svg><span>{{.Msg}}</span>
+</div>
+{{end}}
+
+<form class="std" method="POST" action="/portal/settings/active-directory" data-dirty-guard>
+  {{template "form_error" $fe}}
   <fieldset><legend>Connection</legend>
     <label><span class="lbl">LDAP URL</span>
-      <input type="url" name="url" value="{{$cfg.URL}}" placeholder="ldaps://dc.corp.example:636">
-      <span class="hint">LDAPS recommended (port 636). Plain LDAP on 389 only if your network is tightly controlled.</span>
+      <input type="text" name="url" value="{{$cfg.URL}}" placeholder="ldaps://dc.corp.example:636" {{invalidAttr $fe "url"}}>
+      {{fieldError $fe "url"}}
+      <span class="hint">Your domain controller. Use <code>ldaps://</code> (port 636); plain <code>ldap://</code> (389) only on a trusted network.</span>
     </label>
-    <label><span class="lbl">Service-account bind DN</span>
-      <input type="text" name="bind_dn" value="{{$cfg.BindDN}}" placeholder="CN=autodeploy,OU=Service Accounts,DC=corp,DC=example">
+    <label><span class="lbl">Service account (DN)</span>
+      <input type="text" name="bind_dn" value="{{$cfg.BindDN}}" placeholder="CN=autodeploy,OU=Service Accounts,DC=corp,DC=example" {{invalidAttr $fe "bind_dn"}}>
+      {{fieldError $fe "bind_dn"}}
+      <span class="hint">The account AutoDeploy signs in as, written as its distinguished name (DN): its full path in the directory, from the account up to the domain.</span>
     </label>
-    <label><span class="lbl">Service-account password</span>
-      <input type="password" name="bind_password" placeholder="{{if $cfg.URL}}(leave blank to keep stored value){{else}}required{{end}}" autocomplete="new-password">
-      <span class="hint">Stored encrypted at rest (AES-256-GCM). Never written to any log.</span>
+    <label><span class="lbl">Service account password</span>
+      <input type="password" name="bind_password" placeholder="{{if .Data.Stored}}Leave blank to keep the saved password{{else}}Required{{end}}" autocomplete="new-password" {{invalidAttr $fe "bind_password"}}>
+      {{fieldError $fe "bind_password"}}
+      <span class="hint">Stored encrypted; never shown again or written to logs.</span>
     </label>
-    <label><span class="lbl">Search base (subtree the service operates within)</span>
-      <input type="text" name="search_base" value="{{$cfg.SearchBase}}" placeholder="DC=corp,DC=example">
+    <label><span class="lbl">Search base</span>
+      <input type="text" name="search_base" value="{{$cfg.SearchBase}}" placeholder="DC=corp,DC=example" {{invalidAttr $fe "search_base"}}>
+      {{fieldError $fe "search_base"}}
+      <span class="hint">The part of the directory AutoDeploy works in (a DN). Usually the domain itself.</span>
     </label>
-    <label><input type="checkbox" name="skip_tls_verify" value="1" {{if $cfg.SkipTLSVerify}}checked{{end}}>
-      Skip TLS verification (lab DCs with self-signed certs only — never enable in production)
+    <label class="check"><input type="checkbox" name="skip_tls_verify" value="1" {{if $cfg.SkipTLSVerify}}checked{{end}}>
+      <span>Skip certificate check <span class="muted">— only for test domain controllers with self-signed certificates</span></span>
     </label>
   </fieldset>
   <div class="actions">
     <a class="btn secondary" href="/portal/settings">Cancel</a>
     <button type="submit" class="ghost" formaction="/portal/settings/active-directory/test" formmethod="POST"><svg><use href="#i-bolt"/></svg>Test connection</button>
-    <button type="submit" name="disable" value="1" class="danger" formnovalidate data-confirm="Disable AD integration? Future deploys with domain-join unattends will fail to prepare the computer object."><svg><use href="#i-trash"/></svg>Disable AD</button>
+    <button type="submit" name="disable" value="1" class="danger" formnovalidate data-confirm="Turn off Active Directory? Deploys with a domain-join answer file will fail to prepare their computer account."><svg><use href="#i-trash"/></svg>Disable AD</button>
     <button type="submit"><svg><use href="#i-check"/></svg>Save</button>
   </div>
 </form>
 
-<div class="section-head"><h3>How AutoDeploy uses these values</h3><div class="line"></div></div>
-<p>When a Boot Client requests a deployment manifest and the resolved
-unattend has a <code>&lt;UnattendedJoin&gt;</code> section, AutoDeploy's
-Domain Integration Service runs the delete-and-replace lifecycle on
-the bound computer object before returning the manifest. That way the
-machine's first reboot into Windows finds the AD object exactly where
-the unattend expects it.</p>
-<p>Changes here take effect on the <strong>next</strong> manifest
-request — no server restart needed.</p>
+<details class="help mt-4"><summary>How AutoDeploy uses these settings</summary>
+<p>When a machine asks for its deployment and its answer file joins a domain, AutoDeploy first deletes any old computer account with that name and creates a fresh one in the right OU — so the machine's first boot into Windows finds the account where it expects it.</p>
+<p>Changes apply to the <strong>next</strong> deployment; no restart needed.</p>
+</details>
 
 {{if or $env.URL $env.BindDN $env.SearchBase}}
 <h3 class="muted">Environment defaults (informational)</h3>
-<p class="small muted">These values were read from environment
-variables at startup. The portal value above overrides them once
-set; clearing the portal value would NOT fall back to env (that
-would cause confusing drift between two sources of truth).</p>
+<p class="small muted">Read from environment variables at start-up. Values saved here override them; clearing a value here does not fall back to the environment.</p>
 <dl class="kv small muted">
   {{if $env.URL}}<dt>AUTODEPLOY_AD_URL</dt><dd><code>{{$env.URL}}</code></dd>{{end}}
   {{if $env.BindDN}}<dt>AUTODEPLOY_AD_BIND_DN</dt><dd><code>{{$env.BindDN}}</code></dd>{{end}}

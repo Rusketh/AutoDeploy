@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,49 +94,49 @@ func notifySettingsPage(r Repos) http.HandlerFunc {
 			emailCfg = r.Runtime.NotifyEmailConfig(req.Context())
 			offlineMinutes = r.Runtime.NotifyMachineOfflineMinutes()
 		}
-		webhooks, _ := r.WebhookRepo.List(req.Context())
-		render(w, req, r, "settings_notifications.html", "Notifications", map[string]any{
+		notifySettingsRender(w, req, r, nil, map[string]any{
 			"PortalEnabled":   portalEnabled,
 			"PortalRetention": portalRetention,
 			"EmailEnabled":    emailEnabled,
 			"EmailCfg":        emailCfg,
+			"SMTPPort":        emailCfg.Port,
 			"OfflineMinutes":  offlineMinutes,
-			"Webhooks":        webhooks,
-			"WebhookCount":    len(webhooks),
 		})
 	}
+}
+
+// notifySettingsRender renders the notification settings page; with fe
+// set it is a rejected save (422) showing the submitted values. The SMTP
+// password is never echoed — only whether one is stored.
+func notifySettingsRender(w http.ResponseWriter, req *http.Request, r Repos, fe *FormError, data map[string]any) {
+	stored := false
+	if r.Runtime != nil {
+		stored = r.Runtime.NotifyEmailConfig(req.Context()).Password != ""
+	}
+	if cfg, ok := data["EmailCfg"].(runtime.EmailConfig); ok {
+		cfg.Password = ""
+		data["EmailCfg"] = cfg
+	}
+	keepSecretNote(fe, req, "smtp_password")
+	webhooks, _ := r.WebhookRepo.List(req.Context())
+	data["PasswordStored"] = stored
+	data["Webhooks"] = webhooks
+	data["WebhookCount"] = len(webhooks)
+	renderForm(w, req, r, "settings_notifications.html", "Notifications", fe, data)
 }
 
 func notifySettingsSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-
 		portalEnabled := req.FormValue("portal_enabled") == "1"
-		if err := r.Runtime.SetNotifyPortalEnabled(req.Context(), portalEnabled); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/settings/notifications", http.StatusFound)
-			return
-		}
-
-		if v := req.FormValue("portal_retention"); v != "" {
-			n, _ := strconv.Atoi(v)
-			_ = r.Runtime.SetNotifyPortalRetentionDays(req.Context(), n)
-		}
-
 		emailEnabled := req.FormValue("email_enabled") == "1"
-		if err := r.Runtime.SetNotifyEmailEnabled(req.Context(), emailEnabled); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/settings/notifications", http.StatusFound)
-			return
-		}
-
 		cfg := runtime.EmailConfig{
 			Host:        strings.TrimSpace(req.FormValue("smtp_host")),
 			User:        strings.TrimSpace(req.FormValue("smtp_user")),
@@ -143,25 +144,60 @@ func notifySettingsSubmit(r Repos) http.HandlerFunc {
 			TLSMode:     req.FormValue("smtp_tls"),
 			FromAddress: strings.TrimSpace(req.FormValue("from_address")),
 			FromName:    strings.TrimSpace(req.FormValue("from_name")),
+			Port:        587,
 		}
-		if v := req.FormValue("smtp_port"); v != "" {
-			cfg.Port, _ = strconv.Atoi(v)
+
+		// Check the numbers before saving anything.
+		fe := &FormError{Fields: map[string]string{}}
+		number := func(field string, min, max int, msg string) (int, bool) {
+			v := strings.TrimSpace(req.FormValue(field))
+			if v == "" {
+				return 0, false
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < min || n > max {
+				fe.Fields[field] = msg
+				return 0, false
+			}
+			return n, true
+		}
+		retention, setRetention := number("portal_retention", 0, 3650, "Enter a whole number of days (0 keeps them forever).")
+		if port, ok := number("smtp_port", 1, 65535, "Enter a port number between 1 and 65535 (usually 587)."); ok {
+			cfg.Port = port
+		}
+		offline, setOffline := number("offline_minutes", 1, 10080, "Enter a whole number of minutes, 1 or more.")
+
+		if len(fe.Fields) == 0 {
+			var err error
+			if err = r.Runtime.SetNotifyPortalEnabled(req.Context(), portalEnabled); err == nil && setRetention {
+				err = r.Runtime.SetNotifyPortalRetentionDays(req.Context(), retention)
+			}
+			if err == nil {
+				err = r.Runtime.SetNotifyEmailEnabled(req.Context(), emailEnabled)
+			}
+			if err == nil {
+				err = r.Runtime.SetNotifyEmailConfig(req.Context(), cfg)
+			}
+			if err == nil && setOffline {
+				err = r.Runtime.SetNotifyMachineOfflineMinutes(req.Context(), offline)
+			}
+			if err != nil {
+				fe = newFormError(req, "", err)
+			}
 		} else {
-			cfg.Port = 587
+			fe.Message = "Couldn't save — fix the highlighted fields below. Nothing was changed."
 		}
-		if err := r.Runtime.SetNotifyEmailConfig(req.Context(), cfg); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/settings/notifications", http.StatusFound)
+		if fe.Message != "" {
+			notifySettingsRender(w, req, r, fe, map[string]any{
+				"PortalEnabled":   portalEnabled,
+				"PortalRetention": req.FormValue("portal_retention"),
+				"EmailEnabled":    emailEnabled,
+				"EmailCfg":        cfg,
+				"SMTPPort":        req.FormValue("smtp_port"),
+				"OfflineMinutes":  req.FormValue("offline_minutes"),
+			})
 			return
 		}
-
-		if v := req.FormValue("offline_minutes"); v != "" {
-			n, _ := strconv.Atoi(v)
-			if n >= 1 {
-				_ = r.Runtime.SetNotifyMachineOfflineMinutes(req.Context(), n)
-			}
-		}
-
 		flash(w, "ok", "Notification settings saved.")
 		http.Redirect(w, req, "/portal/settings/notifications", http.StatusFound)
 	}
@@ -213,7 +249,7 @@ func notifyPreferencesSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		u, _ := req.Context().Value(ctxKeyUser{}).(auth.User)
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 
@@ -251,26 +287,34 @@ func webhookFormPage(r Repos, edit bool) http.HandlerFunc {
 			wh.Events = []string{"*"}
 			wh.MinSeverity = "info"
 		}
-		render(w, req, r, "webhook_form.html", "Webhook", map[string]any{
-			"Webhook":    wh,
-			"Edit":       edit,
-			"Categories": notify.EventCategories,
-			"AllEvents":  notify.AllEventNames(),
-		})
+		webhookFormRender(w, req, r, wh, edit, nil)
 	}
+}
+
+// webhookFormRender renders the webhook form; with fe set it is a
+// rejected save re-rendered with the submitted values (422). The signing
+// secret is never echoed back.
+func webhookFormRender(w http.ResponseWriter, req *http.Request, r Repos, wh model.Webhook, edit bool, fe *FormError) {
+	wh.Secret = ""
+	keepSecretNote(fe, req, "secret")
+	renderForm(w, req, r, "webhook_form.html", "Webhook", fe, map[string]any{
+		"Webhook":    wh,
+		"Edit":       edit,
+		"Categories": notify.EventCategories,
+		"AllEvents":  notify.AllEventNames(),
+	})
 }
 
 func webhookCreateSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		wh := webhookFromForm(req)
 		id, err := r.WebhookRepo.Create(req.Context(), wh)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/settings/notifications/webhooks/new", http.StatusFound)
+			webhookFormRender(w, req, r, wh, false, newFormError(req, model.KindWebhook, err))
 			return
 		}
 		flash(w, "ok", "Webhook created.")
@@ -282,16 +326,16 @@ func webhookUpdateSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(req.PathValue("id"), 10, 64)
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		wh := webhookFromForm(req)
 		wh.ID = model.ID(id)
 		if err := r.WebhookRepo.Update(req.Context(), wh); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Webhook saved.")
+			webhookFormRender(w, req, r, wh, true, newFormError(req, model.KindWebhook, err))
+			return
 		}
+		flash(w, "ok", "Webhook saved.")
 		http.Redirect(w, req, "/portal/settings/notifications/webhooks/"+req.PathValue("id"), http.StatusFound)
 	}
 }

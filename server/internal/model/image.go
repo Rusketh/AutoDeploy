@@ -234,13 +234,14 @@ func (r *ImageRepo) Delete(ctx context.Context, id ID) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var refs int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM image WHERE parent_id=?`, id).Scan(&refs); err != nil {
+	refs, err := queryNames(ctx, tx, `SELECT name FROM image WHERE parent_id=? ORDER BY name`, id)
+	if err != nil {
 		return err
 	}
-	if refs > 0 {
-		return fmt.Errorf("image %d: %w (parent of %d images)", id, ErrInUse, refs)
+	if len(refs) > 0 {
+		return &InUseError{Kind: "image", ID: id, Name: rowName(ctx, tx, "image", id),
+			Refs:   []InUseRef{{Noun: "child image", Names: refs}},
+			legacy: fmt.Sprintf("parent of %d images", len(refs))}
 	}
 	// Audit-log tables reference image(id) but must not pin the image in place:
 	// history targets the LATEST image definition, and machine_binding already

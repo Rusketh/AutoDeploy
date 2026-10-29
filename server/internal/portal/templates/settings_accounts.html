@@ -4,6 +4,8 @@
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
+{{$fe := .Data.FormError}}
+{{template "form_error" $fe}}
 <div class="tablewrap">
 <table>
   <thead><tr><th>Username</th><th>Status</th><th>Created</th><th></th></tr></thead>
@@ -12,7 +14,7 @@
     <tr>
       <td><strong>{{.Username}}</strong> {{if eq .ID $.Data.Me.ID}}<span class="badge accent">you</span>{{end}}</td>
       <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok"><svg><use href="#i-check"/></svg>active</span>{{end}}</td>
-      <td class="small muted">{{formatTime .CreatedAt}}</td>
+      <td class="small muted">{{timeAgo .CreatedAt}}</td>
       <td class="actions">
         {{if .Disabled}}
         <form method="POST" action="/portal/settings/accounts/{{.ID}}/enable" class="inline"><button class="secondary sm">Enable</button></form>
@@ -40,7 +42,7 @@
 <form class="std" method="POST" action="/portal/settings/accounts/{{.Data.Me.ID}}/password">
   <label><span class="lbl">New password for <strong>{{.Data.Me.Username}}</strong></span>
     <input type="password" name="password" required autocomplete="new-password" placeholder="Type a new password">
-    <span class="hint">Stored as a bcrypt hash. After saving, the next sign-in will use the new password.</span>
+    <span class="hint">Your next sign-in uses the new password.</span>
   </label>
   <div class="actions"><button type="submit"><svg><use href="#i-lock"/></svg>Update my password</button></div>
 </form>
@@ -49,10 +51,10 @@
 <div class="section-head"><h3>Add account</h3><div class="line"></div></div>
 <form class="std" method="POST" action="/portal/settings/accounts">
   <div class="row">
-    <label><span class="lbl">Username</span><input type="text" name="username" required autocomplete="off"></label>
-    <label><span class="lbl">Password</span><input type="password" name="password" required autocomplete="new-password"></label>
+    <label><span class="lbl">Username</span><input type="text" name="username" value="{{.Data.NewUsername}}" required autocomplete="off" {{invalidAttr $fe "username"}}>{{fieldError $fe "username"}}</label>
+    <label><span class="lbl">Password</span><input type="password" name="password" required autocomplete="new-password" {{invalidAttr $fe "password"}}>{{fieldError $fe "password"}}</label>
   </div>
   <div class="actions"><button type="submit"><svg><use href="#i-plus"/></svg>Create</button></div>
 </form>
-<p class="muted small mt-3">There is no graded permission model: every active account has full portal/API access. Accountability rests on the audit trail.</p>
+<p class="muted small mt-3">Every active account has full access to the portal and API; there are no roles. Changes are recorded in the audit log under each person's name.</p>
 {{end}}

@@ -85,9 +85,10 @@
 </fieldset>
 {{end}}
 
-<form class="std" method="POST" action="{{if $new}}/portal/software{{else}}/portal/software/{{int64 $p.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/software{{else}}/portal/software/{{int64 $p.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset><legend>Identity</legend>
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$p.Name}}" required maxlength="128"></label>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$p.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}</label>
     <label><span class="lbl">Description</span><input type="text" name="description" value="{{$p.Description}}" maxlength="200"></label>
   </fieldset>
 

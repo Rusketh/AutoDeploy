@@ -8,7 +8,7 @@
 </div>
 
 {{if .Data.Webhooks}}
-<table data-sortable>
+<div class="tablewrap"><table data-sortable>
   <thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Severity</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {{range .Data.Webhooks}}
@@ -22,7 +22,7 @@
     </tr>
   {{end}}
   </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="muted">No webhooks configured yet.</p>
 {{end}}

@@ -44,7 +44,7 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Active Directory](operations/active-directory.md)** — domain join and lookups.
 - **[Scaling](operations/scaling.md)** — mirrors, payload throttling, large fleets.
 - **[Backup & retention](operations/backup-and-retention.md)** — protecting your data and pruning logs.
-- **[Updates](operations/updates.md)** — updating the server and distributing new agents.
+- **[Updates](operations/updates.md)** — updating the server and distributing new agents, and what changes when you [upgrade](operations/updates.md#upgrading-from-an-earlier-release).
 - **[Troubleshooting](operations/troubleshooting.md)** — symptoms and fixes.
 
 ---

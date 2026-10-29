@@ -74,14 +74,35 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 	// driver" screens. Element order inside the component matters:
 	// DiskConfiguration, ImageInstall, RunSynchronous, UserData.
 	writeDiskAndImage(b, s)
+	// windowsPE RunSynchronous: the optional Win11 LabConfig bypass, then (USB/
+	// ISO exports only) the disk guard that partitions the target disk in place
+	// of DiskConfiguration. The row format matches the historical literal
+	// block byte-for-byte, so deploy-path output is unchanged (golden_test.go).
+	var pe []rsCmd
 	if IsWindows11Family(s.TargetOS) && s.BypassWin11Reqs {
+		for _, c := range [][2]string{
+			{"TPM", "BypassTPMCheck"},
+			{"Secure Boot", "BypassSecureBootCheck"},
+			{"RAM", "BypassRAMCheck"},
+			{"CPU", "BypassCPUCheck"},
+			{"Storage", "BypassStorageCheck"},
+		} {
+			pe = append(pe, rsCmd{order: len(pe) + 1, desc: "Bypass Win11: " + c[0],
+				path: `reg add HKLM\System\Setup\LabConfig /v ` + c[1] + ` /t REG_DWORD /d 1 /f`})
+		}
+	}
+	if s.DiskGuard {
+		pe = append(pe, rsCmd{order: len(pe) + 1, desc: "AutoDeploy: verify and partition the install disk",
+			path: diskGuardCommand()})
+	}
+	if len(pe) > 0 {
 		fmt.Fprint(b, `      <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Description>Bypass Win11: TPM</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add"><Order>2</Order><Description>Bypass Win11: Secure Boot</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add"><Order>3</Order><Description>Bypass Win11: RAM</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add"><Order>4</Order><Description>Bypass Win11: CPU</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add"><Order>5</Order><Description>Bypass Win11: Storage</Description><Path>reg add HKLM\System\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
-      </RunSynchronous>
+`)
+		for _, c := range pe {
+			fmt.Fprintf(b, `        <RunSynchronousCommand wcm:action="add"><Order>%d</Order><Description>%s</Description><Path>%s</Path></RunSynchronousCommand>`+"\n",
+				c.order, esc(c.desc), esc(c.path))
+		}
+		fmt.Fprint(b, `      </RunSynchronous>
 `)
 	}
 	fmt.Fprint(b, `      <UserData>
@@ -137,10 +158,25 @@ func writeWindowsPE(b *bytes.Buffer, s Settings) {
 // point of the USB flow: a small internal disk no longer has to hold a
 // multi-GB copy of the media. The created triplet is identical (EFI=1,
 // MSR=2, Windows=3), so PartitionID=3 stays correct.
+//
+// Layout (guarded, s.DiskGuard): USB/ISO exports only. No DiskConfiguration
+// is emitted at all — the windowsPE disk guard (diskguard.go) partitions the
+// target into the same EFI=1, MSR=2, Windows=3 triplet, but only after
+// checking it is not the USB stick. ImageInstall still targets PartitionID 3.
 func writeDiskAndImage(b *bytes.Buffer, s Settings) {
-	edition := s.Edition
-	if edition == "" {
-		edition = "Windows 11 Pro"
+	edition := s.InstallEdition()
+	if s.DiskGuard {
+		fmt.Fprintf(b, `      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>%s</Value></MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>%d</DiskID><PartitionID>3</PartitionID></InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+`, esc(edition), s.DiskID)
+		return
 	}
 	willWipe := "false"
 	if s.WholeDisk {
@@ -172,6 +208,19 @@ func writeDiskAndImage(b *bytes.Buffer, s Settings) {
         </OSImage>
       </ImageInstall>
 `, s.DiskID, willWipe, esc(edition), s.DiskID)
+}
+
+// DefaultEdition is the /IMAGE/NAME installed when Settings.Edition is empty.
+const DefaultEdition = "Windows 11 Pro"
+
+// InstallEdition is the Windows edition (WIM image name) the answer file
+// installs: Settings.Edition, or DefaultEdition when unset. Callers that know
+// the ISO's real editions (the USB/ISO export) validate this against them.
+func (s Settings) InstallEdition() string {
+	if s.Edition == "" {
+		return DefaultEdition
+	}
+	return s.Edition
 }
 
 // rsCmd is one RunSynchronousCommand row.

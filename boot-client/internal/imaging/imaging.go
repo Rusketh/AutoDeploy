@@ -49,13 +49,24 @@ type OSRunner struct {
 	Log *slog.Logger
 	// DryRun reports what would happen without actually executing.
 	DryRun bool
+
+	// lastStderr holds the final few stderr lines of the most recent Exec
+	// (see LastStderr). Execs are sequential, so no locking is needed.
+	lastStderr []string
 }
+
+// stderrTailLines is how many trailing stderr lines LastStderr keeps.
+const stderrTailLines = 6
+
+// LastStderr returns the last few non-empty stderr lines of the most
+// recent Exec (nil if it printed none), so a failure screen and the
+// failure event can show what the failing tool actually said.
+func (r *OSRunner) LastStderr() []string { return r.lastStderr }
 
 // Exec implements Runner.
 func (r *OSRunner) Exec(ctx context.Context, name string, args ...string) error {
 	if r.Log != nil {
 		r.Log.Info("imaging.exec",
-			slog.String("actor", "boot-client"),
 			slog.String("target", name),
 			slog.String("args", fmt.Sprintf("%q", args)),
 			slog.Bool("dry_run", r.DryRun),
@@ -64,11 +75,14 @@ func (r *OSRunner) Exec(ctx context.Context, name string, args ...string) error 
 	if r.DryRun {
 		return nil
 	}
+	tail := &lineTail{max: stderrTailLines}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = imagingEnv()
 	cmd.Stdout = stdoutWriter{r.Log}
-	cmd.Stderr = stderrWriter{r.Log}
-	return cmd.Run()
+	cmd.Stderr = stderrWriter{log: r.Log, tail: tail}
+	err := cmd.Run()
+	r.lastStderr = tail.Lines()
+	return err
 }
 
 // Output runs a read-only command and returns its stdout. Unlike Exec it
@@ -77,7 +91,6 @@ func (r *OSRunner) Exec(ctx context.Context, name string, args ...string) error 
 func (r *OSRunner) Output(ctx context.Context, name string, args ...string) (string, error) {
 	if r.Log != nil {
 		r.Log.Info("imaging.exec.output",
-			slog.String("actor", "boot-client"),
 			slog.String("target", name),
 			slog.String("args", fmt.Sprintf("%q", args)))
 	}
@@ -105,13 +118,63 @@ func (w stdoutWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type stderrWriter struct{ log *slog.Logger }
+type stderrWriter struct {
+	log  *slog.Logger
+	tail *lineTail
+}
 
+// Write logs stderr at INFO: tools like sgdisk and mkfs.fat print routine
+// notices there, so stderr alone isn't a warning -- the command's exit
+// status decides failure. The action name is unchanged for existing
+// matching.
 func (w stderrWriter) Write(p []byte) (int, error) {
 	if w.log != nil {
-		w.log.Warn("imaging.exec.stderr", slog.String("line", string(p)))
+		w.log.Info("imaging.exec.stderr", slog.String("line", string(p)))
+	}
+	if w.tail != nil {
+		w.tail.Write(p)
 	}
 	return len(p), nil
+}
+
+// lineTail keeps the last max non-empty lines written to it. Writes
+// arrive in arbitrary chunks (os/exec pipes), so a trailing partial line
+// is carried until its newline or Lines.
+type lineTail struct {
+	max     int
+	lines   []string
+	partial string
+}
+
+func (t *lineTail) Write(p []byte) {
+	parts := strings.Split(t.partial+string(p), "\n")
+	t.partial = parts[len(parts)-1]
+	for _, l := range parts[:len(parts)-1] {
+		t.add(l)
+	}
+}
+
+func (t *lineTail) add(l string) {
+	l = strings.TrimSpace(l)
+	if l == "" {
+		return
+	}
+	t.lines = append(t.lines, l)
+	if len(t.lines) > t.max {
+		t.lines = t.lines[len(t.lines)-t.max:]
+	}
+}
+
+// Lines flushes any partial line and returns the retained tail.
+func (t *lineTail) Lines() []string {
+	if t.partial != "" {
+		t.add(t.partial)
+		t.partial = ""
+	}
+	if len(t.lines) == 0 {
+		return nil
+	}
+	return append([]string(nil), t.lines...)
 }
 
 // MediaDriver is one downloaded driver package plus the server's verdict on

@@ -15,10 +15,10 @@
     front, it installs even where the Microsoft Store / winget source is disabled by policy.</p>
   <p class="hint">Store-exclusive apps (the <code>msstore</code> source) are licence-locked and can't be
     repackaged offline — those aren't importable here.</p>
-  <div class="flex gap-3" style="align-items:center;">
-    <input type="search" id="q" placeholder="7zip" style="flex:1; max-width:420px;" autofocus>
-    <button type="button" class="btn" id="searchBtn" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
-  </div>
+  <form class="flex gap-3" style="align-items:center;" id="searchForm" method="GET" role="search">
+    <input type="search" id="q" name="q" value="{{with .Data}}{{.Query}}{{end}}" placeholder="7zip" style="flex:1; max-width:420px;" autocomplete="off" data-search autofocus>
+    <button type="submit" class="btn" id="searchBtn"><svg><use href="#i-search"/></svg>Search</button>
+  </form>
   <p id="searchStatus" class="hint"></p>
 </fieldset>
 
@@ -50,11 +50,16 @@ function formatBytes(n) {
   return n.toFixed(i ? 1 : 0) + ' ' + units[i];
 }
 
-function runSearch() {
-  var q = document.getElementById('q').value.trim();
+// The query lives in the URL (?q=): each search pushes a history entry,
+// and the page re-runs the search from the URL on load and on Back/
+// Forward, so returning from an imported package lands on the same
+// results. searchSeq drops responses that a newer search overtook.
+var searchSeq = 0;
+function runSearch(q) {
   var status = document.getElementById('searchStatus');
   var btn = document.getElementById('searchBtn');
-  if (!q) { status.textContent = 'Enter an app name or keyword.'; return; }
+  var seq = ++searchSeq;
+  if (!q) { renderResults([]); status.textContent = ''; return; }
   btn.disabled = true;
   status.textContent = 'Searching winget…';
   fetch('/api/v1/winget/search?q=' + encodeURIComponent(q))
@@ -63,13 +68,24 @@ function runSearch() {
       return r.json();
     })
     .then(function(body) {
+      if (seq !== searchSeq) return;
       renderResults(body.results || []);
       status.textContent = (body.results && body.results.length)
         ? body.results.length + ' result(s).'
         : 'No results. winget may not know that query.';
     })
-    .catch(function(err) { status.textContent = err.message; })
-    .finally(function() { btn.disabled = false; });
+    .catch(function(err) { if (seq === searchSeq) status.textContent = err.message; })
+    .finally(function() { if (seq === searchSeq) btn.disabled = false; });
+}
+
+function queryFromURL() {
+  return (new URLSearchParams(location.search).get('q') || '').trim();
+}
+
+function searchFromURL() {
+  var q = queryFromURL();
+  document.getElementById('q').value = q;
+  runSearch(q);
 }
 
 function renderResults(results) {
@@ -216,8 +232,18 @@ function showProgress(cell, id) {
   }, 1500);
 }
 
-document.getElementById('q').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+document.getElementById('searchForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var q = document.getElementById('q').value.trim();
+  if (!q) { document.getElementById('searchStatus').textContent = 'Enter an app name or keyword.'; return; }
+  if (q !== queryFromURL()) {
+    var u = new URL(location.href);
+    u.searchParams.set('q', q);
+    history.pushState({ q: q }, '', u.pathname + u.search);
+  }
+  runSearch(q);
 });
+window.addEventListener('popstate', searchFromURL);
+if (queryFromURL()) searchFromURL();
 </script>
 {{end}}

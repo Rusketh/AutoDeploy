@@ -31,7 +31,7 @@ func imageList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		images, err := r.Images.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Build a name map for ISO / Unattend / Loadout / parent image so
@@ -51,8 +51,15 @@ func imageList(r Repos) http.HandlerFunc {
 			ldNames[l.ID] = l.Name
 		}
 		imgNames := map[model.ID]string{}
+		// children counts the images that inherit from each image: a parent
+		// can't be deleted (model.ImageRepo.Delete), so its Delete button is
+		// disabled with the reason.
+		children := map[model.ID]int{}
 		for _, im := range images {
 			imgNames[im.ID] = im.Name
+			if im.ParentID != nil {
+				children[*im.ParentID]++
+			}
 		}
 		groups, _ := mustListImageGroups(r, req)
 		grpNames := map[model.ID]string{}
@@ -64,11 +71,28 @@ func imageList(r Repos) http.HandlerFunc {
 				grpRefs[g.ID] = n
 			}
 		}
+		// ?q= matches the names the row shows: the image's own name and
+		// description plus its group, parent, ISO, unattend and loadout.
+		nameOf := func(m map[model.ID]string, p *model.ID) string {
+			if p == nil {
+				return ""
+			}
+			return m[*p]
+		}
+		search := newSearchBox(req, "Search images", "Search images")
+		shown := filterByQuery(images, search.Query, func(im model.Image) []string {
+			return []string{im.Name, im.Description,
+				nameOf(grpNames, im.GroupID), nameOf(imgNames, im.ParentID),
+				nameOf(isoNames, im.ISOID), nameOf(uaNames, im.UnattendID),
+				nameOf(ldNames, im.LoadoutID)}
+		})
 		render(w, req, r, "image_list.html", "Images", map[string]any{
-			"Images":   images,
+			"Images":   shown,
+			"Search":   search.counted(len(shown), len(images), "images"),
 			"ISONames": isoNames, "UnattendNames": uaNames,
 			"LoadoutNames": ldNames, "ImageNames": imgNames,
 			"Groups": groups, "GroupNames": grpNames, "GroupRefs": grpRefs,
+			"Children": children,
 		})
 	}
 }
@@ -94,15 +118,6 @@ func imageFormNew(r Repos) http.HandlerFunc {
 
 func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		isos, _ := r.ISOs.List(req.Context())
-		unattends, _ := r.Unattend.List(req.Context())
-		loadouts, _ := r.Loadouts.List(req.Context())
-		images, _ := r.Images.List(req.Context())
-		packages, _ := r.Software.List(req.Context())
-		title := "New image"
-		if !isNew {
-			title = "Edit image: " + im.Name
-		}
 		var dj model.ImageDomainJoin
 		if !isNew && r.DomainJoin != nil {
 			dj, _ = r.DomainJoin.Get(req.Context(), im.ID)
@@ -111,16 +126,54 @@ func imageFormFor(r Repos, im model.Image, isNew bool) http.HandlerFunc {
 		if !isNew && r.SetupLock != nil {
 			sl, _ = r.SetupLock.Get(req.Context(), im.ID)
 		}
-		groups, _ := mustListImageGroups(r, req)
-		render(w, req, r, "image_form.html", title, map[string]any{
-			"Im": im, "IsNew": isNew,
-			"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
-			"Images": images, "Packages": packages,
-			"DomainJoin": dj,
-			"SetupLock":  sl,
-			"Groups":     groups,
-		})
+		imageFormPage(w, req, r, im, isNew, dj, sl, nil)
 	}
+}
+
+// imageFormPage renders the image form. On a rejected save (fe != nil)
+// im, dj and sl hold the submitted values; the join password is never
+// echoed back (dj carries no secret, and the field always renders blank).
+func imageFormPage(w http.ResponseWriter, req *http.Request, r Repos, im model.Image, isNew bool,
+	dj model.ImageDomainJoin, sl model.ImageSetupLock, fe *FormError) {
+	isos, _ := r.ISOs.List(req.Context())
+	unattends, _ := r.Unattend.List(req.Context())
+	loadouts, _ := r.Loadouts.List(req.Context())
+	images, _ := r.Images.List(req.Context())
+	packages, _ := r.Software.List(req.Context())
+	title := "New image"
+	if !isNew {
+		title = "Edit image: " + im.Name
+	}
+	groups, _ := mustListImageGroups(r, req)
+	renderForm(w, req, r, "image_form.html", title, fe, map[string]any{
+		"Im": im, "IsNew": isNew,
+		"ISOs": isos, "Unattends": unattends, "Loadouts": loadouts,
+		"Images": images, "Packages": packages,
+		"DomainJoin": dj,
+		"SetupLock":  sl,
+		"Groups":     groups,
+	})
+}
+
+// imageSubmitted re-renders the image form with the submitted values and
+// fe (a rejected save).
+func imageSubmitted(w http.ResponseWriter, req *http.Request, r Repos, im model.Image, isNew bool, fe *FormError) {
+	dj := model.ImageDomainJoin{
+		ImageID:  im.ID,
+		Enabled:  req.FormValue("dj_enabled") == "1",
+		Domain:   strings.TrimSpace(req.FormValue("dj_domain")),
+		OU:       strings.TrimSpace(req.FormValue("dj_ou")),
+		JoinUser: strings.TrimSpace(req.FormValue("dj_user")),
+	}
+	if !isNew && r.DomainJoin != nil {
+		// Keep the "a password is stored" state from the saved row.
+		if cur, err := r.DomainJoin.Get(req.Context(), im.ID); err == nil {
+			dj.HasPassword = cur.HasPassword
+		}
+	}
+	sl := model.ImageSetupLock{ImageID: im.ID, Enabled: req.FormValue("setuplock_enabled") == "1"}
+	keepSecretNote(fe, req, "dj_password")
+	imageFormPage(w, req, r, im, isNew, dj, sl, fe)
 }
 
 func imageEdit(r Repos) http.HandlerFunc {
@@ -128,7 +181,7 @@ func imageEdit(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		im, err := r.Images.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		imageFormFor(r, im, false)(w, req)
@@ -184,14 +237,12 @@ func imageCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		im, err := buildImageFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/images/new", http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		out, err := r.Images.Create(req.Context(), im)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/images/new", http.StatusFound)
+			imageSubmitted(w, req, r, im, true, newFormError(req, model.KindImage, err))
 			return
 		}
 		if err := saveDomainJoinFromForm(r, req, out.ID); err != nil {
@@ -214,20 +265,25 @@ func imageUpdate(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		im, err := buildImageFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		im.ID = id
 		if err := r.Images.Update(req.Context(), im); err != nil {
-			flash(w, "err", err.Error())
-		} else if err := saveDomainJoinFromForm(r, req, id); err != nil {
-			flash(w, "err", "domain-join config: "+err.Error())
-		} else if err := saveSetupLockFromForm(r, req, id); err != nil {
-			flash(w, "err", "setup-lock config: "+err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			imageSubmitted(w, req, r, im, false, newFormError(req, model.KindImage, err))
+			return
 		}
+		if err := saveDomainJoinFromForm(r, req, id); err != nil {
+			imageSubmitted(w, req, r, im, false, &FormError{
+				Message: "The image was saved, but the domain-join settings weren't: " + friendlyError(model.KindImage, http.StatusUnprocessableEntity, err)})
+			return
+		}
+		if err := saveSetupLockFromForm(r, req, id); err != nil {
+			imageSubmitted(w, req, r, im, false, &FormError{
+				Message: "The image was saved, but the setup-lock setting wasn't: " + friendlyError(model.KindImage, http.StatusUnprocessableEntity, err)})
+			return
+		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/edit", id), http.StatusFound)
 	}
 }
@@ -264,11 +320,8 @@ func saveSetupLockFromForm(r Repos, req *http.Request, imageID model.ID) error {
 func imageDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Images.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindImage, id)
+		deleteFlash(w, req, model.KindImage, name, r.Images.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/images", http.StatusFound)
 	}
 }
@@ -317,7 +370,7 @@ func imageResolved(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		res, err := r.Resolver.Resolve(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "image_resolved.html", "Resolved configuration", map[string]any{
@@ -337,7 +390,7 @@ func imageGroupList(r Repos) http.HandlerFunc {
 			}
 		}
 		render(w, req, r, "image_group_list.html", "Image Groups", map[string]any{
-			"Groups":   groups,
+			"Groups":    groups,
 			"GroupRefs": grpRefs,
 		})
 	}
@@ -400,11 +453,8 @@ func imageGroupDelete(r Repos) http.HandlerFunc {
 			return
 		}
 		id, _ := pathID(req)
-		if err := r.ImageGroups.Delete(req.Context(), id); err != nil {
-			flash(w, "err", "Delete group failed: "+err.Error())
-		} else {
-			flash(w, "ok", "Group deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindImageGroup, id)
+		deleteFlash(w, req, model.KindImageGroup, name, r.ImageGroups.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/images/groups", http.StatusFound)
 	}
 }

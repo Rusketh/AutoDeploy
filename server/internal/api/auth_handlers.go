@@ -10,7 +10,6 @@ import (
 )
 
 const sessionCookieName = "autodeploy_session"
-const sessionTTL = 12 * time.Hour
 
 // RegisterAuth mounts login, logout and account management endpoints.
 func RegisterAuth(mux *http.ServeMux, r Repos) {
@@ -76,12 +75,15 @@ func handleLogin(r Repos) http.HandlerFunc {
 		}
 		u, err := r.Users.Authenticate(req.Context(), in.Username, in.Password)
 		if err != nil {
+			recordAPIAuth(req, r, "auth.login.fail", in.Username, ip)
 			emitLoginFailed(req, r, in.Username, ip)
 			// Constant error message — do not leak whether user exists.
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		tok, err := r.Users.CreateSession(req.Context(), u.ID, sessionTTL)
+		// A new session starts with the idle lifetime; portal activity
+		// slides it forward up to auth.SessionMaxLifetime.
+		tok, err := r.Users.CreateSession(req.Context(), u.ID, auth.SessionIdleTimeout)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -92,9 +94,10 @@ func handleLogin(r Repos) http.HandlerFunc {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(sessionTTL),
+			Expires:  auth.SessionDeadline(time.Now()),
 			Secure:   req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https",
 		})
+		recordAPIAuth(req, r, "auth.login.ok", u.Username, ip)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":       u.ID,
 			"username": u.Username,
@@ -104,6 +107,9 @@ func handleLogin(r Repos) http.HandlerFunc {
 
 func handleLogout(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		if u, ok := UserFromRequest(req, r); ok {
+			recordAPIAuth(req, r, "auth.logout", u.Username, "")
+		}
 		if c, err := req.Cookie(sessionCookieName); err == nil {
 			_ = r.Users.DeleteSession(req.Context(), c.Value)
 		}

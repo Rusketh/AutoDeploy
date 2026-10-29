@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
@@ -32,6 +33,9 @@ type Theme struct {
 	Title font.Face
 	Body  font.Face
 	Small font.Face
+	// Mono is a small fixed-width face for command output (the failure
+	// screen's last stderr lines).
+	Mono font.Face
 
 	// Logo is the operator's brand logo decoded for blitting (nil when none is
 	// set, or it is a format the boot UI can't decode, e.g. SVG). Screens draw
@@ -66,6 +70,14 @@ func NewTheme(primaryHex string, scale float64) (*Theme, error) {
 	if err != nil {
 		return nil, err
 	}
+	monoFont, err := opentype.Parse(gomono.TTF)
+	if err != nil {
+		return nil, err
+	}
+	mono, err := face(monoFont, 14)
+	if err != nil {
+		return nil, err
+	}
 	return &Theme{
 		Bg:        color.RGBA{0x10, 0x14, 0x1a, 0xff},
 		Panel:     color.RGBA{0x1b, 0x22, 0x2c, 0xff},
@@ -74,8 +86,21 @@ func NewTheme(primaryHex string, scale float64) (*Theme, error) {
 		Primary:   primary,
 		OnPrimary: color.RGBA{0xff, 0xff, 0xff, 0xff},
 		Danger:    color.RGBA{0xd0, 0x45, 0x3c, 0xff},
-		Title:     title, Body: body, Small: small,
+		Title:     title, Body: body, Small: small, Mono: mono,
 	}, nil
+}
+
+// ScaleForHeight is the font scale for a panel h pixels tall: 1.0 up to
+// 1080p, a touch larger on big panels so text stays readable from a step
+// back. Shared by the GUI session and the screenshot tests.
+func ScaleForHeight(h int) float64 {
+	switch {
+	case h >= 1440:
+		return 1.4
+	case h >= 1080:
+		return 1.15
+	}
+	return 1.0
 }
 
 // drawText renders s at baseline (x,y) in face/col and returns the advance

@@ -1,7 +1,12 @@
 {{define "action_picker"}}
-{{- /* dict params: Mode ("bulk"|"single"), Packages, Images, AP (prefill map) */ -}}
+{{- /* dict params: Mode ("bulk"|"single"), Packages, Images, AP (prefill map).
+       Optional: ConfirmName (single mode: the machine name a re-image must be
+       confirmed with), Err (*FormError for inline field messages).
+       No action is preselected unless AP.Action names one; a submit button
+       marked data-needs-action stays disabled until one is chosen. */ -}}
 {{$mode := .Mode}}
 {{$ap := .AP}}
+{{$err := .Err}}
 <fieldset class="action-picker" role="radiogroup" aria-label="Action">
   <label class="action-tile">
     <input type="radio" name="action" value="rename" {{if eq $ap.Action "rename"}}checked{{end}}>
@@ -22,46 +27,56 @@
 </fieldset>
 
 <div class="action-panels">
+  <p class="small muted action-none" data-action-panel="" {{if $ap.Action}}hidden{{end}}>Choose an action above to see its options.</p>
+
   <div class="action-panel" data-action-panel="rename" {{if ne $ap.Action "rename"}}hidden{{end}}>
     {{if eq $mode "single"}}
-    <label><span class="lbl">New name</span><input type="text" name="rename_new_name" placeholder="LAB-01"></label>
-    <p class="hint">Renames this machine and reboots it. AD coordination happens server-side before the local rename job is queued.</p>
+    <label><span class="lbl">New name</span><input type="text" name="rename_new_name" value="{{index $ap "RenameNewName"}}" placeholder="e.g. LAB-01" {{invalidAttr $err "rename_new_name"}}>{{fieldError $err "rename_new_name"}}</label>
+    <p class="hint">Renames the machine and reboots it. The AD computer object is renamed first.</p>
     {{else}}
-    <p class="hint">Fleet rename by find/replace (regex) on each machine's current name. e.g. find <code>^LAB-A-</code> replace <code>LAB-B-</code> renames LAB-A-01 → LAB-B-01. To rename a <em>single</em> machine to a literal name, use that machine's page.</p>
-    <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" value="{{$ap.RenameFind}}" placeholder="^LAB-A-"></label>
-    <label><span class="lbl">Replace</span><input type="text" name="rename_replace" value="{{$ap.RenameReplace}}" placeholder="LAB-B-"></label>
+    <p class="hint">Renames by find and replace on each machine's current name (a regular expression). Example: find <code>^LAB-A-</code>, replace <code>LAB-B-</code> turns LAB-A-01 into LAB-B-01. To give one machine a new name, use that machine's page.</p>
+    <label><span class="lbl">Find (regex)</span><input type="text" name="rename_find" value="{{$ap.RenameFind}}" placeholder="e.g. ^LAB-A-"></label>
+    <label><span class="lbl">Replace with</span><input type="text" name="rename_replace" value="{{$ap.RenameReplace}}" placeholder="e.g. LAB-B-"></label>
     {{end}}
   </div>
 
   <div class="action-panel" data-action-panel="script" {{if ne $ap.Action "script"}}hidden{{end}}>
     <label><span class="lbl">Shell</span>
       <select name="script_shell">
-        <option value="powershell" {{if eq $ap.ScriptShell "powershell"}}selected{{end}}>powershell</option>
-        <option value="cmd" {{if eq $ap.ScriptShell "cmd"}}selected{{end}}>cmd</option>
+        <option value="powershell" {{if eq $ap.ScriptShell "powershell"}}selected{{end}}>PowerShell</option>
+        <option value="cmd" {{if eq $ap.ScriptShell "cmd"}}selected{{end}}>Command Prompt (cmd)</option>
       </select>
     </label>
-    <label><span class="lbl">Body</span><textarea name="script_body" rows="6" placeholder="Get-Service">{{$ap.ScriptBody}}</textarea></label>
-    <p class="small muted">Highest-risk action; every script run is fully audited.</p>
+    <label><span class="lbl">Script</span><textarea name="script_body" rows="6" placeholder="e.g. Get-Service" {{invalidAttr $err "script_body"}}>{{$ap.ScriptBody}}</textarea>{{fieldError $err "script_body"}}</label>
+    <p class="small muted">Runs as SYSTEM. Every script run is recorded in the audit log.</p>
   </div>
 
   <div class="action-panel" data-action-panel="software_push" {{if ne $ap.Action "software_push"}}hidden{{end}}>
     <label><span class="lbl">Software package</span>
-      <select name="software_package_id">
+      <select name="software_package_id" {{invalidAttr $err "software_package_id"}}>
         <option value="">— choose a package —</option>
         {{range .Packages}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $ap.SoftwarePackageID}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
+      {{fieldError $err "software_package_id"}}
     </label>
-    <p class="hint">The agent installs this package and its dependencies (deps first), skipping anything already present per detection rules.</p>
+    <p class="hint">Installs the package and anything it depends on, skipping what is already installed.</p>
   </div>
 
   <div class="action-panel" data-action-panel="reimage" {{if ne $ap.Action "reimage"}}hidden{{end}}>
-    <label><span class="lbl">Image (optional)</span>
+    <label><span class="lbl">Image</span>
       <select name="reimage_image_id">
-        <option value="">— use each machine's bound image —</option>
+        <option value="">— {{if eq $mode "single"}}its bound image{{else}}each machine's bound image{{end}} —</option>
         {{range .Images}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $ap.ReimageImageID}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
     </label>
-    <p class="small muted"><strong>Destructive.</strong> Each selected machine reboots and re-images on its next agent check-in (≤5 min), network-booting into AutoDeploy and auto-deploying the image. The machine must be configured to network-boot.</p>
+    <p class="small muted"><strong>Erases the disk.</strong> {{if eq $mode "single"}}The machine reboots{{else}}Each machine reboots{{end}} on its next agent check-in (within about 5 minutes), network-boots into AutoDeploy and installs the image. It must be set to network-boot.</p>
+    {{if .ConfirmName}}
+    <input type="hidden" name="reimage_confirm_required" value="1">
+    <label><span class="lbl">Type <strong>{{.ConfirmName}}</strong> to confirm</span>
+      <input type="text" name="reimage_confirm" value="{{index $ap "ReimageConfirm"}}" autocomplete="off" spellcheck="false" data-confirm-match="{{.ConfirmName}}" placeholder="{{.ConfirmName}}" {{invalidAttr $err "reimage_confirm"}}>
+      {{fieldError $err "reimage_confirm"}}
+    </label>
+    {{end}}
   </div>
 </div>
 {{end}}

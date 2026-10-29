@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
-	"github.com/rusketh/autodeploy/server/internal/notify"
 )
 
 func init() {
@@ -38,7 +37,7 @@ func init() {
 func machineGroupMembership(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		gid, _ := strconv.ParseInt(req.FormValue("group_id"), 10, 64)
@@ -80,7 +79,7 @@ func machineDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := r.Inventory.Delete(req.Context(), id); err != nil {
@@ -97,7 +96,7 @@ func machineDelete(r Repos) http.HandlerFunc {
 func machineBulkDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		n := 0
@@ -134,7 +133,7 @@ func machineCSV(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		machines, err := r.Inventory.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		// Honour the list page's ?group= filter so the export matches what the
@@ -156,8 +155,10 @@ func machineCSV(r Repos) http.HandlerFunc {
 			}
 		}
 
-		bindings, imageNames := loadMachineBindings(req, r, machines)
-		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
+		now := time.Now()
+		facts := loadFleetFacts(req, r, machines, now)
+		bindings, imageNames, osCaptions := facts.Bindings, facts.ImageNames, facts.OS
+		machines = parseMachineFilters(req).apply(machines, facts, now)
 
 		if query := strings.TrimSpace(req.URL.Query().Get("q")); query != "" {
 			needle := strings.ToLower(query)
@@ -171,67 +172,34 @@ func machineCSV(r Repos) http.HandlerFunc {
 		}
 
 		sortKey, sortDir := machineSort(req)
-		sortMachineRecords(machines, sortKey, sortDir, bindings, imageNames, osCaptions)
+		sortMachines(machines, sortKey, sortDir, facts)
 
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="autodeploy-inventory.csv"`)
 		cw := csv.NewWriter(w)
+		// Columns are append-only so spreadsheets and scripts built on the
+		// old layout keep working: image_name, reported_name,
+		// display_name and status were added after last_seen.
 		_ = cw.Write([]string{"id", "name", "agent_id", "manufacturer", "product", "serial",
 			"system_uuid", "bios_vendor", "bios_version", "board_manufacturer", "board_product",
-			"image_id", "first_seen", "last_seen"})
+			"image_id", "first_seen", "last_seen", "image_name", "reported_name", "display_name", "status"})
 		for _, m := range machines {
 			b := bindings[m.ID]
-			imageID := ""
+			imageID, imageName := "", ""
 			if b.ImageID != nil {
 				imageID = strconv.FormatInt(int64(*b.ImageID), 10)
+				imageName = imageNames[*b.ImageID]
 			}
 			_ = cw.Write([]string{
 				strconv.FormatInt(int64(m.ID), 10), b.MachineName, m.AgentID,
 				m.SystemManufacturer, m.SystemProduct, m.SystemSerial, m.SystemUUID,
 				m.BIOSVendor, m.BIOSVersion, m.BoardManufacturer, m.BoardProduct,
 				imageID, m.FirstSeen.Format("2006-01-02 15:04:05"), m.LastSeen.Format("2006-01-02 15:04:05"),
+				imageName, m.ReportedName, model.MachineDisplayName(m, b).Name,
+				facts.Status[m.ID].Label,
 			})
 		}
 		cw.Flush()
-	}
-}
-
-// machineAction runs a single-machine bulk action (rename / script /
-// software push) straight from the machine's page, reusing the bulk
-// machinery with a machine-id target.
-func machineAction(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, err := pathID(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		action := req.FormValue("action")
-		payload, perr := actionPayloadFromForm(req)
-		if perr != nil {
-			flash(w, "err", perr.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
-			return
-		}
-		user, _ := sessionUser(req, r)
-		op, _, err := r.Bulk.CreateOperation(req.Context(), model.BulkOperation{
-			Action:         action,
-			Payload:        payload,
-			Target:         model.BulkTarget{MachineIDs: []model.ID{id}},
-			CreatedBy:      user.Username,
-			ReimageImageID: reimageImageIDFromForm(req),
-		})
-		switch {
-		case err != nil:
-			flash(w, "err", err.Error())
-		case action == model.BulkActionReimage:
-			r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
-			flash(w, "ok", "Re-image queued. The machine will reboot and re-image on its next check-in.")
-		default:
-			r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
-			flash(w, "ok", "Action queued for this machine.")
-		}
-		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
 	}
 }
 
@@ -244,7 +212,7 @@ func machineReimageCancel(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := r.Inventory.ClearReimagePending(req.Context(), id); err != nil {
@@ -317,18 +285,21 @@ func machineList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Inventory.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
-		// For each machine show its name + image (if any). Name prefers the
-		// agent-reported current computer name (reality), falling back to the
-		// binding's desired name for machines that haven't reported yet.
+		// For each machine show its name + image (if any). Name follows the
+		// shared model.MachineDisplayName precedence (desired name, then the
+		// agent-reported name, then the short UUID); Display also carries the
+		// pending-rename hint.
 		type row struct {
 			Machine        model.MachineRecord
 			Name           string
+			Display        model.MachineName
 			ImageName      string
 			OS             string
 			ReimagePending bool
+			Status         machineStatus
 		}
 
 		query := strings.TrimSpace(req.URL.Query().Get("q"))
@@ -377,17 +348,24 @@ func machineList(r Repos) http.HandlerFunc {
 		}
 
 		// One query each for the whole fleet: bindings, image names, OS
-		// captions and pending-re-image flags. Loading the lot up front
-		// (rather than per page) is what lets ?q= search and ?sort= order
-		// the entire inventory, and it replaces the old per-visible-row
-		// hardware Get — an N+1 that cost up to a query per row at render time.
-		bindings, imageNames := loadMachineBindings(req, r, v)
-		osCaptions, _ := r.Inventory.ListOSCaptions(req.Context())
-		allIDs := make([]model.ID, len(v))
-		for i, m := range v {
-			allIDs[i] = m.ID
-		}
-		reimaging, _ := r.Inventory.ListReimagePending(req.Context(), allIDs)
+		// captions, latest deployments and re-image flags, from which every
+		// machine's status is derived (pending-re-image badges only matter
+		// for the visible page, so those are fetched after paging). Loading
+		// the lot up front (rather than per page) is what lets ?q= search,
+		// the filters and ?sort= cover the entire inventory, and it replaces
+		// the old per-visible-row hardware Get — an N+1 that cost up to a
+		// query per row at render time.
+		now := time.Now()
+		facts := loadFleetFacts(req, r, v, now)
+		bindings, imageNames, osCaptions := facts.Bindings, facts.ImageNames, facts.OS
+
+		// Filters (status chips, image / AD / model / last-deployed
+		// selects) narrow the group before the text search. The chips
+		// count over the whole group so each shows what it would select.
+		filters := parseMachineFilters(req)
+		chips, selects := machineFilterView(req, filters, v, facts)
+		inView := len(v) // the group (or whole fleet) before filters and search
+		v = filters.apply(v, facts, now)
 
 		// Server-side filter: ?q= narrows the whole inventory BEFORE
 		// pagination, so the page count, numbered links and totals all
@@ -409,7 +387,7 @@ func machineList(r Repos) http.HandlerFunc {
 		// Server-side sort: ?sort=&dir= orders the whole (filtered) set,
 		// not just the visible page the old client-side sort reordered.
 		sortKey, sortDir := machineSort(req)
-		sortMachineRecords(v, sortKey, sortDir, bindings, imageNames, osCaptions)
+		sortMachines(v, sortKey, sortDir, facts)
 
 		// Page size: an explicit ?size= wins and is remembered in a
 		// cookie, so the choice sticks on later visits that don't carry
@@ -439,18 +417,30 @@ func machineList(r Repos) http.HandlerFunc {
 			if b.ImageID != nil {
 				imgName = imageNames[*b.ImageID]
 			}
-			name := m.ReportedName
-			if name == "" {
-				name = b.MachineName
+			disp := model.MachineDisplayName(m, b)
+			name := disp.Name
+			if disp.Unnamed {
+				name = ""
 			}
 			rows = append(rows, row{
-				Machine: m, Name: name, ImageName: imgName,
+				Machine: m, Name: name, Display: disp, ImageName: imgName,
 				OS:             osCaptions[m.ID],
-				ReimagePending: reimaging[m.ID],
+				ReimagePending: facts.Reimage[m.ID],
+				Status:         facts.Status[m.ID],
 			})
 		}
+		search := newSearchBox(req, "Search machines", "Search machines").
+			counted(len(v), inView, "machines").
+			withFilters(req, "machine-search", filters.Active(), "image", "ad", "model", "since")
+		// The status chip isn't a form control, so it rides along as a
+		// hidden field; Clear drops it with the rest.
+		search.ClearURL = withQuery(req, req.URL.Path, "q", "", "status", "", "image", "", "ad", "", "model", "", "since", "")
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
 			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
+			"Search":            search,
+			"Filters":           filters,
+			"StatusChips":       chips,
+			"FilterSelects":     selects,
 			"Sort":              machineSortColumns(req, sortKey, sortDir),
 			"CSVURL":            machineCSVURL(req),
 			"Groups":            groups,
@@ -487,7 +477,7 @@ func loadMachineBindings(req *http.Request, r Repos, ms []model.MachineRecord) (
 // machineSortKeys are the columns the machines list can be ordered by.
 var machineSortKeys = map[string]bool{
 	"uuid": true, "name": true, "model": true, "serial": true,
-	"os": true, "image": true, "last_seen": true,
+	"os": true, "image": true, "last_seen": true, "status": true,
 }
 
 // machineSort reads ?sort=&dir=, defaulting to last_seen desc (the repo's
@@ -508,6 +498,29 @@ func machineSort(req *http.Request) (key, dir string) {
 	return key, dir
 }
 
+// sortMachines orders the machine set by the chosen column: status by
+// urgency (most urgent first ascending, then most recently seen), every
+// other column via sortMachineRecords.
+func sortMachines(v []model.MachineRecord, key, dir string, f fleetFacts) {
+	if key != "status" {
+		sortMachineRecords(v, key, dir, f.Bindings, f.ImageNames, f.OS)
+		return
+	}
+	sort.SliceStable(v, func(i, j int) bool {
+		a, b := f.Status[v[i].ID].Rank, f.Status[v[j].ID].Rank
+		if a != b {
+			if dir == "desc" {
+				return a > b
+			}
+			return a < b
+		}
+		if !v[i].LastSeen.Equal(v[j].LastSeen) {
+			return v[i].LastSeen.After(v[j].LastSeen)
+		}
+		return v[i].ID < v[j].ID
+	})
+}
+
 // sortMachineRecords orders the full machine set by the chosen column.
 // Display-derived columns (name, image, OS) sort by the same values the
 // rows show. Ties break by ID so paging is stable.
@@ -522,10 +535,7 @@ func sortMachineRecords(v []model.MachineRecord, key, dir string,
 		case "uuid":
 			return m.SystemUUID
 		case "name":
-			if m.ReportedName != "" {
-				return m.ReportedName
-			}
-			return b.MachineName
+			return model.MachineDisplayName(m, b).Name
 		case "model":
 			return m.SystemManufacturer + " " + m.SystemProduct
 		case "serial":
@@ -588,11 +598,7 @@ func machineSortColumns(req *http.Request, activeKey, activeDir string) map[stri
 				dir = "asc"
 			}
 		}
-		q := req.URL.Query()
-		q.Set("sort", key)
-		q.Set("dir", dir)
-		q.Del("page")
-		out[key] = machineSortCol{URL: req.URL.Path + "?" + q.Encode(), State: state}
+		out[key] = machineSortCol{URL: withQuery(req, req.URL.Path, "sort", key, "dir", dir), State: state}
 	}
 	return out
 }
@@ -601,7 +607,7 @@ func machineSortColumns(req *http.Request, activeKey, activeDir string) map[stri
 // export link, so the download matches what's on screen.
 func machineCSVURL(req *http.Request) string {
 	q := url.Values{}
-	for _, k := range []string{"q", "sort", "dir", "group"} {
+	for _, k := range append([]string{"q", "sort", "dir", "group"}, machineFilterNames...) {
 		if v := req.URL.Query().Get(k); v != "" {
 			q.Set(k, v)
 		}
@@ -637,193 +643,4 @@ func machineMatchesQuery(m model.MachineRecord, b model.MachineBinding, imageNam
 		}
 	}
 	return false
-}
-
-func machineDetail(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, err := pathID(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		m, err := r.Inventory.Get(req.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		binding, _ := r.Inventory.GetBinding(req.Context(), id)
-		history, _ := r.Inventory.HistoryFor(req.Context(), id)
-		// Derive a per-row "stalled" flag for display: an in_progress row
-		// whose machine hasn't checked in for longer than deployStallAfter has
-		// most likely failed Setup (or is powered off). Computed here rather
-		// than persisted so it self-corrects if the machine checks back in.
-		type historyRow struct {
-			model.DeploymentRecord
-			Stalled bool
-		}
-		machineStalled := time.Since(m.LastSeen) > deployStallAfter
-		historyRows := make([]historyRow, len(history))
-		for i, h := range history {
-			historyRows[i] = historyRow{DeploymentRecord: h, Stalled: h.Outcome == "in_progress" && machineStalled}
-		}
-		reimages, _ := r.Inventory.ListReimageEvents(req.Context(), id)
-
-		// At-a-glance summary scalars. History is newest-first, so [0] is the
-		// latest deployment and reimages[0] (newest-first) the last re-image.
-		var latestDeploy *model.DeploymentRecord
-		if len(history) > 0 {
-			latestDeploy = &history[0]
-		}
-		var lastReimage *model.ReimageEvent
-		if len(reimages) > 0 {
-			lastReimage = &reimages[0]
-		}
-		// Live deploy progress for the initial paint (the JS poller takes over
-		// after load). Active only when there's an open in_progress row.
-		deployActive := false
-		deployLabel, deployPercent, deployIndeterminate := "", 0, false
-		if open, oerr := r.Inventory.LatestOpenDeployment(req.Context(), id); oerr == nil {
-			deployActive = true
-			deployLabel, deployPercent, deployIndeterminate = model.DeployRecordProgress(open)
-		}
-		detected, _ := r.Inventory.DetectedStateFor(req.Context(), id)
-		images, _ := r.Images.List(req.Context())
-		var pkgs []model.SoftwarePackage
-		pkgs, _ = r.Software.List(req.Context())
-		var kbStatuses []model.MachineUpdateStatus
-		if r.Updates != nil {
-			kbStatuses, _ = r.Updates.ListMachineStatuses(req.Context(), id)
-		}
-		swDetected, swTotal := 0, len(detected)
-		for _, d := range detected {
-			if d.Detected {
-				swDetected++
-			}
-		}
-		kbInstalled := 0
-		for _, s := range kbStatuses {
-			if s.Status == "installed" {
-				kbInstalled++
-			}
-		}
-		// Pending re-image: surface a flagged-but-not-yet-started re-image so an
-		// operator can see it's queued and waiting for the agent to reboot the
-		// box (and cancel it if it's stuck). "Since"/"Claimed" come from the
-		// re-image bulk job; the target image name resolves the flag's image id
-		// (0 => the machine's current binding).
-		reimagePending := map[string]any{"Pending": false}
-		if pending, imgID, perr := r.Inventory.ReimagePendingByID(req.Context(), id); perr == nil && pending {
-			target := "its bound image"
-			if imgID != 0 {
-				for _, im := range images {
-					if im.ID == imgID {
-						target = im.Name
-						break
-					}
-				}
-			}
-			info := map[string]any{"Pending": true, "Target": target, "Claimed": false, "Failed": false}
-			if r.Bulk != nil {
-				if job, jerr := r.Bulk.LatestReimageJob(req.Context(), id); jerr == nil && job != nil {
-					info["Since"] = job.QueuedAt
-					info["Claimed"] = job.Status == "running"
-					// A failed job while the flag is still set means the agent
-					// claimed the re-image but couldn't act on it (most often an
-					// outdated agent that doesn't know the action) — a useful
-					// signal that the box won't reboot on its own.
-					info["Failed"] = job.Status == "failed"
-				}
-			}
-			reimagePending = info
-		}
-		render(w, req, r, "machine_detail.html", "Machine "+m.SystemUUID, map[string]any{
-			"ReimagePending": reimagePending,
-			"M":              m, "Binding": binding, "History": historyRows,
-			"Reimages": reimages,
-			"Detected": detected, "Packages": pkgs,
-			"Images": images, "KBStatuses": kbStatuses,
-			"SWDetected": swDetected, "SWTotal": swTotal,
-			"KBInstalled": kbInstalled, "KBTotal": len(kbStatuses),
-			"LatestDeploy": latestDeploy, "DeployCount": len(history),
-			"LastReimage": lastReimage, "MachineStalled": machineStalled,
-			"DeployActive": deployActive, "DeployLabel": deployLabel,
-			"DeployPercent": deployPercent, "DeployIndeterminate": deployIndeterminate,
-			"AP": formPrefill(nil, displayLoc(r)),
-		})
-	}
-}
-
-// machineDeployStatus serves the live deploy progress as JSON for the machine
-// detail page's progress poller, mirroring isoPrepStatus. When there's an open
-// in_progress deployment it returns its phase/label/percent (and a stall flag);
-// otherwise it reports the latest row's final outcome with finished=true so the
-// poller knows to reload into the settled at-a-glance view.
-func machineDeployStatus(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, err := pathID(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		open, oerr := r.Inventory.LatestOpenDeployment(req.Context(), id)
-		if oerr != nil {
-			// No open deployment: report the latest outcome (if any) as finished.
-			outcome := "none"
-			if hist, herr := r.Inventory.HistoryFor(req.Context(), id); herr == nil && len(hist) > 0 {
-				outcome = hist[0].Outcome
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"active": false, "finished": true, "outcome": outcome,
-			})
-			return
-		}
-		label, percent, indeterminate := model.DeployRecordProgress(open)
-		stalled := false
-		if m, merr := r.Inventory.Get(req.Context(), id); merr == nil {
-			stalled = time.Since(m.LastSeen) > deployStallAfter
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"active": true, "finished": false,
-			"phase": open.Phase, "label": label, "percent": percent,
-			"indeterminate": indeterminate, "outcome": open.Outcome,
-			"done": open.ProgressDone, "total": open.ProgressTotal,
-			"stalled": stalled,
-		})
-	}
-}
-
-func machineBindingSubmit(r Repos) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, _ := pathID(req)
-		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		b := model.MachineBinding{
-			MachineID:   id,
-			MachineName: strings.TrimSpace(req.FormValue("machine_name")),
-			TargetOU:    strings.TrimSpace(req.FormValue("target_ou")),
-		}
-		if v := strings.TrimSpace(req.FormValue("image_id")); v != "" && v != "0" {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-				iid := model.ID(n)
-				b.ImageID = &iid
-			}
-		}
-		if g := strings.TrimSpace(req.FormValue("groups")); g != "" {
-			for _, line := range strings.Split(g, "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					b.GroupMemberships = append(b.GroupMemberships, line)
-				}
-			}
-		}
-		if err := r.Inventory.UpsertBinding(req.Context(), b); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Binding saved.")
-		}
-		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
-	}
 }

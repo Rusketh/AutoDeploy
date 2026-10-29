@@ -42,7 +42,7 @@ TFTP server on port 69.
 
 ## 3. Upload Windows media (ISO)
 
-In the portal, go to **Payloads → ISOs**, click **New**, give it a name, and upload your Windows
+In the portal, go to **Build → ISOs**, click **New ISO**, give it a name, and upload your Windows
 ISO. AutoDeploy extracts it and prepares boot media; watch progress on the ISO's page. Details:
 [Payloads → ISOs](portal/payloads.md#isos).
 
@@ -54,7 +54,7 @@ hands-off installs. You can skip this for a first test.
 
 ## 5. Build an image
 
-An [image](portal/images.md) ties everything together. Go to **Images → New** and select:
+An [image](portal/images.md) ties everything together. Go to **Build → Images**, click **New image** and select:
 
 - the **ISO** from step 3,
 - optionally an **unattend** from step 4,

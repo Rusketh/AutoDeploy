@@ -395,6 +395,7 @@ func handleBulkBinding(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "binding.bulk_edit",
 				Target:    "machines:" + strconv.Itoa(len(in.MachineIDs)),
 				Fields:    string(fields),
@@ -465,7 +466,12 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
-			emitDeployOutcome(req, r, machine, in.Outcome, in.Notes)
+			action := "deploy.finished"
+			if in.Outcome == "failed" {
+				action = "deploy.failed"
+			}
+			recordDeployEvent(req, r, machine, depID, in.ImageID, action, map[string]any{"notes": in.Notes})
+			emitDeployOutcome(req, r, machine, depID, in.Outcome, in.Notes)
 		}
 		// Record per-package detection state.
 		for _, p := range in.Packages {

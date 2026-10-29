@@ -131,7 +131,6 @@ func (e *Evaluator) logNotDetected(reason, rulePath, resolved string, extra ...s
 		return
 	}
 	attrs := []any{
-		slog.String("actor", "agent"),
 		slog.String("reason", reason),
 		slog.String("rule_path", rulePath),
 		slog.String("resolved_path", resolved),

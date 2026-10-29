@@ -2,6 +2,7 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,17 +28,22 @@ func isoList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.ISOs.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		search := newSearchBox(req, "Search ISOs", "Search ISOs")
+		shown := filterByQuery(v, search.Query, func(i model.ISO) []string {
+			return []string{i.Name, i.Description, i.OSType, i.StoragePath}
+		})
 		// Per-row reference counts so the operator sees what's in use.
 		refs := map[model.ID]int{}
-		for _, iso := range v {
+		for _, iso := range shown {
 			n, _ := r.ISOs.RefCount(req.Context(), iso.ID)
 			refs[iso.ID] = n
 		}
 		render(w, req, r, "iso_list.html", "ISOs", map[string]any{
-			"ISOs": v, "Refs": refs,
+			"ISOs": shown, "Refs": refs,
+			"Search": search.counted(len(shown), len(v), "ISOs"),
 		})
 	}
 }
@@ -54,12 +60,12 @@ func isoEdit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		iso, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		render(w, req, r, "iso_form.html", "Edit ISO: "+iso.Name, map[string]any{
@@ -71,17 +77,18 @@ func isoEdit(r Repos) http.HandlerFunc {
 func isoCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("bad form"))
 			return
 		}
-		out, err := r.ISOs.Create(req.Context(), model.ISO{
+		iso := model.ISO{
 			Name:        req.FormValue("name"),
 			Description: req.FormValue("description"),
 			OSType:      req.FormValue("os_type"),
-		})
+		}
+		out, err := r.ISOs.Create(req.Context(), iso)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/isos/new", http.StatusFound)
+			renderForm(w, req, r, "iso_form.html", "New ISO", newFormError(req, model.KindISO, err),
+				map[string]any{"ISO": iso, "IsNew": true})
 			return
 		}
 		flash(w, "ok", "ISO created — upload the file next.")
@@ -93,26 +100,28 @@ func isoUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("bad form"))
 			return
 		}
 		existing, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
+		title := "Edit ISO: " + existing.Name
 		existing.Name = req.FormValue("name")
 		existing.Description = req.FormValue("description")
 		existing.OSType = req.FormValue("os_type")
 		if err := r.ISOs.Update(req.Context(), existing); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			renderForm(w, req, r, "iso_form.html", title, newFormError(req, model.KindISO, err),
+				map[string]any{"ISO": existing, "IsNew": false})
+			return
 		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/isos/%d/edit", id), http.StatusFound)
 	}
 }
@@ -121,15 +130,11 @@ func isoDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
-		if err := r.ISOs.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/isos", http.StatusFound)
-			return
-		}
-		flash(w, "ok", "ISO deleted.")
+		name := nameBeforeDelete(req, r, model.KindISO, id)
+		deleteFlash(w, req, model.KindISO, name, r.ISOs.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/isos", http.StatusFound)
 	}
 }
@@ -142,17 +147,17 @@ func isoUpload(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		iso, err := r.ISOs.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		mr, err := req.MultipartReader()
 		if err != nil {
-			http.Error(w, "expected multipart upload", http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, errors.New("expected multipart upload"))
 			return
 		}
 		var n int64
@@ -206,11 +211,11 @@ func isoExtract(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if _, err := r.ISOs.Get(req.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		payload.StartPrepareAsync(r.Blobs, r.ISOs, id)
@@ -225,7 +230,7 @@ func isoPrepStatus(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

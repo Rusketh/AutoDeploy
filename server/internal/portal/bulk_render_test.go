@@ -12,7 +12,7 @@ import (
 
 // bulkFuncs is a minimal funcmap covering the helpers the bulk templates use.
 func bulkFuncs() template.FuncMap {
-	return template.FuncMap{
+	return withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"deref":      func(p *time.Time) time.Time { return *p },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
@@ -24,13 +24,13 @@ func bulkFuncs() template.FuncMap {
 			}
 			return m
 		},
-	}
+	})
 }
 
 func renderBulk(t *testing.T, page string, data map[string]any) string {
 	t.Helper()
 	tmpl, err := template.New("").Funcs(bulkFuncs()).ParseFS(assetsFS,
-		"templates/"+page, "templates/_action_picker.html")
+		append(append([]string{}, layoutPartials...), "templates/"+page)...)
 	if err != nil {
 		t.Fatalf("parse %s: %v", page, err)
 	}
@@ -43,14 +43,15 @@ func renderBulk(t *testing.T, page string, data map[string]any) string {
 
 func TestBulkFormRenders(t *testing.T) {
 	out := renderBulk(t, "bulk_form.html", map[string]any{
-		"Packages":    []model.SoftwarePackage{},
-		"Images":      []model.Image{},
-		"FormAction":  "/portal/bulk",
-		"Editing":     false,
-		"AP":          formPrefill(nil, time.UTC),
-		"SelInitJSON": "[]",
+		"Packages":     []model.SoftwarePackage{},
+		"Images":       []model.Image{},
+		"FormAction":   "/portal/bulk",
+		"ReviewAction": "/portal/bulk/review",
+		"Editing":      false,
+		"AP":           formPrefill(nil, time.UTC),
+		"SelInitJSON":  "[]",
 	})
-	for _, want := range []string{`name="name"`, `name="description"`, `name="action"`, `name="schedule_kind"`, "action-picker", "Recurring", "Run once"} {
+	for _, want := range []string{`name="name"`, `name="description"`, `name="action"`, `name="schedule_kind"`, "action-picker", "Repeat", "Run once later", "data-machine-picker", `name="filter_name"`, `action="/portal/bulk/review"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_form missing %q", want)
 		}
@@ -68,7 +69,7 @@ func TestBulkListRendersWithProgress(t *testing.T) {
 		CreatedBy: "bob", NextRunAt: &next,
 	}}
 	out := renderBulk(t, "bulk_list.html", map[string]any{"Ops": ops})
-	for _, want := range []string{"Clear completed", "bulk-bar", "scheduled", "active", "/portal/bulk/2/edit",
+	for _, want := range []string{"Clear completed", "segbar", "Scheduled", "Running", "1 failed so far", "Run script", "/portal/bulk/2/edit",
 		"Nightly script", "runs the cleanup", "Lab rebuild"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_list missing %q", want)
@@ -100,9 +101,9 @@ func TestBulkDetailRenders(t *testing.T) {
 		"Jobs": []model.BulkJob{{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}},
 		"Runs": []*run{{No: 1, Jobs: []jobView{{BulkJob: model.BulkJob{ID: 1, MachineID: 9, Status: "ok", RunNo: 1}, MachineName: "WS-DEV-09"}}}},
 	})
-	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "re-evaluated each run",
+	for _, want := range []string{"data-bulk-progress", "Pause", "Cancel", "Running",
 		"Weekly patch run", "patches the fleet",
-		"Wake-on-LAN", "cancel undelivered jobs after 6 hours",
+		"Wake-on-LAN", "Jobs not picked up within 6 hours are cancelled", "Succeeded",
 		"WS-DEV-09"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("bulk_detail missing %q", want)

@@ -32,10 +32,15 @@ func importList(r Repos) http.HandlerFunc {
 				matched++
 			}
 		}
+		search := newSearchBox(req, "Search staged assets", "Search staged assets")
+		shown := filterByQuery(assets, search.Query, func(a model.ImportedAsset) []string {
+			return []string{a.Serial, a.Model, a.Name, a.OU}
+		})
 		render(w, req, r, "imported_assets.html", "Import assets", map[string]any{
-			"Assets":  assets,
+			"Assets":  shown,
 			"Total":   len(assets),
 			"Matched": matched,
+			"Search":  search.counted(len(shown), len(assets), "assets"),
 		})
 	}
 }
@@ -94,6 +99,7 @@ func importUpload(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "asset.import",
 				Target:    "imported_asset:" + strconv.Itoa(inserted+updated),
 				Fields:    string(fields),
@@ -130,6 +136,7 @@ func importWipe(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "asset.wipe",
 				Target:    "imported_asset",
 				Fields:    string(fields),

@@ -15,12 +15,12 @@ import (
 // Enough of the real funcmap is supplied for the ISO pages.
 func renderBody(t *testing.T, page string, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"list":       func(args ...any) []any { return args },
 		"humanBytes": func(n int64) string { return "X" },
-	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/"+page)
+	})
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/"+page, "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse %s: %v", page, err)
 	}
@@ -93,6 +93,20 @@ func TestISOFormBootMediaStates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// An OS type saved through the API (or an older version) that isn't one of
+// the form's choices stays selected instead of reading "(select)", and the
+// known choices are labelled for people.
+func TestISOFormKeepsUnlistedOSType(t *testing.T) {
+	out := renderBody(t, "iso_form.html", map[string]any{"ISO": model.ISO{ID: 1, Name: "Win11", OSType: "windows11"}, "IsNew": false})
+	if !strings.Contains(out, `<option value="windows11" selected>`) {
+		t.Errorf("unlisted os_type not kept selected")
+	}
+	out = renderBody(t, "iso_form.html", map[string]any{"ISO": model.ISO{ID: 1, Name: "Win11", OSType: "windows-11"}, "IsNew": false})
+	if !strings.Contains(out, `<option value="windows-11" selected>Windows 11</option>`) {
+		t.Errorf("known os_type not selected with its label")
 	}
 }
 

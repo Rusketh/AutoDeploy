@@ -4,8 +4,9 @@
   <h3>{{.Data.Heading}}</h3>
   <p>{{.Data.Message}}</p>
   <div class="flex actions-center mt-4">
-    <a class="btn secondary" href="javascript:history.back()"><svg><use href="#i-arrow-left"/></svg>Go back</a>
-    <a class="btn" href="/portal/"><svg><use href="#i-image"/></svg>Dashboard</a>
+    {{if .Data.BackURL}}<a class="btn" href="{{.Data.BackURL}}"><svg><use href="#i-arrow-left"/></svg>Back to {{.Data.BackLabel}}</a>{{end}}
+    <a class="btn secondary" href="javascript:history.back()">Go back</a>
+    {{if ne .Data.BackURL "/portal/"}}<a class="btn ghost" href="/portal/">Dashboard</a>{{end}}
   </div>
   {{if .Data.Detail}}
   <details class="mt-4" style="text-align:left">
@@ -13,5 +14,6 @@
     <pre class="mt-2">{{.Data.Detail}}</pre>
   </details>
   {{end}}
+  <p class="small muted mt-4">Error {{.Data.Code}}</p>
 </div>
 {{end}}

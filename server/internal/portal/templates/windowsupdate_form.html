@@ -8,14 +8,15 @@
   </div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/updates{{else}}/portal/updates/{{int64 $u.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/updates{{else}}/portal/updates/{{int64 $u.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset>
     <legend>Update metadata</legend>
     <label><span class="lbl">KB Number</span>
-      <input type="text" name="kb_number" value="{{$u.KBNumber}}" required placeholder="KB5034441">
+      <input type="text" name="kb_number" value="{{$u.KBNumber}}" required placeholder="KB5034441" {{invalidAttr .Data.FormError "kb_number"}}>{{fieldError .Data.FormError "kb_number"}}
     </label>
     <label><span class="lbl">Title</span>
-      <input type="text" name="title" value="{{$u.Title}}" required placeholder="2024-01 Cumulative Update for Windows 10">
+      <input type="text" name="title" value="{{$u.Title}}" required placeholder="2024-01 Cumulative Update for Windows 10" {{invalidAttr .Data.FormError "title"}}>{{fieldError .Data.FormError "title"}}
     </label>
     <label><span class="lbl">Description</span>
       <textarea name="description" rows="3">{{$u.Description}}</textarea>

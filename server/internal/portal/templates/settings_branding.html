@@ -1,5 +1,6 @@
 {{define "body"}}
 {{$b := .Data.B}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2><svg class="icon-h2"><use href="#i-image"/></svg>Branding</h2>
   <div class="right">
@@ -7,7 +8,8 @@
   </div>
 </div>
 
-<form class="std" method="POST" action="/portal/settings/branding">
+<form class="std" method="POST" action="/portal/settings/branding" data-dirty-guard>
+  {{template "form_error" $fe}}
   <fieldset>
     <legend>Names and contact</legend>
     <label><span class="lbl">Product name</span><input type="text" name="product_name" value="{{$b.ProductName}}" required></label>
@@ -18,7 +20,7 @@
     </div>
     <label><span class="lbl">OEM Manufacturer</span>
       <input type="text" name="oem_manufacturer" value="{{$b.OEMManufacturer}}" placeholder="Defaults to Organisation name">
-      <span class="hint">Written to <code>HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation\Manufacturer</code> by the agent after deploy. Shows up in System Properties.</span>
+      <span class="hint">Shown as the manufacturer in Windows' System Properties on deployed machines.</span>
     </label>
   </fieldset>
 
@@ -32,14 +34,14 @@
       <span class="hint">Used for buttons, accent badges, the active nav highlight.</span>
     </label>
     <label><span class="lbl">Logo</span>
-      <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…">
+      <input type="text" name="logo_data_url" value="{{$b.LogoDataURL}}" placeholder="data:image/svg+xml;base64,…" {{invalidAttr $fe "logo_data_url"}}>{{fieldError $fe "logo_data_url"}}
       <span class="hint">Paste a data URL, or upload an image to embed it:
         <input type="file" accept="image/*" onchange="fileToDataURL(this)" id="logoFile" class="logo-file-input">
         <br>A <strong>PNG</strong> (or JPEG) also shows on the boot menu and the
         setup-lock screen; SVG renders in the portal only. Keep it under 1&nbsp;MB.
       </span>
     </label>
-    {{if $b.LogoDataURL}}<div class="mt-2">Current logo: <img src="{{brandLogo $b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}
+    {{if and $b.LogoDataURL (not (fieldInvalid $fe "logo_data_url"))}}<div class="mt-2">Current logo: <img src="{{brandLogo $b.LogoDataURL}}" alt="logo preview" class="logo-preview"></div>{{end}}
   </fieldset>
 
   <div class="actions">

@@ -14,7 +14,8 @@ import (
 // DeploymentRecord plus a derived Stalled flag.
 type historyRowT struct {
 	model.DeploymentRecord
-	Stalled bool
+	Stalled  bool
+	Timeline *model.DeployTimeline
 }
 
 // renderMachineDetail parses machine_detail.html with enough of the real
@@ -22,7 +23,7 @@ type historyRowT struct {
 // parse or exec error, which is the main guard against template regressions.
 func renderMachineDetail(t *testing.T, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"derefID":    func(p *model.ID) int64 { return int64(*p) },
 		"deref":      func(p *time.Time) time.Time { return *p },
@@ -55,9 +56,9 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 			}
 			return m
 		},
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-		"templates/machine_detail.html", "templates/_action_picker.html")
+		"templates/machine_detail.html", "templates/_action_picker.html", "templates/_deployment_timeline.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse machine_detail.html: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestMachineDetailAtAGlance(t *testing.T) {
 			t.Error("want 'Never re-imaged' in summary")
 		}
 		// Progress card is present but hidden when no deploy is active.
-		if !strings.Contains(out, `card deploy-progress`) || !strings.Contains(out, "hidden") {
+		if !strings.Contains(out, `class="deploy-progress idle"`) || !strings.Contains(out, "hidden") {
 			t.Error("want hidden progress card when no active deploy")
 		}
 	})
@@ -166,8 +167,8 @@ func TestMachineDetailAtAGlance(t *testing.T) {
 		d["LastReimage"] = &model.ReimageEvent{ID: 1, CreatedAt: now, Source: "remote_flag"}
 		out := renderMachineDetail(t, d)
 		for _, want := range []string{
-			"View full deployment history (1)",
-			"View re-image history (1)",
+			"Deployment history (1)", "Succeeded", "Complete",
+			"Re-image history (1)",
 			"<details", "</details>",
 		} {
 			if !strings.Contains(out, want) {

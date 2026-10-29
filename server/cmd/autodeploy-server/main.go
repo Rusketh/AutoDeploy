@@ -82,6 +82,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	auth.SessionIdleTimeout = cfg.SessionIdleTimeout
+	auth.SessionMaxLifetime = cfg.SessionMaxLifetime
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return err
@@ -105,6 +107,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	r := repos(db, bx)
+	// Server-side logging.Event calls (upload failures, …) also land in the
+	// central log so the Logs page shows them next to client events.
+	logging.SetSink(api.LogEventSink(r.Logs))
 
 	// Runtime settings: the operator-facing settings the portal can
 	// change. AD config, log retention, payload throttle. The env-var
@@ -500,6 +505,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	domainJoin := model.NewDomainJoinRepo(db, bx)
 	setupLock := model.NewSetupLockRepo(db)
 	updates := model.NewWindowsUpdateRepo(db, inventory)
+	updates.SetGroups(groups)
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
 	importedAssets := model.NewImportedAssetRepo(db)

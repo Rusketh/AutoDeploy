@@ -27,15 +27,15 @@ import (
 // Repos is the bundle of repositories the API depends on. Pass one
 // constructed by the caller so this package owns no state.
 type Repos struct {
-	ISOs      *model.ISORepo
-	Unattend  *model.UnattendRepo
-	Drivers   *model.DriverPackageRepo
-	Software  *model.SoftwarePackageRepo
+	ISOs        *model.ISORepo
+	Unattend    *model.UnattendRepo
+	Drivers     *model.DriverPackageRepo
+	Software    *model.SoftwarePackageRepo
 	Loadouts    *model.SoftwareLoadoutRepo
 	Images      *model.ImageRepo
 	ImageGroups *model.ImageGroupRepo
 	Inventory   *model.InventoryRepo
-	Resolver  *resolve.Resolver
+	Resolver    *resolve.Resolver
 	// Phase 11.
 	Users    *auth.Repo
 	Settings *auth.SettingsRepo
@@ -147,6 +147,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/images/{id}/export", requireAuth(r, handleExportImage(r)))
 	mux.HandleFunc("GET /api/v1/images/{id}/export/status", requireAuth(r, handleExportStatus(r)))
 	mux.HandleFunc("GET /api/v1/images/{id}/export/download", requireAuth(r, handleExportDownload(r)))
+	mux.HandleFunc("POST /api/v1/images/{id}/export/cancel", requireAuth(r, handleExportCancel(r)))
 
 	// Software loadouts (Phase 7).
 	mux.HandleFunc("GET /api/v1/loadouts", requireAuth(r, handleListLoadouts(r)))

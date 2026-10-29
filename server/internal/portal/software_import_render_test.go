@@ -30,12 +30,12 @@ func TestSoftwareImportPageRenders(t *testing.T) {
 // The software list must offer both the winget import path and manual
 // package creation.
 func TestSoftwareListOffersImportAndManual(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"humanBytes": func(n int64) string { return "X" },
 		"pct":        func(a, b int) int { return 0 },
-	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_list.html")
+	})
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_list.html", "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

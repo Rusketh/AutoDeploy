@@ -6,21 +6,28 @@
   <div class="right"><a class="btn ghost sm" href="/portal/isos"><svg><use href="#i-arrow-left"/></svg>Back to ISOs</a></div>
 </div>
 
-<form class="std" method="POST" action="{{if $new}}/portal/isos{{else}}/portal/isos/{{int64 $iso.ID}}{{end}}">
+<form class="std" method="POST" action="{{if $new}}/portal/isos{{else}}/portal/isos/{{int64 $iso.ID}}{{end}}" data-dirty-guard>
+  {{template "form_error" .Data.FormError}}
   <fieldset>
     <legend>Identity</legend>
     <label><span class="lbl">Name</span>
-      <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128">
+      <input type="text" name="name" value="{{$iso.Name}}" required maxlength="128" {{invalidAttr .Data.FormError "name"}}>{{fieldError .Data.FormError "name"}}
       <span class="hint">Letters, digits, dots, dashes, underscores, spaces.</span>
     </label>
     <label><span class="lbl">OS type</span>
-      <select name="os_type" required>
+      <select name="os_type" required {{invalidAttr .Data.FormError "os_type"}}>
         {{$ot := $iso.OSType}}
+        {{$known := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
+        {{$names := list "Windows 10" "Windows 11" "Windows Server 2019" "Windows Server 2022" "Windows Server 2025"}}
         <option value="">(select)</option>
-        {{range $t := list "windows-10" "windows-11" "windows-server-2019" "windows-server-2022" "windows-server-2025"}}
-          <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{$t}}</option>
+        {{$isKnown := false}}{{range $known}}{{if eq $ot .}}{{$isKnown = true}}{{end}}{{end}}
+        {{/* A value saved through the API (or by an older version) that isn't
+             in the list stays selected rather than silently becoming "(select)". */}}
+        {{if and $ot (not $isKnown)}}<option value="{{$ot}}" selected>{{$ot}}</option>{{end}}
+        {{range $i, $t := $known}}
+          <option value="{{$t}}" {{if eq $ot $t}}selected{{end}}>{{index $names $i}}</option>
         {{end}}
-      </select>
+      </select>{{fieldError .Data.FormError "os_type"}}
     </label>
     <label><span class="lbl">Description</span>
       <input type="text" name="description" value="{{$iso.Description}}" maxlength="200">
@@ -46,7 +53,7 @@
   Current storage path:
   {{if $iso.StoragePath}}
     <code>{{$iso.StoragePath}}</code><button class="copy" data-copy="{{$iso.StoragePath}}" aria-label="Copy path"><svg><use href="#i-copy"/></svg></button>
-    <span class="badge">{{$iso.SizeBytes}} bytes</span>
+    <span class="badge" title="{{$iso.SizeBytes}} bytes">{{humanBytes $iso.SizeBytes}}</span>
   {{else}}<em>nothing uploaded yet</em>{{end}}
 </p>
 
@@ -105,7 +112,7 @@
         {{else}}<span class="badge bad">missing</span> — this media may not boot under UEFI.{{end}}
       </li>
       {{if $iso.PrepError}}<li>Prep error: <code>{{$iso.PrepError}}</code></li>{{end}}
-      {{if $iso.MediaPreparedAt}}<li class="muted">Prepared {{$iso.MediaPreparedAt}}</li>{{end}}
+      {{if $iso.MediaPreparedAt}}<li class="muted">Prepared {{timeAbs $iso.MediaPreparedAt}}</li>{{end}}
     </ul>
   {{end}}
 </div>

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"io/fs"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -21,27 +22,16 @@ func TestAllTemplatesParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A permissive funcmap mirroring funcsFor's names: they must exist for
-	// parse; bodies don't run. Keep in sync when adding template funcs.
-	funcs := template.FuncMap{}
-	for _, name := range []string{
-		"derefID", "idEq", "int64", "derefIDtoID", "deref", "join",
-		"hasItems", "formatTime", "list", "dict", "add", "sub", "min",
-		"derefInt", "lt", "toFloat", "div", "mul", "pct", "humanBytes",
-		"relTime", "formatDate", "displayTZName", "brandLogo",
-		"adJoinLabel", "adJoinBadgeClass",
-	} {
-		funcs[name] = func(args ...any) string { return "" }
-	}
+	// The real funcmap (with no repos) so a template func missing from
+	// funcsFor fails here rather than at first render.
+	funcs := funcsFor(httptest.NewRequest("GET", "/portal/", nil), Repos{})
 	for _, page := range pages {
 		base := strings.TrimPrefix(page, "templates/")
 		if strings.HasPrefix(base, "_") {
 			continue // partial, parsed alongside every page below
 		}
 		if _, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-			"templates/_layout.html", "templates/_icons.html",
-			"templates/_action_picker.html", "templates/_pagination.html",
-			page); err != nil {
+			append(append([]string{}, layoutPartials...), page)...); err != nil {
 			t.Errorf("parse %s: %v", base, err)
 		}
 	}
@@ -50,10 +40,10 @@ func TestAllTemplatesParse(t *testing.T) {
 // TestNotificationsRender: the notifications page uses the shared pager
 // now; make sure the body executes with the handler's data shape.
 func TestNotificationsRender(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"add":        func(a, b int) int { return a + b },
 		"formatTime": func(tm time.Time) string { return tm.Format("2 Jan 2006, 15:04:05") },
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
 		"templates/notifications.html", "templates/_pagination.html")
 	if err != nil {

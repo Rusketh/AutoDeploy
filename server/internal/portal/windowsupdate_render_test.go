@@ -29,12 +29,12 @@ func TestImportPageRenders(t *testing.T) {
 // The updates list must offer both paths: catalog import AND manual
 // creation/upload.
 func TestUpdateListOffersImportAndManual(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"humanBytes": func(n int64) string { return "X" },
 		"pct":        func(a, b int) int { return 0 },
-	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/windowsupdate_list.html")
+	})
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, append(append([]string{}, layoutPartials...), "templates/windowsupdate_list.html")...)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

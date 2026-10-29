@@ -51,7 +51,9 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test -race -count=1 ./...
+        # imaging's TestPreparePartitionSizesForDrivers writes a 5 GiB zip under -race
+        # and takes 7-10 min on CI runners, too close to go test's 10m default.
+        run: go test -race -count=1 -timeout 20m ./...
       - name: build (linux/amd64 static)
         run: make build
       - uses: actions/upload-artifact@v4

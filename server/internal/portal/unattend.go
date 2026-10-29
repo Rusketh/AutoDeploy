@@ -28,57 +28,94 @@ func unattendList(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v, err := r.Unattend.List(req.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		search := newSearchBox(req, "Search unattends", "Search unattends")
+		shown := filterByQuery(v, search.Query, func(u model.Unattend) []string {
+			return []string{u.Name, u.Description}
+		})
 		refs := map[model.ID]int{}
-		for _, ua := range v {
+		for _, ua := range shown {
 			n, _ := r.Unattend.RefCount(req.Context(), ua.ID)
 			refs[ua.ID] = n
 		}
 		render(w, req, r, "unattend_list.html", "Unattends", map[string]any{
-			"Unattends": v, "Refs": refs,
+			"Unattends": shown, "Refs": refs,
+			"Search": search.counted(len(shown), len(v), "unattends"),
 		})
 	}
 }
 
 func unattendForm(r Repos, ua model.Unattend, isNew bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		s := unattend.Defaults()
-		if ua.SettingsJSON != "" {
-			parsed, err := unattend.Parse(ua.SettingsJSON)
-			if err == nil {
-				s = parsed
-			}
-		}
-		title := "New unattend"
-		if !isNew {
-			title = "Edit unattend: " + ua.Name
-		}
-		render(w, req, r, "unattend_form.html", title, map[string]any{
-			"Unattend": ua, "S": s, "IsNew": isNew,
-			"TargetOSes":      unattend.TargetOSes,
-			"Locales":         unattend.Locales,
-			"Keyboards":       unattend.Keyboards,
-			"TimeZones":       unattend.TimeZones,
-			"Editions":        unattend.EditionsFor(s.TargetOS),
-			"AccountGroups":   unattend.AccountGroups,
-			"TelemetryLevels": unattend.TelemetryLevels,
-			"PowerSchemes":    unattend.PowerSchemes,
-		})
+		unattendFormPage(w, req, r, ua, isNew, nil)
 	}
+}
+
+// unattendFormPage renders the unattend form. On a rejected save (fe !=
+// nil) ua holds the submitted values, minus every password: secrets are
+// never echoed back, and the operator is told to re-enter them.
+func unattendFormPage(w http.ResponseWriter, req *http.Request, r Repos, ua model.Unattend, isNew bool, fe *FormError) {
+	s := unattend.Defaults()
+	if ua.SettingsJSON != "" {
+		parsed, err := unattend.Parse(ua.SettingsJSON)
+		if err == nil {
+			s = parsed
+		}
+	}
+	if fe != nil && clearUnattendSecrets(&s) {
+		fe.Message += " Passwords aren't kept after a failed save — enter them again before saving."
+		keepSecretNote(fe, req, "auto_logon_password")
+		keepSecretNote(fe, req, "join_password")
+	}
+	title := "New unattend"
+	if !isNew {
+		title = "Edit unattend: " + ua.Name
+	}
+	renderForm(w, req, r, "unattend_form.html", title, fe, map[string]any{
+		"Unattend": ua, "S": s, "IsNew": isNew,
+		"TargetOSes":      unattend.TargetOSes,
+		"Locales":         unattend.Locales,
+		"Keyboards":       unattend.Keyboards,
+		"TimeZones":       unattend.TimeZones,
+		"Editions":        unattend.EditionsFor(s.TargetOS),
+		"AccountGroups":   unattend.AccountGroups,
+		"TelemetryLevels": unattend.TelemetryLevels,
+		"PowerSchemes":    unattend.PowerSchemes,
+	})
+}
+
+// clearUnattendSecrets blanks every password in s, reporting whether any
+// was set.
+func clearUnattendSecrets(s *unattend.Settings) bool {
+	had := s.AdminPassword != ""
+	s.AdminPassword = ""
+	for i := range s.LocalAccounts {
+		had = had || s.LocalAccounts[i].Password != ""
+		s.LocalAccounts[i].Password = ""
+	}
+	if s.AutoLogon != nil {
+		had = had || s.AutoLogon.Password != ""
+		s.AutoLogon.Password = ""
+	}
+	if s.DomainJoin != nil {
+		had = had || s.DomainJoin.JoinPassword != ""
+		s.DomainJoin.JoinPassword = ""
+	}
+	return had
 }
 
 func unattendEdit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		ua, err := r.Unattend.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		unattendForm(r, ua, false)(w, req)
@@ -89,14 +126,12 @@ func unattendCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ua, err := buildUnattendFromForm(req)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/unattends/new", http.StatusFound)
+			unattendFormPage(w, req, r, ua, true, newFormError(req, model.KindUnattend, err))
 			return
 		}
 		out, err := r.Unattend.Create(req.Context(), ua)
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, "/portal/unattends/new", http.StatusFound)
+			unattendFormPage(w, req, r, ua, true, newFormError(req, model.KindUnattend, err))
 			return
 		}
 		flash(w, "ok", "Unattend created.")
@@ -108,21 +143,20 @@ func unattendUpdate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := pathID(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		ua, err := buildUnattendFromForm(req)
+		ua.ID = id
 		if err != nil {
-			flash(w, "err", err.Error())
-			http.Redirect(w, req, fmt.Sprintf("/portal/unattends/%d/edit", id), http.StatusFound)
+			unattendFormPage(w, req, r, ua, false, newFormError(req, model.KindUnattend, err))
 			return
 		}
-		ua.ID = id
 		if err := r.Unattend.Update(req.Context(), ua); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Saved.")
+			unattendFormPage(w, req, r, ua, false, newFormError(req, model.KindUnattend, err))
+			return
 		}
+		flash(w, "ok", "Saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/unattends/%d/edit", id), http.StatusFound)
 	}
 }
@@ -130,11 +164,8 @@ func unattendUpdate(r Repos) http.HandlerFunc {
 func unattendDelete(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		if err := r.Unattend.Delete(req.Context(), id); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Deleted.")
-		}
+		name := nameBeforeDelete(req, r, model.KindUnattend, id)
+		deleteFlash(w, req, model.KindUnattend, name, r.Unattend.Delete(req.Context(), id))
 		http.Redirect(w, req, "/portal/unattends", http.StatusFound)
 	}
 }
@@ -167,17 +198,17 @@ func unattendPreview(r Repos) http.HandlerFunc {
 		id, _ := pathID(req)
 		ua, err := r.Unattend.Get(req.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			failPage(w, req, r, http.StatusNotFound, err)
 			return
 		}
 		s, err := unattend.Parse(ua.SettingsJSON)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		x, err := unattend.Generate(s)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
 		render(w, req, r, "unattend_preview.html", "unattend.xml — "+ua.Name, map[string]any{

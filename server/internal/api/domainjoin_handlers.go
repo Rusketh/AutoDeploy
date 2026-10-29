@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -77,6 +78,17 @@ func handleAgentDomainJoin(r Repos) http.HandlerFunc {
 		if err != nil && !errors.Is(err, model.ErrNotFound) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if pw != "" {
+			// Audit the hand-out (never the value): which machine's agent
+			// received which image's join password.
+			recordEvent(req, r, model.LogEvent{
+				Actor:     m.SystemUUID,
+				Action:    "secret.access",
+				Target:    fmt.Sprintf("image:%d", int64(*b.ImageID)),
+				MachineID: m.ID,
+				Fields:    fieldsJSON(map[string]any{"secret": "domain-join password", "by": "agent", "domain": cfg.Domain, "note": "value not logged"}),
+			})
 		}
 		writeJSON(w, http.StatusOK, AgentDomainJoinResponse{
 			Join:     true,

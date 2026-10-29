@@ -378,7 +378,7 @@ func TestBootPartitionSizing(t *testing.T) {
 func TestDriverStagedBytesCountsExtractedPlusWinPEDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, "pkg.zip")
-	storage := strings.Repeat("S", 4096)  // boot-critical -> counted twice
+	storage := strings.Repeat("S", 4096)   // boot-critical -> counted twice
 	bluetooth := strings.Repeat("B", 2048) // OS-bucket only -> counted once
 	writeTestZip(t, zipPath, map[string]string{
 		"Storage/iaStorAC/iaStorAC.sys": storage,

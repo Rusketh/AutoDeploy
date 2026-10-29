@@ -3,8 +3,10 @@ package portal
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,41 +18,83 @@ import (
 func networkForm(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var cfg runtime.NetworkConfig
-		var env runtime.NetworkConfig
 		if r.Runtime != nil {
 			cfg = r.Runtime.NetworkConfig()
-			e := r.Runtime.EnvDefaults()
-			env = runtime.NetworkConfig{
-				HTTPAddr:    e.HTTPAddr,
-				HTTPSAddr:   e.HTTPSAddr,
-				TLSCertPath: e.TLSCertFile,
-				TLSKeyPath:  e.TLSKeyFile,
-			}
 		}
-
-		var certInfo string
-		if path := cfg.TLSCertPath; path != "" {
-			certInfo = describeCert(path)
-		} else if path := env.TLSCertPath; path != "" {
-			certInfo = describeCert(path)
-		}
-
-		render(w, req, r, "settings_network.html", "Network", map[string]any{
-			"Cfg":      cfg,
-			"Env":      env,
-			"CertInfo": certInfo,
-		})
+		networkRender(w, req, r, cfg, nil)
 	}
+}
+
+// networkRender renders the network page with cfg in the fields (stored,
+// or as submitted after a rejected save — fe set, 422).
+func networkRender(w http.ResponseWriter, req *http.Request, r Repos, cfg runtime.NetworkConfig, fe *FormError) {
+	var env runtime.NetworkConfig
+	if r.Runtime != nil {
+		e := r.Runtime.EnvDefaults()
+		env = runtime.NetworkConfig{
+			HTTPAddr:    e.HTTPAddr,
+			HTTPSAddr:   e.HTTPSAddr,
+			TLSCertPath: e.TLSCertFile,
+			TLSKeyPath:  e.TLSKeyFile,
+		}
+	}
+	var certInfo string
+	if path := cfg.TLSCertPath; path != "" {
+		certInfo = describeCert(path)
+	} else if path := env.TLSCertPath; path != "" {
+		certInfo = describeCert(path)
+	}
+	renderForm(w, req, r, "settings_network.html", "Network", fe, map[string]any{
+		"Cfg":      cfg,
+		"Env":      env,
+		"CertInfo": certInfo,
+	})
+}
+
+// validateNetworkConfig checks the network form before anything is saved.
+func validateNetworkConfig(cfg runtime.NetworkConfig) *FormError {
+	fe := &FormError{Fields: map[string]string{}}
+	for _, f := range []struct{ field, val string }{{"http_addr", cfg.HTTPAddr}, {"https_addr", cfg.HTTPSAddr}} {
+		if f.val == "" {
+			continue
+		}
+		if _, port, err := net.SplitHostPort(f.val); err != nil || port == "" {
+			fe.Fields[f.field] = "Use host:port, e.g. 0.0.0.0:8080 (all interfaces) or 127.0.0.1:8080 (this computer only)."
+		}
+	}
+	if cfg.ExternalURL != "" && !strings.HasPrefix(cfg.ExternalURL, "http://") && !strings.HasPrefix(cfg.ExternalURL, "https://") {
+		fe.Fields["external_url"] = "Start the address with https:// (or http://), e.g. https://deploy.example.com."
+	}
+	for _, part := range strings.Split(cfg.TrustedProxies, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(part); err != nil && net.ParseIP(part) == nil {
+			fe.Fields["trusted_proxies"] = fmt.Sprintf("%q isn't an IP address or range. Use ranges like 10.0.0.0/8, separated by commas.", part)
+			break
+		}
+	}
+	for _, f := range []struct{ field, val string }{{"tls_cert_path", cfg.TLSCertPath}, {"tls_key_path", cfg.TLSKeyPath}} {
+		if f.val != "" && !filepath.IsAbs(f.val) {
+			fe.Fields[f.field] = "Use a full path starting from the root, e.g. /etc/ssl/certs/autodeploy.pem."
+		}
+	}
+	if len(fe.Fields) == 0 {
+		return nil
+	}
+	fe.Message = "Couldn't save — fix the highlighted fields below. Nothing was changed."
+	return fe
 }
 
 func networkSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		extAccess := strings.TrimSpace(req.FormValue("external_access"))
@@ -66,21 +110,16 @@ func networkSubmit(r Repos) http.HandlerFunc {
 			TLSCertPath:    strings.TrimSpace(req.FormValue("tls_cert_path")),
 			TLSKeyPath:     strings.TrimSpace(req.FormValue("tls_key_path")),
 		}
-
-		if cfg.ExternalURL != "" && !strings.HasPrefix(cfg.ExternalURL, "http://") && !strings.HasPrefix(cfg.ExternalURL, "https://") {
-			flash(w, "err", "External URL must start with http:// or https://")
-			http.Redirect(w, req, "/portal/settings/network", http.StatusFound)
+		if fe := validateNetworkConfig(cfg); fe != nil {
+			networkRender(w, req, r, cfg, fe)
 			return
 		}
-		if cfg.ExternalURL != "" {
-			cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
-		}
-
+		cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
 		if err := r.Runtime.SetNetworkConfig(req.Context(), cfg); err != nil {
-			flash(w, "err", err.Error())
-		} else {
-			flash(w, "ok", "Network settings saved. Listen address and TLS changes take effect on next server restart.")
+			networkRender(w, req, r, cfg, newFormError(req, "", err))
+			return
 		}
+		flash(w, "ok", "Network settings saved. Listen address and TLS changes take effect on next server restart.")
 		http.Redirect(w, req, "/portal/settings/network", http.StatusFound)
 	}
 }
@@ -88,7 +127,7 @@ func networkSubmit(r Repos) http.HandlerFunc {
 func networkUploadCert(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if r.Runtime == nil {
-			http.Error(w, "runtime settings unavailable", http.StatusInternalServerError)
+			failPage(w, req, r, http.StatusInternalServerError, errors.New("runtime settings unavailable"))
 			return
 		}
 		if err := req.ParseMultipartForm(4 << 20); err != nil {

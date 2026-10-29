@@ -14,19 +14,15 @@ import (
 // is always best-effort and asynchronous (the emitter runs its own worker
 // pool); a handler never fails because a notification couldn't be produced.
 
-// machineDisplayName resolves the friendliest label we have for a machine:
-// its desired binding name, then the agent-reported Windows name, then the
-// record id.
+// machineDisplayName resolves the label a machine is shown under, using the
+// shared model.MachineDisplayName precedence: its desired binding name, then
+// the agent-reported Windows name, then the short SMBIOS UUID.
 func machineDisplayName(ctx context.Context, r Repos, m model.MachineRecord) string {
+	var b model.MachineBinding
 	if r.Inventory != nil {
-		if b, err := r.Inventory.GetBinding(ctx, m.ID); err == nil && b.MachineName != "" {
-			return b.MachineName
-		}
+		b, _ = r.Inventory.GetBinding(ctx, m.ID)
 	}
-	if m.ReportedName != "" {
-		return m.ReportedName
-	}
-	return fmt.Sprintf("machine #%d", int64(m.ID))
+	return model.MachineDisplayName(m, b).Name
 }
 
 func machineLink(id model.ID) string {
@@ -39,15 +35,26 @@ func emitFirstSeen(req *http.Request, r Repos, m model.MachineRecord) {
 	if !m.FirstContact {
 		return
 	}
-	label := m.SystemUUID
-	if m.SystemManufacturer != "" || m.SystemProduct != "" {
-		label = fmt.Sprintf("%s %s (%s)", m.SystemManufacturer, m.SystemProduct, m.SystemUUID)
+	// Lead with the display name (an imported asset may already have named
+	// the machine); the make/model and full UUID follow for identification.
+	label := machineDisplayName(req.Context(), r, m)
+	hw := strings.TrimSpace(m.SystemManufacturer + " " + m.SystemProduct)
+	if hw != "" {
+		label = fmt.Sprintf("%s (%s)", label, hw)
+	}
+	body := "A machine reported for the first time and was added to inventory."
+	if m.SystemUUID != "" {
+		body += " SMBIOS UUID " + m.SystemUUID
+		if m.SystemSerial != "" {
+			body += ", serial " + m.SystemSerial
+		}
+		body += "."
 	}
 	r.Emitter.Emit(req.Context(), notify.Event{
 		Name:     notify.EventMachineFirstSeen,
 		Severity: notify.SevInfo,
 		Title:    "New machine seen: " + label,
-		Body:     "A machine reported for the first time and was added to inventory.",
+		Body:     body,
 		Link:     machineLink(m.ID),
 		Actor:    "system",
 	})
@@ -81,15 +88,17 @@ func emitDeployStarted(req *http.Request, r Repos, m model.MachineRecord, imageI
 		ev.Name = notify.EventDeployReimage
 		ev.Severity = notify.SevWarning
 		ev.Title = "Re-image started on " + name
-		ev.Body = strings.TrimSpace("The machine is being wiped and rebuilt (trigger: " + reimageSource + "). " + ev.Body)
+		ev.Body = strings.TrimSpace("The machine is being wiped and rebuilt (" + reimageSourceLabel(reimageSource) + "). " + ev.Body)
 	}
 	r.Emitter.Emit(req.Context(), ev)
 }
 
 // emitDeployOutcome fires deploy.completed / deploy.failed when a deploy
 // reaches a terminal outcome (boot-client staging failure or the agent's
-// final report).
-func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, outcome, notes string) {
+// final report). depID is the run (0 if unknown): a failure's body leads
+// with the first error logged during the run, in the catalogue's plain
+// English with its "what to try" hint, and links to that run's logs.
+func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, depID model.ID, outcome, notes string) {
 	if r.Emitter == nil {
 		return
 	}
@@ -106,6 +115,19 @@ func emitDeployOutcome(req *http.Request, r Repos, m model.MachineRecord, outcom
 		ev.Name = notify.EventDeployFailed
 		ev.Severity = notify.SevError
 		ev.Title = "Deploy failed on " + name
+		if msg, hint, ok := deployFailureSummary(req.Context(), r, depID); ok {
+			body := msg
+			if notes != "" && !strings.Contains(msg, notes) && !strings.Contains(notes, msg) {
+				body += " (" + strings.TrimSuffix(notes, ".") + ")"
+			}
+			if hint != "" {
+				body += "\nWhat to try: " + hint
+			}
+			ev.Body = body
+		}
+		if depID > 0 {
+			ev.Link = fmt.Sprintf("/portal/logs?deployment=%d", int64(depID))
+		}
 	}
 	r.Emitter.Emit(req.Context(), ev)
 }
@@ -125,7 +147,7 @@ func emitLoginFailed(req *http.Request, r Repos, username, ip string) {
 		Severity: notify.SevWarning,
 		Title:    "Failed login attempt for " + username,
 		Body:     "A sign-in with this username was rejected (source IP " + ip + ").",
-		Link:     "/portal/logs",
+		Link:     model.FailedLoginLogsURL(username),
 		Actor:    username,
 	})
 }

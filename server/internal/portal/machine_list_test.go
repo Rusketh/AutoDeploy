@@ -156,7 +156,7 @@ func TestMachineSortColumns(t *testing.T) {
 // empty states against template regressions.
 func renderMachineList(t *testing.T, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"formatTime": func(tm time.Time) string { return tm.Format(time.RFC3339) },
 		"add":        func(a, b int) int { return a + b },
@@ -178,9 +178,9 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 			}
 			return "bad"
 		},
-	}
+	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-		"templates/machine_list.html", "templates/_pagination.html")
+		"templates/machine_list.html", "templates/_pagination.html", "templates/_search.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse machine_list.html: %v", err)
 	}
@@ -200,10 +200,12 @@ func renderMachineList(t *testing.T, data map[string]any) string {
 type machineListRowT struct {
 	Machine        model.MachineRecord
 	Name           string
+	Display        model.MachineName
 	ImageName      string
 	BLSet          bool
 	OS             string
 	ReimagePending bool
+	Status         machineStatus
 }
 
 func TestMachineListRender(t *testing.T) {
@@ -219,14 +221,29 @@ func TestMachineListRender(t *testing.T) {
 	}
 	row := machineListRowT{Machine: model.MachineRecord{
 		ID: 1, SystemUUID: "abcd1234-0000-0000-0000-000000000000", LastSeen: time.Now(),
-	}}
+	}, Display: model.MachineName{Name: "LAB-01", RenamingFrom: "PC-0001"}}
 
 	t.Run("filter box carries the query; counts show match total", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/portal/machines?q=dell&group=3", nil)
 		out := renderMachineList(t, map[string]any{
 			"Rows": []machineListRowT{row}, "Page": page, "Query": "dell", "TotalAll": 40,
+			"Search": newSearchBox(req, "Search machines", "Search machines").counted(25, 40, "machines"),
 		})
 		if !strings.Contains(out, `name="q"`) || !strings.Contains(out, `value="dell"`) {
 			t.Errorf("want a server filter input carrying the query; got:\n%s", out)
+		}
+		// A GET form with an explicit Search button and a Clear link, and no
+		// per-keystroke behaviour hooks.
+		if !strings.Contains(out, `method="GET" action="/portal/machines"`) ||
+			!strings.Contains(out, `>Search</button>`) || !strings.Contains(out, `>Clear</a>`) {
+			t.Errorf("want a GET search form with Search button + Clear link; got:\n%s", out)
+		}
+		if strings.Contains(out, "data-server-filter") || strings.Contains(out, "data-filter") {
+			t.Errorf("search must not filter as you type; got:\n%s", out)
+		}
+		// The active group rides along as a hidden field.
+		if !strings.Contains(out, `<input type="hidden" name="group" value="3">`) {
+			t.Errorf("want the active group kept as a hidden field; got:\n%s", out)
 		}
 		if !strings.Contains(out, "25 of 40 machines match") {
 			t.Errorf("want filtered count line; got:\n%s", out)
@@ -244,13 +261,19 @@ func TestMachineListRender(t *testing.T) {
 		if !strings.Contains(out, `class="sortable`) || !strings.Contains(out, "sort=model") {
 			t.Errorf("want server-sort header links; got:\n%s", out)
 		}
+		// The machine's name (not its UUID) is the link to the machine, with
+		// the pending-rename hint beside it.
+		if !strings.Contains(out, `<a href="/portal/machines/1"><strong>LAB-01</strong></a>`) ||
+			!strings.Contains(out, "renaming from PC-0001") {
+			t.Errorf("want name as the machine link plus rename hint; got:\n%s", out)
+		}
 	})
 
 	t.Run("no matches: filtered empty state with clear link", func(t *testing.T) {
 		out := renderMachineList(t, map[string]any{
 			"Rows": []machineListRowT{}, "Page": PageInfo{}, "Query": "zzz", "TotalAll": 40,
 		})
-		if !strings.Contains(out, "No machines match") || !strings.Contains(out, "Clear filter") {
+		if !strings.Contains(out, "No matches for “zzz”") || !strings.Contains(out, "Clear search") {
 			t.Errorf("want filtered empty state; got:\n%s", out)
 		}
 		if strings.Contains(out, "No machines yet") {

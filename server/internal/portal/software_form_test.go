@@ -16,7 +16,7 @@ import (
 // isolation with the funcs that template needs, returning the rendered HTML.
 func renderSoftwareForm(t *testing.T, data map[string]any) string {
 	t.Helper()
-	funcs := template.FuncMap{
+	funcs := withPortalFuncs(template.FuncMap{
 		"int64":      func(id model.ID) int64 { return int64(id) },
 		"humanBytes": func(int64) string { return "X" },
 		"relTime":    func(time.Time) string { return "now" },
@@ -28,8 +28,8 @@ func renderSoftwareForm(t *testing.T, data map[string]any) string {
 			}
 			return m
 		},
-	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_form.html")
+	})
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/software_form.html", "templates/_form_error.html")
 	if err != nil {
 		t.Fatalf("parse software_form.html: %v", err)
 	}

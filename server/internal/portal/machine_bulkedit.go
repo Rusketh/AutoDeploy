@@ -2,6 +2,7 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ func machineBulkEditForm(r Repos) http.HandlerFunc {
 func machineBulkEditSubmit(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		var machineIDs []model.ID
@@ -44,11 +45,11 @@ func machineBulkEditSubmit(r Repos) http.HandlerFunc {
 		case "set":
 			n, err := strconv.ParseInt(req.FormValue("image_id"), 10, 64)
 			if err != nil || n <= 0 {
-				http.Error(w, "choose an image to set", http.StatusBadRequest)
+				failPage(w, req, r, http.StatusBadRequest, errors.New("choose an image to set"))
 				return
 			}
 			if _, err := r.Images.Get(req.Context(), model.ID(n)); err != nil {
-				http.Error(w, "image not found", http.StatusBadRequest)
+				failPage(w, req, r, http.StatusBadRequest, errors.New("image not found"))
 				return
 			}
 			id := model.ID(n)
@@ -70,7 +71,7 @@ func machineBulkEditSubmit(r Repos) http.HandlerFunc {
 
 		updated, err := r.Inventory.BulkEditBindings(req.Context(), machineIDs, edit)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failPage(w, req, r, http.StatusBadRequest, err)
 			return
 		}
 		if r.Logs != nil {
@@ -81,6 +82,7 @@ func machineBulkEditSubmit(r Repos) http.HandlerFunc {
 			_ = r.Logs.Append(req.Context(), model.LogEvent{
 				Component: "inventory",
 				Actor:     user.Username,
+				User:      user.Username,
 				Action:    "binding.bulk_edit",
 				Target:    "machines:" + strconv.Itoa(len(machineIDs)),
 				Fields:    string(fields),

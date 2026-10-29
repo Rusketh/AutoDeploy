@@ -1,91 +1,58 @@
 {{define "body"}}
 {{$ap := .Data.AP}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2>{{if .Data.Editing}}Edit bulk operation{{else}}New bulk operation{{end}}</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back to bulk</a></div>
 </div>
 
-<form class="std" method="POST" action="{{.Data.FormAction}}" id="bulk-form" onsubmit="return onSubmit()">
+{{/* The form posts to the review step; the review page then sends these
+     same fields to FormAction (the create/edit POST). */}}
+<form class="std" method="POST" action="{{if .Data.ReviewAction}}{{.Data.ReviewAction}}{{else}}{{.Data.FormAction}}{{end}}" id="bulk-form" data-dirty-guard>
+  {{template "form_error" $fe}}
 
-  <div class="section-head"><h3>Details</h3><div class="line"></div></div>
-  <p class="hint">Give this task a short name (and optional notes) so it's easy to find and sort later. Leave blank and AutoDeploy fills in a sensible default from the action and target.</p>
-  <div class="row">
-    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$ap.Name}}" maxlength="120" placeholder="e.g. Nightly lab re-image"></label>
-  </div>
-  <label><span class="lbl">Description</span><textarea name="description" rows="2" maxlength="500" placeholder="Optional notes about what this task does and why">{{$ap.Description}}</textarea></label>
+  <div class="section-head"><h3>1. Machines</h3><div class="line"></div></div>
+  <p class="hint">Find machines, then add the ones you want to the selection.</p>
+  {{template "machine_picker" (dict "Groups" .Data.Groups "InitJSON" .Data.SelInitJSON "Hint" "No machines selected yet — find some above and add them." "Filter" (dict "Name" $ap.FilterName "OU" $ap.FilterOU "Group" $ap.FilterGroup "GroupID" $ap.FilterGroupID))}}
+  {{fieldError $fe "filter_name"}}{{fieldError $fe "machine_ids"}}
 
-  <div class="section-head"><h3>1. Find machines</h3><div class="line"></div></div>
-  <p class="hint">Search by name, OU or AD group, then <strong>add</strong> the machines you want to the selection below. For a re-evaluated recurring task (chosen under <em>When</em>) these filter fields are saved and re-run each time instead of a fixed list.</p>
-  <div class="row">
-    <label><span class="lbl">Name regex</span><input type="text" id="filter_name" name="filter_name" value="{{$ap.FilterName}}" placeholder="^LAB-"></label>
-    <label><span class="lbl">OU (DN)</span><input type="text" id="filter_ou" name="filter_ou" value="{{$ap.FilterOU}}" placeholder="OU=Lab,DC=corp,DC=example"></label>
-    <label><span class="lbl">AD group</span><input type="text" id="filter_group" name="filter_group" value="{{$ap.FilterGroup}}" placeholder="Lab-Computers"></label>
-    <label><span class="lbl">Machine group</span>
-      <select id="filter_group_id" name="filter_group_id">
-        <option value="0">— none —</option>
-        {{range .Data.Groups}}<option value="{{int64 .ID}}" {{if eq (int64 .ID) $ap.FilterGroupID}}selected{{end}}>{{.Name}}</option>{{end}}
-      </select>
-    </label>
-  </div>
-  <div class="actions actions-start">
-    <button type="button" class="secondary" onclick="runSearch()"><svg><use href="#i-search"/></svg>Search</button>
-    <button type="button" class="ghost" onclick="addAllResults()">Add all results</button>
-  </div>
-
-  <div id="results-wrap" hidden>
-    <div class="section-head"><h4>Search results (<span id="results-count">0</span>)</h4><div class="line"></div></div>
-    <div class="tablewrap max-h-scroll">
-      <table><thead><tr><th>Name</th><th>Make / model</th><th>UUID</th><th></th></tr></thead>
-        <tbody id="results-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="section-head"><h3>2. Selection (<span id="sel-count">0</span> machine<span id="sel-plural">s</span>)</h3><div class="line"></div></div>
-  <div id="sel-empty" class="muted">No machines selected yet. Search above and add some.</div>
-  <div class="tablewrap max-h-scroll" id="sel-wrap" hidden>
-    <table><thead><tr><th>Name</th><th>Make / model</th><th></th></tr></thead>
-      <tbody id="sel-body"></tbody>
-    </table>
-  </div>
-  <div id="sel-inputs"></div>
-
-  <div class="section-head"><h3>3. Action</h3><div class="line"></div></div>
+  <div class="section-head"><h3>2. Action</h3><div class="line"></div></div>
   {{template "action_picker" (dict "Mode" "bulk" "Packages" .Data.Packages "Images" .Data.Images "AP" $ap)}}
+  <div data-move-errors>{{fieldError $fe "action"}}{{fieldError $fe "rename_find"}}{{fieldError $fe "script_body"}}{{fieldError $fe "software_package_id"}}</div>
 
-  <div class="section-head"><h3>4. When</h3><div class="line"></div></div>
-  <fieldset class="action-picker" role="radiogroup" aria-label="Schedule">
+  <div class="section-head"><h3>3. When</h3><div class="line"></div></div>
+  <fieldset class="action-picker" role="radiogroup" aria-label="When to run">
     <label class="action-tile">
       <input type="radio" name="schedule_kind" value="now" {{if eq $ap.ScheduleKind "now"}}checked{{end}}>
       <svg><use href="#i-bolt"/></svg><span class="t">Run now</span>
     </label>
     <label class="action-tile">
       <input type="radio" name="schedule_kind" value="once" {{if eq $ap.ScheduleKind "once"}}checked{{end}}>
-      <svg><use href="#i-clock"/></svg><span class="t">Run once</span>
+      <svg><use href="#i-clock"/></svg><span class="t">Run once later</span>
     </label>
     <label class="action-tile">
       <input type="radio" name="schedule_kind" value="recurring" {{if eq $ap.ScheduleKind "recurring"}}checked{{end}}>
-      <svg><use href="#i-repeat"/></svg><span class="t">Recurring</span>
+      <svg><use href="#i-repeat"/></svg><span class="t">Repeat</span>
     </label>
   </fieldset>
   <div class="action-panels">
     <div class="action-panel" data-action-panel="now" {{if ne $ap.ScheduleKind "now"}}hidden{{end}}>
-      <p class="small muted">Jobs are queued immediately; agents pick them up at their next check-in.</p>
+      <p class="small muted">Each machine starts at its next agent check-in.</p>
     </div>
     <div class="action-panel" data-action-panel="once" {{if ne $ap.ScheduleKind "once"}}hidden{{end}}>
-      <label><span class="lbl">Run at (server time)</span><input type="datetime-local" name="run_at" value="{{$ap.RunAtLocal}}"></label>
+      <label><span class="lbl">Date and time</span><input type="datetime-local" name="run_at" value="{{$ap.RunAtLocal}}" {{invalidAttr $fe "run_at"}}>
+        <span class="hint">In {{displayTZName}} (the portal's time zone).</span>{{fieldError $fe "run_at"}}</label>
     </div>
     <div class="action-panel" data-action-panel="recurring" {{if ne $ap.ScheduleKind "recurring"}}hidden{{end}}>
       <div class="row">
         <label><span class="lbl">Every</span><input type="number" name="recur_every" min="1" value="{{$ap.RecurEvery}}"></label>
         <label><span class="lbl">Unit</span>
-          <select name="recur_unit" id="recur_unit" onchange="recurUnitChanged()">
+          <select name="recur_unit" id="recur_unit" onchange="recurUnitChanged()" {{invalidAttr $fe "recur_unit"}}>
             <option value="hour" {{if eq $ap.RecurUnit "hour"}}selected{{end}}>hour(s)</option>
             <option value="day" {{if eq $ap.RecurUnit "day"}}selected{{end}}>day(s)</option>
             <option value="week" {{if eq $ap.RecurUnit "week"}}selected{{end}}>week(s)</option>
-          </select>
+          </select>{{fieldError $fe "recur_unit"}}
         </label>
-        <label id="recur-at-wrap"><span class="lbl">At (server time)</span><input type="time" name="recur_at" value="{{$ap.RecurAt}}"></label>
         <label id="recur-weekday-wrap"><span class="lbl">On</span>
           <select name="recur_weekday">
             {{$wd := $ap.RecurWeekday}}
@@ -98,34 +65,39 @@
             <option value="6" {{if eq $wd 6}}selected{{end}}>Saturday</option>
           </select>
         </label>
+        <label id="recur-at-wrap"><span class="lbl">At</span><input type="time" name="recur_at" value="{{$ap.RecurAt}}"></label>
       </div>
-      <details {{if $ap.RecurCron}}open{{end}}><summary class="small muted">Advanced — cron expression</summary>
-        <label><span class="lbl">Cron (min hour dom month dow) — overrides the preset above</span>
-          <input type="text" name="recur_cron" value="{{$ap.RecurCron}}" placeholder="0 2 * * 1"></label>
+      <p class="hint">Times are in {{displayTZName}}.</p>
+      <details {{if or $ap.RecurCron (fieldInvalid $fe "recur_cron")}}open{{end}}><summary class="small muted">Advanced: cron expression</summary>
+        <label><span class="lbl">Cron expression</span>
+          <input type="text" name="recur_cron" value="{{$ap.RecurCron}}" placeholder="0 2 * * 1" {{invalidAttr $fe "recur_cron"}}>
+          <span class="hint">Five fields: minute, hour, day of month, month, day of week. <code>0 2 * * 1</code> = Mondays at 02:00. Replaces the choice above.</span>
+          {{fieldError $fe "recur_cron"}}</label>
       </details>
       <fieldset class="mt-3">
-        <legend>Targets each run</legend>
+        <legend>Which machines each run</legend>
         <label class="check">
           <input type="radio" name="target_mode" value="selection" {{if ne $ap.TargetMode "filter"}}checked{{end}}>
-          <span>Fixed selection — replay exactly the machines chosen above every run.</span>
+          <span>The machines selected above</span>
         </label>
         <label class="check">
           <input type="radio" name="target_mode" value="filter" {{if eq $ap.TargetMode "filter"}}checked{{end}}>
-          <span>Re-evaluate filter — re-run the name/OU/group search each time so new machines are picked up.</span>
+          <span>Look machines up again each run <span class="muted">— uses the name, OU and group fields, so new machines are included</span></span>
         </label>
       </fieldset>
-      <p class="small warn" id="reimage-recur-warn" hidden><svg class="icon-inline"><use href="#i-alert"/></svg> A recurring re-image will <strong>repeatedly wipe and rebuild</strong> every targeted machine. Use only for kiosk/lab "reset to clean image" scenarios.</p>
+      <p class="small warn" id="reimage-recur-warn" hidden><svg class="icon-inline"><use href="#i-alert"/></svg> A repeating re-image <strong>wipes and rebuilds</strong> every targeted machine each time. Use it only for kiosks or labs that should reset to a clean image.</p>
     </div>
   </div>
 
-  <div class="section-head"><h3>5. Delivery options</h3><div class="line"></div></div>
+  <div class="section-head"><h3>4. Delivery</h3><div class="line"></div></div>
   <label class="check">
     <input type="checkbox" name="wake_on_lan" value="1" {{if $ap.WakeOnLAN}}checked{{end}}>
-    <span>Send Wake-on-LAN — broadcast a magic packet to each targeted machine's known MACs when a run starts, so powered-off machines boot and pick the job up. Machines must have reported their hardware (NIC MACs) and have WoL enabled in firmware.</span>
+    <span>Wake powered-off machines (Wake-on-LAN)</span>
   </label>
+  <p class="hint mt-0">Sends each machine a network “wake up” signal when a run starts. Works only if Wake-on-LAN is enabled in the machine's firmware and its agent has reported its network cards.</p>
   <div class="row mt-2">
-    <label><span class="lbl">Cancel undelivered jobs after</span>
-      <input type="number" name="cancel_after_value" min="0" value="{{$ap.CancelAfterValue}}" placeholder="never"></label>
+    <label><span class="lbl">Give up after</span>
+      <input type="number" name="cancel_after_value" min="0" value="{{$ap.CancelAfterValue}}" placeholder="never" {{invalidAttr $fe "cancel_after_value"}}>{{fieldError $fe "cancel_after_value"}}</label>
     <label><span class="lbl">Unit</span>
       <select name="cancel_after_unit">
         <option value="hours" {{if eq $ap.CancelAfterUnit "hours"}}selected{{end}}>hour(s)</option>
@@ -133,70 +105,22 @@
       </select>
     </label>
   </div>
-  <p class="hint">A job still waiting this long after a run starts is cancelled, and any re-image flag it set is cleared — so a re-image scheduled overnight can't wipe a machine someone first powers on during office hours. Leave blank to wait indefinitely.</p>
+  <p class="hint">Jobs a machine hasn't picked up by then are cancelled, so an overnight re-image can't start on a machine first switched on during office hours. Leave blank to wait indefinitely.</p>
+
+  <div class="section-head"><h3>5. Name <span class="muted small">(optional)</span></h3><div class="line"></div></div>
+  <div class="row">
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$ap.Name}}" maxlength="120" placeholder="e.g. Nightly lab re-image" {{invalidAttr $fe "name"}}>{{fieldError $fe "name"}}</label>
+  </div>
+  <label><span class="lbl">Notes</span><textarea name="description" rows="2" maxlength="500" placeholder="What this is for">{{$ap.Description}}</textarea>
+    <span class="hint">Left blank, a name is made from the action and machines.</span></label>
 
   <div class="actions">
     <a class="btn secondary" href="/portal/bulk">Cancel</a>
-    <button type="submit" class="danger"><svg><use href="#i-bolt"/></svg>{{if .Data.Editing}}Save changes{{else}}Queue operation{{end}}</button>
+    <button type="submit"><svg><use href="#i-eye"/></svg>{{if .Data.Editing}}Review changes{{else}}Review operation{{end}}</button>
   </div>
 </form>
 
 <script>
-var selection = {}; // id -> {id,name,make,product}
-
-function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
-
-var lastResults = [];
-function runSearch(){
-  var q = new URLSearchParams({
-    name_regex: document.getElementById('filter_name').value,
-    ou: document.getElementById('filter_ou').value,
-    group: document.getElementById('filter_group').value,
-    group_id: document.getElementById('filter_group_id').value
-  });
-  fetch('/portal/bulk/search?'+q.toString(), {credentials:'same-origin'})
-    .then(function(r){ return r.json(); })
-    .then(function(rows){
-      lastResults = Array.isArray(rows) ? rows : [];
-      document.getElementById('results-wrap').hidden = false;
-      document.getElementById('results-count').textContent = lastResults.length;
-      var b = document.getElementById('results-body');
-      b.innerHTML = '';
-      lastResults.forEach(function(m){
-        var tr = document.createElement('tr');
-        tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td><td><code>'+esc((m.uuid||'').slice(0,8))+'…</code></td>'+
-          '<td class="actions"><button type="button" class="ghost sm" onclick="addOne('+m.id+')">Add</button></td>';
-        b.appendChild(tr);
-      });
-    })
-    .catch(function(){ alert('Search failed.'); });
-}
-
-function addOne(id){ var m = lastResults.find(function(x){ return x.id===id; }); if(m){ selection[id]=m; renderSelection(); } }
-function addAllResults(){ lastResults.forEach(function(m){ selection[m.id]=m; }); renderSelection(); }
-function removeOne(id){ delete selection[id]; renderSelection(); }
-
-function renderSelection(){
-  var ids = Object.keys(selection);
-  document.getElementById('sel-count').textContent = ids.length;
-  document.getElementById('sel-plural').style.display = ids.length===1 ? 'none' : '';
-  document.getElementById('sel-empty').hidden = ids.length > 0;
-  document.getElementById('sel-wrap').hidden = ids.length === 0;
-  var body = document.getElementById('sel-body'); body.innerHTML='';
-  var inputs = document.getElementById('sel-inputs'); inputs.innerHTML='';
-  ids.forEach(function(id){
-    var m = selection[id];
-    var tr = document.createElement('tr');
-    tr.innerHTML = '<td>'+esc(m.name||'—')+'</td><td><strong>'+esc(m.make)+'</strong> <span class="muted">'+esc(m.product)+'</span></td>'+
-      '<td class="actions"><button type="button" class="ghost sm" onclick="removeOne('+id+')">Remove</button></td>';
-    body.appendChild(tr);
-    var inp = document.createElement('input'); inp.type='hidden'; inp.name='machine_ids'; inp.value=id; inputs.appendChild(inp);
-  });
-}
-
-// Seed the basket on edit.
-(function(){ try{ (JSON.parse({{.Data.SelInitJSON}})||[]).forEach(function(m){ selection[m.id]=m; }); }catch(_){} renderSelection(); })();
-
 function recurUnitChanged(){
   var u = document.getElementById('recur_unit').value;
   document.getElementById('recur-at-wrap').style.display = (u==='hour') ? 'none' : '';
@@ -204,27 +128,25 @@ function recurUnitChanged(){
 }
 recurUnitChanged();
 
-function currentSchedule(){ var el=document.querySelector('input[name=schedule_kind]:checked'); return el?el.value:'now'; }
-function currentTargetMode(){ var el=document.querySelector('input[name=target_mode]:checked'); return el?el.value:'selection'; }
-function currentAction(){ var el=document.querySelector('input[name=action]:checked'); return el?el.value:''; }
-
-// Show the recurring re-image warning when both are selected.
+// Show the repeating re-image warning when both are selected.
 function syncReimageWarn(){
+  var a = document.querySelector('input[name=action]:checked');
+  var s = document.querySelector('input[name=schedule_kind]:checked');
   var warn = document.getElementById('reimage-recur-warn');
-  if(warn){ warn.hidden = !(currentAction()==='reimage' && currentSchedule()==='recurring'); }
+  if(warn){ warn.hidden = !(a && a.value==='reimage' && s && s.value==='recurring'); }
 }
 document.getElementById('bulk-form').addEventListener('change', syncReimageWarn);
 syncReimageWarn();
 
-function onSubmit(){
-  var sched = currentSchedule();
-  var usingFilter = (sched==='recurring' && currentTargetMode()==='filter');
-  if(!usingFilter && Object.keys(selection).length===0){ alert('Add at least one machine to the selection.'); return false; }
-  if(currentAction()==='reimage' && sched==='recurring'){
-    return confirm('Recurring RE-IMAGE will repeatedly wipe and rebuild every targeted machine. Are you sure?');
-  }
-  if(sched==='now'){ return confirm('Queue this operation against '+Object.keys(selection).length+' machine(s)?'); }
-  return true;
-}
+// The action picker's fields live in a shared partial, so their errors
+// render after it; move each next to its field and mark the field invalid.
+// Without JS they stay readable just below the picker.
+document.querySelectorAll('[data-move-errors] .field-error').forEach(function(el){
+  var name = el.id.replace(/^err-/, '');
+  var f = document.querySelector('#bulk-form [name="'+name+'"]:not([type=hidden])');
+  if(!f || name==='action') return;
+  f.setAttribute('aria-invalid','true'); f.setAttribute('aria-describedby', el.id);
+  f.insertAdjacentElement('afterend', el);
+});
 </script>
 {{end}}
