@@ -646,9 +646,10 @@ button svg, .btn svg { width: 16px; height: 16px; }
 [aria-invalid="true"] { border-color: var(--bad) !important; box-shadow: 0 0 0 3px var(--bad-soft); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .form-error,
+  :root:not([data-theme="light"]) .flash-err,
   :root:not([data-theme="light"]) .field-error { color: #ff9b93; }
 }
-:root[data-theme="dark"] .form-error, :root[data-theme="dark"] .field-error { color: #ff9b93; }
+:root[data-theme="dark"] .form-error, :root[data-theme="dark"] .flash-err, :root[data-theme="dark"] .field-error { color: #ff9b93; }
 
 /* Pending re-image banner on the machine page: a prominent, dismissible
    notice that a remote re-image is queued and waiting for the agent. */
