@@ -624,6 +624,9 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 	for k, f := range formErrorFuncs() {
 		fm[k] = f
 	}
+	for k, f := range bulkTemplateFuncs(loc) {
+		fm[k] = f
+	}
 	return fm
 }
 
@@ -667,7 +670,7 @@ var layoutPartials = []string{
 	"templates/_layout.html", "templates/_icons.html",
 	"templates/_action_picker.html", "templates/_pagination.html",
 	"templates/_machine_picker.html", "templates/_search.html", "templates/_form_error.html",
-	"templates/_deployment_timeline.html",
+	"templates/_deployment_timeline.html", "templates/_bulk_progress.html",
 }
 
 // render parses _layout + the named page, executes the layout, and

@@ -140,6 +140,12 @@ func adTest(r Repos) http.HandlerFunc {
 		// bind. We don't care about the result, only that the search
 		// succeeds without an LDAP error.
 		_, err := dir.FindComputer(ctx, "autodeploy-test-nonexistent-machine")
+		// The settings hub shows this result instead of dialling AD itself.
+		res := adTestResult{URL: cfg.URL, OK: err == nil, At: time.Now()}
+		if err != nil {
+			res.Err = err.Error()
+		}
+		rememberADTest(res)
 		if err != nil {
 			flash(w, "err", "Test failed: "+err.Error())
 		} else {

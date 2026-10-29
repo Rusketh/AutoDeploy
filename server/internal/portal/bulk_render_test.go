@@ -30,7 +30,7 @@ func bulkFuncs() template.FuncMap {
 func renderBulk(t *testing.T, page string, data map[string]any) string {
 	t.Helper()
 	tmpl, err := template.New("").Funcs(bulkFuncs()).ParseFS(assetsFS,
-		"templates/"+page, "templates/_action_picker.html", "templates/_search.html", "templates/_form_error.html")
+		append(append([]string{}, layoutPartials...), "templates/"+page)...)
 	if err != nil {
 		t.Fatalf("parse %s: %v", page, err)
 	}

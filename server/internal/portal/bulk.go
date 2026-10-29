@@ -2,8 +2,10 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +21,8 @@ func init() {
 		get("/portal/bulk/new", bulkFormNew(r))
 		get("/portal/bulk/search", bulkSearch(r))
 		post("/portal/bulk", bulkCreate(r))
+		post("/portal/bulk/review", bulkReview(r, false))
+		post("/portal/bulk/{id}/review", bulkReview(r, true))
 		post("/portal/bulk/clear-completed", bulkClearCompleted(r))
 		get("/portal/bulk/{id}", bulkDetail(r))
 		get("/portal/bulk/{id}/edit", bulkEditForm(r))
@@ -51,7 +55,8 @@ func bulkList(r Repos) http.HandlerFunc {
 		}
 		search := newSearchBox(req, "Search operations", "Search bulk operations")
 		shown := filterByQuery(ops, search.Query, func(o model.BulkOperation) []string {
-			return []string{o.Name, o.Description, o.Action, o.Status, o.CreatedBy}
+			return []string{o.Name, o.Description, o.Action, model.BulkActionLabel(o.Action),
+				o.Status, bulkStatus(o).Label, o.CreatedBy}
 		})
 		render(w, req, r, "bulk_list.html", "Bulk operations", map[string]any{
 			"Ops":    shown,
@@ -69,10 +74,11 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 			"Packages":    pkgs,
 			"Images":      imgs,
 			"Groups":      groups,
-			"FormAction":  "/portal/bulk",
-			"Editing":     false,
-			"AP":          formPrefill(nil, displayLoc(r)),
-			"SelInitJSON": "[]",
+			"FormAction":   "/portal/bulk",
+			"ReviewAction": "/portal/bulk/review",
+			"Editing":      false,
+			"AP":           formPrefill(nil, displayLoc(r)),
+			"SelInitJSON":  "[]",
 		})
 	}
 }
@@ -129,7 +135,7 @@ func machineItems(r Repos, req *http.Request, machines []model.MachineRecord) []
 }
 
 // bulkParams collects the action payload, target and schedule from a create or
-// edit form. flashErr is set (and the caller redirects) when validation fails.
+// edit form.
 type bulkParams struct {
 	Name           string
 	Description    string
@@ -146,8 +152,17 @@ type bulkParams struct {
 	CancelAfterMinutes int
 }
 
-// parseBulkForm reads the shared action + target + schedule fields. It returns
-// a human-readable error suitable for a flash on failure.
+// bulkFieldErr is a parseBulkForm failure tied to the form field it
+// concerns, so the re-rendered form can show it beside that field.
+type bulkFieldErr struct{ Field, Msg string }
+
+func (e *bulkFieldErr) Error() string { return e.Msg }
+
+func fieldErr(field, msg string) error { return &bulkFieldErr{Field: field, Msg: msg} }
+
+// parseBulkForm reads the shared action + target + schedule fields. On
+// failure it returns a *bulkFieldErr naming the field and saying, in plain
+// words, what to fix.
 func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	if err := req.ParseForm(); err != nil {
 		return bulkParams{}, err
@@ -169,7 +184,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	case model.BulkScheduleOnce:
 		t, err := parseLocalDateTime(req.FormValue("run_at"), loc)
 		if err != nil {
-			return p, fmt.Errorf("choose when the one-time operation should run")
+			return p, fieldErr("run_at", "Choose the date and time the operation should run.")
 		}
 		p.RunAt = &t
 	case model.BulkScheduleRecurring:
@@ -179,7 +194,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 		}
 		p.RecurSpec = spec
 	default:
-		return p, fmt.Errorf("unknown schedule type")
+		return p, fieldErr("schedule_kind", "Choose when the operation runs: now, once or recurring.")
 	}
 
 	// Delivery options: Wake-on-LAN and the cancel-after window.
@@ -205,7 +220,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 			}
 		}
 		if p.Target.NameRegex == "" && p.Target.OU == "" && p.Target.Group == "" && p.Target.GroupID == 0 {
-			return p, fmt.Errorf("a re-evaluated recurring task needs a name, OU, AD group or machine-group filter")
+			return p, fieldErr("filter_name", "A recurring task that looks machines up again each run needs at least one filter: name, OU, AD group or machine group.")
 		}
 	} else {
 		p.TargetMode = model.BulkTargetSelection
@@ -216,7 +231,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 			}
 		}
 		if len(ids) == 0 {
-			return p, fmt.Errorf("add at least one machine to the selection")
+			return p, fieldErr("machine_ids", "Add at least one machine to the selection.")
 		}
 		p.Target = model.BulkTarget{MachineIDs: ids}
 	}
@@ -227,7 +242,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	case model.BulkActionRename:
 		find := strings.TrimSpace(req.FormValue("rename_find"))
 		if find == "" {
-			return p, fmt.Errorf("bulk rename requires a find pattern. To rename one machine to a literal name, use its machine page")
+			return p, fieldErr("rename_find", "Enter the part of the name to find. To give one machine a new name, use its machine page.")
 		}
 		b, _ := json.Marshal(map[string]string{
 			"rename_find":    find,
@@ -237,14 +252,14 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	case model.BulkActionScript:
 		body := req.FormValue("script_body")
 		if strings.TrimSpace(body) == "" {
-			return p, fmt.Errorf("script body required")
+			return p, fieldErr("script_body", "Enter the script to run.")
 		}
 		b, _ := json.Marshal(map[string]string{"shell": req.FormValue("script_shell"), "body": body})
 		p.Payload = string(b)
 	case model.BulkActionSoftwarePush:
 		pid, err := strconv.ParseInt(req.FormValue("software_package_id"), 10, 64)
 		if err != nil || pid <= 0 {
-			return p, fmt.Errorf("choose a software package to push")
+			return p, fieldErr("software_package_id", "Choose the software package to install.")
 		}
 		b, _ := json.Marshal(map[string]int64{"package_id": pid})
 		p.Payload = string(b)
@@ -252,7 +267,7 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 		p.Payload = "{}"
 		p.ReimageImageID = reimageImageIDFromForm(req)
 	default:
-		return p, fmt.Errorf("unknown action")
+		return p, fieldErr("action", "Choose what to do: rename, run a script, install software or re-image.")
 	}
 	return p, nil
 }
@@ -266,7 +281,7 @@ func cancelAfterFromForm(req *http.Request) (int, error) {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		return 0, fmt.Errorf("cancel-after must be a whole number (or blank for never)")
+		return 0, fieldErr("cancel_after_value", "Enter a whole number, or leave blank to wait indefinitely.")
 	}
 	switch req.FormValue("cancel_after_unit") {
 	case "minutes":
@@ -274,7 +289,7 @@ func cancelAfterFromForm(req *http.Request) (int, error) {
 	case "", "hours":
 		return n * 60, nil
 	default:
-		return 0, fmt.Errorf("cancel-after unit must be minutes or hours")
+		return 0, fieldErr("cancel_after_value", "Choose minutes or hours.")
 	}
 }
 
@@ -309,7 +324,7 @@ func recurSpecFromForm(req *http.Request) (string, error) {
 	switch unit {
 	case "hour", "day", "week":
 	default:
-		return "", fmt.Errorf("choose how often the recurring task runs")
+		return "", fieldErr("recur_unit", "Choose how often the task repeats.")
 	}
 	rs := model.RecurSpec{Every: every, Unit: unit}
 	if unit == "day" || unit == "week" {
@@ -331,6 +346,10 @@ func bulkCreate(r Repos) http.HandlerFunc {
 		p, err := parseBulkForm(req, loc)
 		if err != nil {
 			bulkFormRejected(w, req, r, nil, err)
+			return
+		}
+		if fe := bulkConfirmError(req, r, p); fe != nil {
+			bulkReviewRender(w, req, r, nil, p, fe)
 			return
 		}
 		user, _ := sessionUser(req, r)
@@ -393,11 +412,12 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 			"Packages":    pkgs,
 			"Images":      imgs,
 			"Groups":      groups,
-			"FormAction":  fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
-			"Editing":     true,
-			"Op":          op,
-			"AP":          formPrefill(&op, displayLoc(r)),
-			"SelInitJSON": string(selJSON),
+			"FormAction":   fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
+			"ReviewAction": fmt.Sprintf("/portal/bulk/%d/review", int64(id)),
+			"Editing":      true,
+			"Op":           op,
+			"AP":           formPrefill(&op, displayLoc(r)),
+			"SelInitJSON":  string(selJSON),
 		})
 	}
 }
@@ -408,6 +428,15 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 		p, err := parseBulkForm(req, displayLoc(r))
 		if err != nil {
 			bulkEditRejected(w, req, r, id, err)
+			return
+		}
+		if fe := bulkConfirmError(req, r, p); fe != nil {
+			op, _, gerr := r.Bulk.GetOperation(req.Context(), id)
+			if gerr != nil {
+				failPage(w, req, r, http.StatusNotFound, gerr)
+				return
+			}
+			bulkReviewRender(w, req, r, &op, p, fe)
 			return
 		}
 		if err := r.Bulk.UpdateOperation(req.Context(), model.BulkOperation{
@@ -446,12 +475,48 @@ func bulkEditRejected(w http.ResponseWriter, req *http.Request, r Repos, id mode
 
 // bulkFormRejected re-renders the bulk form (new, or editing op) with
 // everything the operator submitted — read straight from the request, so
-// it works whichever field failed — plus the error, with HTTP 422. The
-// form has no per-field slots, so the message shows in the page's
-// message bar.
+// it works whichever field failed — plus the error beside its field, with
+// HTTP 422.
 func bulkFormRejected(w http.ResponseWriter, req *http.Request, r Repos, op *model.BulkOperation, err error) {
+	bulkFormRender(w, req, r, op, bulkFormError(req, err))
+}
+
+// bulkFormError maps a parse or save failure onto the bulk form's fields.
+func bulkFormError(req *http.Request, err error) *FormError {
+	const top = "Couldn't save — fix the highlighted field below. Nothing was queued."
+	var fieldFail *bulkFieldErr
+	if errors.As(err, &fieldFail) {
+		slog.Info("portal.form.invalid", slog.String("path", req.URL.Path),
+			slog.String("kind", model.KindBulk), slog.String("error", err.Error()))
+		return &FormError{Message: top, Fields: map[string]string{fieldFail.Field: fieldFail.Msg}}
+	}
 	fe := newFormError(req, model.KindBulk, err)
-	fe.Message = "Couldn't save: " + strings.TrimSuffix(friendlyError(model.KindBulk, http.StatusUnprocessableEntity, err), ".") + ". Nothing was queued."
+	msg := friendlyError(model.KindBulk, http.StatusUnprocessableEntity, err)
+	// The model calls the name filter "name pattern"; the bulk form's field
+	// is filter_name. Schedule problems belong beside the schedule fields.
+	if m := fe.Fields["name_regex"]; m != "" {
+		delete(fe.Fields, "name_regex")
+		fe.Fields["filter_name"] = m
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "cron"):
+		fe.Fields["recur_cron"] = msg
+	case strings.Contains(low, "run time"):
+		fe.Fields["run_at"] = msg
+	}
+	if len(fe.Fields) > 0 {
+		fe.Message = top
+	} else {
+		fe.Message = "Couldn't save: " + strings.TrimSuffix(msg, ".") + ". Nothing was queued."
+	}
+	return fe
+}
+
+// bulkFormRender renders the bulk form from the submitted request: after a
+// rejected save (fe set, 422) or when the review step's "Back to edit"
+// returns to it (fe nil, every input kept).
+func bulkFormRender(w http.ResponseWriter, req *http.Request, r Repos, op *model.BulkOperation, fe *FormError) {
 	pkgs, _ := r.Software.List(req.Context())
 	imgs, _ := r.Images.List(req.Context())
 	groups, _ := r.Groups.List(req.Context())
@@ -465,18 +530,19 @@ func bulkFormRejected(w http.ResponseWriter, req *http.Request, r Repos, op *mod
 		selJSON = []byte("[]")
 	}
 	data := map[string]any{
-		"Packages":    pkgs,
-		"Images":      imgs,
-		"Groups":      groups,
-		"FormAction":  "/portal/bulk",
-		"Editing":     false,
-		"AP":          bulkPrefillFromRequest(req),
-		"SelInitJSON": string(selJSON),
-		"FlashErr":    fe.Message,
+		"Packages":     pkgs,
+		"Images":       imgs,
+		"Groups":       groups,
+		"FormAction":   "/portal/bulk",
+		"ReviewAction": "/portal/bulk/review",
+		"Editing":      false,
+		"AP":           bulkPrefillFromRequest(req),
+		"SelInitJSON":  string(selJSON),
 	}
 	title := "New bulk operation"
 	if op != nil {
 		data["FormAction"] = fmt.Sprintf("/portal/bulk/%d/edit", int64(op.ID))
+		data["ReviewAction"] = fmt.Sprintf("/portal/bulk/%d/review", int64(op.ID))
 		data["Editing"] = true
 		data["Op"] = *op
 		title = "Edit " + bulkTitle(*op)
@@ -677,17 +743,16 @@ func bulkDetail(r Repos) http.HandlerFunc {
 			} else {
 				image = template.HTML(`<span class="muted">each machine's bound image</span>`)
 			}
-		case model.BulkActionSoftwarePush:
-			var p struct {
-				PackageID int64 `json:"package_id"`
-			}
-			if json.Unmarshal([]byte(op.Payload), &p) == nil && p.PackageID > 0 {
-				pkg = entityLinkHTML(lookup, model.KindSoftware, model.ID(p.PackageID))
-			}
+		}
+		detail := decodeBulkPayload(op.Action, op.Payload)
+		if detail.PackageID > 0 {
+			pkg = entityLinkHTML(lookup, model.KindSoftware, model.ID(detail.PackageID))
 		}
 		render(w, req, r, "bulk_detail.html", bulkTitle(op), map[string]any{
 			"Op": op, "Jobs": jobs, "Runs": runs,
 			"Image": image, "Package": pkg,
+			"Detail": detail,
+			"Target": bulkTargetHTML(lookup, op.Target, op.TargetMode),
 		})
 	}
 }
@@ -711,7 +776,9 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 	ap := map[string]any{
 		"Name":              "",
 		"Description":       "",
-		"Action":            "rename",
+		// No default action: the operator must pick one (a pre-selected
+		// action is one click from queuing the wrong thing fleet-wide).
+		"Action":            "",
 		"RenameFind":        "",
 		"RenameReplace":     "",
 		"ScriptShell":       "powershell",
