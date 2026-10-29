@@ -34,7 +34,7 @@ func TestUpdateListOffersImportAndManual(t *testing.T) {
 		"humanBytes": func(n int64) string { return "X" },
 		"pct":        func(a, b int) int { return 0 },
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/windowsupdate_list.html", "templates/_search.html", "templates/_form_error.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, append(append([]string{}, layoutPartials...), "templates/windowsupdate_list.html")...)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

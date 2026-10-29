@@ -6,42 +6,25 @@
   </div>
 </div>
 
-<div class="grid stats">
-  <div class="stat">
-    <span class="num">{{index .Data.Counts "queued"}}</span>
-    <span class="lbl"><svg><use href="#i-list"/></svg>Queued</span>
+{{$sv := deploymentStatus .Data.Counts}}
+{{$bar := deploymentBar .Data.Counts}}
+<div class="card mb-4">
+  <div class="progress-card-head">
+    <div>{{template "status_badge" $sv}}{{if $sv.Note}}<span class="status-note">{{$sv.Note}}</span>{{end}}</div>
+    <span class="small muted">{{$bar.Total}} install job{{if ne $bar.Total 1}}s{{end}} (one per machine per update)</span>
   </div>
-  <div class="stat">
-    <span class="num">{{index .Data.Counts "running"}}</span>
-    <span class="lbl"><svg><use href="#i-bolt"/></svg>Running</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{index .Data.Counts "ok"}}</span>
-    <span class="lbl"><svg><use href="#i-check"/></svg>OK</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{index .Data.Counts "failed"}}</span>
-    <span class="lbl"><svg><use href="#i-trash"/></svg>Failed</span>
-  </div>
+  {{template "seg_progress" $bar}}
 </div>
 
 <dl class="kv mt-4">
-  <dt>Created by</dt><dd>{{.Data.Deployment.CreatedBy}}</dd>
-  <dt>Created at</dt><dd>{{timeAbs .Data.Deployment.CreatedAt}}</dd>
-  <dt>Updates</dt><dd>{{range $i, $u := .Data.Deployment.UpdateIDs}}{{if $i}}, {{end}}{{entityLink "update" $u}}{{end}}</dd>
-  {{if .Data.Deployment.OSFilter}}<dt>OS filter</dt><dd>{{.Data.Deployment.OSFilter}}</dd>{{end}}
-  {{with .Data.Deployment.Target}}
-  <dt>Target</dt><dd class="small">
-    {{if .GroupID}}machine group {{entityLink "group" .GroupID}} {{end}}
-    {{if .NameRegex}}name=<code>{{.NameRegex}}</code> {{end}}{{if .OU}}OU=<code>{{.OU}}</code> {{end}}{{if .Group}}AD group=<code>{{.Group}}</code> {{end}}
-    {{with .MachineIDs}}{{len .}} machine{{if ne (len .) 1}}s{{end}}: {{range $i, $id := .}}{{if lt $i 8}}{{if $i}}, {{end}}{{entityLink "machine" $id}}{{end}}{{end}}{{if gt (len .) 8}} <span class="muted">and {{sub (len .) 8}} more</span>{{end}}{{end}}
-    {{if not (or .GroupID .NameRegex .OU .Group .MachineIDs)}}every machine{{end}}
-  </dd>
-  {{end}}
+  <dt>Updates</dt><dd>{{range .Data.Deployment.UpdateIDs}}<div>{{entityLink "update" .}}{{with index $.Data.Titles .}} <span class="muted">— {{.}}</span>{{end}}</div>{{end}}</dd>
+  <dt>OS</dt><dd>{{osLabel .Data.Deployment.OSFilter}}</dd>
+  <dt>Machines</dt><dd class="small">{{.Data.Target}}</dd>
+  <dt>Created</dt><dd>{{timeAbs .Data.Deployment.CreatedAt}} by {{.Data.Deployment.CreatedBy}}</dd>
 </dl>
 
 <details class="mt-3">
-  <summary class="small muted">Target criteria (JSON)</summary>
+  <summary class="small muted">Raw target (JSON)</summary>
   <pre class="mt-2 code-block">{{.Data.TargetJSON}}</pre>
 </details>
 
@@ -57,7 +40,7 @@
 <table id="jtbl" data-sortable>
   <thead><tr>
     <th>Machine</th>
-    <th>KB Number</th>
+    <th>Update</th>
     <th>Status</th>
     <th data-sort="num">Queued</th>
     <th data-sort="num">Claimed</th>
@@ -67,8 +50,9 @@
     {{range .Data.Jobs}}
     <tr>
       <td>{{entityLink "machine" .MachineID}}</td>
-      <td>{{entityLink "update" .UpdateID}}</td>
-      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{end}}" {{if .ResultJSON}}title="{{.ResultJSON}}"{{end}}>{{.Status}}</span></td>
+      <td><span {{with index $.Data.Titles .UpdateID}}title="{{.}}"{{end}}>{{entityLink "update" .UpdateID}}</span></td>
+      {{$js := jobStatus .Status}}
+      <td data-sort-value="{{$js.Label}}">{{template "status_badge" $js}}{{with jobResult .ResultJSON}}<span class="status-note">{{.}}</span>{{end}}</td>
       <td class="small muted" data-sort-value="{{.QueuedAt.Unix}}">{{timeAgo .QueuedAt}}</td>
       <td class="small muted">{{if .ClaimedAt}}{{timeAgo .ClaimedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="small muted">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}<span class="muted">—</span>{{end}}</td>

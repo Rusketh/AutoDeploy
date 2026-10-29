@@ -1185,16 +1185,15 @@
   });
 
   // ---- Bulk operation progress --------------------------------------
-  // The bulk detail page has <div data-bulk-progress data-op-id>. Poll the
-  // operation's progress endpoint, drive the rollup bar/counts, and reload
-  // once it reaches a terminal state so the settled view (final job rows)
-  // appears.
+  // The bulk detail page has <div data-bulk-progress data-op-id> around a
+  // segmented bar (see _bulk_progress.html). While jobs are outstanding,
+  // poll the operation's progress endpoint and update each segment's width
+  // and legend count in place; once nothing is left waiting or running,
+  // reload so the status badge and per-job results come from the server.
   (function initBulkProgress() {
     var box = document.querySelector('[data-bulk-progress][data-op-id]');
-    if (!box) return;
+    if (!box || !(+box.getAttribute('data-outstanding') > 0)) return;
     var id = box.getAttribute('data-op-id');
-    var bar = box.querySelector('[data-prog-bar]');
-    var counts = box.querySelector('[data-prog-counts]');
     var pct = box.querySelector('[data-prog-pct]');
     function schedule() { setTimeout(tick, 2500); }
     function tick() {
@@ -1202,16 +1201,17 @@
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (s) {
           if (!s) { schedule(); return; }
-          if (bar) { bar.value = (s.ok + s.failed + s.cancelled) || 0; bar.max = s.total || 1; }
-          if (counts) {
-            counts.textContent = s.ok + ' ok · ' + s.failed + ' failed · ' + s.running +
-              ' running · ' + s.queued + ' queued' + (s.cancelled ? ' · ' + s.cancelled + ' cancelled' : '');
-          }
-          if (pct) pct.textContent = (s.percent || 0) + '%';
-          // Keep polling while work is outstanding; reload once it settles so
-          // the status badge and per-job results refresh from the server.
-          if (s.running > 0 || s.queued > 0) { schedule(); }
-          else if (s.finished) { /* terminal — leave as is */ }
+          ['ok', 'failed', 'running', 'queued', 'cancelled'].forEach(function (k) {
+            var n = s[k] || 0;
+            var seg = box.querySelector('[data-seg="' + k + '"]');
+            if (seg) seg.style.width = (s.total ? (n * 100 / s.total) : 0).toFixed(2) + '%';
+            var c = box.querySelector('[data-seg-count="' + k + '"]');
+            if (c) c.textContent = n;
+            var li = box.querySelector('[data-seg-item="' + k + '"]');
+            if (li) li.classList.toggle('zero', n === 0);
+          });
+          if (pct) pct.textContent = s.percent || 0;
+          if (s.running > 0 || s.queued > 0) { schedule(); } else { location.reload(); }
         })
         .catch(function () { schedule(); });
     }

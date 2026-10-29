@@ -1,12 +1,14 @@
 {{define "body"}}
 {{$op := .Data.Op}}
 {{$st := $op.Status}}
+{{$sv := bulkStatus $op}}
+{{$title := $op.Name}}{{if not $title}}{{$title = entityName "bulk" $op.ID}}{{end}}
 <div class="toolbar">
   <h2>{{if $op.Name}}{{$op.Name}} <span class="muted small">{{idLabel $op.ID}}</span>{{else}}{{entityName "bulk" $op.ID}}{{end}}</h2>
   <div class="right">
     {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 $op.ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>{{end}}
     {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
-    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/run-now" data-confirm="Queue a run of this operation right now?">
+    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/run-now" data-confirm="Start a run of “{{$title}}” right now?">
       <button type="submit" class="secondary sm"><svg><use href="#i-bolt"/></svg>Run now</button>
     </form>{{end}}
     {{if eq $op.ScheduleKind "recurring"}}
@@ -17,7 +19,7 @@
       {{end}}
     {{end}}
     {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
-    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/cancel" data-confirm="Cancel this operation? Queued and running jobs will be stopped.">
+    <form method="post" action="/portal/bulk/{{int64 $op.ID}}/cancel" data-confirm="Cancel “{{$title}}”? Jobs still waiting or running are stopped.">
       <button type="submit" class="danger sm"><svg><use href="#i-x"/></svg>Cancel</button>
     </form>{{end}}
     <a class="btn ghost sm" href="/portal/bulk"><svg><use href="#i-arrow-left"/></svg>Back</a>
@@ -25,66 +27,71 @@
 </div>
 
 {{$p := $op.Progress}}
-<div class="card mb-4" data-bulk-progress data-op-id="{{int64 $op.ID}}">
-  <div class="deploy-progress-head">
-    <strong>Progress</strong>
-    <span class="small muted" data-prog-counts>{{$p.OK}} ok · {{$p.Failed}} failed · {{$p.Running}} running · {{$p.Queued}} queued{{if $p.Cancelled}} · {{$p.Cancelled}} cancelled{{end}}</span>
+<div class="card mb-4" data-bulk-progress data-op-id="{{int64 $op.ID}}" data-outstanding="{{add $p.Queued $p.Running}}">
+  <div class="progress-card-head">
+    <div>
+      {{template "status_badge" $sv}}
+      {{if $sv.Note}}<span class="status-note">{{$sv.Note}}</span>{{end}}
+    </div>
+    <span class="small muted">{{if $p.Total}}<span data-prog-pct>{{$p.Percent}}</span>% finished{{if gt (len .Data.Runs) 1}} · latest run{{end}}{{else if eq $st "scheduled"}}Jobs are created when it first runs{{end}}</span>
   </div>
-  <progress class="deploy-bar" data-prog-bar value="{{$p.Done}}" max="{{if $p.Total}}{{$p.Total}}{{else}}1{{end}}"></progress>
-  <div class="mt-2">
-    {{if eq $st "completed"}}<span class="badge ok">completed</span>
-    {{else if eq $st "cancelled"}}<span class="badge muted">cancelled</span>
-    {{else if eq $st "scheduled"}}<span class="badge accent">scheduled</span>
-    {{else if eq $st "paused"}}<span class="badge muted">paused</span>
-    {{else}}<span class="badge warn">active</span>{{end}}
-    <span class="small muted" data-prog-pct>{{$p.Percent}}%</span>
-  </div>
+  {{template "seg_progress" (bulkProgressBar $p)}}
 </div>
 
 <dl class="kv">
   {{if $op.Description}}<dt>Description</dt><dd>{{$op.Description}}</dd>{{end}}
-  <dt>Action</dt><dd><span class="badge accent">{{$op.Action}}</span></dd>
-  <dt>Schedule</dt><dd>
-    {{if eq $op.ScheduleKind "once"}}One-time{{else if eq $op.ScheduleKind "recurring"}}Recurring{{else}}Run now{{end}}
-    {{if $op.NextRunAt}} · next run {{timeAbs $op.NextRunAt}}{{end}}
-    {{if $op.LastRunAt}} · last run {{timeAbs $op.LastRunAt}}{{end}}
-    {{if eq $op.ScheduleKind "recurring"}} · target {{if eq $op.TargetMode "filter"}}re-evaluated each run{{else}}fixed selection{{end}}{{end}}
+  <dt>Action</dt><dd>
+    <strong>{{actionLabel $op.Action}}</strong>
+    {{with .Data.Detail}}
+      {{if .Find}} — replace <code>{{.Find}}</code> with <code>{{if .Replace}}{{.Replace}}{{else}}(nothing){{end}}</code> in each machine's name{{end}}
+      {{if .Body}} — {{.ShellLabel}}
+        <details class="mt-1"><summary class="small muted">Show script</summary><pre class="code-block mt-1">{{.Body}}</pre></details>
+      {{end}}
+    {{end}}
   </dd>
   {{if .Data.Image}}<dt>Image</dt><dd>{{.Data.Image}}</dd>{{end}}
   {{if .Data.Package}}<dt>Software</dt><dd>{{.Data.Package}}</dd>{{end}}
-  <dt>Target</dt><dd class="small">{{if $op.Target.NameRegex}}name=<code>{{$op.Target.NameRegex}}</code> {{end}}{{if $op.Target.OU}}ou=<code>{{$op.Target.OU}}</code> {{end}}{{if $op.Target.Group}}AD group=<code>{{$op.Target.Group}}</code> {{end}}{{if $op.Target.GroupID}}machine group {{entityLink "group" $op.Target.GroupID}} {{end}}{{with $op.Target.MachineIDs}}{{len .}} machine{{if ne (len .) 1}}s{{end}}: {{range $i, $id := .}}{{if lt $i 8}}{{if $i}}, {{end}}{{entityLink "machine" $id}}{{end}}{{end}}{{if gt (len .) 8}} <span class="muted">and {{sub (len .) 8}} more</span>{{end}}{{end}}</dd>
-  <dt>Delivery</dt><dd class="small">
-    Wake-on-LAN {{if $op.WakeOnLAN}}<span class="badge ok">on</span>{{else}}<span class="badge muted">off</span>{{end}}
-    · cancel undelivered jobs after {{$op.CancelAfterLabel}}
+  <dt>Machines</dt><dd>{{.Data.Target}}</dd>
+  <dt>When</dt><dd>
+    {{scheduleText $op}}
+    {{if $op.NextRunAt}}<div class="small muted">Next run {{timeAbs $op.NextRunAt}}</div>{{end}}
+    {{if $op.LastRunAt}}<div class="small muted">Last run {{timeAbs $op.LastRunAt}}{{if gt $op.RunCount 1}} · {{$op.RunCount}} runs so far{{end}}</div>{{end}}
   </dd>
-  <dt>Created by</dt><dd>{{$op.CreatedBy}}</dd>
-  <dt>Created</dt><dd>{{timeAbs $op.CreatedAt}}</dd>
-  <dt>Payload</dt><dd><code>{{$op.Payload}}</code></dd>
+  <dt>Delivery</dt><dd class="small">
+    <div>Wake-on-LAN {{if $op.WakeOnLAN}}<span class="badge ok">on</span> — powered-off machines are woken when a run starts{{else}}<span class="badge muted">off</span>{{end}}</div>
+    <div>{{if $op.CancelAfterMinutes}}Jobs not picked up within {{$op.CancelAfterLabel}} are cancelled{{else}}Waits for every machine to check in, however long it takes{{end}}</div>
+  </dd>
+  <dt>Created</dt><dd>{{timeAbs $op.CreatedAt}} by {{$op.CreatedBy}}</dd>
 </dl>
+<details class="mt-2">
+  <summary class="small muted">Raw payload</summary>
+  <pre class="code-block mt-1">{{$op.Payload}}</pre>
+</details>
 
 {{if .Data.Jobs}}
 {{$multi := gt (len .Data.Runs) 1}}
 {{range .Data.Runs}}
-<div class="section-head"><h3>{{if $multi}}Run #{{.No}} ({{len .Jobs}} jobs){{else}}Jobs ({{len .Jobs}}){{end}}</h3><div class="line"></div></div>
+<div class="section-head"><h3>{{if $multi}}Run {{.No}} ({{len .Jobs}} machine{{if ne (len .Jobs) 1}}s{{end}}){{else}}Machines ({{len .Jobs}}){{end}}</h3><div class="line"></div></div>
 <div class="tablewrap">
 <table data-sortable>
   <thead><tr>
-    <th class="num" data-sort="num">Job</th>
     <th>Machine</th>
     <th>Status</th>
-    <th data-sort="num">Claimed</th>
-    <th data-sort="num">Completed</th>
+    <th data-sort="num">Picked up</th>
+    <th data-sort="num">Finished</th>
     <th data-nosort>Result</th>
+    <th class="num" data-sort="num">Job</th>
   </tr></thead>
   <tbody>
     {{range .Jobs}}
+    {{$js := jobStatus .Status}}
     <tr>
-      <td class="num"><code>{{idLabel .ID}}</code></td>
       <td>{{if .MachineName}}<a href="{{entityURL "machine" .MachineID}}">{{.MachineName}}</a>{{else}}{{entityLink "machine" .MachineID}}{{end}}</td>
-      <td><span class="badge {{if eq .Status "ok"}}ok{{else if eq .Status "failed"}}bad{{else if eq .Status "running"}}warn{{else if eq .Status "cancelled"}}muted{{end}}">{{.Status}}</span></td>
+      <td data-sort-value="{{$js.Label}}">{{template "status_badge" $js}}</td>
       <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{timeAgo .ClaimedAt}}{{else}}—{{end}}</td>
       <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}—{{end}}</td>
-      <td class="small"><code>{{.ResultJSON}}</code></td>
+      <td class="small">{{with jobResult .ResultJSON}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num"><code>{{idLabel .ID}}</code></td>
     </tr>
     {{end}}
   </tbody>
@@ -95,7 +102,7 @@
 <div class="empty">
   <svg class="empty-icon"><use href="#i-bolt"/></svg>
   <h3>No jobs yet</h3>
-  <p>{{if eq $st "scheduled"}}This operation is scheduled — jobs are created when it first runs.{{else}}The target selection matched no machines, or the jobs are still being created.{{end}}</p>
+  <p>{{if eq $st "scheduled"}}This operation is scheduled — a job is created for each machine when it first runs.{{else}}No machines matched the target, or the jobs are still being created.{{end}}</p>
 </div>
 {{end}}
 {{end}}

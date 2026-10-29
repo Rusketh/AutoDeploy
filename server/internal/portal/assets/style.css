@@ -1279,16 +1279,58 @@ dl.log-kv dd { overflow-wrap: anywhere; }
 .action-tile.danger:has(input:checked) svg, .action-tile.danger.selected svg { color: var(--bad); }
 .action-panels .action-panel { margin-bottom: var(--sp-2); }
 
-/* ---- Bulk progress bar (list + detail rollup) ---- */
-.bulk-prog { display: flex; flex-direction: column; gap: 2px; }
-.bulk-bar {
-  width: 100%; height: 10px; appearance: none; -webkit-appearance: none;
-  border: 1px solid var(--border); border-radius: var(--r-sm);
-  background: var(--surface-2); overflow: hidden;
+/* ---- Segmented progress (bulk list/detail, update deployments) ----
+ * One coloured run per job state. The bar is decorative; the legend (or
+ * the compact summary) carries every count as text. */
+.segbar-wrap { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.segbar-wrap.compact { gap: 3px; min-width: 9rem; max-width: 15rem; }
+td .badge { white-space: nowrap; }
+.show-sm { display: none; }
+@media (max-width: 600px) {
+  th.hide-sm, td.hide-sm { display: none; }
+  .show-sm { display: block; }
 }
-.bulk-bar::-webkit-progress-bar { background: var(--surface-2); }
-.bulk-bar::-webkit-progress-value { background: var(--accent); transition: width 240ms linear; }
-.bulk-bar::-moz-progress-bar { background: var(--accent); }
+.segbar {
+  display: flex; width: 100%; height: 12px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+}
+.segbar-wrap.compact .segbar { height: 8px; }
+.segbar .seg { height: 100%; transition: width 240ms linear; }
+.segbar .seg + .seg { box-shadow: inset 1px 0 0 var(--surface); }
+.seg-ok { background: var(--good); }
+.seg-failed { background: var(--bad); }
+.seg-running { background: var(--accent); }
+.seg-queued {
+  background: repeating-linear-gradient(135deg, var(--border-strong) 0 4px, var(--surface-2) 4px 8px);
+}
+.seg-cancelled { background: var(--fg-subtle); }
+.seg-legend {
+  display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4);
+  margin: 0; padding: 0; list-style: none; font-size: var(--fs-sm); color: var(--fg-muted);
+}
+.seg-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.seg-legend li strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+.seg-legend li.zero { opacity: .55; }
+.seg-legend .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.seg-legend .swatch.seg-queued { border: 1px solid var(--border-strong); }
+.status-note { display: block; margin-top: 3px; font-size: var(--fs-xs); color: var(--fg-muted); }
+.progress-card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.progress-card-head .badge { font-size: var(--fs-sm); }
+
+/* ---- Inline help: <details class="help"> under a field group ---- */
+details.help { margin: var(--sp-1) 0 var(--sp-2); color: var(--fg-muted); }
+details.help > summary { cursor: pointer; color: var(--accent); width: fit-content; font-size: var(--fs-sm); }
+details.help p { margin: var(--sp-1) 0; max-width: 70ch; }
+
+/* ---- Bulk review step ---- */
+.review-card.danger .review-kv { border-color: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+.review-headline { font-size: var(--fs-lg); font-weight: 600; margin: 0 0 var(--sp-2); }
+.review-headline svg { width: 18px; height: 18px; margin-right: var(--sp-2); vertical-align: -3px; }
+.review-card.danger .review-headline { color: var(--bad); }
+.review-card pre.code-block { max-height: 14rem; overflow: auto; }
+.review-confirm { margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); background: var(--bad-soft); border-radius: var(--r); }
+.review-confirm input { max-width: 10rem; }
+form.std .actions.review-actions { flex-direction: row-reverse; justify-content: flex-start; }
 
 /* ---- Collapsible detail sections ----
  * <details class="detail-section"> wrappers around the full history tables,
@@ -1348,7 +1390,8 @@ pre.snippet { background: var(--surface-2); padding: var(--sp-2); border-radius:
 .toolbar-code { font-size: 0.75em; }
 .filter-bar { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-4); flex-wrap: wrap; align-items: center; }
 .filter-bar select, .filter-bar input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--bg); color: var(--fg); }
-.actions-start { justify-content: flex-start; }
+.actions-start, form.std .actions.actions-start { justify-content: flex-start; }
+.machine-picker [hidden] { display: none !important; }
 .actions-center { justify-content: center; }
 tr.unread td { font-weight: 600; }
 .col-progress { min-width: 150px; }
@@ -1489,8 +1532,22 @@ table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .stat-text { font-size: var(--fs-lg); }
 .intro { max-width: 720px; }
 
-/* Settings cards — a nicer layout than stat for settings index */
-.settings-card { font-size: 1.1rem; }
+/* Settings hub cards: live state as the headline, amber/red with a
+ * reason when something needs attention (icon + text, not colour alone). */
+.grid.settings-hub {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp-3);
+}
+.hub-card .hub-value { font-size: var(--fs-lg); font-weight: 600; line-height: 1.3; margin: 2px 0; overflow-wrap: anywhere; }
+.hub-card .hub-value .icon-inline { width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; }
+.hub-card.tone-ok .hub-value svg { color: var(--good); }
+.hub-card.tone-warn { border-color: var(--warn); background: linear-gradient(var(--warn-soft), var(--warn-soft)) top / 100% 4px no-repeat, var(--surface); }
+.hub-card.tone-warn .hub-value, .hub-card.tone-warn .hub-reason { color: var(--warn); }
+.hub-card.tone-bad { border-color: var(--bad); background: linear-gradient(var(--bad-soft), var(--bad-soft)) top / 100% 4px no-repeat, var(--surface); }
+.hub-card.tone-bad .hub-value, .hub-card.tone-bad .hub-reason { color: var(--bad); }
+.hub-reason { font-size: var(--fs-sm); font-weight: 500; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* Driver form filter blocks */
 .filter-block { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3); margin: var(--sp-2) 0; background: var(--bg); }

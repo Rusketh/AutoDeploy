@@ -10,25 +10,25 @@
   <fieldset>
     <legend>Select updates</legend>
     {{if .Data.Updates}}
-    <p class="hint mt-0">Only updates with an uploaded payload are shown. Check the ones to deploy.</p>
+    <p class="hint mt-0">Tick the updates to install. Only updates with an uploaded file are listed.</p>
     <div class="tablewrap max-h-scroll">
       <table>
         <thead><tr>
           <th data-nosort></th>
-          <th>KB Number</th>
+          <th>Update</th>
           <th>Title</th>
-          <th>OS Filter</th>
+          <th>For</th>
           <th>Severity</th>
         </tr></thead>
         <tbody>
           {{range .Data.Updates}}
           {{if .StoragePath}}
           <tr>
-            <td><input type="checkbox" name="update_ids" value="{{int64 .ID}}"></td>
+            <td><input type="checkbox" name="update_ids" value="{{int64 .ID}}" aria-label="Install {{.KBNumber}}"></td>
             <td><strong>{{.KBNumber}}</strong></td>
             <td>{{.Title}}</td>
-            <td>{{if .OSFilter}}{{.OSFilter}}{{else}}<span class="muted">any</span>{{end}}</td>
-            <td>{{if .Severity}}<span class="badge {{.Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+            <td>{{osLabel .OSFilter}}</td>
+            <td>{{if .Severity}}<span class="badge {{severityTone .Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
           </tr>
           {{end}}
           {{end}}
@@ -72,8 +72,9 @@
 
     <details class="mt-3">
       <summary class="small muted">More filters (name pattern, OU, AD group)</summary>
+      <p class="hint">Name pattern is a regular expression (<code>^LAB-</code> = names starting LAB-). OU is an Active Directory organisational unit written as its distinguished name.</p>
       <div class="row mt-2">
-        <label><span class="lbl">Name regex</span>
+        <label><span class="lbl">Name pattern</span>
           <input type="text" name="name_regex" placeholder="LAB-.*">
         </label>
         <label><span class="lbl">OU</span>

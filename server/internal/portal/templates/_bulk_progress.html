@@ -1,0 +1,25 @@
+{{/*
+  Status and progress partials shared by the bulk and Windows Update pages.
+    {{template "status_badge" (bulkStatus .Op)}}       a statusView: colour + icon + words
+    {{template "seg_progress" (bulkProgressBar .Progress)}}  segmented bar + legend
+  The bar itself is decorative (aria-hidden); the legend (or, in compact
+  rows, the summary sentence) states every count as text, so nothing
+  relies on colour alone.
+  data-seg / data-seg-count hooks let app.js update a live bar in place.
+*/}}
+{{define "status_badge"}}<span class="badge {{.Tone}}" data-status-badge><svg aria-hidden="true"><use href="#{{.Icon}}"/></svg>{{.Label}}</span>{{end}}
+
+{{define "seg_progress"}}
+<div class="segbar-wrap{{if .Compact}} compact{{end}}" data-segbar>
+  <div class="segbar" aria-hidden="true">
+    {{range .Segs}}<span class="seg seg-{{.Key}}" data-seg="{{.Key}}" style="width: {{printf "%.2f" .Pct}}%"></span>{{end}}
+  </div>
+  {{if .Compact}}
+  <span class="small muted" data-seg-summary title="{{.Summary}}">{{.Short}}</span>
+  {{else}}
+  <ul class="seg-legend" aria-label="Progress">
+    {{range .Segs}}<li class="{{if not .Count}}zero{{end}}" data-seg-item="{{.Key}}"><span class="swatch seg-{{.Key}}"></span>{{.Label}} <strong data-seg-count="{{.Key}}">{{.Count}}</strong></li>{{end}}
+  </ul>
+  {{end}}
+</div>
+{{end}}

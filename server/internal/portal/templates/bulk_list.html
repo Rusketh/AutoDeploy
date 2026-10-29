@@ -14,54 +14,49 @@
 <div class="tablewrap">
 <table id="tbl" data-sortable>
   <thead><tr>
-    <th class="num" data-sort="num">ID</th>
+    <th class="num hide-sm" data-sort="num">ID</th>
     <th>Name</th>
-    <th>Action</th>
+    <th class="hide-sm">Action</th>
     <th>Status</th>
     <th>Progress</th>
     <th>Schedule</th>
     <th>Next run</th>
-    <th>Created by</th>
+    <th class="hide-sm">Created by</th>
     <th data-nosort></th>
   </tr></thead>
   <tbody>
     {{range .Data.Ops}}
     {{$st := .Status}}
     <tr>
-      <td class="num"><code>{{idLabel .ID}}</code></td>
+      <td class="num hide-sm"><code>{{idLabel .ID}}</code></td>
       <td>
         <a href="/portal/bulk/{{int64 .ID}}"><strong>{{if .Name}}{{.Name}}{{else}}{{entityName "bulk" .ID}}{{end}}</strong></a>
+        <div class="small muted show-sm">{{actionLabel .Action}}</div>
         {{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}
       </td>
-      <td><span class="badge accent">{{.Action}}</span></td>
-      <td>
-        {{if eq $st "completed"}}<span class="badge ok">completed</span>
-        {{else if eq $st "cancelled"}}<span class="badge muted">cancelled</span>
-        {{else if eq $st "scheduled"}}<span class="badge accent">scheduled</span>
-        {{else if eq $st "paused"}}<span class="badge muted">paused</span>
-        {{else}}<span class="badge warn">active</span>{{end}}
+      <td class="hide-sm"><span class="badge">{{actionLabel .Action}}</span></td>
+      {{$sv := bulkStatus .}}
+      <td data-sort-value="{{$sv.Label}}">
+        {{template "status_badge" $sv}}
+        {{if $sv.Note}}<span class="status-note">{{$sv.Note}}</span>{{end}}
       </td>
       <td data-sort-value="{{.Progress.Percent}}" class="col-progress">
-        {{if .Progress.Total}}
-        <div class="bulk-prog">
-          <progress class="bulk-bar" value="{{.Progress.Done}}" max="{{.Progress.Total}}"></progress>
-          <span class="small muted">{{.Progress.OK}} ok · {{.Progress.Failed}} fail · {{.Progress.Queued}} queued</span>
-        </div>
-        {{else}}<span class="muted small">—</span>{{end}}
+        {{if .Progress.Total}}{{template "seg_progress" (compactProgress (bulkProgressBar .Progress))}}
+        {{else}}<span class="muted small">No jobs yet</span>{{end}}
       </td>
       <td class="small muted">
-        {{if eq .ScheduleKind "once"}}<svg class="icon-inline"><use href="#i-clock"/></svg> once
-        {{else if eq .ScheduleKind "recurring"}}<svg class="icon-inline"><use href="#i-repeat"/></svg> recurring
-        {{else}}now{{end}}
+        {{if eq .ScheduleKind "once"}}<svg class="icon-inline" aria-hidden="true"><use href="#i-clock"/></svg>
+        {{else if eq .ScheduleKind "recurring"}}<svg class="icon-inline" aria-hidden="true"><use href="#i-repeat"/></svg>{{end}}
+        {{scheduleText .}}
       </td>
       <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{timeAgo .NextRunAt}}{{else}}—{{end}}</td>
-      <td class="small">{{.CreatedBy}}</td>
+      <td class="small hide-sm">{{.CreatedBy}}</td>
       <td class="actions">
         <a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a>
-        {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg></a>{{end}}
+        {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 .ID}}/edit" title="Edit" aria-label="Edit"><svg><use href="#i-pencil"/></svg></a>{{end}}
         {{if or (eq $st "scheduled") (eq $st "active") (eq $st "paused")}}
-        <form method="post" action="/portal/bulk/{{int64 .ID}}/cancel" data-confirm="Cancel this operation? Queued and running jobs will be stopped.">
-          <button type="submit" class="danger sm"><svg><use href="#i-x"/></svg></button>
+        <form method="post" action="/portal/bulk/{{int64 .ID}}/cancel" data-confirm="Cancel “{{if .Name}}{{.Name}}{{else}}{{entityName "bulk" .ID}}{{end}}”? Jobs still waiting or running are stopped.">
+          <button type="submit" class="danger sm" title="Cancel operation" aria-label="Cancel operation"><svg><use href="#i-x"/></svg></button>
         </form>{{end}}
       </td>
     </tr>
@@ -75,7 +70,7 @@
 <div class="empty">
   <svg class="empty-icon"><use href="#i-bolt"/></svg>
   <h3>No bulk operations yet</h3>
-  <p>Queue a rename, software-push, script or re-image across a fleet selection — run it now, schedule it, or repeat it on a cadence. The server coordinates AD renames; agents pull each job at check-in time.</p>
+  <p>Rename, install software, run a script or re-image many machines at once — now, at a set time, or on a repeating schedule. Each machine picks up its job the next time its agent checks in.</p>
   <a class="btn" href="/portal/bulk/new"><svg><use href="#i-plus"/></svg>Create operation</a>
 </div>
 {{end}}

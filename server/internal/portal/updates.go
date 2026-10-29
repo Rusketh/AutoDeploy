@@ -73,6 +73,7 @@ func updatesPage(r Repos) http.HandlerFunc {
 			data.LatestServerVersion = latest
 			data.LatestServerURL = url
 			data.LatestServerChecked = time.Now()
+			rememberLatestRelease(latest) // for the settings hub's Updates card
 		}
 		// Agents: scan the downloads dir for any
 		// autodeploy-agent-* binary with a .version sidecar so the

@@ -1,0 +1,62 @@
+{{define "body"}}
+{{$v := .Data.Review}}
+{{$fe := .Data.FormError}}
+<div class="toolbar">
+  <h2>{{if $v.Editing}}Review changes{{else}}Review before queuing{{end}}</h2>
+</div>
+
+<form class="std review" method="POST" action="{{$v.FormAction}}" id="bulk-review">
+  {{template "form_error" $fe}}
+  {{range $v.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+  <input type="hidden" name="reviewed" value="1">
+
+  <div class="review-card{{if $v.Destructive}} danger{{end}}">
+    <p class="review-headline">{{if $v.Destructive}}<svg class="icon-inline" aria-hidden="true"><use href="#i-alert"/></svg>{{end}}{{$v.Headline}}</p>
+    {{if $v.Name}}<p class="small muted mt-0">Saved as “{{$v.Name}}”{{if $v.Description}} — {{$v.Description}}{{end}}</p>{{end}}
+
+    <dl class="kv review-kv">
+      <dt>Action</dt>
+      <dd><strong>{{$v.ActionLabel}}</strong><div class="small">{{$v.ActionDetail}}</div></dd>
+      <dt>Machines</dt>
+      <dd>
+        <strong>{{$v.Count}} machine{{if ne $v.Count 1}}s{{end}}</strong>{{if $v.Filter}} <span class="small muted">match right now</span>{{end}}
+        {{if $v.Count}}<div class="small">{{$v.Machines}}</div>{{end}}
+        {{if $v.Filter}}<div class="small muted">{{$v.FilterText}}</div>{{end}}
+      </dd>
+      <dt>When</dt><dd>{{$v.When}}</dd>
+      <dt>Delivery</dt>
+      <dd class="small">
+        <div>Wake-on-LAN: {{if $v.WakeOnLAN}}<strong>on</strong> — powered-off machines are woken when a run starts{{else}}off{{end}}</div>
+        <div>{{if eq $v.CancelAfter "never"}}Waits for every machine to check in, however long it takes{{else}}Jobs not picked up within <strong>{{$v.CancelAfter}}</strong> are cancelled{{end}}</div>
+      </dd>
+    </dl>
+
+    {{if $v.Destructive}}
+    <div class="review-confirm">
+      <label><span class="lbl">Type <strong>{{$v.Count}}</strong> to confirm you want to erase {{if eq $v.Count 1}}this machine{{else}}these {{$v.Count}} machines{{end}}</span>
+        <input type="text" name="confirm_count" inputmode="numeric" autocomplete="off" required data-confirm-count="{{$v.Count}}" {{invalidAttr $fe "confirm_count"}}>
+        {{fieldError $fe "confirm_count"}}
+      </label>
+    </div>
+    {{end}}
+  </div>
+
+  {{/* The final button comes first so Enter submits it; row-reverse
+       shows "Back to edit" on its left. */}}
+  <div class="actions review-actions">
+    <button type="submit" class="{{if $v.Destructive}}danger{{end}}" data-review-submit><svg><use href="#i-bolt"/></svg>{{if $v.Editing}}Save changes{{else if $v.Destructive}}Re-image {{$v.Count}} machine{{if ne $v.Count 1}}s{{end}}{{else}}Queue operation{{end}}</button>
+    <button type="submit" class="secondary" name="review_back" value="1" formaction="{{$v.ReviewAction}}" formnovalidate><svg><use href="#i-arrow-left"/></svg>Back to edit</button>
+  </div>
+</form>
+<script>
+(function(){
+  // Re-image: keep the final button disabled until the typed count matches.
+  // The server checks it too, so this is only a convenience.
+  var inp = document.querySelector('[data-confirm-count]');
+  var btn = document.querySelector('[data-review-submit]');
+  if(!inp || !btn) return;
+  function sync(){ btn.disabled = inp.value.trim() !== inp.getAttribute('data-confirm-count'); }
+  inp.addEventListener('input', sync); sync();
+})();
+</script>
+{{end}}

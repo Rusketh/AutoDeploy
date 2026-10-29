@@ -1,26 +1,38 @@
 {{/* Reusable machine picker basket: search machines (via /portal/bulk/search),
      add results to a selection, and post the selection as repeated hidden
-     machine_ids inputs inside the enclosing form. The search fields carry no
-     name attribute, so they are never submitted themselves.
+     machine_ids inputs inside the enclosing form. By default the search
+     fields carry no name attribute, so they are never submitted themselves.
 
      Usage: {{template "machine_picker" (dict "Groups" .Data.Groups "InitJSON" .Data.SelInitJSON "Hint" "…")}}
        Groups   []model.MachineGroup for the "Machine group" search select (optional)
        InitJSON JSON array of {id,name,make,product,uuid} to pre-fill (optional)
-       Hint     text shown when the selection is empty (optional) */}}
+       Hint     text shown when the selection is empty (optional)
+       Filter   map with Name, OU, Group, GroupID (optional): names the search
+                fields filter_name / filter_ou / filter_group / filter_group_id
+                so they post with the form (the bulk form saves them as a
+                recurring task's live filter), pre-filled with these values,
+                and adds the AD group field */}}
 {{define "machine_picker"}}
+{{$f := .Filter}}
 <div class="machine-picker" data-machine-picker>
   <div class="row">
-    <label><span class="lbl">Name (regex)</span><input type="text" data-mp-name placeholder="^LAB-"></label>
-    <label><span class="lbl">OU (DN)</span><input type="text" data-mp-ou placeholder="OU=Lab,DC=corp,DC=example"></label>
+    <label><span class="lbl">Name pattern</span><input type="text" data-mp-name placeholder="^LAB-"{{if $f}} name="filter_name" id="filter_name" value="{{$f.Name}}"{{end}}></label>
+    <label><span class="lbl">OU</span><input type="text" data-mp-ou placeholder="OU=Lab,DC=corp,DC=example"{{if $f}} name="filter_ou" id="filter_ou" value="{{$f.OU}}"{{end}}></label>
+    {{if $f}}<label><span class="lbl">AD group</span><input type="text" data-mp-ad-group placeholder="Lab-Computers" name="filter_group" id="filter_group" value="{{$f.Group}}"></label>{{end}}
     {{if .Groups}}
     <label><span class="lbl">Machine group</span>
-      <select data-mp-group-id>
+      <select data-mp-group-id{{if $f}} name="filter_group_id" id="filter_group_id"{{end}}>
         <option value="0">— any —</option>
-        {{range .Groups}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}
+        {{range .Groups}}<option value="{{int64 .ID}}"{{if $f}}{{if eq (int64 .ID) $f.GroupID}} selected{{end}}{{end}}>{{.Name}}</option>{{end}}
       </select>
     </label>
     {{end}}
   </div>
+  <details class="help small">
+    <summary>What do these mean?</summary>
+    <p><strong>Name pattern</strong> is a regular expression matched against each machine's name: <code>^LAB-</code> finds names starting with “LAB-”, <code>PC-00(1|2)</code> finds PC-001 and PC-002. Leave blank to match any name.</p>
+    <p><strong>OU</strong> is an Active Directory organisational unit, written as its distinguished name (DN) — the path from the OU up to the domain, e.g. <code>OU=Lab,DC=corp,DC=example</code>.{{if $f}} <strong>AD group</strong> is an Active Directory security group's name.{{end}}</p>
+  </details>
   <div class="actions actions-start">
     <button type="button" class="secondary" data-mp-search><svg><use href="#i-search"/></svg>Find machines</button>
     <button type="button" class="ghost" data-mp-add-all hidden>Add all results</button>
@@ -70,6 +82,7 @@
   function add(m){ if(!selection[m.id]){ selection[m.id]=m; order.push(m.id); } }
   function search(){
     var p=new URLSearchParams({ name_regex:q('[data-mp-name]').value, ou:q('[data-mp-ou]').value });
+    var ad=q('[data-mp-ad-group]'); if(ad) p.set('group', ad.value);
     var g=q('[data-mp-group-id]'); if(g) p.set('group_id', g.value);
     var st=q('[data-mp-status]'); st.textContent='Searching…';
     fetch('/portal/bulk/search?'+p.toString(),{credentials:'same-origin'})
@@ -98,7 +111,7 @@
   });
   // Enter in a search box searches instead of submitting the outer form.
   root.addEventListener('keydown', function(e){
-    if(e.key==='Enter' && e.target.matches('input[data-mp-name], input[data-mp-ou]')){ e.preventDefault(); search(); }
+    if(e.key==='Enter' && e.target.matches('input[data-mp-name], input[data-mp-ou], input[data-mp-ad-group]')){ e.preventDefault(); search(); }
   });
   try{ (JSON.parse(initJSON)||[]).forEach(add); }catch(_){}
   render();
