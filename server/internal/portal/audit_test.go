@@ -76,3 +76,16 @@ func TestAuditedRecordsPortalChanges(t *testing.T) {
 		t.Fatal("nil handler")
 	}
 }
+
+func TestAuditFailureMessageReadsAsEnglish(t *testing.T) {
+	for _, tc := range []struct{ kind, verb, want string }{
+		{"machine", "binding.update", `admin tried to update the binding of machine “LAB-01” — not saved`},
+		{"machine", "reimage.cancel", `admin tried to cancel the re-image of machine “LAB-01” — not saved`},
+		{"machine", "some_new.verb", `admin tried to some new verb machine “LAB-01” — not saved`},
+	} {
+		got := auditFailureMessage("admin", tc.kind, tc.verb, "LAB-01", "")
+		if !strings.HasPrefix(got, tc.want) {
+			t.Errorf("auditFailureMessage(%q, %q) = %q, want prefix %q", tc.kind, tc.verb, got, tc.want)
+		}
+	}
+}

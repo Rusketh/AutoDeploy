@@ -113,7 +113,8 @@ var auditVerbBase = map[string]string{
 	"run_now": "start", "password": "reset the password of", "file_delete": "delete a file from",
 	"extract": "extract", "upload": "upload files to", "bulk_delete": "delete",
 	"group_membership": "change group membership of", "action": "queue an action on",
-	"reimage": "re-image",
+	"reimage": "re-image", "binding.update": "update the binding of",
+	"reimage.cancel": "cancel the re-image of",
 }
 
 // auditWriter records the status a handler wrote.
@@ -278,7 +279,7 @@ func recordAudit(req *http.Request, r Repos, spec auditSpec, kind string, id mod
 func auditFailureMessage(user, kind, verb, name, why string) string {
 	base, ok := auditVerbBase[verb]
 	if !ok {
-		base = verb
+		base = strings.NewReplacer(".", " ", "_", " ").Replace(verb)
 	}
 	noun := model.AuditNouns[kind]
 	switch kind {
