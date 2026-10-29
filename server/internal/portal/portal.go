@@ -528,6 +528,8 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		// adJoinLabel / adJoinBadgeClass render a machine's AD join status as a
 		// human label and a badge colour class. An empty (unknown / N/A) status
 		// yields an empty label so the caller can show a muted dash instead.
+		// eventLabel names a notification event in plain English.
+		"eventLabel": notify.EventLabel,
 		"adJoinLabel": func(status string) string {
 			switch status {
 			case model.ADJoinJoined:

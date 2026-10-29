@@ -71,6 +71,39 @@ var EventCategories = []struct {
 	{"System health", []string{EventSystemStorageLow, EventSystemAgentOutdated}},
 }
 
+// eventLabels are the plain-English names the portal shows for each event.
+var eventLabels = map[string]string{
+	EventDeployStarted:         "Deployment started",
+	EventDeployCompleted:       "Deployment finished",
+	EventDeployFailed:          "Deployment failed",
+	EventDeployReimage:         "Re-image requested",
+	EventBulkCreated:           "Bulk operation created",
+	EventBulkCompleted:         "Bulk operation finished",
+	EventBulkFailed:            "Bulk operation failed",
+	EventBulkPartial:           "Bulk operation partly failed",
+	EventSoftwareInstallOK:     "Software installed",
+	EventSoftwareInstallFailed: "Software install failed",
+	EventMachineFirstSeen:      "New machine seen",
+	EventMachineOffline:        "Machine went offline",
+	EventMachineHardwareChange: "Machine hardware changed",
+	EventADJoinFailed:          "Domain join failed",
+	EventADTrustFailed:         "Domain trust broken",
+	EventUpdateDeployed:        "Windows Update deployed",
+	EventUpdateComplianceFail:  "Windows Update compliance below target",
+	EventAuthLoginFailed:       "Failed sign-in",
+	EventSystemStorageLow:      "Server storage low",
+	EventSystemAgentOutdated:   "Agent out of date",
+}
+
+// EventLabel returns the plain-English name of an event, or the event name
+// itself when it has none.
+func EventLabel(event string) string {
+	if l, ok := eventLabels[event]; ok {
+		return l
+	}
+	return event
+}
+
 // AllEventNames returns every known event name.
 func AllEventNames() []string {
 	var out []string
