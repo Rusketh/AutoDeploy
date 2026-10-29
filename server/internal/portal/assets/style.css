@@ -125,6 +125,8 @@
 html, body { height: 100%; }
 body {
   font: var(--fs)/var(--lh) var(--font-sans);
+  /* Inter's contextual alternates turn "x64" after a digit into "×64". */
+  font-feature-settings: "calt" 0;
   color: var(--fg);
   background: var(--bg);
   margin: 0;
@@ -826,7 +828,11 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--fg); f
   margin-bottom: var(--sp-2);
   background: var(--surface);
 }
-.rep > * { flex: 1; }
+.rep > * { flex: 1; min-width: 0; }
+.rep > .order-input { flex: 0 0 5.5rem; }
+/* The package picker keeps a usable width; on a phone it takes its own line. */
+.rep { flex-wrap: wrap; }
+.rep > select { flex: 1 1 12rem; }
 .rep button.rem {
   flex: 0 0 auto;
   background: transparent;
@@ -1481,6 +1487,13 @@ table.activity { background: transparent; }
 table.activity tr:hover td { background: var(--surface-2); }
 table.activity td { padding: 0.35rem 0.5rem; font-size: var(--fs-sm); }
 .activity-num { width: 60px; }
+/* Phones: the feed's time / level / machine sit on one line with the
+   message underneath at full width, instead of a squeezed fourth column. */
+@media (max-width: 600px) {
+  table.activity-feed tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--sp-2); padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+  table.activity-feed td { border: none; padding: 0 0.5rem; }
+  table.activity-feed td.activity-msg { flex: 1 1 100%; padding-top: 2px; overflow-wrap: anywhere; }
+}
 
 .quickstart {
   margin: 0;

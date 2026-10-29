@@ -123,27 +123,27 @@
   <p class="hint">Type a hypothetical machine identity. The portal evaluates every filter against it and tells you whether the package would apply.</p>
   {{$prev := .Data.Preview}}
   <div class="row">
-    <label><span class="lbl">system_manufacturer</span><input type="text" name="p_system_manufacturer" value="{{if $prev}}{{$prev.Identity.SystemManufacturer}}{{end}}"></label>
-    <label><span class="lbl">system_product</span><input type="text" name="p_system_product" value="{{if $prev}}{{$prev.Identity.SystemProduct}}{{end}}"></label>
+    <label><span class="lbl">Make (manufacturer)</span><input type="text" name="p_system_manufacturer" value="{{if $prev}}{{$prev.Identity.SystemManufacturer}}{{end}}"></label>
+    <label><span class="lbl">Model</span><input type="text" name="p_system_product" value="{{if $prev}}{{$prev.Identity.SystemProduct}}{{end}}"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">system_serial</span><input type="text" name="p_system_serial" value="{{if $prev}}{{$prev.Identity.SystemSerial}}{{end}}"></label>
-    <label><span class="lbl">system_uuid</span><input type="text" name="p_system_uuid" value="{{if $prev}}{{$prev.Identity.SystemUUID}}{{end}}"></label>
+    <label><span class="lbl">Serial number</span><input type="text" name="p_system_serial" value="{{if $prev}}{{$prev.Identity.SystemSerial}}{{end}}"></label>
+    <label><span class="lbl">System UUID</span><input type="text" name="p_system_uuid" value="{{if $prev}}{{$prev.Identity.SystemUUID}}{{end}}"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">system_sku</span><input type="text" name="p_system_sku" value="{{if $prev}}{{$prev.Identity.SystemSKU}}{{end}}"></label>
-    <label><span class="lbl">system_family</span><input type="text" name="p_system_family" value="{{if $prev}}{{$prev.Identity.SystemFamily}}{{end}}"></label>
+    <label><span class="lbl">SKU / product code</span><input type="text" name="p_system_sku" value="{{if $prev}}{{$prev.Identity.SystemSKU}}{{end}}"></label>
+    <label><span class="lbl">Product family</span><input type="text" name="p_system_family" value="{{if $prev}}{{$prev.Identity.SystemFamily}}{{end}}"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">bios_vendor</span><input type="text" name="p_bios_vendor" value="{{if $prev}}{{$prev.Identity.BIOSVendor}}{{end}}"></label>
-    <label><span class="lbl">bios_version</span><input type="text" name="p_bios_version" value="{{if $prev}}{{$prev.Identity.BIOSVersion}}{{end}}"></label>
+    <label><span class="lbl">BIOS vendor</span><input type="text" name="p_bios_vendor" value="{{if $prev}}{{$prev.Identity.BIOSVendor}}{{end}}"></label>
+    <label><span class="lbl">BIOS version</span><input type="text" name="p_bios_version" value="{{if $prev}}{{$prev.Identity.BIOSVersion}}{{end}}"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">board_manufacturer</span><input type="text" name="p_board_manufacturer" value="{{if $prev}}{{$prev.Identity.BoardManufacturer}}{{end}}"></label>
-    <label><span class="lbl">board_product</span><input type="text" name="p_board_product" value="{{if $prev}}{{$prev.Identity.BoardProduct}}{{end}}"></label>
+    <label><span class="lbl">Board manufacturer</span><input type="text" name="p_board_manufacturer" value="{{if $prev}}{{$prev.Identity.BoardManufacturer}}{{end}}"></label>
+    <label><span class="lbl">Board model</span><input type="text" name="p_board_product" value="{{if $prev}}{{$prev.Identity.BoardProduct}}{{end}}"></label>
   </div>
   <div class="row">
-    <label><span class="lbl">board_serial</span><input type="text" name="p_board_serial" value="{{if $prev}}{{$prev.Identity.BoardSerial}}{{end}}"></label>
+    <label><span class="lbl">Board serial</span><input type="text" name="p_board_serial" value="{{if $prev}}{{$prev.Identity.BoardSerial}}{{end}}"></label>
   </div>
   <div class="actions"><button type="submit"><svg><use href="#i-bolt"/></svg>Evaluate</button></div>
 </form>

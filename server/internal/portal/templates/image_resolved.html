@@ -109,6 +109,8 @@
     (list||[]).forEach(function(w){ var p=document.createElement('div'); p.textContent=w; warnBox.appendChild(p); });
     warnBox.hidden=!(list&&list.length);
   }
+  // Same wording as the server-rendered times: "29 Oct 2026, 11:15" in the portal's display time zone.
+  function when(iso){ try { return new Date(iso).toLocaleString('en-GB',{timeZone:document.body.getAttribute('data-tz')||'UTC',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}); } catch(e){ return new Date(iso).toLocaleString(); } }
   function size(b){ return b>=1073741824?(b/1073741824).toFixed(1)+' GB':Math.max(1,Math.round(b/1048576))+' MB'; }
   function render(s){
     if(!s) return;
@@ -123,13 +125,13 @@
       btn.disabled=false; cancelBtn.hidden=true; btn.innerHTML='<svg><use href="#i-disc"/></svg>'+(s.phase==='done'?'Rebuild ISO':'Build ISO');
       if(s.phase==='done'){
         prog.hidden=false; bar.style.width='100%'; dl.hidden=false; showErr('');
-        var when=s.built_at?(' · built '+new Date(s.built_at).toLocaleString()):'';
+        var when=s.built_at?(' · built '+when(s.built_at)):'';
         stage.textContent='Ready'+(s.size_bytes?(' — '+size(s.size_bytes)):'')+when+'. Write it with Rufus in ISO mode.';
       } else if(s.phase==='error'){
         showErr(s.error||'Export failed');
         // A previous finished ISO survives a failed or cancelled rebuild.
         var prev=!!s.size_bytes; dl.hidden=!prev; prog.hidden=!prev; bar.style.width=prev?'100%':'0';
-        if(prev) stage.textContent='The previous ISO is still available — '+size(s.size_bytes)+(s.built_at?(' · built '+new Date(s.built_at).toLocaleString()):'')+'.';
+        if(prev) stage.textContent='The previous ISO is still available — '+size(s.size_bytes)+(s.built_at?(' · built '+when(s.built_at)):'')+'.';
       }
     }
   }
