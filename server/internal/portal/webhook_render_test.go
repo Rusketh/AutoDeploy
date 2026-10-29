@@ -39,3 +39,16 @@ func TestNotifyPreferencesShowEventLabels(t *testing.T) {
 		t.Errorf("preferences should name events in plain English")
 	}
 }
+
+func TestMakeModel(t *testing.T) {
+	for _, c := range [][3]string{
+		{"HP", "HP EliteDesk 800 G6", "HP EliteDesk 800 G6"},
+		{"Dell Inc.", "OptiPlex 7090", "Dell Inc. OptiPlex 7090"},
+		{"LENOVO", "", "LENOVO"},
+		{"", "11DT0012UK", "11DT0012UK"},
+	} {
+		if got := makeModel(c[0], c[1]); got != c[2] {
+			t.Errorf("makeModel(%q, %q) = %q, want %q", c[0], c[1], got, c[2])
+		}
+	}
+}

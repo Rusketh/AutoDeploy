@@ -168,7 +168,7 @@
         {{$st := index $.Data.Status .ID}}<span class="dot {{$st.Dot}}" aria-hidden="true" title="{{$st.Title}}"></span>
         <a href="/portal/machines/{{int64 .ID}}">
           {{$n := machineName .ID}}<span class="machine-name">{{if $n.Unnamed}}<span class="muted">{{$n.Name}}</span>{{else}}{{$n.Name}}{{end}}</span>
-          <span class="machine-meta">{{if .SystemProduct}}{{.SystemManufacturer}} {{.SystemProduct}}{{else}}unidentified hardware{{end}}{{if .SystemSerial}} · {{.SystemSerial}}{{end}}</span>
+          <span class="machine-meta">{{if .SystemProduct}}{{makeModel .SystemManufacturer .SystemProduct}}{{else}}unidentified hardware{{end}}{{if .SystemSerial}} · {{.SystemSerial}}{{end}}</span>
         </a>
         <span class="small muted nowrap"><span class="status-text">{{(index $.Data.Status .ID).Label}}</span> · {{timeAgo .LastSeen}}</span>
       </li>

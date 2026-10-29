@@ -528,6 +528,9 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		// adJoinLabel / adJoinBadgeClass render a machine's AD join status as a
 		// human label and a badge colour class. An empty (unknown / N/A) status
 		// yields an empty label so the caller can show a muted dash instead.
+		// makeModel joins manufacturer and product without repeating a
+		// manufacturer the product already starts with ("HP EliteDesk").
+		"makeModel": makeModel,
 		// eventLabel names a notification event in plain English.
 		"eventLabel": notify.EventLabel,
 		"adJoinLabel": func(status string) string {
@@ -926,4 +929,17 @@ func pathID(req *http.Request) (model.ID, error) {
 		return 0, fmt.Errorf("invalid id %q", raw)
 	}
 	return model.ID(n), nil
+}
+
+// makeModel is "<manufacturer> <product>", or just the product when it
+// already names the manufacturer (HP reports "HP EliteDesk 800 G6").
+func makeModel(manufacturer, product string) string {
+	manufacturer, product = strings.TrimSpace(manufacturer), strings.TrimSpace(product)
+	switch {
+	case product == "":
+		return manufacturer
+	case manufacturer == "" || strings.HasPrefix(strings.ToLower(product), strings.ToLower(manufacturer)):
+		return product
+	}
+	return manufacturer + " " + product
 }
