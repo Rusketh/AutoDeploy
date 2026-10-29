@@ -22,7 +22,7 @@ func TestBrandingLogoPreviewRenders(t *testing.T) {
 			return template.URL("")
 		},
 	})
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, "templates/settings_branding.html")
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS, append(append([]string{}, layoutPartials...), "templates/settings_branding.html")...)
 	if err != nil {
 		t.Fatalf("parse settings_branding.html: %v", err)
 	}

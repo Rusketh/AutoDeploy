@@ -71,9 +71,9 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 		imgs, _ := r.Images.List(req.Context())
 		groups, _ := r.Groups.List(req.Context())
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
-			"Packages":    pkgs,
-			"Images":      imgs,
-			"Groups":      groups,
+			"Packages":     pkgs,
+			"Images":       imgs,
+			"Groups":       groups,
 			"FormAction":   "/portal/bulk",
 			"ReviewAction": "/portal/bulk/review",
 			"Editing":      false,
@@ -409,9 +409,9 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 		selJSON, _ := json.Marshal(selInit)
 		groups, _ := r.Groups.List(req.Context())
 		render(w, req, r, "bulk_form.html", "Edit "+bulkTitle(op), map[string]any{
-			"Packages":    pkgs,
-			"Images":      imgs,
-			"Groups":      groups,
+			"Packages":     pkgs,
+			"Images":       imgs,
+			"Groups":       groups,
 			"FormAction":   fmt.Sprintf("/portal/bulk/%d/edit", int64(id)),
 			"ReviewAction": fmt.Sprintf("/portal/bulk/%d/review", int64(id)),
 			"Editing":      true,
@@ -774,8 +774,8 @@ func bulkTitle(op model.BulkOperation) string {
 // so editing round-trips the wall-clock the operator originally entered.
 func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 	ap := map[string]any{
-		"Name":              "",
-		"Description":       "",
+		"Name":        "",
+		"Description": "",
 		// No default action: the operator must pick one (a pre-selected
 		// action is one click from queuing the wrong thing fleet-wide).
 		"Action":            "",

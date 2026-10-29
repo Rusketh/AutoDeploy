@@ -1,38 +1,19 @@
 {{define "body"}}
 <div class="toolbar">
-  <h2>{{.Data.Update.KBNumber}} — Compliance</h2>
+  <h2>{{.Data.Update.KBNumber}} — who has it</h2>
   <div class="right">
     <a class="btn secondary" href="/portal/updates/{{int64 .Data.Update.ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit update</a>
     <a class="btn secondary" href="/portal/updates"><svg><use href="#i-arrow-left"/></svg>Back to list</a>
   </div>
 </div>
 
-<div class="grid stats">
-  <div class="stat">
-    <span class="num">{{.Data.Summary.Installed}}</span>
-    <span class="lbl"><svg><use href="#i-check"/></svg>Installed</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{.Data.Summary.Pending}}</span>
-    <span class="lbl"><svg><use href="#i-list"/></svg>Pending</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{.Data.Summary.Failed}}</span>
-    <span class="lbl"><svg><use href="#i-bolt"/></svg>Failed</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{.Data.Summary.Unknown}}</span>
-    <span class="lbl"><svg><use href="#i-search"/></svg>Unknown</span>
-  </div>
-  <div class="stat">
-    <span class="num">{{.Data.Summary.Total}}</span>
-    <span class="lbl"><svg><use href="#i-server"/></svg>Total</span>
-  </div>
-</div>
-
-<div class="mt-4">
-  <p><strong>{{.Data.Update.Title}}</strong></p>
-  {{if .Data.Update.Description}}<p class="muted">{{.Data.Update.Description}}</p>{{end}}
+<div class="card mb-4">
+  <p class="mt-0"><strong>{{if .Data.Update.Title}}{{.Data.Update.Title}}{{else}}{{.Data.Update.KBNumber}}{{end}}</strong>
+    <span class="small muted">· {{osLabel .Data.Update.OSFilter}}{{if .Data.Update.Severity}} · {{.Data.Update.Severity}}{{end}}</span></p>
+  {{if .Data.Update.Description}}<p class="muted small">{{.Data.Update.Description}}</p>{{end}}
+  {{$cv := compliance .Data.Summary}}
+  <div class="progress-card-head">{{template "status_badge" $cv}}</div>
+  {{template "seg_progress" (complianceBar .Data.Summary)}}
 </div>
 
 {{if or .Data.Machines .Data.Search.Query}}
@@ -47,15 +28,16 @@
 <table id="ctbl" data-sortable>
   <thead><tr>
     <th>Machine</th>
-    <th>UUID</th>
     <th>Status</th>
+    <th>UUID</th>
   </tr></thead>
   <tbody>
     {{range .Data.Machines}}
     <tr>
       <td><a href="/portal/machines/{{int64 .Machine.ID}}">{{if .Name}}<strong>{{.Name}}</strong>{{else}}<code>{{slice .Machine.SystemUUID 0 8}}…</code>{{end}}</a></td>
+      {{$cs := complianceStatus .Status}}
+      <td data-sort-value="{{$cs.Label}}">{{template "status_badge" $cs}}</td>
       <td class="small muted"><code>{{.Machine.SystemUUID}}</code></td>
-      <td><span class="badge {{if eq .Status "installed"}}ok{{else if eq .Status "pending"}}warn{{else if eq .Status "failed"}}bad{{end}}">{{.Status}}</span></td>
     </tr>
     {{end}}
   </tbody>

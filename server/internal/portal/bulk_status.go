@@ -377,5 +377,13 @@ func bulkTemplateFuncs(loc *time.Location) template.FuncMap {
 		"actionLabel":     model.BulkActionLabel,
 		"scheduleText":    func(op model.BulkOperation) string { return scheduleText(op, loc) },
 		"humanToken":      humanToken,
+		// Windows Update pages (windowsupdate.go).
+		"osLabel":          osFilterLabel,
+		"severityTone":     severityTone,
+		"complianceStatus": complianceStatusView,
+		"compliance":       complianceView,
+		"complianceBar":    complianceBar,
+		"deploymentBar":    deploymentBar,
+		"deploymentStatus": deploymentStatus,
 	}
 }

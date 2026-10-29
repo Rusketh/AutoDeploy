@@ -2,6 +2,8 @@ package portal
 
 import (
 	"encoding/json"
+	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -345,6 +347,13 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 		for _, id := range dep.UpdateIDs {
 			kbs = append(kbs, names.Lookup(model.KindUpdate, id).Label(id))
 		}
+		// Titles say what each KB is ("2023-10 Cumulative Update").
+		titles := map[model.ID]string{}
+		if all, err := r.Updates.List(req.Context()); err == nil {
+			for _, u := range all {
+				titles[u.ID] = u.Title
+			}
+		}
 		// Summarize job statuses.
 		counts := map[string]int{}
 		for _, j := range jobs {
@@ -366,8 +375,119 @@ func wuDeploymentDetail(r Repos) http.HandlerFunc {
 			"Counts":     counts,
 			"TargetJSON": string(targetJSON),
 			"KBs":        kbs,
+			"Titles":     titles,
+			"Target":     wuTargetHTML(names, dep.Target),
 		})
 	}
+}
+
+// osFilterLabel names an update's OS filter token ("windows-11" →
+// "Windows 11"); blank means any OS.
+func osFilterLabel(token string) string {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "":
+		return "Any OS"
+	case "windows-10":
+		return "Windows 10"
+	case "windows-11":
+		return "Windows 11"
+	case "server-2019":
+		return "Windows Server 2019"
+	case "server-2022":
+		return "Windows Server 2022"
+	case "server-2025":
+		return "Windows Server 2025"
+	}
+	return token
+}
+
+// severityTone is the badge class for a Microsoft severity rating.
+func severityTone(sev string) string {
+	switch strings.ToLower(sev) {
+	case "critical":
+		return "bad"
+	case "important":
+		return "warn"
+	case "moderate", "low":
+		return ""
+	}
+	return "muted"
+}
+
+// complianceStatusView labels one machine's state for an update.
+func complianceStatusView(status string) statusView {
+	switch status {
+	case "installed":
+		return statusView{Label: "Installed", Tone: "ok", Icon: "i-check"}
+	case "pending":
+		return statusView{Label: "Not installed yet", Tone: "warn", Icon: "i-clock"}
+	case "failed":
+		return statusView{Label: "Install failed", Tone: "bad", Icon: "i-alert"}
+	case "", "unknown":
+		return statusView{Label: "Not reported", Tone: "muted", Icon: "i-info"}
+	case "not_applicable":
+		return statusView{Label: "Not needed", Tone: "muted", Icon: "i-info"}
+	}
+	return statusView{Label: humanToken(status), Tone: "muted", Icon: "i-info"}
+}
+
+// complianceView is the list's compliance cell: "12 of 20 installed".
+func complianceView(c model.ComplianceSummary) statusView {
+	if c.Total == 0 {
+		return statusView{Label: "No machines yet", Tone: "muted", Icon: "i-info"}
+	}
+	pct := c.Installed * 100 / c.Total
+	v := statusView{Label: fmt.Sprintf("%d of %d installed (%d%%)", c.Installed, c.Total, pct), Icon: "i-clock", Tone: "warn"}
+	switch {
+	case c.Installed == c.Total:
+		v.Tone, v.Icon = "ok", "i-check"
+	case c.Failed > 0:
+		v.Tone, v.Icon = "bad", "i-alert"
+		v.Note = fmt.Sprintf("%d failed", c.Failed)
+	}
+	return v
+}
+
+// complianceBar is the segmented bar for an update's compliance.
+func complianceBar(c model.ComplianceSummary) segmentedProgress {
+	return newSegmentedProgress(c.Total,
+		progressSeg{Key: "ok", Label: "Installed", Count: c.Installed},
+		progressSeg{Key: "failed", Label: "Failed", Count: c.Failed},
+		progressSeg{Key: "queued", Label: "Not installed yet", Count: c.Pending},
+		progressSeg{Key: "cancelled", Label: "Not reported", Count: c.Unknown},
+	)
+}
+
+// wuTargetHTML describes a deployment's target in names; an empty target
+// means every machine (narrowed only by the OS filter).
+func wuTargetHTML(names *model.NameLookup, t model.BulkTarget) template.HTML {
+	if len(t.MachineIDs) == 0 && t.GroupID == 0 && t.NameRegex == "" && t.OU == "" && t.Group == "" {
+		return "Every machine"
+	}
+	return bulkTargetHTML(names, t, "")
+}
+
+// deploymentBar is the segmented bar for an update deployment's jobs.
+func deploymentBar(counts map[string]int) segmentedProgress {
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	return newSegmentedProgress(total,
+		progressSeg{Key: "ok", Label: "Succeeded", Count: counts["ok"]},
+		progressSeg{Key: "failed", Label: "Failed", Count: counts["failed"]},
+		progressSeg{Key: "running", Label: "Running", Count: counts["running"]},
+		progressSeg{Key: "queued", Label: "Queued", Count: counts["queued"]},
+		progressSeg{Key: "cancelled", Label: "Cancelled", Count: counts["cancelled"]},
+	)
+}
+
+// deploymentStatus summarises an update deployment from its job counts.
+func deploymentStatus(counts map[string]int) statusView {
+	p := model.BulkProgress{Queued: counts["queued"], Running: counts["running"], OK: counts["ok"],
+		Failed: counts["failed"], Cancelled: counts["cancelled"]}
+	p.Total = p.Queued + p.Running + p.OK + p.Failed + p.Cancelled
+	return bulkStatus(model.BulkOperation{Status: model.BulkStatusActive, Progress: p})
 }
 
 func idStr(id model.ID) string {

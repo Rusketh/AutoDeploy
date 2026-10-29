@@ -1,18 +1,20 @@
 {{define "body"}}
+{{$fe := .Data.FormError}}
 <div class="toolbar">
   <h2><svg class="icon-h2"><use href="#i-bell"/></svg>Notification settings</h2>
   <div class="right"><a class="btn ghost sm" href="/portal/settings"><svg><use href="#i-arrow-left"/></svg>Settings</a></div>
 </div>
 
 <form class="std" method="POST" action="/portal/settings/notifications" data-dirty-guard>
+  {{template "form_error" $fe}}
 
   <fieldset><legend>In-portal notifications</legend>
     <label class="check">
       <input type="checkbox" name="portal_enabled" value="1"{{if .Data.PortalEnabled}} checked{{end}}>
       <span>Enable in-portal notifications</span>
     </label>
-    <label><span class="lbl">Retain notifications for (days)</span>
-      <input type="number" name="portal_retention" value="{{.Data.PortalRetention}}" min="0" max="3650">
+    <label><span class="lbl">Keep notifications for (days)</span>
+      <input type="number" name="portal_retention" value="{{.Data.PortalRetention}}" min="0" max="3650" {{invalidAttr $fe "portal_retention"}}>{{fieldError $fe "portal_retention"}}
       <span class="hint">0 = keep forever. Old notifications are pruned alongside log retention.</span>
     </label>
   </fieldset>
@@ -22,19 +24,19 @@
       <input type="checkbox" name="email_enabled" value="1"{{if .Data.EmailEnabled}} checked{{end}}>
       <span>Enable email notifications</span>
     </label>
-    <label><span class="lbl">SMTP host</span>
-      <input type="text" name="smtp_host" value="{{.Data.EmailCfg.Host}}" placeholder="smtp.example.com">
+    <label><span class="lbl">Mail server (SMTP)</span>
+      <input type="text" name="smtp_host" value="{{.Data.EmailCfg.Host}}" placeholder="smtp.example.com" {{invalidAttr $fe "smtp_host"}}>{{fieldError $fe "smtp_host"}}
     </label>
-    <label><span class="lbl">SMTP port</span>
-      <input type="number" name="smtp_port" value="{{.Data.EmailCfg.Port}}" min="1" max="65535">
+    <label><span class="lbl">Port</span>
+      <input type="number" name="smtp_port" value="{{.Data.SMTPPort}}" min="1" max="65535" {{invalidAttr $fe "smtp_port"}}>{{fieldError $fe "smtp_port"}}
     </label>
-    <label><span class="lbl">SMTP username</span>
-      <input type="text" name="smtp_user" value="{{.Data.EmailCfg.User}}" placeholder="(optional)">
+    <label><span class="lbl">Username</span>
+      <input type="text" name="smtp_user" value="{{.Data.EmailCfg.User}}" placeholder="(optional)" {{invalidAttr $fe "smtp_user"}}>{{fieldError $fe "smtp_user"}}
     </label>
-    <label><span class="lbl">SMTP password</span>
-      <input type="password" name="smtp_password" placeholder="{{if .Data.EmailCfg.Password}}(stored, leave blank to keep){{else}}(optional){{end}}">
+    <label><span class="lbl">Password</span>
+      <input type="password" name="smtp_password" placeholder="{{if .Data.PasswordStored}}Leave blank to keep the saved password{{else}}(optional){{end}}" autocomplete="new-password" {{invalidAttr $fe "smtp_password"}}>{{fieldError $fe "smtp_password"}}
     </label>
-    <label><span class="lbl">TLS mode</span>
+    <label><span class="lbl">Encryption</span>
       <select name="smtp_tls">
         <option value="starttls"{{if eq .Data.EmailCfg.TLSMode "starttls"}} selected{{end}}>STARTTLS (port 587)</option>
         <option value="tls"{{if eq .Data.EmailCfg.TLSMode "tls"}} selected{{end}}>Implicit TLS (port 465)</option>
@@ -42,17 +44,17 @@
       </select>
     </label>
     <label><span class="lbl">From address</span>
-      <input type="email" name="from_address" value="{{.Data.EmailCfg.FromAddress}}" placeholder="autodeploy@example.com">
+      <input type="email" name="from_address" value="{{.Data.EmailCfg.FromAddress}}" placeholder="autodeploy@example.com" {{invalidAttr $fe "from_address"}}>{{fieldError $fe "from_address"}}
     </label>
-    <label><span class="lbl">From display name</span>
-      <input type="text" name="from_name" value="{{.Data.EmailCfg.FromName}}" placeholder="AutoDeploy">
+    <label><span class="lbl">From name</span>
+      <input type="text" name="from_name" value="{{.Data.EmailCfg.FromName}}" placeholder="AutoDeploy" {{invalidAttr $fe "from_name"}}>{{fieldError $fe "from_name"}}
     </label>
   </fieldset>
 
   <fieldset><legend>Machine offline detection</legend>
-    <label><span class="lbl">Offline threshold (minutes)</span>
-      <input type="number" name="offline_minutes" value="{{.Data.OfflineMinutes}}" min="1" max="10080">
-      <span class="hint">Fire a <code>machine.offline</code> notification when a machine has not checked in for this long. Default 30 minutes.</span>
+    <label><span class="lbl">Offline after (minutes)</span>
+      <input type="number" name="offline_minutes" value="{{.Data.OfflineMinutes}}" min="1" max="10080" {{invalidAttr $fe "offline_minutes"}}>{{fieldError $fe "offline_minutes"}}
+      <span class="hint">Send a “machine offline” notification when a machine hasn't checked in for this long. Default 30.</span>
     </label>
   </fieldset>
 
