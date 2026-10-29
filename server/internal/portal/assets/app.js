@@ -1131,7 +1131,9 @@
             }
             if (pctEl) pctEl.textContent = s.indeterminate ? '' : ((s.percent || 0) + '%');
             schedule();
-          } else if (s.finished && sawActive) {
+          } else if (sawActive) {
+            // Finished, or went quiet (stalled): reload into the settled
+            // Current state card.
             window.location.reload();
           }
           // Not active and never saw active: nothing in flight; stop polling.
@@ -1160,8 +1162,25 @@
         var r = t.querySelector('input[type=radio]');
         t.classList.toggle('selected', !!(r && r.checked));
       });
+      // No action is preselected: a submit button marked data-needs-action
+      // stays disabled until one is chosen, and while a visible panel has a
+      // type-to-confirm field (data-confirm-match) until it matches.
+      var form = fs.form || fs.closest('form');
+      if (!form) return;
+      var reason = v ? '' : 'Choose an action first';
+      if (!reason) {
+        panels.querySelectorAll('[data-action-panel]:not([hidden]) [data-confirm-match]').forEach(function (inp) {
+          var want = (inp.getAttribute('data-confirm-match') || '').trim().toLowerCase();
+          if (inp.value.trim().toLowerCase() !== want) reason = 'Type the name to confirm';
+        });
+      }
+      form.querySelectorAll('[data-needs-action]').forEach(function (b) {
+        b.disabled = !!reason;
+        if (reason) { b.title = reason; } else { b.removeAttribute('title'); }
+      });
     }
     fs.addEventListener('change', sync);
+    panels.addEventListener('input', sync);
     sync();
   });
 

@@ -69,7 +69,7 @@
   <strong>Deployment run {{idLabel .ID}}</strong>
   on {{entityLink "machine" .MachineID}}{{if .ImageID}} with {{entityLink "image" .ImageID}}{{end}}
   · started {{timeAgo .StartedAt}}
-  · <span class="badge {{if eq .Outcome "ok"}}ok{{else if eq .Outcome "failed"}}bad{{else}}warn{{end}}">{{if eq .Outcome "in_progress"}}in progress{{else}}{{.Outcome}}{{end}}</span>
+  · <span class="badge {{outcomeBadge .Outcome}}">{{outcomeLabel .Outcome}}</span>
   <span class="muted small">Includes events from older clients logged on this machine during the run.</span>
 </div>
 {{end}}

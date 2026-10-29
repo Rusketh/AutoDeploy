@@ -333,8 +333,14 @@ func dashboardPage(r Repos) http.HandlerFunc {
 			ISOs, Unattends, Drivers, Software, Loadouts, Images, Machines int
 		}
 		var c counts
+		isoPrepFailed := 0
 		if l, err := r.ISOs.List(req.Context()); err == nil {
 			c.ISOs = len(l)
+			for _, iso := range l {
+				if strings.TrimSpace(iso.PrepError) != "" {
+					isoPrepFailed++
+				}
+			}
 		}
 		if l, err := r.Unattend.List(req.Context()); err == nil {
 			c.Unattends = len(l)
@@ -414,7 +420,11 @@ func dashboardPage(r Repos) http.HandlerFunc {
 		if r.Updates != nil {
 			updateSummary, _ = r.Updates.FleetUpdateSummary(req.Context())
 		}
+		now := time.Now()
+		facts := loadFleetFacts(req, r, machines, now)
 		render(w, req, r, "index.html", "Dashboard", map[string]any{
+			"Attention":   needsAttention(machines, facts, isoPrepFailed, now),
+			"Status":      facts.Status,
 			"Counts":      c,
 			"Events":      events,
 			"TopMachines": topMachines,
@@ -622,6 +632,9 @@ func funcsFor(req *http.Request, r Repos) template.FuncMap {
 		fm[k] = f
 	}
 	for k, f := range formErrorFuncs() {
+		fm[k] = f
+	}
+	for k, f := range deployFuncs() {
 		fm[k] = f
 	}
 	return fm

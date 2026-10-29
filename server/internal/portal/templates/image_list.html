@@ -40,9 +40,9 @@
         <form method="POST" action="/portal/images/{{int64 .ID}}/clone">
           <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
         </form>
-        <form method="POST" action="/portal/images/{{int64 .ID}}/delete" data-confirm="Delete this image? Will fail if other images inherit from it.">
+        {{$n := index $.Data.Children .ID}}{{if $n}}<span class="disabled-reason" title="{{$n}} image{{if ne $n 1}}s inherit{{else}} inherits{{end}} from it — change their parent first"><button class="danger sm" type="button" disabled aria-disabled="true" aria-label="Delete (unavailable: {{$n}} image{{if ne $n 1}}s inherit{{else}} inherits{{end}} from it — change their parent first)"><svg><use href="#i-trash"/></svg>Delete</button></span>{{else}}<form method="POST" action="/portal/images/{{int64 .ID}}/delete" data-confirm="Delete image “{{.Name}}”? Machines bound to it are left without an image.">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
-        </form>
+        </form>{{end}}
       </td>
     </tr>
     {{end}}

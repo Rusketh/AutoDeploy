@@ -1596,3 +1596,110 @@ fieldset.disabled::after { content: " (does not apply to selected target OS)"; c
 .sel-group { display: inline-flex; align-items: center; gap: var(--sp-2); padding-left: var(--sp-3); margin-left: var(--sp-1); border-left: 1px solid var(--border); }
 .sel-group select { min-width: 9rem; }
 .sel-count { margin-right: var(--sp-1); }
+
+/* ---------- Fleet status (machine list, detail, dashboard) ---------- */
+.dot.accent { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+/* Offline: a hollow ring, so it reads differently from Idle even without colour. */
+.dot.off { background: transparent; border: 2px solid var(--fg-muted); box-shadow: none; box-sizing: border-box; }
+.status-label { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+.status-label .dot { box-shadow: none; }
+.status-badge {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.15rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap;
+}
+.status-badge .dot { box-shadow: none; }
+
+.machine-filters { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-2) var(--sp-4); margin: 0 0 var(--sp-3); }
+.status-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.status-chips .chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.65rem; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--fg); font-size: var(--fs-sm); text-decoration: none;
+}
+.status-chips .chip:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.status-chips .chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.status-chips .chip .dot { width: 8px; height: 8px; box-shadow: none; }
+.status-chips .chip-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.status-chips .chip.on .chip-count { color: inherit; }
+.filter-selects { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-2); }
+.filter-select { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.filter-select .lbl { font-size: var(--fs-xs); color: var(--fg-muted); }
+.filter-select select { min-width: 8.5rem; max-width: 13rem; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: var(--fs-sm); }
+.filter-select.on select { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.machine-table .col-check { width: 2rem; }
+.machine-table .col-name .rename-hint { display: block; }
+.machine-table .col-uuid { white-space: nowrap; }
+.machine-table .uuid-short { font-size: var(--fs-xs); color: var(--fg-muted); }
+.machine-table .copy-hover { opacity: 0; transition: opacity var(--tx-fast); }
+.machine-table tr:hover .copy-hover, .machine-table .copy-hover:focus-visible { opacity: 1; }
+@media (hover: none) { .machine-table .copy-hover { opacity: 1; } }
+
+/* Phones: each machine becomes a card — name and status on top, the rest
+   as labelled lines (labels come from each cell's data-label). */
+@media (max-width: 600px) {
+  .machine-filters { flex-direction: column; align-items: stretch; }
+  .filter-select { flex: 1 1 45%; }
+  .filter-select select { max-width: none; min-width: 0; width: 100%; }
+  .machine-table thead { display: none; }
+  .machine-table, .machine-table tbody { display: block; }
+  .machine-table tr {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--sp-2);
+    padding: var(--sp-3); border-bottom: 1px solid var(--border);
+  }
+  .machine-table tbody tr:hover td { background: transparent; }
+  .machine-table td { display: block; border: none; padding: 0.1rem 0; }
+  .machine-table td.col-check { grid-column: 1; grid-row: 1; padding-top: 0.15rem; }
+  .machine-table td.col-name { grid-column: 2; grid-row: 1; }
+  .machine-table td.col-status { grid-column: 3; grid-row: 1; text-align: right; }
+  .machine-table td[data-label]:not(.col-status) { grid-column: 2 / 4; display: flex; gap: var(--sp-2); font-size: var(--fs-sm); }
+  .machine-table td[data-label]:not(.col-status)::before {
+    content: attr(data-label); flex: 0 0 5.5rem; color: var(--fg-muted); font-size: var(--fs-xs); padding-top: 0.1rem;
+  }
+  .machine-table .copy-hover { opacity: 1; }
+}
+.machine-table .col-name a, .machine-table .badge { white-space: nowrap; }
+.machine-table .model-product { display: block; }
+@media (max-width: 600px) { .machine-table .model-product { display: inline; } }
+
+/* ---------- Machine detail ---------- */
+.machine-head { align-items: flex-start; }
+.machine-title h2 { margin: 0 0 var(--sp-2); }
+.head-badges { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.status-badge.quiet { font-weight: 400; color: var(--fg-muted); }
+.current-state .card-head { flex-wrap: wrap; gap: var(--sp-2); }
+.cs-links { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.cs-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-3); }
+.cs-outcome { font-size: var(--fs); font-weight: 600; }
+.current-state dl.kv.cs-kv { padding: 0; border: none; box-shadow: none; background: transparent; margin-bottom: var(--sp-3); }
+.current-state dl.kv.cs-foot { margin: var(--sp-3) 0 0; padding-top: var(--sp-3); border-top: 1px solid var(--border); border-radius: 0; }
+.current-state .deploy-progress { margin-bottom: var(--sp-3); }
+.current-state .timeline-headline { margin-bottom: var(--sp-2); }
+.cs-note { margin: 0 0 var(--sp-2); }
+.section-lead { margin: calc(-1 * var(--sp-2)) 0 var(--sp-3); }
+.action-panels .action-none { margin: var(--sp-2) 0; }
+abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+
+/* ---------- Dashboard: needs attention, library ---------- */
+.attention-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--sp-2); }
+.attention-item {
+  display: grid; grid-template-columns: 12px auto minmax(0, 1fr) 14px; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); color: var(--fg); text-decoration: none; height: 100%;
+}
+.attention-item:hover { border-color: var(--accent); background: var(--surface-2); text-decoration: none; }
+.attention-item .att-num { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+.attention-item .att-text { display: flex; flex-direction: column; gap: 2px; }
+.attention-item .att-go { width: 14px; height: 14px; color: var(--fg-muted); }
+.attention-item .dot { box-shadow: none; }
+.all-clear { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.all-clear .dot { margin-top: 0.4rem; }
+.all-clear p { margin: 0.2rem 0 0; }
+.library-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--sp-1) var(--sp-3); }
+.library-list a { display: flex; align-items: center; gap: var(--sp-2); padding: 0.3rem 0; color: var(--fg); font-size: var(--fs-sm); text-decoration: none; }
+.library-list a:hover { color: var(--accent); }
+.library-list svg { width: 14px; height: 14px; color: var(--fg-muted); }
+.library-list .lib-num { margin-left: auto; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.machine-list li > .dot { width: 8px; height: 8px; box-shadow: none; flex: 0 0 auto; margin-right: var(--sp-2); }
+.disabled-reason { display: inline-block; cursor: not-allowed; margin-left: var(--sp-1); }
+.disabled-reason > button { pointer-events: none; }

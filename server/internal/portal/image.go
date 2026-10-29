@@ -51,8 +51,15 @@ func imageList(r Repos) http.HandlerFunc {
 			ldNames[l.ID] = l.Name
 		}
 		imgNames := map[model.ID]string{}
+		// children counts the images that inherit from each image: a parent
+		// can't be deleted (model.ImageRepo.Delete), so its Delete button is
+		// disabled with the reason.
+		children := map[model.ID]int{}
 		for _, im := range images {
 			imgNames[im.ID] = im.Name
+			if im.ParentID != nil {
+				children[*im.ParentID]++
+			}
 		}
 		groups, _ := mustListImageGroups(r, req)
 		grpNames := map[model.ID]string{}
@@ -85,6 +92,7 @@ func imageList(r Repos) http.HandlerFunc {
 			"ISONames": isoNames, "UnattendNames": uaNames,
 			"LoadoutNames": ldNames, "ImageNames": imgNames,
 			"Groups": groups, "GroupNames": grpNames, "GroupRefs": grpRefs,
+			"Children": children,
 		})
 	}
 }

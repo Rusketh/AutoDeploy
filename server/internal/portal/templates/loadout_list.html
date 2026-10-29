@@ -31,9 +31,9 @@
         <form method="POST" action="/portal/loadouts/{{int64 .ID}}/clone">
           <button class="secondary sm" type="submit"><svg><use href="#i-copy"/></svg>Clone</button>
         </form>
-        <form method="POST" action="/portal/loadouts/{{int64 .ID}}/delete" data-confirm="Delete this loadout?">
+        {{$n := index $.Data.Refs .ID}}{{if $n}}<span class="disabled-reason" title="In use by {{$n}} image{{if ne $n 1}}s{{end}} or child loadout{{if ne $n 1}}s{{end}} — unlink it first"><button class="danger sm" type="button" disabled aria-disabled="true" aria-label="Delete (unavailable: In use by {{$n}} image{{if ne $n 1}}s{{end}} or child loadout{{if ne $n 1}}s{{end}} — unlink it first)"><svg><use href="#i-trash"/></svg>Delete</button></span>{{else}}<form method="POST" action="/portal/loadouts/{{int64 .ID}}/delete" data-confirm="Delete loadout “{{.Name}}”?">
           <button class="danger sm" type="submit"><svg><use href="#i-trash"/></svg>Delete</button>
-        </form>
+        </form>{{end}}
       </td>
     </tr>
     {{end}}

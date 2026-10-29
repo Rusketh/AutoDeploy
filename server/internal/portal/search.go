@@ -93,6 +93,12 @@ type SearchBox struct {
 	Matched     int // rows matching Query
 	Total       int // rows before filtering
 	Noun        string
+	// ID names the form so filter controls rendered elsewhere on the
+	// page can join it with form="…" (optional).
+	ID string
+	// Filtered is true while a filter other than q is set; the Clear
+	// link then clears those too.
+	Filtered bool
 }
 
 // newSearchBox builds the search box state for the current request.
@@ -122,5 +128,32 @@ func newSearchBox(req *http.Request, placeholder, label string) SearchBox {
 // "N of M images match" line.
 func (sb SearchBox) counted(matched, total int, noun string) SearchBox {
 	sb.Matched, sb.Total, sb.Noun = matched, total, noun
+	return sb
+}
+
+// withFilters adapts the box for a page with its own filter controls:
+// the named parameters are submitted by those controls (joined to this
+// form by ID), so they are not repeated as hidden fields, and Clear
+// drops them along with the search text. active says whether any of
+// them is currently set.
+func (sb SearchBox) withFilters(req *http.Request, id string, active bool, names ...string) SearchBox {
+	drop := map[string]bool{}
+	for _, n := range names {
+		drop[n] = true
+	}
+	kept := sb.Hidden[:0:0]
+	for _, h := range sb.Hidden {
+		if !drop[h.Name] {
+			kept = append(kept, h)
+		}
+	}
+	sb.Hidden = kept
+	sb.ID = id
+	sb.Filtered = active
+	clear := []string{"q", ""}
+	for _, n := range names {
+		clear = append(clear, n, "")
+	}
+	sb.ClearURL = withQuery(req, req.URL.Path, clear...)
 	return sb
 }
