@@ -162,7 +162,7 @@ func buildBulkReview(req *http.Request, r Repos, p bulkParams) bulkReviewView {
 		if i == namesShown {
 			break
 		}
-		parts = append(parts, template.HTML(esc(m.Name)))
+		parts = append(parts, template.HTML(`<span class="nowrap">`+esc(m.Name)+`</span>`))
 	}
 	v.Machines = joinNamesHTML(parts, len(items))
 	if p.TargetMode == model.BulkTargetFilter {

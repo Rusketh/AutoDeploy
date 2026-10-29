@@ -27,7 +27,9 @@ type testPortal struct {
 	cookie *http.Cookie
 }
 
-func newTestPortal(t *testing.T) *testPortal {
+// newTestPortal builds the portal; opts may add repos (e.g. runtime
+// settings) before the routes are registered.
+func newTestPortal(t *testing.T, opts ...func(*Repos, *storage.DB, *secrets.Box)) *testPortal {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.Open(ctx, ":memory:")
@@ -56,6 +58,9 @@ func newTestPortal(t *testing.T) *testPortal {
 		Updates: model.NewWindowsUpdateRepo(db, inv), Notifications: model.NewNotificationRepo(db),
 		WebhookRepo: model.NewWebhookRepo(db, bx), Groups: model.NewMachineGroupRepo(db, inv),
 		ImportedAssets: model.NewImportedAssetRepo(db), SecretsBox: bx,
+	}
+	for _, o := range opts {
+		o(&r, db, bx)
 	}
 	mux := http.NewServeMux()
 	if err := Register(mux, r); err != nil {

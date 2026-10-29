@@ -18,7 +18,7 @@
 
   <div class="section-head"><h3>2. Action</h3><div class="line"></div></div>
   {{template "action_picker" (dict "Mode" "bulk" "Packages" .Data.Packages "Images" .Data.Images "AP" $ap)}}
-  {{fieldError $fe "action"}}{{fieldError $fe "rename_find"}}{{fieldError $fe "script_body"}}{{fieldError $fe "software_package_id"}}
+  <div data-move-errors>{{fieldError $fe "action"}}{{fieldError $fe "rename_find"}}{{fieldError $fe "script_body"}}{{fieldError $fe "software_package_id"}}</div>
 
   <div class="section-head"><h3>3. When</h3><div class="line"></div></div>
   <fieldset class="action-picker" role="radiogroup" aria-label="When to run">
@@ -137,5 +137,16 @@ function syncReimageWarn(){
 }
 document.getElementById('bulk-form').addEventListener('change', syncReimageWarn);
 syncReimageWarn();
+
+// The action picker's fields live in a shared partial, so their errors
+// render after it; move each next to its field and mark the field invalid.
+// Without JS they stay readable just below the picker.
+document.querySelectorAll('[data-move-errors] .field-error').forEach(function(el){
+  var name = el.id.replace(/^err-/, '');
+  var f = document.querySelector('#bulk-form [name="'+name+'"]:not([type=hidden])');
+  if(!f || name==='action') return;
+  f.setAttribute('aria-invalid','true'); f.setAttribute('aria-describedby', el.id);
+  f.insertAdjacentElement('afterend', el);
+});
 </script>
 {{end}}

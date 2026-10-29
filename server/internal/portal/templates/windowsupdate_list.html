@@ -27,7 +27,7 @@
     {{$c := index $.Data.Compliance .ID}}
     <tr>
       <td><a href="/portal/updates/{{int64 .ID}}/edit"><strong>{{.KBNumber}}</strong></a>{{if .Title}}<div class="small muted">{{.Title}}</div>{{end}}</td>
-      <td>{{if .OSFilter}}{{osLabel .OSFilter}}{{else}}<span class="muted">Any OS</span>{{end}}</td>
+      <td class="nowrap">{{if .OSFilter}}{{osLabel .OSFilter}}{{else}}<span class="muted">Any OS</span>{{end}}</td>
       <td>{{if .Severity}}<span class="badge {{severityTone .Severity}}">{{.Severity}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="num nowrap" data-sort-value="{{.SizeBytes}}">{{if .SizeBytes}}{{humanBytes .SizeBytes}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td>{{if .RebootAfter}}Restarts{{else}}<span class="muted">No restart</span>{{end}}</td>

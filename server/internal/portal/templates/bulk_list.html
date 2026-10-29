@@ -14,26 +14,27 @@
 <div class="tablewrap">
 <table id="tbl" data-sortable>
   <thead><tr>
-    <th class="num" data-sort="num">ID</th>
+    <th class="num hide-sm" data-sort="num">ID</th>
     <th>Name</th>
-    <th>Action</th>
+    <th class="hide-sm">Action</th>
     <th>Status</th>
     <th>Progress</th>
     <th>Schedule</th>
     <th>Next run</th>
-    <th>Created by</th>
+    <th class="hide-sm">Created by</th>
     <th data-nosort></th>
   </tr></thead>
   <tbody>
     {{range .Data.Ops}}
     {{$st := .Status}}
     <tr>
-      <td class="num"><code>{{idLabel .ID}}</code></td>
+      <td class="num hide-sm"><code>{{idLabel .ID}}</code></td>
       <td>
         <a href="/portal/bulk/{{int64 .ID}}"><strong>{{if .Name}}{{.Name}}{{else}}{{entityName "bulk" .ID}}{{end}}</strong></a>
+        <div class="small muted show-sm">{{actionLabel .Action}}</div>
         {{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}
       </td>
-      <td><span class="badge">{{actionLabel .Action}}</span></td>
+      <td class="hide-sm"><span class="badge">{{actionLabel .Action}}</span></td>
       {{$sv := bulkStatus .}}
       <td data-sort-value="{{$sv.Label}}">
         {{template "status_badge" $sv}}
@@ -49,7 +50,7 @@
         {{scheduleText .}}
       </td>
       <td class="small muted" data-sort-value="{{if .NextRunAt}}{{(deref .NextRunAt).Unix}}{{else}}0{{end}}">{{if .NextRunAt}}{{timeAgo .NextRunAt}}{{else}}—{{end}}</td>
-      <td class="small">{{.CreatedBy}}</td>
+      <td class="small hide-sm">{{.CreatedBy}}</td>
       <td class="actions">
         <a class="btn secondary sm" href="/portal/bulk/{{int64 .ID}}">Open</a>
         {{if eq $st "scheduled"}}<a class="btn ghost sm" href="/portal/bulk/{{int64 .ID}}/edit" title="Edit" aria-label="Edit"><svg><use href="#i-pencil"/></svg></a>{{end}}

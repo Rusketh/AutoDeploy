@@ -191,6 +191,15 @@ func jobResultText(raw string) string {
 		}
 	}
 	if v, ok := m["exit_code"]; ok {
+		// JSON numbers decode as float64; Windows codes read best whole
+		// and, when large, also in hex (2359302 = 0x00240006).
+		if f, isNum := v.(float64); isNum && f == float64(int64(f)) {
+			n := int64(f)
+			if n > 0xFFFF || n < 0 {
+				return fmt.Sprintf("Exit code %d (0x%08X)", n, uint32(n))
+			}
+			return fmt.Sprintf("Exit code %d", n)
+		}
 		return fmt.Sprintf("Exit code %v", v)
 	}
 	return raw

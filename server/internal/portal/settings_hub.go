@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -206,9 +207,14 @@ func gatherHubState(req *http.Request, r Repos) hubState {
 			st.StorageOverrides++
 		}
 		// A missing default directory is created on first use; a missing
-		// override, or anything unwritable, is a real problem.
-		if e.State == "unreadable" || (e.State == "missing" && e.Override != "") {
-			st.StorageProblems = append(st.StorageProblems, e.Category+": "+e.Detail)
+		// or unwritable chosen folder (which the server then falls back
+		// from), or anything unwritable, is a real problem.
+		state, detail := e.State, e.Detail
+		if e.Override != "" && e.Effective != e.Override {
+			state, detail = checkStoragePath(e.Override)
+		}
+		if state == "unreadable" || (state == "missing" && e.Override != "") {
+			st.StorageProblems = append(st.StorageProblems, e.Category+" folder: "+detail)
 		}
 	}
 	st.FreeBytes, st.TotalBytes, st.FreeKnown = diskFree(dataDirFor(r))
@@ -298,7 +304,7 @@ func hubCards(st hubState) []hubCard {
 			ad.Detail = "Connection test passed " + relativeTime(t.At, st.Now, time.UTC) + "."
 		} else if t != nil {
 			ad.Value, ad.Tone = "AD: connection failing", "bad"
-			ad.Reason = "The last connection test failed: " + t.Err
+			ad.Reason = "The last connection test failed: " + shorten(t.Err, 90)
 		}
 	}
 	add(ad)
@@ -321,7 +327,7 @@ func hubCards(st hubState) []hubCard {
 			netc.Value, netc.Tone = "HTTPS on · certificate expired", "bad"
 			netc.Reason = "The certificate expired " + st.CertExpiry.Format("2 Jan 2006") + ". Browsers and agents will refuse the connection."
 		case left < certWarnWithin:
-			days := int(left.Hours() / 24)
+			days := int(math.Ceil(left.Hours() / 24))
 			netc.Value = fmt.Sprintf("HTTPS on · cert expires in %d day%s", days, plural(days))
 			if days == 0 {
 				netc.Value = "HTTPS on · cert expires today"
@@ -389,6 +395,18 @@ func hubCards(st hubState) []hubCard {
 	add(hubCard{Href: "/portal/settings/pxe", Icon: "i-bolt", Title: "PXE setup",
 		Value: "iPXE & DHCP", Detail: "Boot files this server serves, and DHCP settings to copy into your router or DHCP server."})
 	return cards
+}
+
+// shorten trims s to about n characters at a word boundary, adding "…".
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := strings.LastIndex(s[:n], " ")
+	if cut < n/2 {
+		cut = n
+	}
+	return strings.TrimRight(s[:cut], " :,") + "…"
 }
 
 // checkInText renders the agent poll interval: "5 min", "30 s", "2 h".

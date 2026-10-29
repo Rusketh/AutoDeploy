@@ -1285,6 +1285,11 @@ dl.log-kv dd { overflow-wrap: anywhere; }
 .segbar-wrap { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .segbar-wrap.compact { gap: 3px; min-width: 9rem; max-width: 15rem; }
 td .badge { white-space: nowrap; }
+.show-sm { display: none; }
+@media (max-width: 600px) {
+  th.hide-sm, td.hide-sm { display: none; }
+  .show-sm { display: block; }
+}
 .segbar {
   display: flex; width: 100%; height: 12px; overflow: hidden;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
