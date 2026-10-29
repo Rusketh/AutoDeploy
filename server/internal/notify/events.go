@@ -93,6 +93,7 @@ var eventLabels = map[string]string{
 	EventAuthLoginFailed:       "Failed sign-in",
 	EventSystemStorageLow:      "Server storage low",
 	EventSystemAgentOutdated:   "Agent out of date",
+	"system.test":              "Test message",
 }
 
 // EventLabel returns the plain-English name of an event, or the event name

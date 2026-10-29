@@ -458,6 +458,7 @@ form.std label > span.hint, .hint {
   line-height: 1.45;
 }
 form.std input[type="text"],
+form.std input[type="search"],
 form.std input[type="password"],
 form.std input[type="number"],
 form.std input[type="url"],
@@ -778,6 +779,16 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--fg); f
   font: inherit;
   transition: border-color var(--tx-fast), box-shadow var(--tx-fast);
 }
+/* Bare search boxes (the winget / Microsoft Update Catalog import pages). */
+form[role="search"] > input[type="search"] {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+form[role="search"] > input[type="search"]:focus,
 .filter input:focus {
   outline: none;
   border-color: var(--accent);
