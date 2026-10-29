@@ -18,6 +18,13 @@ overridden in the portal and take effect on next restart. This page documents ea
 
 ![Settings hub](../images/settings-index.png)
 
+Each card on the hub shows that area's **current state** — *PIN required*, *3 channels on*,
+*AD: configured · not tested*, *HTTP only*, *Logs kept 120 days*, free space for storage — and
+flags anything that needs a look. When you save a settings page, values the server can't use (an
+unknown time zone, a malformed address or proxy range, a check-in interval under 5 seconds, …) are
+refused with the reason next to the field and **nothing is changed**; earlier versions saved some of
+these and silently fell back to a default.
+
 ## Accounts
 
 Local logins for the portal and API. There is no graded permission model — every active account has

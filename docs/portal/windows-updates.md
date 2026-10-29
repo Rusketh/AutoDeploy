@@ -16,7 +16,7 @@ otherwise.
 
 ## Creating an update manually
 
-Go to **Updates → New**. Give it a **KB number** (e.g. KB5034441), **title**, optional
+Go to **Patching → Windows Updates** and click **New update**. Give it a **KB number** (e.g. KB5034441), **title**, optional
 **description**, **OS filter** (e.g. "Windows 10" — matches machines whose OS caption contains this
 string), and **severity** (critical, important, moderate, low). The form also has an optional
 **Supersedes** field for the replaced KB numbers this update obsoletes.
@@ -35,7 +35,7 @@ the flag, the update finalizes at the machine's next natural restart.
 
 ## Importing from Microsoft
 
-Instead of downloading an `.msu` yourself, go to **Updates → Import from Microsoft** (or use the
+Instead of downloading an `.msu` yourself, go to **Patching → Windows Updates → Import from Microsoft** (or use the
 button on the update list). Search the Microsoft Update Catalog by KB number or keywords, then
 click **Import** on the row you want — results show title, products, classification, date, and
 size so you can pick the right OS/architecture variant. Only the first 25 catalog results are

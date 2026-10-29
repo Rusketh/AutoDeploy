@@ -22,7 +22,7 @@ how many images it is **used by**.
 
 ### Uploading an ISO
 
-1. Go to **ISOs** in the top navigation and click **New ISO**.
+1. Go to **Build → ISOs** and click **New ISO**.
 2. Give it a **Name** (required), pick the **OS type** (Windows 10 / 11 / Server 2019 / 2022 /
    2025 — required), and optionally a **Description**. Save.
 3. On the next screen, choose your Windows **ISO file** and click **Upload**.
@@ -64,7 +64,7 @@ reused across many images.
 
 ### Creating an unattend
 
-Go to **Unattends → New**. The form is organised into numbered sections (a sidebar jumps between
+Go to **Build → Unattends** and click **New unattend**. The form is organised into numbered sections (a sidebar jumps between
 them). Only the **Name** is required; everything else has a sensible default. The main sections:
 
 | Section | What it controls |
@@ -118,7 +118,7 @@ image.
 
 ### Creating a driver package
 
-Go to **Drivers → New**, give it a **Name** (required) and optional **Description**, define the
+Go to **Build → Drivers**, click **New driver package**, give it a **Name** (required) and optional **Description**, define the
 SMBIOS filters, save, then upload the driver archive (a `.zip` is recommended). After uploading,
 click **Extract & scan** to unpack the zip and list the discovered `.inf` files with their class,
 provider, version, and date.

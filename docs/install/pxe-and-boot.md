@@ -264,6 +264,25 @@ chain http://YOUR-SERVER-IP/ipxe/boot.ipxe
 The most common cause is `next-server` (option 66) not being set or not pointing at the AutoDeploy
 host.
 
+## What the imaging screens show
+
+While it deploys, the Boot Client shows the machine's **identity** across the top — its name in
+AutoDeploy, serial number, IP address and model — with **Step N of M** and the elapsed time, so
+whoever is standing at the machine can tell which one it is and how far along it is.
+
+![Boot Client progress screen](../images/boot-progress.png)
+
+If a deploy fails, the progress screen is replaced by a red **Deployment failed** screen: what went
+wrong in plain English, a short **error code** you can search for (for example `PARTITION`,
+`NO-DISK`, `MEDIA-DOWNLOAD`, `MANIFEST`), the last lines the failing command printed, and whether
+the run's logs reached the server. The same error, code and output appear on the machine's page
+and in the [logs](../portal/logs.md), linked to that deployment run.
+
+![Boot Client failure screen](../images/boot-failure.png)
+
+From the failure screen press **R** to try again (back to the menu), **Enter** to restart the
+machine, or **Esc** for the diagnostic shell.
+
 ## Fail-safe behaviour
 
 The Boot Client never harms a working machine. If it cannot reach the server, finds no deployable

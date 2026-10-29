@@ -7,8 +7,11 @@ network boot).
 
 ![Bulk operations list](../images/bulk-list.png)
 
-The list shows past operations with their **action**, the **target** filter used, who **created**
-it, and **when**. Click one to track it.
+The list shows each operation with its **action**, a **status** in plain words (*Scheduled*,
+*Running*, *Completed with 1 failure*, …), a **progress** bar split into succeeded / failed / queued
+jobs, its **schedule** and **next run**, and who **created** it. Type in the search box and press
+**Search** (or Enter) to find an operation by name; **Clear** removes the search. Click one to track
+it.
 
 ## Running an operation
 
@@ -63,7 +66,20 @@ appear: an agent checking in after the deadline is never handed the job, and a m
 network-booting after the deadline finds no re-image flag. Both options can be edited on a
 scheduled operation until its first run is in flight.
 
-Click **Queue operation** to start it.
+### 6. Review and queue
+
+Click **Review operation**. Nothing is queued yet: the review page describes the operation in
+words — for example *"Re-image 2 machines, starting now"* — and lists the machines it will touch
+by name, the action's details, when it runs and how it is delivered. Use **Back to edit** to change
+anything (your entries are kept), or **Queue operation** to start it.
+
+![Review before queuing](../images/bulk-review.png)
+
+A **re-image** wipes disks, so its review page also asks you to **type the number of machines** to
+confirm; the button stays disabled until the number matches. There is no default action — you must
+pick one before the form can be reviewed. If something on the form is wrong (no machines selected,
+a recurring task with no filter, …) the form comes back with your entries and the problem marked
+next to the field; nothing was queued.
 
 ## Tracking results
 
@@ -81,10 +97,12 @@ report their jobs.
   AutoDeploy, and re-images without operator interaction, so the machines must be configured to
   network-boot.
 - Renames coordinate with Active Directory server-side before the local job is queued.
-- Bulk operations aren't written to the portal [activity log](logs.md); track them on the
-  operation's [detail page](#tracking-results) (the per-machine job rows) and via the `deploy.*` /
-  `bulk.*` [notifications](notifications.md). An agent's own actions appear in the activity log only
-  if the agent reports them.
+- Creating, editing, pausing, resuming and cancelling an operation are recorded in the
+  [activity log](logs.md) under the operator's name; the per-machine results live on the operation's
+  [detail page](#tracking-results) and in the `deploy.*` / `bulk.*`
+  [notifications](notifications.md).
+- Scripts and integrations that POST the bulk form directly (without the review step) still work:
+  the review and the typed confirmation are part of the portal's form flow, not of the endpoint.
 - Creating an operation fires a `bulk.created` [notification](notifications.md); when its last job
   finishes the matching `bulk.completed` / `bulk.partial` / `bulk.failed` event fires (jobs
   cancelled by the cancel-after window count toward *partial*).
