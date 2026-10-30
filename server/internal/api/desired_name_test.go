@@ -24,6 +24,7 @@ func newDesiredNameRepos(t *testing.T) (Repos, context.Context) {
 		Unattend:  model.NewUnattendRepo(db),
 		ISOs:      model.NewISORepo(db),
 		Inventory: inv,
+		Bulk:      model.NewBulkRepo(db, inv),
 		Resolver:  resolve.New(model.NewImageRepo(db), model.NewISORepo(db), model.NewUnattendRepo(db)),
 	}, ctx
 }

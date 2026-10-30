@@ -211,7 +211,7 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		// should carry so a USB/ISO-imaged machine (installed with a random
 		// name) renames itself to its binding/template name. Best-effort and
 		// idempotent — see resolveDesiredName.
-		resp.DesiredName = resolveDesiredName(req.Context(), r, m)
+		resp.DesiredName = desiredNameFor(req.Context(), r, m.ID)
 		// Pending jobs, claimed the same way checkin does.
 		jobs, jerr := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
 		if jerr != nil {
@@ -220,6 +220,16 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 		}
 		if jobs != nil {
 			resp.Jobs = jobs
+		}
+		// A portal Rename action delivers a rename job AND sets the binding
+		// name. Leave the rename to the job: the agent applies DesiredName
+		// first and reboots without running this poll's jobs, which would
+		// leave the claimed job "running" for ever.
+		for _, j := range jobs {
+			if j.Action == model.BulkActionRename {
+				resp.DesiredName = ""
+				break
+			}
 		}
 		// Claim pending Windows Update deployment jobs, enriched with the
 		// update's KB number, payload filename, and reboot flag so the agent
@@ -438,4 +448,40 @@ func resolveDesiredName(ctx context.Context, r Repos, m model.MachineRecord) str
 		return ""
 	}
 	return intended
+}
+
+// desiredNameFor is resolveDesiredName for a machine loaded by ID. The full
+// record carries reported_name (GetByAgentID doesn't), which is what lets
+// resolveDesiredName see that a machine already has its name, or was just
+// renamed on the machine itself, and ask for nothing.
+func desiredNameFor(ctx context.Context, r Repos, id model.ID) string {
+	if r.Inventory == nil {
+		return ""
+	}
+	m, err := r.Inventory.Get(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return resolveDesiredName(ctx, r, m)
+}
+
+// validComputerName reports whether s is a name the agent will rename to: 1-15
+// ASCII letters, digits and hyphens, not all digits. It mirrors the agent's
+// own check (agent/cmd/autodeploy-agent validComputerName); a desired name
+// failing it is never applied, so it must not count as a pending rename.
+func validComputerName(s string) bool {
+	if len(s) == 0 || len(s) > 15 {
+		return false
+	}
+	allDigits := true
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '-':
+			allDigits = false
+		case c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return !allDigits
 }
