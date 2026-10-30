@@ -122,12 +122,31 @@ func handleAgentIdentity(r Repos) http.HandlerFunc {
 		}
 		name := strings.TrimSpace(in.ComputerName)
 		dn := strings.TrimSpace(in.ADDistinguishedName)
+		// A rename the server asked for (portal binding name, Rename action
+		// or image name template) that the machine hasn't finished yet. Taken
+		// before the observed name is stored, from the name the server last
+		// saw.
+		pending := ""
+		if prev, perr := r.Inventory.GetByAgentID(req.Context(), in.AgentID); perr == nil {
+			pending = desiredNameFor(req.Context(), r, prev.ID)
+		}
 		m, err := r.Inventory.UpdateObservedIdentity(req.Context(), in.AgentID, name, dn)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if err := r.Inventory.SyncBindingFromObserved(req.Context(), m.ID, name, ouFromDN(dn)); err != nil {
+		// Copy the machine's own name into its binding only when it isn't
+		// mid-way through a server-asked rename. Otherwise the pre-rename
+		// name, reported in the seconds before the rename reboot, overwrites
+		// the name the operator chose and the agent renames the machine back
+		// on the next boot, for ever. A rename made on the machine itself
+		// (Control Panel, Rename-Computer) still syncs: with nothing pending,
+		// its new name is copied once it is live after the reboot.
+		syncName := name
+		if pending != "" && validComputerName(pending) && !strings.EqualFold(name, pending) {
+			syncName = ""
+		}
+		if err := r.Inventory.SyncBindingFromObserved(req.Context(), m.ID, syncName, ouFromDN(dn)); err != nil {
 			writeError(w, err)
 			return
 		}
