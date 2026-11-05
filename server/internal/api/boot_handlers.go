@@ -130,7 +130,9 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			// machine accurately instead of carrying over data from its old
 			// OS. Deployment history is kept (audit). Best-effort: a cleanup
 			// hiccup must not block the deploy from starting.
-			clearReimagedState(req.Context(), r, m.ID)
+			for _, opID := range clearReimagedState(req.Context(), r, m.ID) {
+				emitBulkFinished(req, r, opID)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"machine_id": m.ID, "deployment_id": id})
 			return
 		case "staged", "failed":
@@ -214,17 +216,20 @@ func reimageSourceFor(ctx context.Context, r Repos, machineID model.ID, uuid str
 // jobs, and bulk-job queue/results. Each step is best-effort and independent
 // so one repo being absent (nil) or erroring doesn't abort the others — the
 // deploy must proceed regardless. Deployment history is intentionally NOT
-// touched.
-func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) {
+// touched. Returns the bulk operations that finished because their last
+// outstanding job was this machine's (the caller emits their outcome).
+func clearReimagedState(ctx context.Context, r Repos, machineID model.ID) []model.ID {
 	if r.Inventory != nil {
 		_ = r.Inventory.ClearDetectedState(ctx, machineID)
 	}
+	var finished []model.ID
 	if r.Bulk != nil {
-		_ = r.Bulk.DeleteJobsForMachine(ctx, machineID)
+		finished, _ = r.Bulk.DeleteJobsForMachine(ctx, machineID)
 	}
 	if r.Updates != nil {
 		_ = r.Updates.ClearMachineState(ctx, machineID)
 	}
+	return finished
 }
 
 func handleBootMenu(r Repos) http.HandlerFunc {

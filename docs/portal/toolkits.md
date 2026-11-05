@@ -61,8 +61,10 @@ When a kit runs as another account:
 
 - Environment variables in step paths and arguments (`%APPDATA%`, `%USERPROFILE%`, `%TEMP%`) are
   expanded **as that account sees them**.
-- The account is given modify rights on the run's work folder, so it can read the kit's files and
-  write logs beside them.
+- The account is given **read and execute** rights on the run's work folder, so it can run the
+  kit's files. It can't change them: a kit may also have steps that run as SYSTEM, and those must
+  not run files the account could have swapped. Write scratch files and logs to `%TEMP%` instead.
+  The agent's work folder is otherwise restricted to SYSTEM and Administrators.
 - `copy` and `unzip` steps are carried out by the agent itself, using the account's paths. Their
   files inherit permissions from the destination folder.
 - An `appx` step installs the package **for that account**. A SYSTEM run instead provisions it

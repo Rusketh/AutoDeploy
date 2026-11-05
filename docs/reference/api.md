@@ -319,5 +319,13 @@ the kit's files, its steps with parameters already filled in, the effective Run 
 and the restart policy. The second returns the Run As password. Both answer only the agent of the
 machine the job belongs to, and only while that job is **running**. Any other caller gets `403`, and
 a queued or finished job gets `409`. Every password release is audit-logged as `secret.access`.
-Tool kit files are served from `/payload/toolkit/{id}/files/…` and `/payload/toolkit/{id}/bundle/…`.
+Tool kit files are served from `/payload/toolkit/{id}/files/…` and `/payload/toolkit/{id}/bundle/…`,
+but only to a request carrying an `X-AutoDeploy-Agent-ID` header from a machine that is running that
+kit right now. Everyone else gets `403`.
+
+`POST /api/v1/agent/jobs/{id}/result` and `POST /api/v1/agent/update-job/{id}/result` accept a
+result only from the machine the job belongs to. The machine is identified by an `agent_id` in the
+body, or, for agents that predate it, by the `X-AutoDeploy-Machine-UUID` header. Any other caller
+gets `403`. A bulk job must also still be running: a second report, or one for a job that was never
+picked up, gets `409`.
 </content>

@@ -99,6 +99,11 @@ deploying a kit as a different account, are encrypted with the same key:
   behind.
 - On the machine, the agent uses the password once to log the account on and does not store it.
 
+Tool kit files are also restricted. They are served only to the agent of a machine that is running
+the kit at that moment. On the machine, the agent's work folder (`C:\ProgramData\AutoDeploy\work`)
+is limited to SYSTEM and Administrators. A Run As account gets read and execute rights on its own
+job's folder, and nothing more.
+
 AutoDeploy has no per-user permissions, so any portal user can run a kit as its stored account.
 Give such accounts only the rights the kit needs.
 

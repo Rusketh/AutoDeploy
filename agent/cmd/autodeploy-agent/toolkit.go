@@ -226,7 +226,11 @@ func runToolkitJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f age
 		return fail("couldn't create the work folder: " + err.Error())
 	}
 	sysRunner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
-	hasWorkdir, legacyPath, ok := fetchPackagePayload(runCtx, log, c, f, sysRunner, def.Item, pkgDir, filesDir,
+	// Tool Kit files are served only to the agent running the kit, so the
+	// downloads carry this agent's id.
+	kc := *c
+	kc.AgentID = f.agentID
+	hasWorkdir, legacyPath, ok := fetchPackagePayload(runCtx, log, &kc, f, sysRunner, def.Item, pkgDir, filesDir,
 		filepath.Join(pkgDir, "payload.bin"))
 	if !ok {
 		return fail("couldn't download the tool kit's files")

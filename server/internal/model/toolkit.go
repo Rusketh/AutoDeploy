@@ -410,6 +410,18 @@ func (r *ToolkitRepo) PendingUse(ctx context.Context, id ID) (ops, jobs int, err
 	return ops, jobs, err
 }
 
+// MachineRunningKit reports whether the machine has a job for the kit that
+// is running right now -- the only time its agent may download the kit's
+// files.
+func (r *ToolkitRepo) MachineRunningKit(ctx context.Context, machineID, kitID ID) bool {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+		WHERE j.machine_id=? AND j.status='running' AND `+toolkitOpFilter,
+		int64(machineID), int64(kitID)).Scan(&n)
+	return err == nil && n > 0
+}
+
 // Delete removes a kit. It is refused while any operation that runs it is
 // scheduled, active or paused, so a queued job can never point at a kit that
 // no longer exists. Finished operations keep their history (the kit's name

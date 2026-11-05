@@ -226,10 +226,13 @@ func (s *Session) Close() {
 // Expand expands %VARS% as the account sees them (its profile paths, TEMP...).
 func (s *Session) Expand(str string) string { return ExpandWith(s.env, str) }
 
-// GrantDir gives the account modify rights on dir (and everything under it),
-// so its steps can read the kit's files and write logs beside them.
+// GrantDir gives the account read/execute rights on dir (and everything
+// under it), so its steps can run the kit's files. Deliberately not write:
+// a kit can mix steps run as this account with steps run as SYSTEM, and an
+// account able to change the folder could swap a file a SYSTEM step then
+// runs. Steps that need scratch space should use %TEMP%.
 func (s *Session) GrantDir(dir string) error {
-	out, err := exec.Command("icacls", dir, "/grant", "*"+s.sid+":(OI)(CI)M", "/T", "/C", "/Q").CombinedOutput()
+	out, err := exec.Command("icacls", dir, "/grant", "*"+s.sid+":(OI)(CI)RX", "/T", "/C", "/Q").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("icacls: %v: %s", err, strings.TrimSpace(string(out)))
 	}

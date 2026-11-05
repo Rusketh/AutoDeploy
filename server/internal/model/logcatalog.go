@@ -305,6 +305,7 @@ var logCatalog = map[string]logEntry{
 	"bulk.interrupted.post":     e(LogCatSoftware, "Couldn't report an interrupted bulk job yet[: {error}]"),
 	"bulk.result.post":          e(LogCatSoftware, "Couldn't report a bulk job's result; it will be re-sent[: {error}]"),
 	"bulk.abandon.post":         e(LogCatSoftware, "Couldn't report a bulk job skipped for a restart[: {error}]"),
+	"workdir.secure":            eFail(LogCatSystem, "Couldn't restrict the agent's work folder to SYSTEM and Administrators[: {error}]", "Check that the agent runs as SYSTEM and that icacls is available."),
 	"toolkit.start":             e(LogCatSoftware, "Running tool kit {target}[ (revision {revision})][ as {account}] || Tool kit started"),
 	"toolkit.step":              e(LogCatSoftware, "{target}: step {step}[ ({type})] finished[ — exit code {exit_code}][: {error}] || A tool kit step finished"),
 	"toolkit.ok":                eOK(LogCatSoftware, "Tool kit {target} finished || Tool kit finished"),

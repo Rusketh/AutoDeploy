@@ -39,7 +39,7 @@
 <fieldset class="mb-4">
   <legend>Files</legend>
   {{if $hasfiles}}
-  <p class="hint mt-0">The agent downloads <strong>every file below</strong> into a work folder on the machine before the steps run, and the steps run from that folder. Reference a file by its name (e.g. <code>fix.ps1</code>) or relative path (e.g. <code>tools/diag.exe</code>). When the kit runs as another account, that account is given read access to the folder.</p>
+  <p class="hint mt-0">The agent downloads <strong>every file below</strong> into a work folder on the machine before the steps run, and the steps run from that folder. Reference a file by its name (e.g. <code>fix.ps1</code>) or relative path (e.g. <code>tools/diag.exe</code>). When the kit runs as another account, that account can read and run the files but not change them; write scratch files to <code>%TEMP%</code>.</p>
   <div class="filetree-wrap mt-3">{{template "filetree" dict "Nodes" $files "Base" $base}}</div>
   {{template "upload_dropzone" dict "Base" $base "Empty" false}}
   {{else}}

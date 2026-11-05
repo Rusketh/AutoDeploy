@@ -92,14 +92,14 @@ func processUpdateJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 		out, err := os.Create(path)
 		if err != nil {
 			log.Error("update.download.create", slog.String("error", err.Error()))
-			reportUpdateJobResult(ctx, c, j.ID, "failed", updateJobResult{Error: "create file: " + err.Error()})
+			reportUpdateJobResult(ctx, c, f.agentID, j.ID, "failed", updateJobResult{Error: "create file: " + err.Error()})
 			continue
 		}
 		if err := c.Download(ctx, f.server+url, out); err != nil {
 			_ = out.Close()
 			_ = os.Remove(path)
 			log.Error("update.download", slog.String("error", err.Error()))
-			reportUpdateJobResult(ctx, c, j.ID, "failed", updateJobResult{Error: "download: " + err.Error()})
+			reportUpdateJobResult(ctx, c, f.agentID, j.ID, "failed", updateJobResult{Error: "download: " + err.Error()})
 			continue
 		}
 		_ = out.Close()
@@ -110,7 +110,7 @@ func processUpdateJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			// The installer could not be run at all (bad extension,
 			// missing binary) — distinct from a non-zero exit.
 			log.Error("update.install.run", slog.Int64("job_id", j.ID), slog.String("error", err.Error()))
-			reportUpdateJobResult(ctx, c, j.ID, "failed", updateJobResult{ExitCode: exitCode, Error: err.Error()})
+			reportUpdateJobResult(ctx, c, f.agentID, j.ID, "failed", updateJobResult{ExitCode: exitCode, Error: err.Error()})
 			continue
 		}
 		o := updates.ClassifyExitCode(exitCode)
@@ -135,19 +135,19 @@ func processUpdateJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 				slog.String("reason", o.Reason),
 				slog.Bool("reboot_required", o.RebootRequired))
 		}
-		reportUpdateJobResult(ctx, c, j.ID, status, result)
+		reportUpdateJobResult(ctx, c, f.agentID, j.ID, status, result)
 	}
 	return res
 }
 
-func reportUpdateJobResult(ctx context.Context, c *httpc.Client, jobID int64, status string, result updateJobResult) {
+func reportUpdateJobResult(ctx context.Context, c *httpc.Client, agentID string, jobID int64, status string, result updateJobResult) {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		resultJSON = []byte("{}")
 	}
 	_ = c.PostJSON(ctx,
 		fmt.Sprintf("/api/v1/agent/update-job/%d/result", jobID),
-		map[string]any{"status": status, "result_json": string(resultJSON)}, nil)
+		updateResultBody(agentID, status, string(resultJSON)), nil)
 }
 
 var kbScanCounter int
@@ -185,4 +185,14 @@ func scheduleUpdateReboot(ctx context.Context, log *slog.Logger, dryRun bool) {
 		return
 	}
 	log.Info("update.reboot.scheduled", slog.Int("delay_seconds", 60))
+}
+
+// updateResultBody is the update-job result POST body; agent_id (when the
+// agent has one) authenticates it.
+func updateResultBody(agentID, status, result string) map[string]any {
+	body := map[string]any{"status": status, "result_json": result}
+	if agentID != "" {
+		body["agent_id"] = agentID
+	}
+	return body
 }

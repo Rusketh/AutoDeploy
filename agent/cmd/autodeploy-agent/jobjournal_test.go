@@ -15,7 +15,7 @@ import (
 )
 
 type postedResult struct {
-	path, status, result string
+	path, status, result, agentID string
 }
 
 func resultServer(t *testing.T, code int) (*httptest.Server, *[]postedResult) {
@@ -24,12 +24,13 @@ func resultServer(t *testing.T, code int) (*httptest.Server, *[]postedResult) {
 	var got []postedResult
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Status string `json:"status"`
-			Result string `json:"result_json"`
+			Status  string `json:"status"`
+			Result  string `json:"result_json"`
+			AgentID string `json:"agent_id"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		mu.Lock()
-		got = append(got, postedResult{r.URL.Path, body.Status, body.Result})
+		got = append(got, postedResult{r.URL.Path, body.Status, body.Result, body.AgentID})
 		mu.Unlock()
 		w.WriteHeader(code)
 	}))
@@ -101,8 +102,8 @@ func TestRunAndReportJobJournal(t *testing.T) {
 
 func TestAbandonClaimedJobs(t *testing.T) {
 	srv, got := resultServer(t, http.StatusNoContent)
-	abandonClaimedJobs(context.Background(), quietLog(), httpc.New(srv.URL, "u", false), []int64{3, 4}, "to apply its new name")
-	if len(*got) != 2 || (*got)[0].status != "failed" || !strings.Contains((*got)[0].result, "to apply its new name") {
+	abandonClaimedJobs(context.Background(), quietLog(), httpc.New(srv.URL, "u", false), agentFlags{agentID: "a-1"}, []int64{3, 4}, "to apply its new name")
+	if len(*got) != 2 || (*got)[0].status != "failed" || !strings.Contains((*got)[0].result, "to apply its new name") || (*got)[0].agentID != "a-1" {
 		t.Fatalf("posted = %+v", *got)
 	}
 }

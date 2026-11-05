@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -257,8 +258,16 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 type jobResultReq struct {
 	Status string `json:"status"`
 	Result string `json:"result_json,omitempty"`
+	// AgentID authenticates the report (current agents send it). Agents
+	// that predate it are identified by their X-AutoDeploy-Machine-UUID
+	// header instead -- the same identity /agent/checkin claims jobs with.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
+// handleAgentJobResult records a job's outcome. Only the machine the job was
+// handed to may report it, and only while it is running (claimed): a
+// stranger can't complete or overwrite someone else's job, and a job can't be
+// reported twice. Refusals don't reveal whether the job exists.
 func handleAgentJobResult(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := parseID(req)
@@ -271,6 +280,19 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
+		job, err := r.Bulk.GetJob(req.Context(), id)
+		if err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if !jobReporterMatches(req, r, job.MachineID, in.AgentID) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if job.Status != "running" {
+			http.Error(w, "job is not running", http.StatusConflict)
+			return
+		}
 		completedOp, err := r.Bulk.CompleteJob(req.Context(), id, in.Status, in.Result)
 		if err != nil {
 			writeError(w, err)
@@ -281,6 +303,23 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 		emitBulkFinished(req, r, completedOp)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// jobReporterMatches reports whether the caller is the machine a job belongs
+// to: by agent_id when one was sent, else by the SMBIOS UUID header.
+func jobReporterMatches(req *http.Request, r Repos, machineID model.ID, agentID string) bool {
+	if r.Inventory == nil {
+		return false
+	}
+	m, err := r.Inventory.Get(req.Context(), machineID)
+	if err != nil {
+		return false
+	}
+	if agentID = strings.TrimSpace(agentID); agentID != "" {
+		return m.AgentID != "" && agentID == m.AgentID
+	}
+	uuid := strings.TrimSpace(req.Header.Get("X-AutoDeploy-Machine-UUID"))
+	return uuid != "" && m.SystemUUID != "" && strings.EqualFold(uuid, m.SystemUUID)
 }
 
 // emitSoftwarePushResult fires software.install_ok/failed for a finished

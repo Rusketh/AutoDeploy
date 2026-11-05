@@ -13,8 +13,11 @@ import (
 )
 
 type Client struct {
-	BaseURL    string
-	UUID       string
+	BaseURL string
+	UUID    string
+	// AgentID, when set, is sent as X-AutoDeploy-Agent-ID on downloads:
+	// the server serves Tool Kit files only to the agent running that kit.
+	AgentID    string
 	HTTPClient *http.Client
 }
 
@@ -84,6 +87,9 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer) error 
 		return err
 	}
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	if c.AgentID != "" {
+		req.Header.Set("X-AutoDeploy-Agent-ID", c.AgentID)
+	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err

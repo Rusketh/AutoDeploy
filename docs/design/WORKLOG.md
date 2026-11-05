@@ -3469,7 +3469,7 @@ with a default **Run As** account that each deployment can override.
     a specific account, or `winsta0\default` for the signed-in user. The process runs in a job
     object so a timeout kills its whole tree; stdout and stderr are piped back.
   - **Environment:** step env vars are expanded with the account's environment block, and the
-    account gets modify rights (`icacls`) on the per-job work folder.
+    account gets read and execute rights (`icacls`) on the per-job work folder; see the follow-ups below.
   - **Reporting:** a 4 KB output tail per step, timeout, and reboot policy (never after a
     timeout). `steps.OSRunner` gained `Launcher` and `Tee`; payload download and env expansion
     were factored out for reuse.
@@ -3527,3 +3527,32 @@ restarts for a rename or domain join are reported failed (*not run*) before the 
 - Editing a scheduled operation away from *Run tool kit* deletes its stored override password.
 - The agent retries the credential fetch once after 5 seconds. This covers the moment between the
   portal queuing an operation and storing its override password.
+
+### Follow-up 2: second review pass
+
+- **Re-imaged machines left operations open.** Re-imaging deletes a machine's bulk jobs. An
+  operation whose last outstanding job was among them stayed `active` forever, and kept any Tool
+  Kit password override. `DeleteJobsForMachine` now completes such operations, as `CompleteJob`
+  would, purges their override, and returns their IDs so the boot handler sends the finished
+  notification.
+- **Job results were unauthenticated.** Anyone who could reach the server could complete any bulk
+  job or update job, or overwrite its result. `/agent/jobs/{id}/result` and
+  `/agent/update-job/{id}/result` now accept a result only from the owning machine: by `agent_id`
+  in the body, which current agents send, or by the `X-AutoDeploy-Machine-UUID` header, which
+  older agents send and which is the same identity check-in claims jobs with. A bulk job must also
+  still be `running`: a second report, or one for a job never picked up, gets `409`.
+- **Tool kit files were public.** `/payload/toolkit/...` now requires `X-AutoDeploy-Agent-ID` from
+  a machine with a running job for that kit. The agent's `httpc.Client` gained an `AgentID` field,
+  sent on downloads.
+- **Local privilege escalation on the work folder.** `C:\ProgramData` lets ordinary users create
+  files in its subfolders. A local user could plant files beside an installer the agent runs as
+  SYSTEM; this predates Tool Kits. Also, in a kit mixing logged-on-user steps with SYSTEM steps,
+  the user had modify rights and could swap a file a SYSTEM step then ran. Fixes:
+  - when the agent runs as SYSTEM, it restricts the work folder to SYSTEM and Administrators
+    (`secureWorkDir`);
+  - a Run As account now gets read and execute only on its job folder.
+- **Duplicate naming.** A long kit name is now shortened before the " copy" suffix, instead of
+  keeping only its tail.
+
+Re-ran everything: both modules with `-race`, the Windows build, `check-secrets.sh`, and the end to
+end script, now also checking the new refusals. All 25 checks pass.

@@ -155,6 +155,7 @@ func main() {
 			log.Error("workdir.create", slog.String("error", err.Error()))
 			os.Exit(1)
 		}
+		secureWorkDir(log, f.workDir)
 		c := httpc.New(f.server, f.uuid, f.insecureTLS)
 		if isWindowsService() {
 			if err := runService(func(sctx context.Context) {
@@ -189,6 +190,7 @@ func main() {
 		log.Error("workdir.create", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+	secureWorkDir(log, f.workDir)
 
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
 
@@ -407,11 +409,11 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if maybeRename(ctx, dlog, resp.DesiredName) {
 		// The jobs this poll claimed won't run before the restart; report
 		// them rather than leave them "running" for good.
-		abandonClaimedJobs(ctx, dlog, c, claimed, "to apply its new name")
+		abandonClaimedJobs(ctx, dlog, c, f, claimed, "to apply its new name")
 		return 0 // a rename reboot is scheduled; the rest resumes after reboot
 	}
 	if maybeDomainJoin(ctx, dlog, c, f) {
-		abandonClaimedJobs(ctx, dlog, c, claimed, "to join the domain")
+		abandonClaimedJobs(ctx, dlog, c, f, claimed, "to join the domain")
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
 	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds

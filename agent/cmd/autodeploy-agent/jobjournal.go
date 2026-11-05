@@ -59,7 +59,7 @@ func writeJournal(f agentFlags, e journalEntry) {
 func runAndReportJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, id int64, action, payload string) {
 	writeJournal(f, journalEntry{JobID: id, Action: action})
 	status, result := executeBulkJob(ctx, log, c, f, runner, id, action, payload)
-	if err := postJobResult(ctx, c, id, status, result); err != nil {
+	if err := postJobResult(ctx, c, f.agentID, id, status, result); err != nil {
 		log.Warn("bulk.result.post", slog.Int64("job", id), slog.String("error", err.Error()))
 		// Keep the outcome so the next start re-sends it.
 		writeJournal(f, journalEntry{JobID: id, Action: action, Status: status, Result: result})
@@ -68,9 +68,14 @@ func runAndReportJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	_ = os.Remove(journalPath(f, id))
 }
 
-func postJobResult(ctx context.Context, c *httpc.Client, id int64, status, result string) error {
-	return c.PostJSON(ctx, fmt.Sprintf("/api/v1/agent/jobs/%d/result", id),
-		map[string]any{"status": status, "result_json": result}, nil)
+// postJobResult reports a job's outcome. The agent_id authenticates it (the
+// server also accepts the machine-UUID header for agents without one).
+func postJobResult(ctx context.Context, c *httpc.Client, agentID string, id int64, status, result string) error {
+	body := map[string]any{"status": status, "result_json": result}
+	if agentID != "" {
+		body["agent_id"] = agentID
+	}
+	return c.PostJSON(ctx, fmt.Sprintf("/api/v1/agent/jobs/%d/result", id), body, nil)
 }
 
 // reportInterruptedJobs settles every journalled job left by a previous run
@@ -102,7 +107,7 @@ func reportInterruptedJobs(ctx context.Context, log *slog.Logger, c *httpc.Clien
 		default:
 			status, result = "failed", interruptedJobResult
 		}
-		if err := postJobResult(ctx, c, e.JobID, status, result); err != nil && !isClientError(err) {
+		if err := postJobResult(ctx, c, f.agentID, e.JobID, status, result); err != nil && !isClientError(err) {
 			log.Warn("bulk.interrupted.post", slog.Int64("job", e.JobID), slog.String("error", err.Error()))
 			continue // server unreachable: try again on the next start
 		}
@@ -116,18 +121,23 @@ func reportInterruptedJobs(ctx context.Context, log *slog.Logger, c *httpc.Clien
 // exists): retrying won't help, so the marker is dropped.
 func isClientError(err error) bool {
 	s := err.Error()
-	return strings.Contains(s, ": 400 ") || strings.Contains(s, ": 404 ") || strings.Contains(s, ": 409 ") || strings.Contains(s, ": 422 ")
+	for _, code := range []string{": 400 ", ": 403 ", ": 404 ", ": 409 ", ": 422 "} {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // abandonClaimedJobs reports jobs this poll claimed but won't run because the
 // agent is about to restart (rename / domain join). They are failed with a
 // clear reason rather than left "running" for good.
-func abandonClaimedJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, ids []int64, reason string) {
+func abandonClaimedJobs(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, ids []int64, reason string) {
 	for _, id := range ids {
 		result, _ := json.Marshal(map[string]string{
 			"error": "Not run: the machine restarted " + reason + " before this job started. Run the operation again.",
 		})
-		if err := postJobResult(ctx, c, id, "failed", string(result)); err != nil {
+		if err := postJobResult(ctx, c, f.agentID, id, "failed", string(result)); err != nil {
 			log.Warn("bulk.abandon.post", slog.Int64("job", id), slog.String("error", err.Error()))
 		}
 	}

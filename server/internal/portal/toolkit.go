@@ -347,13 +347,17 @@ func toolkitDuplicate(r Repos) http.HandlerFunc {
 		}
 		var dup model.Toolkit
 		for i := 1; i <= 20; i++ {
-			name := src.Name + " copy"
+			suffix := " copy"
 			if i > 1 {
-				name = fmt.Sprintf("%s copy %d", src.Name, i)
+				suffix = fmt.Sprintf(" copy %d", i)
 			}
-			if len(name) > 128 {
-				name = name[len(name)-128:]
+			// Names are at most 128 characters: shorten the original, keep
+			// the suffix (names are ASCII-only, so byte slicing is safe).
+			base := src.Name
+			if len(base)+len(suffix) > 128 {
+				base = strings.TrimSpace(base[:128-len(suffix)])
 			}
+			name := base + suffix
 			dup, err = r.Toolkits.Duplicate(req.Context(), id, name)
 			if !errors.Is(err, model.ErrConflict) {
 				break

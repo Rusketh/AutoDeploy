@@ -88,6 +88,10 @@ func newToolkitServer(t *testing.T, def toolkitJobDef) *toolkitServer {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"user": ts.def.RunAsUser, "password": "agent-test-pw"})
 		case strings.HasPrefix(r.URL.Path, "/payload/toolkit/"):
+			if r.Header.Get("X-AutoDeploy-Agent-ID") == "" {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 			name := r.URL.Path[strings.LastIndex(r.URL.Path, "/files/")+len("/files/"):]
 			_, _ = io.WriteString(w, ts.resultFiles[name])
 		default:
