@@ -466,7 +466,7 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 		for _, j := range resp.Jobs {
-			status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
+			status, result := executeBulkJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 			_ = c.PostJSON(ctx,
 				fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
 				map[string]any{"status": status, "result_json": result}, nil)
@@ -1062,14 +1062,94 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	// into a per-package work directory, then resolve bare filenames in
 	// install-step paths against it. Legacy single-file packages (no
 	// Files list) fall back to the {payload} -> pkg-N.bin path.
-	hasWorkdir := len(pkg.Files) > 0 || len(pkg.Bundles) > 0
-	var legacyPayloadPath string
+	hasWorkdir, legacyPayloadPath, fetched := fetchPackagePayload(ctx, log, c, f, runner, pkg, pkgDir, filesDir, legacyBinPath)
+	if !fetched {
+		return nil, false
+	}
+
+	// Rewrite, in order: substitute the legacy {payload} token; resolve
+	// bare filenames against everything in the work dir (uploaded files +
+	// extracted bundle contents); then expand Windows %ENV% in path fields
+	// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
+	// the real location instead of a literal "%ProgramData%" folder.
+	rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
+	if hasWorkdir {
+		// %pkgdir% -> the work dir (any field, any step type); then resolve
+		// remaining bare filenames against everything in the work dir
+		// (uploaded files + extracted bundle contents).
+		rewritten = expandPkgDir(rewritten, filesDir)
+		knownFiles := mapWorkdirFiles(filesDir)
+		rewritten = resolveBareFilenames(rewritten, knownFiles)
+	}
+	rewritten = expandStepEnv(rewritten)
+	// Adapt appx steps to the agent's context: provision machine-wide when we're
+	// SYSTEM (per-user Add-AppxPackage is rejected for that account), and pick up
+	// a Dependencies/ folder for a bundle whose framework packages weren't named.
+	appxDepDir := ""
+	if hasWorkdir {
+		appxDepDir = filesDir
+	}
+	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
+
+	log.Info("package.install.start",
+		slog.String("target", pkg.Name),
+		slog.String("host_os", facts.OSCaption),
+		slog.Int("steps", len(rewritten)))
+	// Run steps from the package work dir so an installer's relative args
+	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
+	// resolve against the downloaded/extracted files, not the service's CWD.
+	if hasWorkdir {
+		runner.WorkDir = filesDir
+	} else {
+		runner.WorkDir = f.workDir
+	}
+	results := steps.Execute(ctx, rewritten, runner, facts)
+	ok := true
+	for i, r := range results {
+		lvl := slog.LevelInfo
+		if r.Error != nil || r.Aborted {
+			lvl = slog.LevelError
+			ok = false
+		}
+		log.Log(ctx, lvl, "package.step",
+			slog.String("package", pkg.Name),
+			slog.Int("step", i+1),
+			slog.String("type", r.Step.Type),
+			slog.Int("exit_code", r.ExitCode),
+			slog.Bool("aborted", r.Aborted),
+			// A step skipped because its FilterOS didn't match the host is
+			// recorded so an operator can see WHY a step didn't run (e.g. the
+			// Windows 10 zip step was passed over on a Windows 11 machine)
+			// rather than wondering whether it silently failed.
+			slog.Bool("skipped", r.Skipped),
+			slog.String("filter_os", r.Step.FilterOS),
+			slog.String("exit_meaning", stepExitMeaning(r)),
+			slog.Any("error", r.Error),
+		)
+	}
+	if ok {
+		log.Info("package.install.ok",
+			slog.String("target", pkg.Name))
+		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
+		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
+	}
+	log.Error("package.install.fail", packageFailAttrs(pkg.Name, results, runner.LastStderr())...)
+	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
+}
+
+// fetchPackagePayload downloads an item's files into filesDir and extracts
+// its bundles there (or, for a legacy single-file package, downloads the
+// payload to legacyBinPath). It reports whether the item has a work dir, the
+// path the legacy {payload} token resolves to (if any) and whether the
+// download succeeded. Shared by software installs and Tool Kit runs.
+func fetchPackagePayload(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner *steps.OSRunner, pkg softwareItem, pkgDir, filesDir, legacyBinPath string) (hasWorkdir bool, legacyPayloadPath string, ok bool) {
+	hasWorkdir = len(pkg.Files) > 0 || len(pkg.Bundles) > 0
 	if hasWorkdir {
 		if err := os.MkdirAll(filesDir, 0o755); err != nil {
 			log.Error("package.workdir",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		downloadOK := true
 		for _, pf := range pkg.Files {
@@ -1151,7 +1231,7 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 				slog.String("dir", filesDir))
 		}
 		if !downloadOK {
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		// A single plain file (no bundles) keeps the legacy {payload}
 		// convenience pointing at it.
@@ -1169,89 +1249,21 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			log.Error("package.download.create",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		if err := c.Download(ctx, url, out); err != nil {
 			_ = out.Close()
 			log.Error("package.download",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		_ = out.Close()
 		log.Info("package.download.ok",
 			slog.String("package", pkg.Name),
 			slog.String("path", legacyPayloadPath))
 	}
-
-	// Rewrite, in order: substitute the legacy {payload} token; resolve
-	// bare filenames against everything in the work dir (uploaded files +
-	// extracted bundle contents); then expand Windows %ENV% in path fields
-	// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
-	// the real location instead of a literal "%ProgramData%" folder.
-	rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
-	if hasWorkdir {
-		// %pkgdir% -> the work dir (any field, any step type); then resolve
-		// remaining bare filenames against everything in the work dir
-		// (uploaded files + extracted bundle contents).
-		rewritten = expandPkgDir(rewritten, filesDir)
-		knownFiles := mapWorkdirFiles(filesDir)
-		rewritten = resolveBareFilenames(rewritten, knownFiles)
-	}
-	rewritten = expandStepEnv(rewritten)
-	// Adapt appx steps to the agent's context: provision machine-wide when we're
-	// SYSTEM (per-user Add-AppxPackage is rejected for that account), and pick up
-	// a Dependencies/ folder for a bundle whose framework packages weren't named.
-	appxDepDir := ""
-	if hasWorkdir {
-		appxDepDir = filesDir
-	}
-	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
-
-	log.Info("package.install.start",
-		slog.String("target", pkg.Name),
-		slog.String("host_os", facts.OSCaption),
-		slog.Int("steps", len(rewritten)))
-	// Run steps from the package work dir so an installer's relative args
-	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
-	// resolve against the downloaded/extracted files, not the service's CWD.
-	if hasWorkdir {
-		runner.WorkDir = filesDir
-	} else {
-		runner.WorkDir = f.workDir
-	}
-	results := steps.Execute(ctx, rewritten, runner, facts)
-	ok := true
-	for i, r := range results {
-		lvl := slog.LevelInfo
-		if r.Error != nil || r.Aborted {
-			lvl = slog.LevelError
-			ok = false
-		}
-		log.Log(ctx, lvl, "package.step",
-			slog.String("package", pkg.Name),
-			slog.Int("step", i+1),
-			slog.String("type", r.Step.Type),
-			slog.Int("exit_code", r.ExitCode),
-			slog.Bool("aborted", r.Aborted),
-			// A step skipped because its FilterOS didn't match the host is
-			// recorded so an operator can see WHY a step didn't run (e.g. the
-			// Windows 10 zip step was passed over on a Windows 11 machine)
-			// rather than wondering whether it silently failed.
-			slog.Bool("skipped", r.Skipped),
-			slog.String("filter_os", r.Step.FilterOS),
-			slog.String("exit_meaning", stepExitMeaning(r)),
-			slog.Any("error", r.Error),
-		)
-	}
-	if ok {
-		log.Info("package.install.ok",
-			slog.String("target", pkg.Name))
-		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
-		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
-	}
-	log.Error("package.install.fail", packageFailAttrs(pkg.Name, results, runner.LastStderr())...)
-	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
+	return hasWorkdir, legacyPayloadPath, true
 }
 
 // packageFailAttrs builds package.install.fail's attrs so the event says
@@ -1412,7 +1424,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Warn("checkin.fetch", slog.String("error", err.Error()))
 		} else {
 			for _, j := range resp.Jobs {
-				status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
+				status, result := executeBulkJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 				_ = c.PostJSON(ctx,
 					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
 					map[string]any{"status": status, "result_json": result}, nil)
@@ -1483,9 +1495,14 @@ func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 
 // executeBulkJob dispatches on action and returns (status, result JSON).
 // Result JSON is bounded so the server can store it.
-func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, action, payload string) (string, string) {
+func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, jobID int64, action, payload string) (string, string) {
 	log.Info("bulk.start", slog.String("action", action))
 	switch action {
+	case "toolkit":
+		// The payload only names the kit; the definition (and any Run As
+		// password) is fetched for this specific job, see toolkit.go.
+		return runToolkitJob(ctx, log, c, f, jobID)
+
 	case "script":
 		// Payload: {"shell":"cmd"|"powershell","body":"..."}
 		var p struct {
@@ -1752,29 +1769,36 @@ func mapWorkdirFiles(dir string) map[string]string {
 var envExpand = winenv.Expand
 
 func expandStepEnv(in []swspec.InstallStep) []swspec.InstallStep {
+	return expandStepEnvWith(in, envExpand)
+}
+
+// expandStepEnvWith expands %ENV% in every step path and arg list with
+// expand -- the agent's own environment (expandStepEnv) or, for a Tool Kit
+// step run as another account, that account's.
+func expandStepEnvWith(in []swspec.InstallStep, expand func(string) string) []swspec.InstallStep {
 	out := make([]swspec.InstallStep, len(in))
 	copy(out, in)
 	for i := range out {
-		out[i].SourcePath = envExpand(out[i].SourcePath)
-		out[i].DestinationPath = envExpand(out[i].DestinationPath)
-		out[i].MSIPath = envExpand(out[i].MSIPath)
-		out[i].APPXPath = envExpand(out[i].APPXPath)
-		out[i].APPXLicense = envExpand(out[i].APPXLicense)
-		out[i].APPXDependencies = expandEnvAll(out[i].APPXDependencies)
-		out[i].ExePath = envExpand(out[i].ExePath)
-		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs)
-		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs)
+		out[i].SourcePath = expand(out[i].SourcePath)
+		out[i].DestinationPath = expand(out[i].DestinationPath)
+		out[i].MSIPath = expand(out[i].MSIPath)
+		out[i].APPXPath = expand(out[i].APPXPath)
+		out[i].APPXLicense = expand(out[i].APPXLicense)
+		out[i].APPXDependencies = expandEnvAll(out[i].APPXDependencies, expand)
+		out[i].ExePath = expand(out[i].ExePath)
+		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs, expand)
+		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs, expand)
 	}
 	return out
 }
 
-func expandEnvAll(in []string) []string {
+func expandEnvAll(in []string, expand func(string) string) []string {
 	if len(in) == 0 {
 		return in
 	}
 	out := make([]string, len(in))
 	for i, s := range in {
-		out[i] = envExpand(s)
+		out[i] = expand(s)
 	}
 	return out
 }

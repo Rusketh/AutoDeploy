@@ -56,9 +56,26 @@ type OSRunner struct {
 	// service's CWD (C:\Windows\System32).
 	WorkDir string
 
+	// Launcher, when set, starts processes instead of os/exec -- used to run
+	// a Tool Kit's steps as another account (see internal/runas). nil runs
+	// them as the agent itself.
+	Launcher Launcher
+
+	// Tee, when set, also receives every byte a Run'd process writes to
+	// stdout or stderr (a Tool Kit captures each step's output this way).
+	Tee io.Writer
+
 	// lastStderr holds the final few stderr lines of the most recent Run
 	// (see LastStderr). Runs are sequential, so no locking is needed.
 	lastStderr []string
+}
+
+// Launcher starts a process some other way than os/exec -- e.g. under
+// another account's token -- and waits for it. It returns the exit code;
+// a non-nil error means the process couldn't be started (or waited on).
+// Cancelling ctx must terminate the process.
+type Launcher interface {
+	Launch(ctx context.Context, name string, args []string, dir, stdin string, stdout, stderr io.Writer) (int, error)
 }
 
 // stderrTailLines is how many trailing stderr lines LastStderr keeps.
@@ -84,11 +101,22 @@ func (r *OSRunner) Run(ctx context.Context, name string, args []string, shellInp
 	if r.DryRun {
 		return 0, nil
 	}
+	tail := &lineTail{max: stderrTailLines}
+	var stdout io.Writer = stdoutWriter{r.Log}
+	var stderr io.Writer = stderrWriter{log: r.Log, tail: tail}
+	if r.Tee != nil {
+		stdout = io.MultiWriter(stdout, r.Tee)
+		stderr = io.MultiWriter(stderr, r.Tee)
+	}
+	if r.Launcher != nil {
+		code, err := r.Launcher.Launch(ctx, name, args, r.WorkDir, shellInput, stdout, stderr)
+		r.lastStderr = tail.Lines()
+		return code, err
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = r.WorkDir
-	tail := &lineTail{max: stderrTailLines}
-	cmd.Stdout = stdoutWriter{r.Log}
-	cmd.Stderr = stderrWriter{log: r.Log, tail: tail}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if shellInput != "" {
 		cmd.Stdin = strings.NewReader(shellInput)
 	}
