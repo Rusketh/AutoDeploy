@@ -58,6 +58,15 @@ type Config struct {
 	// no activity, and in any case SessionMaxLifetime after sign-in.
 	SessionIdleTimeout time.Duration
 	SessionMaxLifetime time.Duration
+
+	// AgentLegacyAuth lets a machine that has not been issued an agent
+	// secret yet keep talking to the server the old way (agent_id / SMBIOS
+	// UUID only). On by default so existing fleets keep working while their
+	// agents update and pick up a secret; turn it off once every machine
+	// shows "Secured". Machines that hold a secret always need it.
+	AgentLegacyAuth bool
+	// AgentSecretRotation is how often an agent replaces its secret.
+	AgentSecretRotation time.Duration
 }
 
 // Load reads configuration from the environment.
@@ -95,6 +104,16 @@ func Load() (Config, error) {
 	}
 	c.PayloadMaxInFlight = maxIF
 	c.TFTPAddr = getenv("AUTODEPLOY_TFTP_ADDR", "")
+	legacy, err := strconv.ParseBool(getenv("AUTODEPLOY_AGENT_LEGACY_AUTH", "true"))
+	if err != nil {
+		return Config{}, errors.New("AUTODEPLOY_AGENT_LEGACY_AUTH must be a boolean")
+	}
+	c.AgentLegacyAuth = legacy
+	rot, err := time.ParseDuration(getenv("AUTODEPLOY_AGENT_SECRET_ROTATION", "720h"))
+	if err != nil || rot < time.Minute {
+		return Config{}, errors.New("AUTODEPLOY_AGENT_SECRET_ROTATION must be a duration of at least 1m, such as 720h (30 days)")
+	}
+	c.AgentSecretRotation = rot
 	idle, err := time.ParseDuration(getenv("AUTODEPLOY_SESSION_IDLE_TIMEOUT", "12h"))
 	if err != nil || idle <= 0 {
 		return Config{}, errors.New("AUTODEPLOY_SESSION_IDLE_TIMEOUT must be a positive duration such as 12h or 90m")

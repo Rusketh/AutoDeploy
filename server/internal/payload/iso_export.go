@@ -18,11 +18,13 @@ package payload
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
@@ -37,7 +39,15 @@ type ISOExportDeps struct {
 	Blobs    *storage.BlobStore
 	Drivers  *model.DriverPackageRepo
 	Runner   ISOBuildRunner
+	// Creds mints the enrollment token the media carries, which lets the
+	// machines it installs obtain their agent secret. Nil: no token (their
+	// agents follow the first-contact / approval path instead).
+	Creds *model.AgentCredentialRepo
 }
+
+// mediaEnrollTokenTTL is how long exported media can enrol machines.
+// Re-exporting the image replaces the token (older media stop working).
+const mediaEnrollTokenTTL = 90 * 24 * time.Hour
 
 // ISOExportOptions parameterise a single export.
 type ISOExportOptions struct {
@@ -214,6 +224,15 @@ func (d ISOExportDeps) ExportImageISO(ctx context.Context, opts ISOExportOptions
 		if err := stageExportAgent(inMedia, opts.AgentBinaryPath, base, opts.ImageID); err != nil {
 			return fmt.Errorf("iso export: stage agent: %w", err)
 		}
+		if d.Creds != nil {
+			tok, terr := d.Creds.NewImageEnrollToken(ctx, opts.ImageID, mediaEnrollTokenTTL)
+			if terr != nil {
+				return fmt.Errorf("iso export: enrollment token: %w", terr)
+			}
+			if err := stageEnrollToken(inMedia, opts.ImageID, tok); err != nil {
+				return fmt.Errorf("iso export: stage enrollment token: %w", err)
+			}
+		}
 	}
 
 	// 3. Boot-critical drivers into $WinPEDriver$ (best-effort).
@@ -358,6 +377,21 @@ func stageExportAgent(at func(rel string) string, agentSrc, baseURL string, imag
 	return writeOverlayFile(at("sources/$OEM$/$$/Setup/Scripts/SetupComplete.cmd"), []byte(script))
 }
 
+// EnrollTokenFile is where an exported ISO's enrollment token lands in the
+// installed OS (%WINDIR%\AutoDeploy\enroll.json). The agent reads it when it
+// first asks for its secret and deletes it; SetupComplete.cmd deletes it too
+// once the enrolling run is over.
+const EnrollTokenFile = "sources/$OEM$/$$/AutoDeploy/enroll.json"
+
+// stageEnrollToken writes the media's enrollment token into the $OEM$ tree.
+func stageEnrollToken(at func(rel string) string, imageID model.ID, token string) error {
+	b, err := json.Marshal(map[string]any{"image_id": int64(imageID), "enroll_token": token})
+	if err != nil {
+		return err
+	}
+	return writeOverlayFile(at(EnrollTokenFile), b)
+}
+
 // exportSetupCompleteScript renders the SetupComplete.cmd for an exported ISO.
 // Unlike the boot client's variant (which bakes a server-minted agent_id), this
 // one enrols on first run: `--server <base> --image-id <id>` self-identifies by
@@ -375,6 +409,8 @@ func exportSetupCompleteScript(baseURL string, imageID model.ID) string {
 		`copy /y "%SRC%" "%DEST%\autodeploy-agent.exe" >nul`,
 		fmt.Sprintf(`reg add "HKLM\SOFTWARE\AutoDeploy" /v ServerURL /t REG_SZ /d "%s" /f`, baseURL),
 		fmt.Sprintf(`"%%DEST%%\autodeploy-agent.exe" --server "%s" --image-id %d`, baseURL, int64(imageID)),
+		// The enrolling run above has used the media's token (if any).
+		`del /q "%WINDIR%\AutoDeploy\enroll.json" 2>nul`,
 		`"%DEST%\autodeploy-agent.exe" install-service`,
 		"exit /b 0",
 		"",

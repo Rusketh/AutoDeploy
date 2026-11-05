@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strings"
 
@@ -84,12 +85,17 @@ func loadToolkitJob(w http.ResponseWriter, req *http.Request, r Repos) (toolkitJ
 		http.Error(w, "agent_id and job_id required", http.StatusBadRequest)
 		return c, false
 	}
-	m, err := r.Inventory.GetByAgentID(req.Context(), agentID)
+	caller, err := agentAuth(r).Agent(req, agentID)
 	if err != nil {
-		// Unknown agent_id: don't reveal whether the job exists.
-		http.Error(w, "forbidden", http.StatusForbidden)
+		// Unknown or unauthenticated agent: don't reveal whether the job
+		// exists (an unknown agent gets 403, not 404).
+		if errors.Is(err, agentauth.ErrUnknownAgent) {
+			err = agentauth.ErrForbidden
+		}
+		agentauth.Write(w, err)
 		return c, false
 	}
+	m := caller.Machine
 	job, err := r.Bulk.GetJob(req.Context(), in.JobID)
 	if err != nil || job.MachineID != m.ID || job.Action != model.BulkActionToolkit {
 		http.Error(w, "forbidden", http.StatusForbidden)

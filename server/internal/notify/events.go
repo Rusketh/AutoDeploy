@@ -40,6 +40,8 @@ const (
 	EventSoftwareInstallOK     = "software.install_ok"
 	EventSoftwareInstallFailed = "software.install_failed"
 
+	EventAgentCredentialRequest = "agent.credential_request"
+
 	EventToolkitRunOK     = "toolkit.run_ok"
 	EventToolkitRunFailed = "toolkit.run_failed"
 
@@ -71,35 +73,36 @@ var EventCategories = []struct {
 	{"Machine inventory", []string{EventMachineFirstSeen, EventMachineOffline, EventMachineHardwareChange}},
 	{"Active Directory", []string{EventADJoinFailed, EventADTrustFailed}},
 	{"Windows Updates", []string{EventUpdateDeployed, EventUpdateComplianceFail}},
-	{"Security", []string{EventAuthLoginFailed}},
+	{"Security", []string{EventAuthLoginFailed, EventAgentCredentialRequest}},
 	{"System health", []string{EventSystemStorageLow, EventSystemAgentOutdated}},
 }
 
 // eventLabels are the plain-English names the portal shows for each event.
 var eventLabels = map[string]string{
-	EventDeployStarted:         "Deployment started",
-	EventDeployCompleted:       "Deployment finished",
-	EventDeployFailed:          "Deployment failed",
-	EventDeployReimage:         "Re-image requested",
-	EventBulkCreated:           "Bulk operation created",
-	EventBulkCompleted:         "Bulk operation finished",
-	EventBulkFailed:            "Bulk operation failed",
-	EventBulkPartial:           "Bulk operation partly failed",
-	EventSoftwareInstallOK:     "Software installed",
-	EventSoftwareInstallFailed: "Software install failed",
-	EventToolkitRunOK:          "Tool kit ran",
-	EventToolkitRunFailed:      "Tool kit failed",
-	EventMachineFirstSeen:      "New machine seen",
-	EventMachineOffline:        "Machine went offline",
-	EventMachineHardwareChange: "Machine hardware changed",
-	EventADJoinFailed:          "Domain join failed",
-	EventADTrustFailed:         "Domain trust broken",
-	EventUpdateDeployed:        "Windows Update deployed",
-	EventUpdateComplianceFail:  "Windows Update compliance below target",
-	EventAuthLoginFailed:       "Failed sign-in",
-	EventSystemStorageLow:      "Server storage low",
-	EventSystemAgentOutdated:   "Agent out of date",
-	"system.test":              "Test message",
+	EventDeployStarted:          "Deployment started",
+	EventDeployCompleted:        "Deployment finished",
+	EventDeployFailed:           "Deployment failed",
+	EventDeployReimage:          "Re-image requested",
+	EventBulkCreated:            "Bulk operation created",
+	EventBulkCompleted:          "Bulk operation finished",
+	EventBulkFailed:             "Bulk operation failed",
+	EventBulkPartial:            "Bulk operation partly failed",
+	EventSoftwareInstallOK:      "Software installed",
+	EventSoftwareInstallFailed:  "Software install failed",
+	EventToolkitRunOK:           "Tool kit ran",
+	EventToolkitRunFailed:       "Tool kit failed",
+	EventMachineFirstSeen:       "New machine seen",
+	EventMachineOffline:         "Machine went offline",
+	EventMachineHardwareChange:  "Machine hardware changed",
+	EventADJoinFailed:           "Domain join failed",
+	EventADTrustFailed:          "Domain trust broken",
+	EventUpdateDeployed:         "Windows Update deployed",
+	EventUpdateComplianceFail:   "Windows Update compliance below target",
+	EventAuthLoginFailed:        "Failed sign-in",
+	EventAgentCredentialRequest: "Agent secret needs approval",
+	EventSystemStorageLow:       "Server storage low",
+	EventSystemAgentOutdated:    "Agent out of date",
+	"system.test":               "Test message",
 }
 
 // EventLabel returns the plain-English name of an event, or the event name

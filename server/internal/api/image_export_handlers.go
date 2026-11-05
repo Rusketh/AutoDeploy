@@ -37,6 +37,7 @@ func exportDeps(r Repos) payload.ISOExportDeps {
 		Resolver: r.Resolver,
 		Blobs:    r.Blobs,
 		Drivers:  r.Drivers,
+		Creds:    r.Credentials,
 	}
 }
 

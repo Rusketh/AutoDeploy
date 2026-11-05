@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,8 +19,12 @@ type Client struct {
 	// AgentID, when set, is sent as X-AutoDeploy-Agent-ID on every request.
 	// The server serves software and Tool Kit definitions and files only to
 	// an identified agent whose machine needs them.
-	AgentID    string
-	HTTPClient *http.Client
+	AgentID string
+	// Credentials, when set, supplies the agent id and secret for every
+	// request (it wins over AgentID). Called per request so a rotated
+	// secret takes effect immediately. The secret is never logged.
+	Credentials func() (agentID, secret string)
+	HTTPClient  *http.Client
 }
 
 func New(baseURL, uuid string, insecureTLS bool) *Client {
@@ -104,7 +109,33 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer) error 
 // identify sets the machine identity headers on req.
 func (c *Client) identify(req *http.Request) {
 	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
-	if c.AgentID != "" {
-		req.Header.Set("X-AutoDeploy-Agent-ID", c.AgentID)
+	id, secret := c.AgentID, ""
+	if c.Credentials != nil {
+		if cid, s := c.Credentials(); cid != "" {
+			id, secret = cid, s
+		}
 	}
+	if id != "" {
+		req.Header.Set("X-AutoDeploy-Agent-ID", id)
+	}
+	if secret != "" {
+		req.Header.Set("X-AutoDeploy-Agent-Secret", secret)
+	}
+}
+
+// IsUnauthorized reports whether err is the server's 401 "agent credential
+// required" answer.
+func IsUnauthorized(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ": 401 ")
+}
+
+// IsStatus reports whether err is a non-2xx answer with the given status.
+func IsStatus(err error, code int) bool {
+	return err != nil && strings.Contains(err.Error(), fmt.Sprintf(": %d ", code))
+}
+
+// IsUnknownMachine reports a 404 whose body says the server doesn't know the
+// machine (as opposed to a server without the endpoint at all).
+func IsUnknownMachine(err error) bool {
+	return IsStatus(err, 404) && strings.Contains(err.Error(), "unknown machine")
 }

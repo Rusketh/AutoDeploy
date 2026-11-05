@@ -81,6 +81,8 @@ type Repos struct {
 	ImportedAssets *model.ImportedAssetRepo
 	// Toolkits stores Tool Kits (Build -> Tool Kits).
 	Toolkits *model.ToolkitRepo
+	// Credentials stores agents' secrets and pending secret requests.
+	Credentials *model.AgentCredentialRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -164,6 +166,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerSoftwareRoutes(get, post, r)
 	registerLoadoutRoutes(get, post, r)
 	registerToolkitRoutes(get, post, r)
+	registerAgentCredentialRoutes(get, post, r)
 	registerImageRoutes(get, post, r)
 	registerInventoryRoutes(get, post, r)
 	registerImportRoutes(get, post, r)

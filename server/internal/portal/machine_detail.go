@@ -182,6 +182,7 @@ func machineDetailPage(w http.ResponseWriter, req *http.Request, r Repos, id mod
 		"DeployPercent": deployPercent, "DeployIndeterminate": deployIndeterminate,
 		"AP":           ap,
 		"Toolkits":     toolkitPickerKits(req.Context(), r, ap),
+		"Credential":   machineCredentialView(req.Context(), r, id),
 		"ToolkitRuns":  machineToolkitRuns(req, r, id),
 		"BindingError": form.BindingError,
 		"ActionError":  form.ActionError,

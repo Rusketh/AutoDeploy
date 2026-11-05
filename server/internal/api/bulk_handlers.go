@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -238,6 +239,12 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// Claiming hands out job payloads: a machine with a secret must
+		// prove it; a legacy machine is accepted by UUID as before.
+		if _, aerr := agentAuth(r).Check(req, m); aerr != nil {
+			agentauth.Write(w, aerr)
+			return
+		}
 		emitFirstSeen(req, r, m)
 		jobs, err := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
 		if err != nil {
@@ -306,7 +313,9 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 }
 
 // jobReporterMatches reports whether the caller is the machine a job belongs
-// to: by agent_id when one was sent, else by the SMBIOS UUID header.
+// to, authenticated the way that machine must be: its secret when it holds
+// one; otherwise (legacy) by agent_id, or the SMBIOS UUID header old agents
+// send.
 func jobReporterMatches(req *http.Request, r Repos, machineID model.ID, agentID string) bool {
 	if r.Inventory == nil {
 		return false
@@ -315,11 +324,21 @@ func jobReporterMatches(req *http.Request, r Repos, machineID model.ID, agentID 
 	if err != nil {
 		return false
 	}
-	if agentID = strings.TrimSpace(agentID); agentID != "" {
-		return m.AgentID != "" && agentID == m.AgentID
+	agentID = strings.TrimSpace(agentID)
+	hdrID := strings.TrimSpace(req.Header.Get(agentauth.HeaderAgentID))
+	switch {
+	case hdrID != "" || agentID != "":
+		if (hdrID != "" && hdrID != m.AgentID) || (agentID != "" && agentID != m.AgentID) {
+			return false
+		}
+	default:
+		uuid := strings.TrimSpace(req.Header.Get(agentauth.HeaderUUID))
+		if uuid == "" || m.SystemUUID == "" || !strings.EqualFold(uuid, m.SystemUUID) {
+			return false
+		}
 	}
-	uuid := strings.TrimSpace(req.Header.Get("X-AutoDeploy-Machine-UUID"))
-	return uuid != "" && m.SystemUUID != "" && strings.EqualFold(uuid, m.SystemUUID)
+	_, err = agentAuth(r).Check(req, m)
+	return err == nil
 }
 
 // emitSoftwarePushResult fires software.install_ok/failed for a finished

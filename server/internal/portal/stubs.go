@@ -25,6 +25,7 @@ var registerDriverRoutes = func(get, post func(string, http.HandlerFunc), r Repo
 var registerSoftwareRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 	get("/portal/software", placeholder(r, "Software packages"))
 }
+var registerAgentCredentialRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {}
 var registerToolkitRoutes = func(get, post func(string, http.HandlerFunc), r Repos) {
 	get("/portal/toolkits", placeholder(r, "Tool Kits"))
 }

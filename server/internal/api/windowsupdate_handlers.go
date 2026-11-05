@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"time"
@@ -232,11 +233,12 @@ func handleAgentUpdateStatus(r Repos) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), in.AgentID)
+		caller, err := agentAuth(r).Agent(req, in.AgentID)
 		if err != nil {
-			writeError(w, err)
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		statuses := make([]model.MachineUpdateStatus, len(in.KBNumbers))
 		for i, kb := range in.KBNumbers {
 			statuses[i] = model.MachineUpdateStatus{

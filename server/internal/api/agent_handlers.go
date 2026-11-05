@@ -3,13 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
-	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
 	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
@@ -94,6 +94,11 @@ type AgentSelfResponse struct {
 	// the on-disk lock marker that the credential provider reads; it clears
 	// the marker once it closes the deployment, so later pushes never lock.
 	SetupLock bool `json:"setup_lock,omitempty"`
+	// CredentialStatus is "secured" when the agent authenticated with its
+	// secret, or "legacy" when it has none yet (it should request one).
+	CredentialStatus string `json:"credential_status,omitempty"`
+	// CredentialRotateSeconds is how often the agent replaces its secret.
+	CredentialRotateSeconds int64 `json:"credential_rotate_seconds,omitempty"`
 	// DesiredName is the computer name this machine should carry, resolved
 	// from its binding (or the bound image's name template). It is set only
 	// when that name is DETERMINISTIC (a literal, or a hardware-derived
@@ -133,9 +138,28 @@ func handleAgentPackageItems(r Repos) http.HandlerFunc {
 			return
 		}
 		jobID, _ := strconv.ParseInt(req.URL.Query().Get("job"), 10, 64)
-		m, ok := agentFromHeader(req, r)
-		if !ok || jobID <= 0 || r.Bulk == nil {
-			http.Error(w, "forbidden", http.StatusForbidden)
+		caller, aerr := agentAuth(r).Any(req, "")
+		if aerr != nil || r.Bulk == nil {
+			agentauth.Write(w, aerr)
+			return
+		}
+		m := caller.Machine
+		if jobID <= 0 {
+			// Agents from before job binding name no job: accepted only
+			// for a legacy machine with a push of this package running.
+			running, _ := r.Bulk.RunningPushPackages(req.Context(), m.ID)
+			ok := false
+			for _, id := range running {
+				if id == model.ID(pid) {
+					ok = true
+				}
+			}
+			if !caller.Legacy || !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			items, warnings := expandSoftwareItems(req.Context(), r, []model.ID{model.ID(pid)})
+			writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
 			return
 		}
 		job, jerr := r.Bulk.GetJob(req.Context(), model.ID(jobID))
@@ -164,8 +188,13 @@ func handleAgentSoftware(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		m, ok := agentFromHeader(req, r)
-		if !ok || in.ImageID <= 0 {
+		caller, aerr := agentAuth(r).Any(req, "")
+		if aerr != nil {
+			agentauth.Write(w, aerr)
+			return
+		}
+		m := caller.Machine
+		if in.ImageID <= 0 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -207,11 +236,12 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			http.Error(w, "id query parameter required", http.StatusBadRequest)
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), agentID)
+		caller, err := agentAuth(r).Agent(req, agentID)
 		if err != nil {
-			writeError(w, err) // 404 for an unknown id
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		// A successful poll IS the check-in: bump last_seen so the portal
 		// shows real liveness for every agent version (the resident loop
 		// otherwise never touched it). Best-effort -- a write hiccup must not
@@ -222,6 +252,15 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			AgentID:   m.AgentID,
 			Software:  []AgentSoftwareItem{},
 			Jobs:      []model.BulkJob{},
+			// Tells an agent without a secret to obtain one, and a secured
+			// agent how often to rotate it.
+			CredentialStatus: model.CredSecured,
+		}
+		if caller.Legacy {
+			resp.CredentialStatus = model.CredLegacy
+		}
+		if r.AgentSecretRotation > 0 {
+			resp.CredentialRotateSeconds = int64(r.AgentSecretRotation.Seconds())
 		}
 		// Advertise the operator-configured check-in cadence so the agent
 		// adjusts its poll interval live (no reinstall needed to speed it up
@@ -533,15 +572,4 @@ func validComputerName(s string) bool {
 		}
 	}
 	return !allDigits
-}
-
-// agentFromHeader identifies the calling agent by its X-AutoDeploy-Agent-ID
-// header (its server-minted id). ok is false for a missing or unknown id.
-func agentFromHeader(req *http.Request, r Repos) (model.MachineRecord, bool) {
-	id := strings.TrimSpace(req.Header.Get(swaccess.AgentIDHeader))
-	if id == "" || r.Inventory == nil {
-		return model.MachineRecord{}, false
-	}
-	m, err := r.Inventory.GetByAgentID(req.Context(), id)
-	return m, err == nil
 }

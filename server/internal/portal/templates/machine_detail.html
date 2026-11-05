@@ -177,6 +177,49 @@
 </details>
 {{end}}
 
+{{with .Data.Credential}}
+<div class="section-head" id="agent-credential"><h3>Agent secret</h3><div class="line"></div></div>
+<dl class="kv">
+  <dt>Status</dt>
+  <dd>
+    {{if eq .Status "secured"}}<span class="badge ok">Secured</span> The agent proves its identity with a secret{{if .RotatedAt}}, last replaced {{timeAgo .RotatedAt}}{{end}}{{if .IssuedVia}} <span class="small muted">(issued via {{.IssuedVia}})</span>{{end}}.
+      {{if .RotationUnconfirmed}}<div class="small muted">A new secret is waiting for the agent's next check-in; the previous one works until then.</div>{{end}}
+    {{else if eq .Status "approval_required"}}<span class="badge bad">Approval required</span> This machine has no working secret{{if eq .IssuedVia "revoked"}} (revoked){{end}}. Its agent is refused until you approve its next request below.
+    {{else}}<span class="badge warn">Legacy</span> This agent hasn't been issued a secret yet. It picks one up automatically after it updates.
+    {{end}}
+  </dd>
+  {{if .LastUsed}}<dt>Last used</dt><dd>{{timeAgo .LastUsed}}</dd>{{end}}
+</dl>
+{{if .Requests}}
+<div class="tablewrap"><table>
+  <thead><tr><th>Requested</th><th>From</th><th>Why it needs approval</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Requests}}
+    <tr>
+      <td class="small">{{timeAgo .CreatedAt}}</td>
+      <td class="small"><code>{{.RemoteAddr}}</code></td>
+      <td class="small">{{.Reason}}</td>
+      <td class="small">{{.Status}}{{if .DecidedBy}} <span class="muted">by {{.DecidedBy}}</span>{{end}}</td>
+      <td class="actions">
+        {{if eq .Status "pending"}}
+        <form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/requests/{{int64 .ID}}/approve" data-confirm="Approve this request? Only do this if you just re-imaged or re-installed this machine — whoever made the request gets the machine's identity.">
+          <button type="submit" class="sm"><svg><use href="#i-check"/></svg>Approve</button></form>
+        <form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/requests/{{int64 .ID}}/deny">
+          <button type="submit" class="secondary sm"><svg><use href="#i-x"/></svg>Deny</button></form>
+        {{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table></div>
+{{end}}
+{{if eq .Status "secured"}}
+<form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/revoke" data-confirm="Revoke this machine's agent secret? Its agent is refused until you approve a new request.">
+  <button type="submit" class="ghost sm danger"><svg><use href="#i-lock"/></svg>Revoke secret</button>
+</form>
+{{end}}
+{{end}}
+
 <div class="section-head"><h3>Identity &amp; hardware</h3><div class="line"></div></div>
 <dl class="kv">
   <dt>Reported name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>

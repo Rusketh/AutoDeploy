@@ -435,7 +435,13 @@ func machineList(r Repos) http.HandlerFunc {
 		// The status chip isn't a form control, so it rides along as a
 		// hidden field; Clear drops it with the rest.
 		search.ClearURL = withQuery(req, req.URL.Path, "q", "", "status", "", "image", "", "ad", "", "model", "", "since", "")
+		var legacyAgents, pendingSecrets int
+		if r.Credentials != nil {
+			legacyAgents, _ = r.Credentials.LegacyMachineCount(req.Context())
+			pendingSecrets, _ = r.Credentials.PendingRequestCount(req.Context())
+		}
 		render(w, req, r, "machine_list.html", "Machines", map[string]any{
+			"LegacyAgents": legacyAgents, "PendingSecrets": pendingSecrets,
 			"Rows": rows, "Page": page, "Query": query, "TotalAll": totalAll,
 			"Search":            search,
 			"Filters":           filters,

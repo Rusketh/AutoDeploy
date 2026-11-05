@@ -47,6 +47,10 @@ type agentFlags struct {
 	noSelfUpdate    bool
 }
 
+// agentCreds is the process's credential manager (set in main once the
+// agent id is known); nil only in tests that don't set it.
+var agentCreds *credManager
+
 // Version is set at build time via -ldflags
 // "-X main.Version=v0.1.2". Reported on every check-in so the
 // server can decide whether to push a self-update.
@@ -144,6 +148,10 @@ func main() {
 		ensureEnrolled(context.Background(), log, &f)
 	}
 
+	// The agent's secret: load it (or import the one the deployment staged)
+	// before any authenticated request.
+	agentCreds = newCredManager(log, f)
+
 	// New model: identify by the server-minted agent_id and poll
 	// /api/v1/agent/self for desired state. This is how the deployed agent
 	// runs -- as a Windows service, polling forever; the SCM Stop handler
@@ -158,6 +166,7 @@ func main() {
 		secureWorkDir(log, f.workDir)
 		c := httpc.New(f.server, f.uuid, f.insecureTLS)
 		c.AgentID = f.agentID // identifies this agent on every request
+		c.Credentials = agentCreds.Credentials
 		if isWindowsService() {
 			if err := runService(func(sctx context.Context) {
 				runSelfLoop(sctx, log, c, f, shipper, f.checkInInterval)
@@ -195,6 +204,13 @@ func main() {
 
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
 	c.AgentID = f.agentID // identifies this agent on every request
+	if agentCreds != nil {
+		c.Credentials = agentCreds.Credentials
+	}
+
+	// Obtain the agent secret first (exported USB/ISO media carry a token
+	// that authorises it). Without one the machine may still be legacy.
+	agentCreds.Obtain(ctx, c)
 
 	// Fetch the effective software set.
 	var resp struct {
@@ -296,6 +312,9 @@ func main() {
 func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
 	c.AgentID = f.agentID // identifies this agent on every request
+	if agentCreds != nil {
+		c.Credentials = agentCreds.Credentials
+	}
 	var resp struct {
 		MachineID int64  `json:"machine_id"`
 		AgentID   string `json:"agent_id"`
@@ -338,6 +357,11 @@ type selfResponse struct {
 	} `json:"jobs"`
 	Warnings            []string `json:"warnings"`
 	PollIntervalSeconds int      `json:"poll_interval_seconds"`
+	// CredentialStatus is "legacy" when this agent has no secret yet (it
+	// should obtain one) or "secured"; CredentialRotateSeconds is how often
+	// it should replace the secret.
+	CredentialStatus        string `json:"credential_status"`
+	CredentialRotateSeconds int64  `json:"credential_rotate_seconds"`
 	// DeploymentID is the primary key of an open (in_progress) deployment
 	// row for this machine. Non-zero when the boot client opened a deployment
 	// that hasn't been closed yet; the agent reports the final outcome after
@@ -363,9 +387,23 @@ type selfResponse struct {
 func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) time.Duration {
 	var resp selfResponse
 	// agent_id is a UUID (URL-safe), so no escaping needed.
-	if err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp); err != nil {
+	err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
+	if httpc.IsUnauthorized(err) && agentCreds != nil && agentCreds.Unauthorized(ctx, c) {
+		// Switched to (or obtained) a secret the server accepts: retry.
+		err = c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
+	}
+	if err != nil {
 		log.Warn("self.fetch", slog.String("error", err.Error()))
 		return 0
+	}
+	// Upgrade path / rotation: obtain a secret while still on the legacy
+	// protocol; otherwise rotate when due (or finish a pending rotation).
+	if agentCreds != nil {
+		if resp.CredentialStatus == "legacy" {
+			agentCreds.Obtain(ctx, c)
+		} else {
+			agentCreds.Rotate(ctx, c, time.Duration(resp.CredentialRotateSeconds)*time.Second)
+		}
 	}
 	for _, w := range resp.Warnings {
 		log.Warn("self.warning", slog.String("message", w))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -641,13 +642,16 @@ func (s *Service) serveToolkitBlob(w http.ResponseWriter, r *http.Request, sub s
 	// Kit files can hold scripts and configuration an operator wouldn't
 	// publish: serve them only to the agent of a machine that is running
 	// this kit right now (its server-minted agent_id is the credential).
-	agentID := strings.TrimSpace(r.Header.Get("X-AutoDeploy-Agent-ID"))
-	if agentID == "" || s.Inventory == nil {
+	if strings.TrimSpace(r.Header.Get(agentauth.HeaderAgentID)) == "" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	m, err := s.Inventory.GetByAgentID(r.Context(), agentID)
-	if err != nil || !s.Toolkits.MachineRunningKit(r.Context(), m.ID, id) {
+	who := s.SoftwareAccess
+	if who == nil {
+		who = &swaccess.Checker{Inventory: s.Inventory}
+	}
+	m, ok := who.Machine(r)
+	if !ok || !s.Toolkits.MachineRunningKit(r.Context(), m.ID, id) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

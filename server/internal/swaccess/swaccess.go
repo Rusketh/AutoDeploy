@@ -11,8 +11,8 @@ package swaccess
 
 import (
 	"context"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +21,7 @@ import (
 )
 
 // AgentIDHeader carries the calling agent's server-minted id.
-const AgentIDHeader = "X-AutoDeploy-Agent-ID"
+const AgentIDHeader = agentauth.HeaderAgentID
 
 // cacheTTL bounds how stale a machine's allowed set may be. Short: a push
 // that just started (or an image re-bind) is picked up within this window,
@@ -30,6 +30,10 @@ const cacheTTL = 30 * time.Second
 
 // Checker answers "may this agent read this package?".
 type Checker struct {
+	// Auth authenticates the downloading agent (its secret when the machine
+	// has one; legacy machines by agent id or UUID header). nil falls back
+	// to a legacy-accepting authenticator over Inventory.
+	Auth      *agentauth.Authenticator
 	Inventory *model.InventoryRepo
 	Software  *model.SoftwarePackageRepo
 	Bulk      *model.BulkRepo
@@ -45,21 +49,21 @@ type cached struct {
 	at      time.Time
 }
 
-// Machine authenticates the request by its agent id header. ok is false for
-// a missing or unknown id.
+// Machine authenticates the downloading agent. ok is false when it can't be
+// identified or fails authentication.
 func (c *Checker) Machine(req *http.Request) (model.MachineRecord, bool) {
-	if c == nil || c.Inventory == nil {
+	if c == nil {
 		return model.MachineRecord{}, false
 	}
-	id := strings.TrimSpace(req.Header.Get(AgentIDHeader))
-	if id == "" {
-		return model.MachineRecord{}, false
+	auth := c.Auth
+	if auth == nil {
+		auth = &agentauth.Authenticator{Inventory: c.Inventory, AllowLegacy: true}
 	}
-	m, err := c.Inventory.GetByAgentID(req.Context(), id)
+	caller, err := auth.Any(req, "")
 	if err != nil {
 		return model.MachineRecord{}, false
 	}
-	return m, true
+	return caller.Machine, true
 }
 
 // Allowed reports whether machineID may read package pkgID.

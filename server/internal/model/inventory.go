@@ -1102,3 +1102,17 @@ func (r *InventoryRepo) DetectedStateFor(ctx context.Context, machineID ID) ([]D
 	}
 	return out, rows.Err()
 }
+
+// DeploymentMachine returns the machine a deployment_history row belongs to.
+func (r *InventoryRepo) DeploymentMachine(ctx context.Context, deploymentID ID) (MachineRecord, error) {
+	var mid ID
+	err := r.db.QueryRowContext(ctx,
+		`SELECT machine_id FROM deployment_history WHERE id=?`, int64(deploymentID)).Scan(&mid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MachineRecord{}, fmt.Errorf("deployment %d: %w", deploymentID, ErrNotFound)
+	}
+	if err != nil {
+		return MachineRecord{}, err
+	}
+	return r.Get(ctx, mid)
+}

@@ -346,6 +346,11 @@ func handleValidatePIN(r Repos) http.HandlerFunc {
 			return
 		}
 		_ = r.Settings.RecordPINAttempt(req.Context(), in.SystemUUID, ok)
+		if ok && r.Credentials != nil {
+			// The PIN authorises this machine's deploy, including issuing
+			// the new OS its agent secret (see the image manifest).
+			_ = r.Credentials.AuthorizeDeploy(req.Context(), in.SystemUUID)
+		}
 		writeJSON(w, http.StatusOK, validatePINResp{Granted: ok})
 	}
 }

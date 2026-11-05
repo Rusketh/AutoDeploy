@@ -18,7 +18,12 @@ import (
 //
 // Only when the agent runs as SYSTEM (the service): an operator running it by
 // hand, unelevated, must not lock themselves out of their own folder.
-func secureWorkDir(log *slog.Logger, dir string) {
+func secureWorkDir(log *slog.Logger, dir string) { secureDir(log, dir) }
+
+// secureDir restricts dir (and everything under it) to SYSTEM and
+// Administrators, dropping inherited entries. Used for the work folder and
+// the agent's identity folder, which holds its secret.
+func secureDir(log *slog.Logger, dir string) {
 	if !runningAsSystem() {
 		return
 	}
