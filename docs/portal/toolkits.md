@@ -75,6 +75,11 @@ When a kit runs as another account:
 | **Timeout** | The run is stopped after this many minutes, including any child processes a step started, and marked failed with *timed out*. `0` means no timeout. Default: 60 minutes. |
 | **Restart afterwards** | **Never** (default), **If a step requests it** (a step exited `3010` or `1641`), or **Always**. The restart happens about a minute after the agent reports the result. A timed-out run never restarts. |
 
+> **Don't restart the machine from a step.** Use **Restart afterwards** instead. If a step restarts
+> the machine, for example with `shutdown /r`, the run can't report its result. When the agent
+> starts again it reports that run as **failed (interrupted)** and does **not** run it again, so a
+> kit that restarts the machine can never cause a restart loop.
+
 ### Parameters
 
 Declare a parameter with a **name** (letters, digits and underscores; `pkgdir` and `payload` are

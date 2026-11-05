@@ -120,7 +120,9 @@ func withFakeRunAs(t *testing.T, sess *fakeSession, wantPassword string) *[]stri
 		calls = append(calls, "reboot|"+name)
 		return nil
 	}
-	t.Cleanup(func() { openRunAs, rebootScheduler = saved, savedReboot })
+	savedDelay := credentialRetryDelay
+	credentialRetryDelay = 0
+	t.Cleanup(func() { openRunAs, rebootScheduler, credentialRetryDelay = saved, savedReboot, savedDelay })
 	return &calls
 }
 
@@ -243,7 +245,7 @@ func TestToolkitJobCredentialRefused(t *testing.T) {
 	calls := withFakeRunAs(t, sess, "")
 	f := agentFlags{server: ts.srv.URL, agentID: "a", workDir: t.TempDir()}
 	status, result := runToolkitJob(context.Background(), quietLog(), httpc.New(ts.srv.URL, "u", false), f, 1)
-	if status != "failed" || !strings.Contains(result, "Run As password") || len(*calls) != 0 {
+	if status != "failed" || !strings.Contains(result, "Run As password") || len(*calls) != 0 || ts.credCalls != 2 {
 		t.Fatalf("%s %s %v", status, result, *calls)
 	}
 }

@@ -617,22 +617,24 @@ func ExpandToolkitSteps(steps []swspec.InstallStep, values map[string]string) []
 	if len(values) == 0 {
 		return steps
 	}
-	type rep struct {
-		re  *regexp.Regexp
-		val string
-	}
-	reps := make([]rep, 0, len(values))
+	// One pass over each field: every %NAME% is replaced by its value in a
+	// single scan, so a value that itself contains %OTHER% is inserted as-is
+	// (never re-expanded, whatever order the parameters come in).
+	lower := make(map[string]string, len(values))
 	for name, v := range values {
-		reps = append(reps, rep{regexp.MustCompile(`(?i)%` + regexp.QuoteMeta(name) + `%`), v})
+		lower[strings.ToLower(name)] = v
 	}
+	tokenRE := regexp.MustCompile(`%[A-Za-z_][A-Za-z0-9_]*%`)
 	ex := func(s string) string {
 		if !strings.Contains(s, "%") {
 			return s
 		}
-		for _, r := range reps {
-			s = r.re.ReplaceAllLiteralString(s, r.val)
-		}
-		return s
+		return tokenRE.ReplaceAllStringFunc(s, func(tok string) string {
+			if v, ok := lower[strings.ToLower(tok[1:len(tok)-1])]; ok {
+				return v
+			}
+			return tok
+		})
 	}
 	exs := func(in []string) []string {
 		if in == nil {

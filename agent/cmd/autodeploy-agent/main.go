@@ -400,10 +400,18 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// The server hands back the deterministic name it should carry; rename and
 	// reboot BEFORE joining AD or installing software, so the domain object and
 	// everything after it use the final name. Resumes after the reboot.
+	claimed := make([]int64, 0, len(resp.Jobs))
+	for _, j := range resp.Jobs {
+		claimed = append(claimed, j.ID)
+	}
 	if maybeRename(ctx, dlog, resp.DesiredName) {
+		// The jobs this poll claimed won't run before the restart; report
+		// them rather than leave them "running" for good.
+		abandonClaimedJobs(ctx, dlog, c, claimed, "to apply its new name")
 		return 0 // a rename reboot is scheduled; the rest resumes after reboot
 	}
 	if maybeDomainJoin(ctx, dlog, c, f) {
+		abandonClaimedJobs(ctx, dlog, c, claimed, "to join the domain")
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
 	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
@@ -466,10 +474,7 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 		for _, j := range resp.Jobs {
-			status, result := executeBulkJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
-			_ = c.PostJSON(ctx,
-				fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
-				map[string]any{"status": status, "result_json": result}, nil)
+			runAndReportJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 		}
 	}
 	// Process Windows Update deployment jobs.
@@ -911,6 +916,9 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if isWindowsService() {
 		svc = serviceName
 	}
+	// Settle any job a previous run claimed but never reported (the machine
+	// restarted mid-job). Reported, never re-run -- see jobjournal.go.
+	reportInterruptedJobs(ctx, log, c, f)
 	pollLoop(ctx, log, interval, func(ctx context.Context) pollLoopResult {
 		suggested := runSelfOnce(ctx, log, c, f)
 		shipLogs(log, shipper, f.server, f.insecureTLS)
@@ -1417,6 +1425,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		Jobs      []bulkJob `json:"jobs"`
 	}
 
+	reportInterruptedJobs(ctx, log, c, f)
 	pollLoop(ctx, log, f.checkInInterval, func(ctx context.Context) pollLoopResult {
 		var resp checkinResp
 		if err := c.PostJSON(ctx, "/api/v1/agent/checkin",
@@ -1424,10 +1433,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Warn("checkin.fetch", slog.String("error", err.Error()))
 		} else {
 			for _, j := range resp.Jobs {
-				status, result := executeBulkJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
-				_ = c.PostJSON(ctx,
-					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
-					map[string]any{"status": status, "result_json": result}, nil)
+				runAndReportJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 			}
 		}
 		// Best-effort log ship at the end of each tick so the

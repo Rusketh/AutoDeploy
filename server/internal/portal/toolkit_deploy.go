@@ -209,8 +209,12 @@ func opHasCredentialFor(ctx context.Context, kits *model.ToolkitRepo, opID model
 // specific account, removes) an operation's override password after it was
 // created or edited.
 func storeToolkitCredential(ctx context.Context, r Repos, op model.BulkOperation, cred toolkitCred) error {
-	if r.Toolkits == nil || op.Action != model.BulkActionToolkit {
+	if r.Toolkits == nil {
 		return nil
+	}
+	if op.Action != model.BulkActionToolkit {
+		// An operation edited away from "run tool kit" keeps no password.
+		return r.Toolkits.DeleteOperationCredential(ctx, op.ID)
 	}
 	if cred.Password != "" {
 		return r.Toolkits.SetOperationCredential(ctx, op.ID, cred.User, cred.Password)

@@ -3498,3 +3498,32 @@ executes:
 - a timeout that kills child processes;
 - the account reading and writing the work folder;
 - per-user `appx`.
+
+### Follow-up: stranded "running" jobs and review fixes
+
+**Problem.** `/agent/self` claims a machine's queued jobs (sets them `running`) in its response. If
+the agent then returned early to restart for a rename or a domain join, or a job's own step
+restarted the machine, nothing ever moved those jobs on. They stayed `running` forever. This
+predates Tool Kits, but Tool Kits made it worse: the operation never completed, a deploy-time Run
+As password was never purged, the kit couldn't be deleted, and *skip machines where it already
+succeeded* excluded that machine for good.
+
+**Agent fix (`jobjournal.go`).** Each job is journalled in `<work>/jobs-inflight/` before it runs.
+The marker is removed once the result is posted, or keeps the outcome if the POST fails. When a
+resident loop starts, leftover markers are settled:
+
+- a kept outcome is re-sent;
+- an interrupted `rename` or `reimage` is reported `ok`, because restarting the machine is what
+  those actions do;
+- anything else is reported `failed`, *interrupted*.
+
+Jobs are **never re-run**: a kit whose step restarts the machine would otherwise run, restart and
+run again forever, the same failure mode as the rename boot loop. Jobs claimed on a poll that then
+restarts for a rename or domain join are reported failed (*not run*) before the restart.
+
+**Other fixes.**
+- Parameter substitution is now a single pass, so a value containing another parameter's `%TOKEN%`
+  is never expanded. It used to depend on map iteration order.
+- Editing a scheduled operation away from *Run tool kit* deletes its stored override password.
+- The agent retries the credential fetch once after 5 seconds. This covers the moment between the
+  portal queuing an operation and storing its override password.

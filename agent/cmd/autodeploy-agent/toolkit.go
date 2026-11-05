@@ -82,6 +82,10 @@ const (
 	toolkitRebootDelay = 60
 )
 
+// credentialRetryDelay is how long to wait before asking for a Run As
+// password a second time. A package var so tests needn't wait.
+var credentialRetryDelay = 5 * time.Second
+
 // runAsSession is what a Tool Kit needs from a logged-on account; satisfied
 // by *runas.Session, faked in tests.
 type runAsSession interface {
@@ -180,7 +184,17 @@ func runToolkitJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f age
 					User     string `json:"user"`
 					Password string `json:"password"`
 				}
-				if err := c.PostJSON(ctx, "/api/v1/agent/job-credential", req, &cred); err != nil {
+				err := c.PostJSON(ctx, "/api/v1/agent/job-credential", req, &cred)
+				if err != nil {
+					// The portal stores a deploy-time override a moment after
+					// queuing the job; a very fast agent can ask first.
+					select {
+					case <-ctx.Done():
+					case <-time.After(credentialRetryDelay):
+						err = c.PostJSON(ctx, "/api/v1/agent/job-credential", req, &cred)
+					}
+				}
+				if err != nil {
 					return fail("couldn't get the Run As password: " + err.Error())
 				}
 				password = cred.Password

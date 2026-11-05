@@ -165,6 +165,12 @@ func TestToolkitParamsAndExpansion(t *testing.T) {
 	if out[1].ScriptBody != "echo N$1YC %pkgdir% $1" {
 		t.Fatalf("script body: %q", out[1].ScriptBody)
 	}
+	// A value containing another parameter's token is not re-expanded.
+	cross := ExpandToolkitSteps([]swspec.InstallStep{{Type: "cmd", ScriptBody: "%A% %B%"}},
+		map[string]string{"A": "%B%", "B": "b"})
+	if cross[0].ScriptBody != "%B% b" {
+		t.Fatalf("cross expansion: %q", cross[0].ScriptBody)
+	}
 	if steps[0].ExePath != `%site%\setup.exe` {
 		t.Fatal("ExpandToolkitSteps mutated its input")
 	}
