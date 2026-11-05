@@ -199,7 +199,7 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `action` | yes | One of `rename`, `software_push`, `script`, `reimage`. |
+| `action` | yes | One of `rename`, `software_push`, `script`, `reimage`, `toolkit`. |
 | `target` | yes | Selection: `{ "name_regex", "ou", "group", "machine_ids" }` (empty fields are ignored). |
 | `payload` | yes | A JSON **string** carrying action-specific parameters (must be valid JSON). |
 | `reimage_image_id` | for `reimage` | Image to deploy; `0`/omitted uses each machine's existing binding. |
@@ -288,6 +288,17 @@ information).
 | `GET /api/v1/server/update-log` | Retrieve the last 64 KB of the update log for diagnostics. Accepts an optional `?lines=N` query parameter to limit output. |
 | `POST /api/v1/server/install-agent` | Fetch a matching agent binary (and the credential-provider sidecar) from the GitHub release into the downloads area, so it can be handed to deployed machines. Body `{ "os", "arch", "tag" }` — defaults to `windows`/`amd64`/latest release. Returns the resolved `tag`, `filename`, `sha256` and `path`. `503` if the downloads area is not configured. Driven by the **Settings → Updates** page. |
 
+**`toolkit` payload** (a JSON string, like every payload):
+
+```json
+{"toolkit_id": 3, "run_as": "kit", "params": {"PRINT_SERVER": "\\\\ps02"}, "skip_succeeded": true}
+```
+
+`run_as` is `kit` (the kit's own account, the default), `system`, `logged_on_user` or `user` (then
+set `run_as_user`). The API has no field for a password. A `user` override therefore works over the
+API only when the account is the kit's own, so its stored password can be used. To enter a password
+for a different account, use the portal. The server adds `revision` when the operation is queued.
+
 ## Client & agent endpoints
 
 The boot client and agent use a dedicated set of endpoints for AutoDeploy's internal protocol —
@@ -301,4 +312,12 @@ operator scripting and are listed here only for completeness.
 configuration for the calling machine's bound image (domain, OU, join account and — only over this
 authenticated agent channel — the join password). It is the runtime source of join credentials, so
 they never need to be written into the unattend answer file.
+
+`POST /api/v1/agent/toolkit-job` and `POST /api/v1/agent/job-credential` (body
+`{"agent_id": "...", "job_id": N}`) serve a [tool kit](../portal/toolkits.md) run. The first returns
+the kit's files, its steps with parameters already filled in, the effective Run As mode, the timeout
+and the restart policy. The second returns the Run As password. Both answer only the agent of the
+machine the job belongs to, and only while that job is **running**. Any other caller gets `403`, and
+a queued or finished job gets `409`. Every password release is audit-logged as `secret.access`.
+Tool kit files are served from `/payload/toolkit/{id}/files/…` and `/payload/toolkit/{id}/bundle/…`.
 </content>

@@ -42,6 +42,11 @@ A named **group of software packages**, optionally inheriting from a parent load
 you assemble reusable software bundles (for example "Standard apps" or "Engineering tools") and
 attach them to images. See [Software & loadouts](portal/software.md#loadouts).
 
+### Tool Kit
+A reusable set of **files and steps that runs once each time it is deployed**: no detection rules
+and no image attachment. You run it on demand on one machine or as a bulk operation, as SYSTEM,
+as the signed-in user, or as a chosen account. See [Tool Kits](portal/toolkits.md).
+
 ## Composition & targeting
 
 ### Image

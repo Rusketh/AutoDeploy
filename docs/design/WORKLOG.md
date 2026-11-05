@@ -3433,3 +3433,68 @@ flags, and real-case boot paths.
 
 **NEXT.** Re-export from the portal and confirm the ISO builds; then the pending
 manual VM boot test (BIOS + UEFI, small disk).
+
+---
+
+## 2026-11-05 — Tool Kits
+
+**WHAT.** A new artifact type: reusable, run-once payloads (files + ordered steps, the
+software-package step format, no detection rules) deployed to one machine or as a bulk operation,
+with a default **Run As** account that each deployment can override.
+
+- **Model** (`model/toolkit.go`, migration `0036`): `toolkit` table with steps, parameters,
+  Run As mode (`system` / `user` / `logged_on_user`), account, encrypted password, timeout,
+  reboot policy and revision. `bulk_credential` holds a per-operation password override.
+  The new `toolkit` bulk action has a payload with the kit id, revision, Run As override,
+  parameter values and `skip_succeeded`. It never carries a password. `skip_succeeded` filters
+  out machines with an ok or pending job for the kit (`BulkRepo.filterToolkitTargets`). Override
+  passwords are deleted in `CompleteJob`, `CancelOperation` and `ExpireOverdueJobs` when the
+  operation finishes, with a scheduler sweep as backstop. A kit can't be deleted while an operation
+  uses it.
+- **API** (`api/toolkit_handlers.go`): `POST /agent/toolkit-job` returns the definition with
+  parameters substituted server-side. `POST /agent/job-credential` returns the password. Both
+  require the job to belong to the caller's `agent_id` machine and to be in the `running` state.
+  Password release is audit-logged as `secret.access`. Files are served from `/payload/toolkit/…`.
+  Adds the `toolkit.run_ok` / `toolkit.run_failed` notifications.
+- **Portal**: Build → Tool Kits (list, form, files/bundle, parameters, per-step "Run as SYSTEM",
+  duplicate, create from a software package, recent runs). A "Run tool kit" action on the bulk form
+  and the machine page. The bulk review step swaps a typed password for an in-memory stash token
+  (30 min, bound to the operator). Per-step results render on the operation, machine and kit pages.
+  The step editor moved into the shared `_steps.html` partial, now used by software packages too.
+- **Agent** (`cmd/autodeploy-agent/toolkit.go`, `internal/runas`): runs the job.
+  - **Specific account:** `LogonUser` (batch, falling back to interactive). Administrators run
+    with the elevated linked token; the profile is loaded.
+  - **Logged-on user:** `WTSQueryUserToken`, with the user's normal unelevated token.
+  - **Process launch:** `CreateProcessAsUser` with an empty desktop (a private window station) for
+    a specific account, or `winsta0\default` for the signed-in user. The process runs in a job
+    object so a timeout kills its whole tree; stdout and stderr are piped back.
+  - **Environment:** step env vars are expanded with the account's environment block, and the
+    account gets modify rights (`icacls`) on the per-job work folder.
+  - **Reporting:** a 4 KB output tail per step, timeout, and reboot policy (never after a
+    timeout). `steps.OSRunner` gained `Launcher` and `Tee`; payload download and env expansion
+    were factored out for reuse.
+
+**DECISIONS.**
+- Credentials are fetched just in time, as with domain join, rather than carried in job payloads.
+- Parameters are substituted on the server: the server decides, the agent executes.
+- No RBAC exists, so any operator can run a kit as its stored account. This is documented.
+- Copy and unzip steps run inside the agent, as SYSTEM, using the account's expanded paths.
+
+**STATE.** server and agent `go vet` and `go test -race` pass. The Windows agent build passes.
+`check-secrets.sh` passes.
+- New tests: model (CRUD, revision, validation, payload, parameters, skip-succeeded, credential
+  purge, history); API (agent and job binding, 403/409 refusals, password never in the definition
+  or the audit row); portal (create, edit and duplicate; review page and payload never carry the
+  password; machine action and history); agent (fake Run As session, output capture, SYSTEM steps,
+  abort, timeout, reboot policy, refused credential, no signed-in user); `runas` helpers.
+- End-to-end against a real server binary (Playwright for the portal plus a simulated agent): every
+  check passed and no password appeared in any page, log row or the server log. The new
+  screenshots come from that run.
+
+**NEXT.** Manual Windows VM validation of `internal/runas`, which CI cross-compiles but never
+executes:
+- runs as SYSTEM, a local admin (elevated), a domain user, and the logged-on user;
+- a run when nobody is signed in;
+- a timeout that kills child processes;
+- the account reading and writing the work folder;
+- per-user `appx`.

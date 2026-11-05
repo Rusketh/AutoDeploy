@@ -83,6 +83,25 @@ openssl rand -hex 32
 > webhook secrets become unrecoverable. Include it (or the key file) in your
 > [backup plan](backup-and-retention.md).
 
+### Tool kit Run As passwords
+
+A [tool kit's](../portal/toolkits.md) Run As password, and any password an operator enters when
+deploying a kit as a different account, are encrypted with the same key:
+
+- **Never shown or carried in a page.** After saving, the portal only says a password is stored.
+  The bulk review page carries an opaque token instead of the password; the token is held in
+  server memory for at most 30 minutes and is tied to the operator who entered it.
+- **Never put in a job payload.** The agent asks for the password just before the run, using its
+  `agent_id`. The server releases it only for a job that belongs to that machine and is running.
+  Every release is logged as `secret.access`, without the value.
+- **Deleted when the operation ends.** A password entered at deploy time is deleted when the
+  operation completes or is cancelled. The bulk scheduler also sweeps for and removes any left
+  behind.
+- On the machine, the agent uses the password once to log the account on and does not store it.
+
+AutoDeploy has no per-user permissions, so any portal user can run a kit as its stored account.
+Give such accounts only the rights the kit needs.
+
 The repository includes `scripts/check-secrets.sh`, a CI source-code tripwire (not a key
 validator). It greps the Go source (`server/`, `boot-client/`, `agent/`) for secret-named values
 (`pin`, `password`, `recoveryKey`, …) passed to `slog`/`fmt` logging or print calls, and for stray

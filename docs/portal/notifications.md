@@ -38,6 +38,7 @@ Events are grouped into seven categories:
 | **Deployments** | `deploy.started`, `deploy.completed`, `deploy.failed`, `deploy.reimage` |
 | **Bulk operations** | `bulk.created`, `bulk.completed`, `bulk.failed`, `bulk.partial` |
 | **Software installs** | `software.install_ok`, `software.install_failed` |
+| **Tool Kits** | `toolkit.run_ok`, `toolkit.run_failed` |
 | **Machine inventory** | `machine.first_seen`, `machine.offline`, `machine.hardware_change` |
 | **Windows Updates** | `update.deployed`, `update.compliance_fail` |
 | **Security** | `auth.login_failed` |

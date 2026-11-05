@@ -118,6 +118,9 @@ next check-in, typically within a few minutes):
 - **Run a script** — a PowerShell or cmd script.
 - **Push software** — install a package (and its dependencies; detection rules skip what's already
   present).
+- **Run tool kit** — run a [tool kit](toolkits.md) once, as its default account or one you choose,
+  with its parameters. The results appear in the **Tool Kit runs** section of the page, with each
+  step's exit code and output.
 - **Re-image** — rebuild from an image (this machine's bound image, or one you choose). Destructive;
   the machine network-boots and re-images on its next check-in.
 
