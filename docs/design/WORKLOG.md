@@ -3556,3 +3556,38 @@ restarts for a rename or domain join are reported failed (*not run*) before the 
 
 Re-ran everything: both modules with `-race`, the Windows build, `check-secrets.sh`, and the end to
 end script, now also checking the new refusals. All 25 checks pass.
+
+### Follow-up 3: software definitions and files no longer public
+
+**Problem.** Three unauthenticated routes exposed software:
+- `GET /agent/package-items?package=N` returned any package's full definition: steps, arguments
+  (licence keys, transforms) and file list;
+- `POST /agent/software {image_id}` did the same for any image's set;
+- `/payload/software/…` served every installer and config file.
+
+**Fix.**
+- **`internal/swaccess.Checker`** decides which packages a machine may read: its bound image's
+  set, plus packages of `software_push` jobs running on it, each expanded with
+  `ResolveOrder` so dependencies are included. A positive result is cached for 30 seconds per
+  machine, because a package can be thousands of file requests. A miss always recomputes, so a
+  push that just started isn't refused.
+- **Payload downloads** require the agent's `X-AutoDeploy-Agent-ID` header and an entitled
+  machine. A missing checker means deny.
+- **`package-items`** additionally requires `&job=` to name a running push job on the caller for
+  exactly that package.
+- **`/agent/software`** requires an identified agent whose machine is bound to the image. An
+  unbound machine (first boot from an exported USB/ISO) is bound to it, mirroring the PXE
+  manifest; a machine bound elsewhere is refused.
+- **Agent:** `httpc.Client` sends `AgentID` on every request when set, and `package-items` names
+  the job. Result posts fall back to omitting `agent_id` when a server older than the agent
+  rejects the unknown field with a 400.
+- **Old agents** can't download software until they self-update on their next tick. This is
+  documented in the upgrade notes.
+
+**OPEN, needs a decision.** `agent_id` is the credential behind all of the above, and behind domain
+join, Tool Kit passwords, `/self` and job results. But `POST /agent/enroll`, `/agent/report` and
+the image manifest return a machine's `agent_id` to anyone who presents its SMBIOS UUID. The UUID
+is not secret: it is shown in the portal, used as the log actor, and readable on the machine. The
+agent also logs its `agent_id` at start-up, and that log is shipped to the server. A real
+per-machine secret needs a protocol change across the server, the boot client and deployed
+agents; see the conversation for the options.

@@ -71,11 +71,20 @@ func runAndReportJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 // postJobResult reports a job's outcome. The agent_id authenticates it (the
 // server also accepts the machine-UUID header for agents without one).
 func postJobResult(ctx context.Context, c *httpc.Client, agentID string, id int64, status, result string) error {
+	path := fmt.Sprintf("/api/v1/agent/jobs/%d/result", id)
 	body := map[string]any{"status": status, "result_json": result}
-	if agentID != "" {
-		body["agent_id"] = agentID
+	if agentID == "" {
+		return c.PostJSON(ctx, path, body, nil)
 	}
-	return c.PostJSON(ctx, fmt.Sprintf("/api/v1/agent/jobs/%d/result", id), body, nil)
+	body["agent_id"] = agentID
+	err := c.PostJSON(ctx, path, body, nil)
+	if err != nil && strings.Contains(err.Error(), ": 400 ") {
+		// A server older than this agent rejects the unknown agent_id
+		// field; it identifies the machine by the UUID header instead.
+		delete(body, "agent_id")
+		err = c.PostJSON(ctx, path, body, nil)
+	}
+	return err
 }
 
 // reportInterruptedJobs settles every journalled job left by a previous run

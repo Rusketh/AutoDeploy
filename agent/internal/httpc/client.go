@@ -15,8 +15,9 @@ import (
 type Client struct {
 	BaseURL string
 	UUID    string
-	// AgentID, when set, is sent as X-AutoDeploy-Agent-ID on downloads:
-	// the server serves Tool Kit files only to the agent running that kit.
+	// AgentID, when set, is sent as X-AutoDeploy-Agent-ID on every request.
+	// The server serves software and Tool Kit definitions and files only to
+	// an identified agent whose machine needs them.
 	AgentID    string
 	HTTPClient *http.Client
 }
@@ -43,7 +44,7 @@ func (c *Client) PostJSON(ctx context.Context, path string, in, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	c.identify(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -65,7 +66,7 @@ func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	c.identify(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -86,10 +87,7 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer) error 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
-	if c.AgentID != "" {
-		req.Header.Set("X-AutoDeploy-Agent-ID", c.AgentID)
-	}
+	c.identify(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -101,4 +99,12 @@ func (c *Client) Download(ctx context.Context, url string, dst io.Writer) error 
 	}
 	_, err = io.Copy(dst, resp.Body)
 	return err
+}
+
+// identify sets the machine identity headers on req.
+func (c *Client) identify(req *http.Request) {
+	req.Header.Set("X-AutoDeploy-Machine-UUID", c.UUID)
+	if c.AgentID != "" {
+		req.Header.Set("X-AutoDeploy-Agent-ID", c.AgentID)
+	}
 }

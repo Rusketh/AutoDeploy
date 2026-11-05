@@ -113,9 +113,31 @@ will notice, and what to check:
   to continue unless the PC booted in **UEFI** mode and disk 0 is an internal disk that is not the
   USB stick. Such a PC powers off with a message instead of wiping the wrong disk. Re-export images
   you deploy by USB; network (PXE) deploys are unchanged.
-- **Agents and boot clients**: older agents and boot clients in the field keep working against this
-  server, and the new ones keep working against an older server until you upgrade it (they only add
-  optional log fields and a header). Update them at your own pace.
+- **Agents and boot clients**: older boot clients keep working against this server. Older agents
+  must update before they can download software (they do so on their next check-in; see
+  [Upgrading to the Tool Kits release](#upgrading-to-the-tool-kits-release)). New agents keep
+  working against an older server.
+
+### Upgrading to the Tool Kits release
+
+This release adds [Tool Kits](../portal/toolkits.md) (database migration `0036`, applied
+automatically) and closes several gaps in what machines on the network can read or change:
+
+- **Software is no longer public.** A package's definition and files are served only to an agent
+  whose machine needs that package: the package is in its image's software set, or a *Push
+  software* job for it is running on that machine. Dependencies count in both cases. Agents send
+  their id on every request. **Older agents can't download software until they update.** Agents
+  update themselves on their next check-in, so expect at most one missed install per machine;
+  the install is retried on the next poll. A *Push software* job that an old agent picks up before
+  it updates fails; run it again.
+- **A machine imaged from an exported USB/ISO** is bound to the image baked into the media the
+  first time its agent asks for that image's software. This matches what a network (PXE) deploy
+  already does. A machine already bound to a different image is refused.
+- **Job results are accepted only from the machine the job belongs to**, and a bulk job only while
+  it is running. A script that posted results to `/api/v1/agent/jobs/{id}/result` must identify the
+  machine; see the [API reference](../reference/api.md#client--agent-endpoints).
+- **On Windows, the agent's work folder** (`C:\ProgramData\AutoDeploy\work`) is restricted to
+  SYSTEM and Administrators.
 
 ## Updating the agent
 

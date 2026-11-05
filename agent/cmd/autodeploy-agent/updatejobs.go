@@ -145,9 +145,12 @@ func reportUpdateJobResult(ctx context.Context, c *httpc.Client, agentID string,
 	if err != nil {
 		resultJSON = []byte("{}")
 	}
-	_ = c.PostJSON(ctx,
-		fmt.Sprintf("/api/v1/agent/update-job/%d/result", jobID),
-		updateResultBody(agentID, status, string(resultJSON)), nil)
+	path := fmt.Sprintf("/api/v1/agent/update-job/%d/result", jobID)
+	if err := c.PostJSON(ctx, path, updateResultBody(agentID, status, string(resultJSON)), nil); err != nil &&
+		agentID != "" && strings.Contains(err.Error(), ": 400 ") {
+		// Older server: retry without the agent_id field it doesn't know.
+		_ = c.PostJSON(ctx, path, updateResultBody("", status, string(resultJSON)), nil)
+	}
 }
 
 var kbScanCounter int

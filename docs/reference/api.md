@@ -319,6 +319,20 @@ the kit's files, its steps with parameters already filled in, the effective Run 
 and the restart policy. The second returns the Run As password. Both answer only the agent of the
 machine the job belongs to, and only while that job is **running**. Any other caller gets `403`, and
 a queued or finished job gets `409`. Every password release is audit-logged as `secret.access`.
+Software is restricted the same way. Every request needs the agent's `X-AutoDeploy-Agent-ID`
+header:
+
+- `GET /api/v1/agent/package-items?package=N&job=J`, a pushed package's definition, answers only
+  for job `J`. That job must be a running *Push software* job for package `N` on the calling
+  machine.
+- `POST /api/v1/agent/software`, an image's software set at first boot, answers only for the image
+  the calling machine is bound to. A machine with no image yet is bound to it.
+- `/payload/software/{id}…` serves a package's files only to an agent whose machine needs that
+  package: it's in its image's software set, or a *Push software* job for it is running. Dependencies
+  are included.
+
+Everyone else gets `403`.
+
 Tool kit files are served from `/payload/toolkit/{id}/files/…` and `/payload/toolkit/{id}/bundle/…`,
 but only to a request carrying an `X-AutoDeploy-Agent-ID` header from a machine that is running that
 kit right now. Everyone else gets `403`.

@@ -99,6 +99,11 @@ deploying a kit as a different account, are encrypted with the same key:
   behind.
 - On the machine, the agent uses the password once to log the account on and does not store it.
 
+Software packages are restricted too. Their definitions can include licence keys, transforms or
+response-file arguments. A package's definition and files are served only to an identified agent
+whose machine needs that package, through its image or a running *Push software* job. Dependencies
+are included. Nothing about a package is served anonymously.
+
 Tool kit files are also restricted. They are served only to the agent of a machine that is running
 the kit at that moment. On the machine, the agent's work folder (`C:\ProgramData\AutoDeploy\work`)
 is limited to SYSTEM and Administrators. A Run As account gets read and execute rights on its own

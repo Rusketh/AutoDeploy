@@ -157,6 +157,7 @@ func main() {
 		}
 		secureWorkDir(log, f.workDir)
 		c := httpc.New(f.server, f.uuid, f.insecureTLS)
+		c.AgentID = f.agentID // identifies this agent on every request
 		if isWindowsService() {
 			if err := runService(func(sctx context.Context) {
 				runSelfLoop(sctx, log, c, f, shipper, f.checkInInterval)
@@ -193,6 +194,7 @@ func main() {
 	secureWorkDir(log, f.workDir)
 
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	c.AgentID = f.agentID // identifies this agent on every request
 
 	// Fetch the effective software set.
 	var resp struct {
@@ -293,6 +295,7 @@ func main() {
 // path's report response is the fallback source.
 func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	c.AgentID = f.agentID // identifies this agent on every request
 	var resp struct {
 		MachineID int64  `json:"machine_id"`
 		AgentID   string `json:"agent_id"`
@@ -1591,7 +1594,7 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			Warnings []string       `json:"warnings"`
 		}
 		if err := c.GetJSON(ctx,
-			fmt.Sprintf("/api/v1/agent/package-items?package=%d", p.PackageID), &resp); err != nil {
+			fmt.Sprintf("/api/v1/agent/package-items?package=%d&job=%d", p.PackageID, jobID), &resp); err != nil {
 			return "failed", fmt.Sprintf(`{"error":%q}`, err.Error())
 		}
 		for _, wn := range resp.Warnings {

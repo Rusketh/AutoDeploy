@@ -38,6 +38,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/tftp"
 	"github.com/rusketh/autodeploy/server/internal/wingetsrc"
 	"github.com/rusketh/autodeploy/server/internal/wol"
@@ -261,6 +262,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		DomainJoin: r.DomainJoin,
 		Updates:    r.Updates,
 		Toolkits:   r.Toolkits,
+		SoftwareAccess: &swaccess.Checker{
+			Inventory: r.Inventory, Software: r.Software, Bulk: r.Bulk, Resolver: r.Resolver,
+		},
 		RequireAuth: func(w http.ResponseWriter, req *http.Request) bool {
 			if _, ok := api.UserFromRequest(req, apiRepos); !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

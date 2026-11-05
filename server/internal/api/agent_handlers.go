@@ -9,6 +9,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/swspec"
 	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
@@ -120,6 +121,10 @@ func RegisterAgent(mux *http.ServeMux, r Repos) {
 // transitive dependencies, deps first) into install items. Used by the
 // agent when it runs a bulk "software_push" job, which references a
 // package by id rather than carrying raw steps.
+//
+// The definition is served only for a push job that is running on the
+// calling machine: the agent names the job (?job=), identifies itself with
+// its agent id header, and the job's package must be the one asked for.
 func handleAgentPackageItems(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		pid, err := strconv.ParseInt(req.URL.Query().Get("package"), 10, 64)
@@ -127,16 +132,60 @@ func handleAgentPackageItems(r Repos) http.HandlerFunc {
 			http.Error(w, "package query parameter required", http.StatusBadRequest)
 			return
 		}
+		jobID, _ := strconv.ParseInt(req.URL.Query().Get("job"), 10, 64)
+		m, ok := agentFromHeader(req, r)
+		if !ok || jobID <= 0 || r.Bulk == nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		job, jerr := r.Bulk.GetJob(req.Context(), model.ID(jobID))
+		var p struct {
+			PackageID int64 `json:"package_id"`
+		}
+		if jerr != nil || job.MachineID != m.ID || job.Action != model.BulkActionSoftwarePush ||
+			job.Status != "running" || json.Unmarshal([]byte(job.Payload), &p) != nil || p.PackageID != pid {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		items, warnings := expandSoftwareItems(req.Context(), r, []model.ID{model.ID(pid)})
 		writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
 	}
 }
 
+// Served only to an enrolled agent (agent id header) whose machine is bound
+// to that image. A machine with no image yet -- first boot from an exported
+// USB/ISO, which carries the image id -- is bound to it here, exactly as the
+// PXE manifest binds the machine it deploys; a machine bound to a different
+// image is refused.
 func handleAgentSoftware(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in AgentSoftwareRequest
 		if err := decodeJSON(req, &in); err != nil {
 			writeError(w, err)
+			return
+		}
+		m, ok := agentFromHeader(req, r)
+		if !ok || in.ImageID <= 0 {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+		switch {
+		case b.ImageID != nil && *b.ImageID == in.ImageID:
+		case b.ImageID == nil:
+			if _, err := r.Images.Get(req.Context(), in.ImageID); err != nil {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			b.MachineID = m.ID
+			img := in.ImageID
+			b.ImageID = &img
+			if err := r.Inventory.UpsertBinding(req.Context(), b); err != nil {
+				writeError(w, err)
+				return
+			}
+		default:
+			http.Error(w, "forbidden: this machine is bound to a different image", http.StatusForbidden)
 			return
 		}
 		items, warnings, err := buildSoftwareItems(req, r, in.ImageID)
@@ -484,4 +533,15 @@ func validComputerName(s string) bool {
 		}
 	}
 	return !allDigits
+}
+
+// agentFromHeader identifies the calling agent by its X-AutoDeploy-Agent-ID
+// header (its server-minted id). ok is false for a missing or unknown id.
+func agentFromHeader(req *http.Request, r Repos) (model.MachineRecord, bool) {
+	id := strings.TrimSpace(req.Header.Get(swaccess.AgentIDHeader))
+	if id == "" || r.Inventory == nil {
+		return model.MachineRecord{}, false
+	}
+	m, err := r.Inventory.GetByAgentID(req.Context(), id)
+	return m, err == nil
 }

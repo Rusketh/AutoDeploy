@@ -14,6 +14,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
@@ -45,6 +46,9 @@ type Service struct {
 	// Toolkits serves Tool Kit files and bundles to the agent. Optional; nil
 	// disables the /payload/toolkit/* routes.
 	Toolkits *model.ToolkitRepo
+	// SoftwareAccess decides which agent may download which software
+	// package. nil refuses every software download (secure default).
+	SoftwareAccess *swaccess.Checker
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -523,6 +527,9 @@ func (s *Service) serveSoftware(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	pkg, err := s.Software.Get(r.Context(), id)
 	if err != nil {
 		writeModelErr(w, err)
@@ -551,6 +558,9 @@ func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad filename", http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	if _, err := s.Software.Get(r.Context(), id); err != nil {
 		writeModelErr(w, err)
 		return
@@ -573,12 +583,29 @@ func (s *Service) serveSoftwareBundle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad filename", http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	if _, err := s.Software.Get(r.Context(), id); err != nil {
 		writeModelErr(w, err)
 		return
 	}
 	rel := "software/" + fmt.Sprint(int64(id)) + "/bundle/" + name
 	s.serveBlob(w, r, rel)
+}
+
+// softwareAllowed admits only an enrolled agent whose machine needs package
+// id (its image's software set, or a running push, dependencies included).
+// Installers and their configuration (licence keys, transforms, response
+// files) are not public. Writes 403 itself and returns false otherwise; the
+// response doesn't reveal whether the package exists.
+func (s *Service) softwareAllowed(w http.ResponseWriter, r *http.Request, id model.ID) bool {
+	m, ok := s.SoftwareAccess.Machine(r)
+	if !ok || !s.SoftwareAccess.Allowed(r.Context(), m.ID, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // serveToolkitFile streams one file from a Tool Kit's files/ tree. Same

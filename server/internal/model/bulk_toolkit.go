@@ -82,3 +82,29 @@ func (r *BulkRepo) ToolkitDoneMachines(ctx context.Context, toolkitID ID) (map[I
 func (r *BulkRepo) PurgeFinishedCredentials(ctx context.Context) (int64, error) {
 	return PurgeFinishedCredentials(ctx, r.db)
 }
+
+// RunningPushPackages returns the package ids of the machine's software_push
+// jobs that are running right now (claimed, not yet reported) -- what the
+// agent is entitled to download for a push, before dependency expansion.
+func (r *BulkRepo) RunningPushPackages(ctx context.Context, machineID ID) ([]ID, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT CAST(json_extract(o.payload,'$.package_id') AS INTEGER)
+		FROM bulk_job j JOIN bulk_operation o ON o.id=j.operation_id
+		WHERE j.machine_id=? AND j.status='running' AND o.action=?`,
+		int64(machineID), BulkActionSoftwarePush)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ID
+	for rows.Next() {
+		var id sql.NullInt64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id.Valid && id.Int64 > 0 {
+			out = append(out, ID(id.Int64))
+		}
+	}
+	return out, rows.Err()
+}
