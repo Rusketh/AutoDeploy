@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,6 +94,11 @@ type AgentSelfResponse struct {
 	// the on-disk lock marker that the credential provider reads; it clears
 	// the marker once it closes the deployment, so later pushes never lock.
 	SetupLock bool `json:"setup_lock,omitempty"`
+	// CredentialStatus is "secured" when the agent authenticated with its
+	// secret, or "legacy" when it has none yet (it should request one).
+	CredentialStatus string `json:"credential_status,omitempty"`
+	// CredentialRotateSeconds is how often the agent replaces its secret.
+	CredentialRotateSeconds int64 `json:"credential_rotate_seconds,omitempty"`
 	// DesiredName is the computer name this machine should carry, resolved
 	// from its binding (or the bound image's name template). It is set only
 	// when that name is DETERMINISTIC (a literal, or a hardware-derived
@@ -120,6 +126,10 @@ func RegisterAgent(mux *http.ServeMux, r Repos) {
 // transitive dependencies, deps first) into install items. Used by the
 // agent when it runs a bulk "software_push" job, which references a
 // package by id rather than carrying raw steps.
+//
+// The definition is served only for a push job that is running on the
+// calling machine: the agent names the job (?job=), identifies itself with
+// its agent id header, and the job's package must be the one asked for.
 func handleAgentPackageItems(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		pid, err := strconv.ParseInt(req.URL.Query().Get("package"), 10, 64)
@@ -127,16 +137,94 @@ func handleAgentPackageItems(r Repos) http.HandlerFunc {
 			http.Error(w, "package query parameter required", http.StatusBadRequest)
 			return
 		}
+		jobID, _ := strconv.ParseInt(req.URL.Query().Get("job"), 10, 64)
+		caller, aerr := agentAuth(r).Any(req, "")
+		if aerr != nil || r.Bulk == nil {
+			agentauth.Write(w, aerr)
+			return
+		}
+		m := caller.Machine
+		if jobID <= 0 {
+			// Agents from before job binding name no job: accepted only
+			// for a legacy machine with a push of this package running.
+			running, _ := r.Bulk.RunningPushPackages(req.Context(), m.ID)
+			ok := false
+			for _, id := range running {
+				if id == model.ID(pid) {
+					ok = true
+				}
+			}
+			if !caller.Legacy || !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			items, warnings := expandSoftwareItems(req.Context(), r, []model.ID{model.ID(pid)})
+			writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
+			return
+		}
+		job, jerr := r.Bulk.GetJob(req.Context(), model.ID(jobID))
+		var p struct {
+			PackageID int64 `json:"package_id"`
+		}
+		if jerr != nil || job.MachineID != m.ID || job.Action != model.BulkActionSoftwarePush ||
+			job.Status != "running" || json.Unmarshal([]byte(job.Payload), &p) != nil || p.PackageID != pid {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		items, warnings := expandSoftwareItems(req.Context(), r, []model.ID{model.ID(pid)})
 		writeJSON(w, http.StatusOK, AgentSoftwareResponse{Items: items, Warnings: warnings})
 	}
 }
 
+// Served only to an enrolled agent (agent id header) whose machine is bound
+// to that image. A machine with no image yet -- first boot from an exported
+// USB/ISO, which carries the image id -- is bound to it here, exactly as the
+// PXE manifest binds the machine it deploys; a machine bound to a different
+// image is refused.
 func handleAgentSoftware(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in AgentSoftwareRequest
 		if err := decodeJSON(req, &in); err != nil {
 			writeError(w, err)
+			return
+		}
+		caller, aerr := agentAuth(r).Any(req, "")
+		if aerr != nil {
+			agentauth.Write(w, aerr)
+			return
+		}
+		m := caller.Machine
+		if in.ImageID <= 0 {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		b, _ := r.Inventory.GetBinding(req.Context(), m.ID)
+		switch {
+		case b.ImageID != nil && *b.ImageID == in.ImageID:
+		case b.ImageID == nil:
+			if _, err := r.Images.Get(req.Context(), in.ImageID); err != nil {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			// A secured machine may bind itself only to the image whose
+			// exported media issued its secret (a legacy agent keeps the
+			// old behaviour while legacy auth is on).
+			if !caller.Legacy && r.Credentials != nil {
+				if c, cerr := r.Credentials.Get(req.Context(), m.ID); cerr != nil ||
+					c.IssuedVia != "media" || c.IssuedImageID != in.ImageID {
+					http.Error(w, "forbidden: this machine isn't bound to an image; bind it in the portal", http.StatusForbidden)
+					return
+				}
+			}
+			b.MachineID = m.ID
+			img := in.ImageID
+			b.ImageID = &img
+			if err := r.Inventory.UpsertBinding(req.Context(), b); err != nil {
+				writeError(w, err)
+				return
+			}
+		default:
+			http.Error(w, "forbidden: this machine is bound to a different image", http.StatusForbidden)
 			return
 		}
 		items, warnings, err := buildSoftwareItems(req, r, in.ImageID)
@@ -158,11 +246,12 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			http.Error(w, "id query parameter required", http.StatusBadRequest)
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), agentID)
+		caller, err := agentAuth(r).Agent(req, agentID)
 		if err != nil {
-			writeError(w, err) // 404 for an unknown id
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		// A successful poll IS the check-in: bump last_seen so the portal
 		// shows real liveness for every agent version (the resident loop
 		// otherwise never touched it). Best-effort -- a write hiccup must not
@@ -173,6 +262,15 @@ func handleAgentSelf(r Repos) http.HandlerFunc {
 			AgentID:   m.AgentID,
 			Software:  []AgentSoftwareItem{},
 			Jobs:      []model.BulkJob{},
+			// Tells an agent without a secret to obtain one, and a secured
+			// agent how often to rotate it.
+			CredentialStatus: model.CredSecured,
+		}
+		if caller.Legacy {
+			resp.CredentialStatus = model.CredLegacy
+		}
+		if r.AgentSecretRotation > 0 {
+			resp.CredentialRotateSeconds = int64(r.AgentSecretRotation.Seconds())
 		}
 		// Advertise the operator-configured check-in cadence so the agent
 		// adjusts its poll interval live (no reinstall needed to speed it up

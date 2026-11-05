@@ -84,8 +84,11 @@ func TestBulkLifecycleEmitsNotifications(t *testing.T) {
 	if len(claim.Jobs) != 1 {
 		t.Fatalf("expected to claim 1 job, got %d", len(claim.Jobs))
 	}
-	resp, err = client.Post(srv.URL+"/api/v1/agent/jobs/"+itoa64(int64(claim.Jobs[0].ID))+"/result",
-		"application/json", strings.NewReader(`{"status":"ok"}`))
+	rreq, _ := http.NewRequest("POST", srv.URL+"/api/v1/agent/jobs/"+itoa64(int64(claim.Jobs[0].ID))+"/result",
+		strings.NewReader(`{"status":"ok"}`))
+	rreq.Header.Set("Content-Type", "application/json")
+	rreq.Header.Set("X-AutoDeploy-Machine-UUID", "u-notify")
+	resp, err = client.Do(rreq)
 	if err != nil {
 		t.Fatal(err)
 	}

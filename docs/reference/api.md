@@ -199,7 +199,7 @@ are keyed by SMBIOS UUID. There is no create endpoint.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `action` | yes | One of `rename`, `software_push`, `script`, `reimage`. |
+| `action` | yes | One of `rename`, `software_push`, `script`, `reimage`, `toolkit`. |
 | `target` | yes | Selection: `{ "name_regex", "ou", "group", "machine_ids" }` (empty fields are ignored). |
 | `payload` | yes | A JSON **string** carrying action-specific parameters (must be valid JSON). |
 | `reimage_image_id` | for `reimage` | Image to deploy; `0`/omitted uses each machine's existing binding. |
@@ -288,6 +288,17 @@ information).
 | `GET /api/v1/server/update-log` | Retrieve the last 64 KB of the update log for diagnostics. Accepts an optional `?lines=N` query parameter to limit output. |
 | `POST /api/v1/server/install-agent` | Fetch a matching agent binary (and the credential-provider sidecar) from the GitHub release into the downloads area, so it can be handed to deployed machines. Body `{ "os", "arch", "tag" }` — defaults to `windows`/`amd64`/latest release. Returns the resolved `tag`, `filename`, `sha256` and `path`. `503` if the downloads area is not configured. Driven by the **Settings → Updates** page. |
 
+**`toolkit` payload** (a JSON string, like every payload):
+
+```json
+{"toolkit_id": 3, "run_as": "kit", "params": {"PRINT_SERVER": "\\\\ps02"}, "skip_succeeded": true}
+```
+
+`run_as` is `kit` (the kit's own account, the default), `system`, `logged_on_user` or `user` (then
+set `run_as_user`). The API has no field for a password. A `user` override therefore works over the
+API only when the account is the kit's own, so its stored password can be used. To enter a password
+for a different account, use the portal. The server adds `revision` when the operation is queued.
+
 ## Client & agent endpoints
 
 The boot client and agent use a dedicated set of endpoints for AutoDeploy's internal protocol —
@@ -297,8 +308,65 @@ installs to acquire the machine's agent id, check-in, hardware reports, job resu
 state, self-update, and `domain-join`). These are not intended for
 operator scripting and are listed here only for completeness.
 
+**Agent authentication.** Agents send `X-AutoDeploy-Agent-ID` and `X-AutoDeploy-Agent-Secret` on
+every request; see [Agent secrets](../operations/security.md#agent-secrets).
+
+- A machine that holds a secret gets `401` on any agent endpoint without it. This includes the old
+  ways of identifying the machine: `agent_id` in the body or query, or the
+  `X-AutoDeploy-Machine-UUID` header.
+- A machine that has never had a secret is accepted the old way while `AUTODEPLOY_AGENT_LEGACY_AUTH`
+  is on.
+- An unknown agent id gets `404`.
+- A valid secret sent with an `X-AutoDeploy-Machine-UUID` header for other hardware gets `409`.
+  This means a clone; the agent re-enrols as itself.
+
+Two endpoints manage the secret:
+
+- `POST /api/v1/agent/credential` requests one. The body is
+  `{"agent_id" | "system_uuid", "nonce", "image_id"?, "enroll_token"?}`. The response is
+  `{"status":"issued","secret":…}`, or `202 {"status":"pending"}` when an operator must approve,
+  or `403 {"status":"denied"}`.
+- `GET /api/v1/agent/whoami?id=<agent_id>`, with the `X-AutoDeploy-Machine-UUID` header, returns
+  `{"same_hardware": bool}`: whether that agent id belongs to this hardware. It needs no secret and
+  reveals nothing else. Agents use it to detect that they were cloned.
+- `POST /api/v1/agent/credential/rotate` replaces the secret. The body is `{"new_secret"}`, and
+  the request is authenticated with the current secret. Repeating it is safe.
+
+The image manifest returns `agent_secret` when the request carries `"want_credential": true` and
+the deploy is authorised.
+
 `POST /api/v1/agent/domain-join` returns the [agent-driven domain join](../operations/active-directory.md#agent-driven-join-recommended)
 configuration for the calling machine's bound image (domain, OU, join account and — only over this
 authenticated agent channel — the join password). It is the runtime source of join credentials, so
 they never need to be written into the unattend answer file.
+
+`POST /api/v1/agent/toolkit-job` and `POST /api/v1/agent/job-credential` (body
+`{"agent_id": "...", "job_id": N}`) serve a [tool kit](../portal/toolkits.md) run. The first returns
+the kit's files, its steps with parameters already filled in, the effective Run As mode, the timeout
+and the restart policy. The second returns the Run As password. Both answer only the agent of the
+machine the job belongs to, and only while that job is **running**. Any other caller gets `403`, and
+a queued or finished job gets `409`. Every password release is audit-logged as `secret.access`.
+Software is restricted the same way. Every request needs the agent's `X-AutoDeploy-Agent-ID`
+header:
+
+- `GET /api/v1/agent/package-items?package=N&job=J`, a pushed package's definition, answers only
+  for job `J`. That job must be a running *Push software* job for package `N` on the calling
+  machine.
+- `POST /api/v1/agent/software`, an image's software set at first boot, answers only for the image
+  the calling machine is bound to. A machine with no image yet is bound to it.
+- `/payload/software/{id}…` serves a package's files only to an agent whose machine needs that
+  package: it's in its image's software set, or a *Push software* job for it is running. Dependencies
+  are included.
+
+Everyone else gets `403`.
+
+Tool kit files are served from `/payload/toolkit/{id}/files/…` and `/payload/toolkit/{id}/bundle/…`,
+but only to a request carrying an `X-AutoDeploy-Agent-ID` header from a machine that is running that
+kit right now. Everyone else gets `403`.
+
+`POST /api/v1/agent/jobs/{id}/result` and `POST /api/v1/agent/update-job/{id}/result` accept a
+result only from the machine the job belongs to. The machine is identified by an `agent_id` in the
+body, or, for agents that predate it, by the `X-AutoDeploy-Machine-UUID` header. Any other caller
+gets `403`. A bulk job must also still be running: a second report, or one for a job that was never
+picked up, gets `409`.
 </content>

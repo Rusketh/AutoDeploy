@@ -1,0 +1,75 @@
+{{define "body"}}
+<div class="toolbar">
+  <h2>Tool Kits</h2>
+  {{template "search_form" .Data.Search}}
+  {{template "search_count" .Data.Search}}
+  <div class="right">
+    <a class="btn" href="/portal/toolkits/new"><svg><use href="#i-plus"/></svg>New tool kit</a>
+  </div>
+</div>
+<p class="hint mt-0">A tool kit is a reusable set of files and steps that <strong>runs once each time you deploy it</strong> — on one machine from its page, or on many as a <a href="/portal/bulk">bulk operation</a>. Each kit has a default Run As account, which you can change when you deploy it.</p>
+{{if .Data.Kits}}
+<div class="tablewrap">
+<table id="tbl" data-sortable>
+  <thead><tr>
+    <th>Name</th>
+    <th>Description</th>
+    <th>Runs as</th>
+    <th class="num" data-sort="num">Size</th>
+    <th class="num" data-sort="num">Revision</th>
+    <th class="num" data-sort="num">Succeeded</th>
+    <th class="num" data-sort="num">Failed</th>
+    <th class="num" data-sort="num">Pending</th>
+    <th data-sort="num">Last run</th>
+    <th data-nosort></th>
+  </tr></thead>
+  <tbody>
+    {{range .Data.Kits}}
+    {{$s := index $.Data.Stats .ID}}
+    {{$size := index $.Data.Sizes .ID}}
+    <tr>
+      <td><a href="/portal/toolkits/{{int64 .ID}}/edit"><strong>{{.Name}}</strong></a></td>
+      <td class="small muted">{{.Description}}</td>
+      <td class="small">{{runAsText .RunAsMode .RunAsUser}}{{if and (eq .RunAsMode "user") (not .HasPassword)}} <span class="badge warn" title="No password stored">no password</span>{{end}}</td>
+      <td class="num nowrap" data-sort-value="{{$size}}">{{if $size}}{{humanBytes $size}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="num">{{.Revision}}</td>
+      <td class="num">{{if $s.OK}}{{$s.OK}}{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="num">{{if $s.Failed}}<span class="badge bad">{{$s.Failed}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="num">{{if $s.Pending}}{{$s.Pending}}{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="small muted" data-sort-value="{{if $s.LastRun}}{{(deref $s.LastRun).Unix}}{{else}}0{{end}}">{{if $s.LastRun}}{{timeAgo $s.LastRun}}{{else}}never{{end}}</td>
+      <td class="actions">
+        <a class="btn secondary sm" href="/portal/bulk/new?toolkit_id={{int64 .ID}}"><svg><use href="#i-bolt"/></svg>Run…</a>
+        <a class="btn ghost sm" href="/portal/toolkits/{{int64 .ID}}/edit"><svg><use href="#i-pencil"/></svg>Edit</a>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else if .Data.Search.Query}}
+{{template "search_empty" .Data.Search}}
+{{else}}
+<div class="empty">
+  <svg class="empty-icon"><use href="#i-wrench"/></svg>
+  <h3>No tool kits yet</h3>
+  <p>Package a script, a diagnostic tool or a one-off fix as a tool kit, then run it on any machine whenever you need it.</p>
+  <a class="btn" href="/portal/toolkits/new"><svg><use href="#i-plus"/></svg>New tool kit</a>
+</div>
+{{end}}
+
+{{if .Data.Packages}}
+<details class="mt-4">
+  <summary class="small muted">Create a tool kit from a software package…</summary>
+  <form class="std mt-2" method="POST" action="/portal/toolkits/from-software">
+    <p class="hint">Copies the package's install steps and files into a new tool kit that runs as SYSTEM. Detection rules are left behind — a tool kit runs every time it's deployed.</p>
+    <label><span class="lbl">Software package</span>
+      <select name="software_package_id" required>
+        <option value="">— choose a package —</option>
+        {{range .Data.Packages}}<option value="{{int64 .ID}}">{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <div class="actions"><button type="submit" class="secondary"><svg><use href="#i-copy"/></svg>Create tool kit</button></div>
+  </form>
+</details>
+{{end}}
+{{end}}

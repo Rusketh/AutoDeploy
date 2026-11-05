@@ -70,14 +70,21 @@ func bulkFormNew(r Repos) http.HandlerFunc {
 		pkgs, _ := r.Software.List(req.Context())
 		imgs, _ := r.Images.List(req.Context())
 		groups, _ := r.Groups.List(req.Context())
+		ap := formPrefill(nil, displayLoc(r))
+		// Preselect a kit when arriving from its page ("Run on machines").
+		if n, err := strconv.ParseInt(req.URL.Query().Get("toolkit_id"), 10, 64); err == nil && n > 0 {
+			ap["Action"] = model.BulkActionToolkit
+			ap["ToolkitID"] = n
+		}
 		render(w, req, r, "bulk_form.html", "New bulk operation", map[string]any{
+			"Toolkits":     toolkitPickerKits(req.Context(), r, ap),
 			"Packages":     pkgs,
 			"Images":       imgs,
 			"Groups":       groups,
 			"FormAction":   "/portal/bulk",
 			"ReviewAction": "/portal/bulk/review",
 			"Editing":      false,
-			"AP":           formPrefill(nil, displayLoc(r)),
+			"AP":           ap,
 			"SelInitJSON":  "[]",
 		})
 	}
@@ -150,6 +157,9 @@ type bulkParams struct {
 	// Delivery options.
 	WakeOnLAN          bool
 	CancelAfterMinutes int
+	// Cred is a Tool Kit Run As override password entered on the form, to
+	// store against the operation once it exists. Secret: never logged.
+	Cred toolkitCred
 }
 
 // bulkFieldErr is a parseBulkForm failure tied to the form field it
@@ -163,7 +173,11 @@ func fieldErr(field, msg string) error { return &bulkFieldErr{Field: field, Msg:
 // parseBulkForm reads the shared action + target + schedule fields. On
 // failure it returns a *bulkFieldErr naming the field and saying, in plain
 // words, what to fix.
-func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
+//
+// kits resolves a Tool Kit action (nil: the action is unavailable) and
+// existingOp is the operation being edited (0 when creating), whose stored
+// Run As password may satisfy the password check.
+func parseBulkForm(req *http.Request, loc *time.Location, kits *model.ToolkitRepo, existingOp model.ID) (bulkParams, error) {
 	if err := req.ParseForm(); err != nil {
 		return bulkParams{}, err
 	}
@@ -266,8 +280,14 @@ func parseBulkForm(req *http.Request, loc *time.Location) (bulkParams, error) {
 	case model.BulkActionReimage:
 		p.Payload = "{}"
 		p.ReimageImageID = reimageImageIDFromForm(req)
+	case model.BulkActionToolkit:
+		payload, cred, err := toolkitPayloadFromForm(req, kits, existingOp)
+		if err != nil {
+			return p, err
+		}
+		p.Payload, p.Cred = payload, cred
 	default:
-		return p, fieldErr("action", "Choose what to do: rename, run a script, install software or re-image.")
+		return p, fieldErr("action", "Choose what to do: rename, run a script, install software, run a tool kit or re-image.")
 	}
 	return p, nil
 }
@@ -343,7 +363,7 @@ func recurSpecFromForm(req *http.Request) (string, error) {
 func bulkCreate(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		loc := displayLoc(r)
-		p, err := parseBulkForm(req, loc)
+		p, err := parseBulkForm(req, loc, r.Toolkits, 0)
 		if err != nil {
 			bulkFormRejected(w, req, r, nil, err)
 			return
@@ -372,6 +392,14 @@ func bulkCreate(r Repos) http.HandlerFunc {
 			bulkFormRejected(w, req, r, nil, err)
 			return
 		}
+		if err := storeToolkitCredential(req.Context(), r, op, p.Cred); err != nil {
+			// Without its password the operation can't run: stop it rather
+			// than let every job fail.
+			_ = r.Bulk.CancelOperation(req.Context(), op.ID)
+			bulkFormRejected(w, req, r, nil, fieldErr(tkFieldPassword, "Couldn't store the Run As password ("+err.Error()+"); nothing was queued."))
+			return
+		}
+		reviewCreds.drop(req.FormValue(tkFieldPasswordToken))
 		r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
 		// "Run now" queued its jobs above — wake the targets; scheduled and
 		// recurring runs are woken by the scheduler when they materialise.
@@ -408,7 +436,13 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 		}
 		selJSON, _ := json.Marshal(selInit)
 		groups, _ := r.Groups.List(req.Context())
+		ap := formPrefill(&op, displayLoc(r))
+		if op.Action == model.BulkActionToolkit && r.Toolkits != nil {
+			_, has, _ := r.Toolkits.HasOperationCredential(req.Context(), op.ID)
+			ap["ToolkitStoredPassword"] = has
+		}
 		render(w, req, r, "bulk_form.html", "Edit "+bulkTitle(op), map[string]any{
+			"Toolkits":     toolkitPickerKits(req.Context(), r, ap),
 			"Packages":     pkgs,
 			"Images":       imgs,
 			"Groups":       groups,
@@ -416,7 +450,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 			"ReviewAction": fmt.Sprintf("/portal/bulk/%d/review", int64(id)),
 			"Editing":      true,
 			"Op":           op,
-			"AP":           formPrefill(&op, displayLoc(r)),
+			"AP":           ap,
 			"SelInitJSON":  string(selJSON),
 		})
 	}
@@ -425,7 +459,7 @@ func bulkEditForm(r Repos) http.HandlerFunc {
 func bulkEditSave(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, _ := pathID(req)
-		p, err := parseBulkForm(req, displayLoc(r))
+		p, err := parseBulkForm(req, displayLoc(r), r.Toolkits, id)
 		if err != nil {
 			bulkEditRejected(w, req, r, id, err)
 			return
@@ -457,6 +491,13 @@ func bulkEditSave(r Repos) http.HandlerFunc {
 			bulkEditRejected(w, req, r, id, err)
 			return
 		}
+		if op, _, gerr := r.Bulk.GetOperation(req.Context(), id); gerr == nil {
+			if err := storeToolkitCredential(req.Context(), r, op, p.Cred); err != nil {
+				bulkEditRejected(w, req, r, id, fieldErr(tkFieldPassword, "Saved, but couldn't store the Run As password: "+err.Error()))
+				return
+			}
+		}
+		reviewCreds.drop(req.FormValue(tkFieldPasswordToken))
 		flash(w, "ok", "Operation updated.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/bulk/%d", int64(id)), http.StatusFound)
 	}
@@ -529,14 +570,20 @@ func bulkFormRender(w http.ResponseWriter, req *http.Request, r Repos, op *model
 	if sel == nil {
 		selJSON = []byte("[]")
 	}
+	ap := bulkPrefillFromRequest(req)
+	if op != nil && op.Action == model.BulkActionToolkit && r.Toolkits != nil && ap["ToolkitStoredPassword"] != true {
+		_, has, _ := r.Toolkits.HasOperationCredential(req.Context(), op.ID)
+		ap["ToolkitStoredPassword"] = has
+	}
 	data := map[string]any{
+		"Toolkits":     toolkitPickerKits(req.Context(), r, ap),
 		"Packages":     pkgs,
 		"Images":       imgs,
 		"Groups":       groups,
 		"FormAction":   "/portal/bulk",
 		"ReviewAction": "/portal/bulk/review",
 		"Editing":      false,
-		"AP":           bulkPrefillFromRequest(req),
+		"AP":           ap,
 		"SelInitJSON":  string(selJSON),
 	}
 	title := "New bulk operation"
@@ -592,6 +639,7 @@ func bulkPrefillFromRequest(req *http.Request) map[string]any {
 	ap["WakeOnLAN"] = req.FormValue("wake_on_lan") != ""
 	str("CancelAfterValue", "cancel_after_value")
 	str("CancelAfterUnit", "cancel_after_unit")
+	toolkitPrefillFromRequest(ap, req, true)
 	return ap
 }
 
@@ -748,9 +796,24 @@ func bulkDetail(r Repos) http.HandlerFunc {
 		if detail.PackageID > 0 {
 			pkg = entityLinkHTML(lookup, model.KindSoftware, model.ID(detail.PackageID))
 		}
+		var kitLink template.HTML
+		var kitSummary *toolkitPayloadSummary
+		if op.Action == model.BulkActionToolkit {
+			var kit *model.Toolkit
+			s := summarizeToolkitPayload(op.Payload, nil)
+			if r.Toolkits != nil {
+				if k, kerr := r.Toolkits.Get(req.Context(), s.ToolkitID); kerr == nil {
+					kit = &k
+					s = summarizeToolkitPayload(op.Payload, kit)
+				}
+			}
+			kitSummary = &s
+			kitLink = entityLinkHTML(lookup, model.KindToolkit, s.ToolkitID)
+		}
 		render(w, req, r, "bulk_detail.html", bulkTitle(op), map[string]any{
 			"Op": op, "Jobs": jobs, "Runs": runs,
 			"Image": image, "Package": pkg,
+			"Toolkit": kitLink, "ToolkitSummary": kitSummary,
 			"Detail": detail,
 			"Target": bulkTargetHTML(lookup, op.Target, op.TargetMode),
 		})
@@ -801,6 +864,7 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 		"CancelAfterValue":  "",
 		"CancelAfterUnit":   "hours",
 	}
+	toolkitPrefillDefaults(ap)
 	if op == nil {
 		return ap
 	}
@@ -824,6 +888,8 @@ func formPrefill(op *model.BulkOperation, loc *time.Location) map[string]any {
 		var raw map[string]int64
 		_ = json.Unmarshal([]byte(op.Payload), &raw)
 		ap["SoftwarePackageID"] = raw["package_id"]
+	case model.BulkActionToolkit:
+		toolkitPrefillFromPayload(ap, op.Payload)
 	}
 	ap["ReimageImageID"] = int64(op.ReimageImageID)
 	ap["ScheduleKind"] = op.ScheduleKind

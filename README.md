@@ -21,7 +21,8 @@ There is no client to pre-install: a machine PXE-boots, appears in the portal, a
 - **Driver packages** matched to hardware automatically from SMBIOS identity.
 - **Software packages & loadouts** with detection rules and scripted install steps.
 - **Inventory** of every machine — hardware, bindings, and deployment history.
-- **Bulk operations** — reimage, rename, run scripts, or push software to many machines at once.
+- **Tool Kits** — reusable, run-once payloads (files + steps) run on demand on one machine or many, as SYSTEM, the signed-in user, or a chosen account.
+- **Bulk operations** — reimage, rename, run scripts, run tool kits, or push software to many machines at once.
 - **Active Directory** domain join and lookups.
 - **Payload mirrors** for scaling across sites, and **audit logging** of every action.
 

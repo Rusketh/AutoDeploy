@@ -21,6 +21,7 @@ from a single web portal. This guide takes you from a bare server to a fully man
 - **[Dashboard](portal/dashboard.md)** — fleet overview and quick actions.
 - **[Payloads](portal/payloads.md)** — ISOs, unattend files, and driver packages.
 - **[Software & loadouts](portal/software.md)** — software packages, detection, install steps, and loadouts.
+- **[Tool Kits](portal/toolkits.md)** — reusable, run-once payloads you run on demand, as SYSTEM, the signed-in user, or a chosen account.
 - **[Images](portal/images.md)** — composing ISOs, unattends, drivers and software into a deployable image.
 - **[Machines](portal/machines.md)** — inventory, machine detail, bindings, and history.
 - **[Machine groups](portal/machine-groups.md)** — manual and dynamic groups to filter, target, and scope by.

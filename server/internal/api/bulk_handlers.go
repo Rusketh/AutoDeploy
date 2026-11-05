@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -237,6 +239,12 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// Claiming hands out job payloads: a machine with a secret must
+		// prove it; a legacy machine is accepted by UUID as before.
+		if _, aerr := agentAuth(r).Check(req, m); aerr != nil {
+			agentauth.Write(w, aerr)
+			return
+		}
 		emitFirstSeen(req, r, m)
 		jobs, err := r.Bulk.ClaimJobsFor(req.Context(), m.ID, 8)
 		if err != nil {
@@ -257,8 +265,16 @@ func handleAgentCheckin(r Repos) http.HandlerFunc {
 type jobResultReq struct {
 	Status string `json:"status"`
 	Result string `json:"result_json,omitempty"`
+	// AgentID authenticates the report (current agents send it). Agents
+	// that predate it are identified by their X-AutoDeploy-Machine-UUID
+	// header instead -- the same identity /agent/checkin claims jobs with.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
+// handleAgentJobResult records a job's outcome. Only the machine the job was
+// handed to may report it, and only while it is running (claimed): a
+// stranger can't complete or overwrite someone else's job, and a job can't be
+// reported twice. Refusals don't reveal whether the job exists.
 func handleAgentJobResult(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := parseID(req)
@@ -271,15 +287,58 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 			http.Error(w, "invalid body", http.StatusBadRequest)
 			return
 		}
+		job, err := r.Bulk.GetJob(req.Context(), id)
+		if err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if !jobReporterMatches(req, r, job.MachineID, in.AgentID) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if job.Status != "running" {
+			http.Error(w, "job is not running", http.StatusConflict)
+			return
+		}
 		completedOp, err := r.Bulk.CompleteJob(req.Context(), id, in.Status, in.Result)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		emitSoftwarePushResult(req, r, id, in.Status)
+		emitToolkitResult(req, r, id, in.Status)
 		emitBulkFinished(req, r, completedOp)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// jobReporterMatches reports whether the caller is the machine a job belongs
+// to, authenticated the way that machine must be: its secret when it holds
+// one; otherwise (legacy) by agent_id, or the SMBIOS UUID header old agents
+// send.
+func jobReporterMatches(req *http.Request, r Repos, machineID model.ID, agentID string) bool {
+	if r.Inventory == nil {
+		return false
+	}
+	m, err := r.Inventory.Get(req.Context(), machineID)
+	if err != nil {
+		return false
+	}
+	agentID = strings.TrimSpace(agentID)
+	hdrID := strings.TrimSpace(req.Header.Get(agentauth.HeaderAgentID))
+	switch {
+	case hdrID != "" || agentID != "":
+		if (hdrID != "" && hdrID != m.AgentID) || (agentID != "" && agentID != m.AgentID) {
+			return false
+		}
+	default:
+		uuid := strings.TrimSpace(req.Header.Get(agentauth.HeaderUUID))
+		if uuid == "" || m.SystemUUID == "" || !strings.EqualFold(uuid, m.SystemUUID) {
+			return false
+		}
+	}
+	_, err = agentAuth(r).Check(req, m)
+	return err == nil
 }
 
 // emitSoftwarePushResult fires software.install_ok/failed for a finished

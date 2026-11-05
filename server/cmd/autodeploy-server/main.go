@@ -7,6 +7,8 @@ import (
 	cryptoRand "crypto/rand"
 	base64URLpkg "encoding/base64"
 	"errors"
+	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"log/slog"
 	"net"
 	"net/http"
@@ -38,6 +40,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/runtime"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/tftp"
 	"github.com/rusketh/autodeploy/server/internal/wingetsrc"
 	"github.com/rusketh/autodeploy/server/internal/wol"
@@ -223,6 +226,23 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// return the correct value.
 	api.SetServerVersion(Version)
 
+	// Agents authenticate with a per-machine secret; machines that have
+	// never been issued one keep the old protocol while legacy auth is on.
+	agentAuthenticator := &agentauth.Authenticator{
+		Inventory: r.Inventory, Creds: r.Credentials, AllowLegacy: cfg.AgentLegacyAuth,
+		OnFailure: func(req *http.Request, m model.MachineRecord, reason string) {
+			logger.LogAttrs(req.Context(), slog.LevelWarn, "agent.auth.fail",
+				slog.String("actor", m.SystemUUID),
+				slog.String("action", "agent.auth.fail"),
+				slog.String("target", fmt.Sprintf("machine:%d", int64(m.ID))),
+				slog.String("reason", reason),
+				slog.String("path", req.URL.Path))
+		},
+	}
+	if !cfg.AgentLegacyAuth {
+		logger.LogAttrs(ctx, slog.LevelInfo, "agent.legacy_auth.disabled")
+	}
+
 	// Build the api.Repos value once so we can share it with the
 	// payload auth check below without duplicating field lists.
 	apiRepos := api.Repos{
@@ -244,8 +264,14 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,
+		Toolkits:      r.Toolkits,
 		Emitter:       emitter,
 		Waker:         waker,
+
+		AgentAuth:           agentAuthenticator,
+		Credentials:         r.Credentials,
+		AgentSecretRotation: cfg.AgentSecretRotation,
+		AgentAutoEnrollNew:  cfg.AgentAutoEnrollNew,
 	}
 
 	api.Register(mux, apiRepos)
@@ -259,6 +285,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Inventory:  r.Inventory,
 		DomainJoin: r.DomainJoin,
 		Updates:    r.Updates,
+		Toolkits:   r.Toolkits,
+		SoftwareAccess: &swaccess.Checker{
+			Auth:      agentAuthenticator,
+			Inventory: r.Inventory, Software: r.Software, Bulk: r.Bulk, Resolver: r.Resolver,
+		},
 		RequireAuth: func(w http.ResponseWriter, req *http.Request) bool {
 			if _, ok := api.UserFromRequest(req, apiRepos); !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -284,6 +315,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		DomainJoin: r.DomainJoin,
 		SetupLock:  r.SetupLock,
 		Blobs:      blobs,
+		Creds:      r.Credentials,
+		PINEnabled: func(ctx context.Context) bool {
+			on, err := r.Settings.AccessPINEnabled(ctx)
+			return err != nil || on // fail closed: unknown = PIN required
+		},
 	}
 	mux.HandleFunc("GET /api/v1/images/{id}/manifest", mh.Handler())
 	mux.HandleFunc("POST /api/v1/images/{id}/manifest", mh.Handler())
@@ -316,6 +352,8 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		WebhookRepo:    r.Webhooks,
 		Groups:         r.Groups,
 		ImportedAssets: r.ImportedAssets,
+		Toolkits:       r.Toolkits,
+		Credentials:    r.Credentials,
 		Emitter:        emitter,
 		Waker:          waker,
 		SecretsBox:     bx,
@@ -482,6 +520,8 @@ type appRepos struct {
 	Groups         *model.MachineGroupRepo
 	ImageGroups    *model.ImageGroupRepo
 	ImportedAssets *model.ImportedAssetRepo
+	Toolkits       *model.ToolkitRepo
+	Credentials    *model.AgentCredentialRepo
 	Emitter        *notify.Emitter
 }
 
@@ -509,6 +549,8 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
 	importedAssets := model.NewImportedAssetRepo(db)
+	toolkits := model.NewToolkitRepo(db, bx)
+	credentials := model.NewAgentCredentialRepo(db).WithSecretsBox(bx)
 	// Let first-contact enrollment apply operator-imported name/OU (self-clean
 	// staging table matched on serial+model).
 	inventory.SetAssetImporter(importedAssets)
@@ -529,6 +571,8 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Groups:         groups,
 		ImageGroups:    imageGroups,
 		ImportedAssets: importedAssets,
+		Toolkits:       toolkits,
+		Credentials:    credentials,
 	}
 }
 

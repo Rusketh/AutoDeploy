@@ -208,10 +208,14 @@ type mediaIndex struct {
 }
 
 type manifest struct {
-	ImageID  int64          `json:"image_id"`
-	AgentID  string         `json:"agent_id,omitempty"`
-	Items    []manifestItem `json:"items"`
-	Warnings []string       `json:"warnings,omitempty"`
+	ImageID int64  `json:"image_id"`
+	AgentID string `json:"agent_id,omitempty"`
+	// AgentSecret is the deployed OS's agent secret (the server issues it
+	// because we ask with want_credential). Staged for the agent to import;
+	// never logged, never written into SetupComplete.cmd.
+	AgentSecret string         `json:"agent_secret,omitempty"`
+	Items       []manifestItem `json:"items"`
+	Warnings    []string       `json:"warnings,omitempty"`
 	// SetupLock is true when this image locks the machine with a branded
 	// setup screen until the agent finishes the initial software rollout.
 	// When set, the client fetches the credential provider DLL and injects
@@ -835,9 +839,12 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 
 	reportStage("Preparing", "Fetching deployment manifest", -1)
 	var m manifest
-	// POST identity so the server can match driver packages.
+	// POST identity so the server can match driver packages, and ask for
+	// the new OS's agent secret (want_credential): this client can stage it.
+	manifestReq := identityBody(id)
+	manifestReq["want_credential"] = true
 	if err := c.PostJSON(ctx, fmt.Sprintf("/api/v1/images/%d/manifest", imageID),
-		identityBody(id), &m); err != nil {
+		manifestReq, &m); err != nil {
 		fail(deployFailure{
 			Action: "manifest.fetch",
 			Code:   "MANIFEST",
@@ -945,6 +952,17 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	if m.SetupLock && agentPath != "" {
 		credProviderPath = fetchCredProvider(ctx, c, log, f.work)
 	}
+	// The agent's secret travels as a one-time file next to the agent (the
+	// agent imports it into its protected store and deletes it), never on a
+	// command line or in the registry.
+	agentCredentialPath := ""
+	if agentPath != "" && m.AgentID != "" && m.AgentSecret != "" {
+		if p, err := writeAgentCredential(f.work, m.AgentID, m.AgentSecret); err != nil {
+			log.Warn("agent.credential.stage", slog.String("error", err.Error()))
+		} else {
+			agentCredentialPath = p
+		}
+	}
 	setupCompletePath := ""
 	if agentPath != "" {
 		if m.AgentID == "" {
@@ -972,15 +990,16 @@ func runDeploy(log *slog.Logger, f bootFlags, id smbios.Identity, imageID int64,
 	}
 
 	plan := imaging.MediaPlan{
-		TargetDisk:         f.disk,
-		MediaBytes:         mediaItem.Size,
-		UnattendPath:       unattendPath,
-		Drivers:            drivers,
-		AgentPath:          agentPath,
-		CredProviderPath:   credProviderPath,
-		SetupCompletePath:  setupCompletePath,
-		CallbackScriptPath: callbackScriptPath,
-		WorkDir:            f.work,
+		TargetDisk:          f.disk,
+		MediaBytes:          mediaItem.Size,
+		UnattendPath:        unattendPath,
+		Drivers:             drivers,
+		AgentPath:           agentPath,
+		AgentCredentialPath: agentCredentialPath,
+		CredProviderPath:    credProviderPath,
+		SetupCompletePath:   setupCompletePath,
+		CallbackScriptPath:  callbackScriptPath,
+		WorkDir:             f.work,
 	}
 	runner := &imaging.OSRunner{Log: log, DryRun: f.dryRun}
 	log.Info("deploy.stage.start",
@@ -2039,4 +2058,18 @@ func sanitise(s string) string {
 		out = out[len(out)-96:]
 	}
 	return string(out)
+}
+
+// writeAgentCredential writes the agent's one-time credential file (0600) in
+// the work dir for staging into the OS.
+func writeAgentCredential(workDir, agentID, secret string) (string, error) {
+	b, err := json.Marshal(map[string]string{"agent_id": agentID, "secret": secret})
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(workDir, "agent-credential.json")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		return "", err
+	}
+	return p, nil
 }

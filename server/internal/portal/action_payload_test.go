@@ -65,7 +65,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	}
 
 	// Defaults: WoL off, never cancel.
-	p, err := parseBulkForm(mk(nil), time.UTC)
+	p, err := parseBulkForm(mk(nil), time.UTC, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Hours normalise to minutes; checkbox read.
 	p, err = parseBulkForm(mk(url.Values{
 		"wake_on_lan": {"1"}, "cancel_after_value": {"6"}, "cancel_after_unit": {"hours"},
-	}), time.UTC)
+	}), time.UTC, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Minutes pass through.
 	p, err = parseBulkForm(mk(url.Values{
 		"cancel_after_value": {"90"}, "cancel_after_unit": {"minutes"},
-	}), time.UTC)
+	}), time.UTC, nil, 0)
 	if err != nil || p.CancelAfterMinutes != 90 {
 		t.Errorf("cancel=%d err=%v, want 90", p.CancelAfterMinutes, err)
 	}
@@ -95,7 +95,7 @@ func TestBulkFormDeliveryOptions(t *testing.T) {
 	// Garbage rejected with a friendly error.
 	if _, err := parseBulkForm(mk(url.Values{
 		"cancel_after_value": {"soon"}, "cancel_after_unit": {"hours"},
-	}), time.UTC); err == nil {
+	}), time.UTC, nil, 0); err == nil {
 		t.Error("non-numeric cancel-after should error")
 	}
 }

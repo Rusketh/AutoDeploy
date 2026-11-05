@@ -1794,3 +1794,11 @@ abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cur
 .machine-list li > .dot { width: 8px; height: 8px; box-shadow: none; flex: 0 0 auto; margin-right: var(--sp-2); }
 .disabled-reason { display: inline-block; cursor: not-allowed; margin-left: var(--sp-1); }
 .disabled-reason > button { pointer-events: none; }
+
+/* Tool Kits: per-step results and the deploy-time Run As controls. */
+.toolkit-result .toolkit-err { color: var(--bad); white-space: pre-wrap; }
+.toolkit-steps { margin: 0; padding-left: 1.4rem; }
+.toolkit-steps li { margin: .25rem 0; }
+.toolkit-steps pre.code-block { max-height: 16rem; overflow: auto; white-space: pre-wrap; }
+.toolkit-runas { display: grid; gap: .35rem; margin: .25rem 0 .5rem; }
+.toolkit-params { border-left: 2px solid var(--border, #2a2f3a); padding-left: .75rem; margin: .5rem 0; }

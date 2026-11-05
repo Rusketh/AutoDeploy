@@ -157,6 +157,10 @@ func (r *BulkRepo) RunOperationNow(ctx context.Context, id ID) ([]BulkJob, error
 	if err != nil {
 		return nil, err
 	}
+	targets, err = r.filterToolkitTargets(ctx, op.Action, op.Payload, targets)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	runNo := op.RunCount + 1
 
@@ -332,6 +336,10 @@ func (r *BulkRepo) ExpireOverdueJobs(ctx context.Context, now time.Time) (int64,
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			completedOps = append(completedOps, opID)
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM bulk_credential WHERE operation_id=?`, int64(opID)); err != nil {
+				return 0, nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -370,6 +378,12 @@ func (r *BulkRepo) CancelOperation(ctx context.Context, id ID) error {
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE bulk_operation SET status='cancelled', next_run_at=NULL WHERE id=?`,
 		int64(id)); err != nil {
+		return err
+	}
+	// A cancelled operation never runs again: drop any Run As password
+	// override it held.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM bulk_credential WHERE operation_id=?`, int64(id)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -416,13 +430,14 @@ func (r *BulkRepo) ResumeOperation(ctx context.Context, id ID) error {
 // what an agent is about to do mid-flight.
 func (r *BulkRepo) UpdateOperation(ctx context.Context, in BulkOperation) error {
 	in = withScheduleDefaults(in)
-	switch in.Action {
-	case BulkActionRename, BulkActionSoftwarePush, BulkActionScript, BulkActionReimage:
-	default:
+	if !validBulkAction(in.Action) {
 		return fmt.Errorf("%w: unknown action %q", ErrValidation, in.Action)
 	}
 	if !json.Valid([]byte(in.Payload)) {
 		return fmt.Errorf("%w: payload must be valid JSON", ErrValidation)
+	}
+	if err := r.validateActionPayload(ctx, in.Action, in.Payload); err != nil {
+		return err
 	}
 	if err := validateSchedule(in); err != nil {
 		return err

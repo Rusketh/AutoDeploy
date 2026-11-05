@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"strings"
@@ -86,7 +87,17 @@ func handleAgentDeployProgress(r Repos) http.HandlerFunc {
 		// Touch last_seen so the dashboard's stall detection stays fresh through
 		// a long software install. Best-effort: a missing/blank identity must
 		// not block the progress update, which is keyed by deployment id.
-		if in.Identity.SystemUUID != "" {
+		// The caller must be the machine the deployment belongs to.
+		dm, derr := r.Inventory.DeploymentMachine(req.Context(), in.DeploymentID)
+		if derr != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if _, aerr := agentAuth(r).Check(req, dm); aerr != nil {
+			agentauth.Write(w, aerr)
+			return
+		}
+		if in.Identity.SystemUUID != "" && strings.EqualFold(in.Identity.SystemUUID, dm.SystemUUID) {
 			_, _ = r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
 		}
 		if err := r.Inventory.SetDeploymentProgress(req.Context(), in.DeploymentID, in.Phase, in.Notes, in.Done, in.Total); err != nil {
@@ -126,10 +137,12 @@ func handleAgentIdentity(r Repos) http.HandlerFunc {
 		// or image name template) that the machine hasn't finished yet. Taken
 		// before the observed name is stored, from the name the server last
 		// saw.
-		pending := ""
-		if prev, perr := r.Inventory.GetByAgentID(req.Context(), in.AgentID); perr == nil {
-			pending = desiredNameFor(req.Context(), r, prev.ID)
+		prev, aerr := agentAuth(r).Agent(req, in.AgentID)
+		if aerr != nil {
+			agentauth.Write(w, aerr)
+			return
 		}
+		pending := desiredNameFor(req.Context(), r, prev.Machine.ID)
 		m, err := r.Inventory.UpdateObservedIdentity(req.Context(), in.AgentID, name, dn)
 		if err != nil {
 			writeError(w, err)
@@ -199,11 +212,12 @@ func handleAgentHardware(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), in.AgentID)
+		caller, err := agentAuth(r).Agent(req, in.AgentID)
 		if err != nil {
-			writeError(w, err)
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		// Fold any reported SMBIOS identity into the machine record first.
 		// Guarded by the UUID matching the agent_id's record so a confused
 		// client can't relabel a different machine; absent fields never
@@ -463,6 +477,10 @@ func handleAgentReport(r Repos) http.HandlerFunc {
 		machine, err := r.Inventory.UpsertFromIdentity(req.Context(), in.Identity)
 		if err != nil {
 			writeError(w, err)
+			return
+		}
+		if _, aerr := agentAuth(r).Check(req, machine); aerr != nil {
+			agentauth.Write(w, aerr)
 			return
 		}
 		emitFirstSeen(req, r, machine)

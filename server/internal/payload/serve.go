@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 	"github.com/rusketh/autodeploy/server/internal/unattend"
 )
 
@@ -42,6 +44,12 @@ type Service struct {
 	DomainJoin *model.DomainJoinRepo
 	// Updates serves .msu payload blobs for Windows Update deployment jobs.
 	Updates *model.WindowsUpdateRepo
+	// Toolkits serves Tool Kit files and bundles to the agent. Optional; nil
+	// disables the /payload/toolkit/* routes.
+	Toolkits *model.ToolkitRepo
+	// SoftwareAccess decides which agent may download which software
+	// package. nil refuses every software download (secure default).
+	SoftwareAccess *swaccess.Checker
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -108,6 +116,10 @@ func (s *Service) Register(mux *http.ServeMux) {
 	// and BlobStore.Resolve is the backstop against path traversal.
 	mux.Handle("GET /payload/software/{id}/files/{name...}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
 	mux.Handle("GET /payload/software/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareBundle)))
+	// Tool Kit files: same layout and sanitisation as software packages,
+	// under toolkit/<id>/{files,bundle}.
+	mux.Handle("GET /payload/toolkit/{id}/files/{name...}", s.throttleHandler(http.HandlerFunc(s.serveToolkitFile)))
+	mux.Handle("GET /payload/toolkit/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveToolkitBundle)))
 	mux.Handle("GET /payload/updates/{id}", s.throttleHandler(http.HandlerFunc(s.serveUpdate)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
 }
@@ -516,6 +528,9 @@ func (s *Service) serveSoftware(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	pkg, err := s.Software.Get(r.Context(), id)
 	if err != nil {
 		writeModelErr(w, err)
@@ -544,6 +559,9 @@ func (s *Service) serveSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad filename", http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	if _, err := s.Software.Get(r.Context(), id); err != nil {
 		writeModelErr(w, err)
 		return
@@ -566,12 +584,78 @@ func (s *Service) serveSoftwareBundle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad filename", http.StatusBadRequest)
 		return
 	}
+	if !s.softwareAllowed(w, r, id) {
+		return
+	}
 	if _, err := s.Software.Get(r.Context(), id); err != nil {
 		writeModelErr(w, err)
 		return
 	}
 	rel := "software/" + fmt.Sprint(int64(id)) + "/bundle/" + name
 	s.serveBlob(w, r, rel)
+}
+
+// softwareAllowed admits only an enrolled agent whose machine needs package
+// id (its image's software set, or a running push, dependencies included).
+// Installers and their configuration (licence keys, transforms, response
+// files) are not public. Writes 403 itself and returns false otherwise; the
+// response doesn't reveal whether the package exists.
+func (s *Service) softwareAllowed(w http.ResponseWriter, r *http.Request, id model.ID) bool {
+	m, ok := s.SoftwareAccess.Machine(r)
+	if !ok || !s.SoftwareAccess.Allowed(r.Context(), m.ID, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// serveToolkitFile streams one file from a Tool Kit's files/ tree. Same
+// sanitisation and containment as serveSoftwareFile.
+func (s *Service) serveToolkitFile(w http.ResponseWriter, r *http.Request) {
+	s.serveToolkitBlob(w, r, "files", true)
+}
+
+// serveToolkitBundle streams one Tool Kit bundle zip.
+func (s *Service) serveToolkitBundle(w http.ResponseWriter, r *http.Request) {
+	s.serveToolkitBlob(w, r, "bundle", false)
+}
+
+func (s *Service) serveToolkitBlob(w http.ResponseWriter, r *http.Request, sub string, allowSubdirs bool) {
+	if s.Toolkits == nil {
+		http.Error(w, "tool kits not configured", http.StatusNotFound)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	bad := name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, `\`) || strings.Contains(name, "..")
+	if !allowSubdirs && strings.Contains(name, "/") {
+		bad = true
+	}
+	if bad {
+		http.Error(w, "bad filename", http.StatusBadRequest)
+		return
+	}
+	// Kit files can hold scripts and configuration an operator wouldn't
+	// publish: serve them only to the agent of a machine that is running
+	// this kit right now (its server-minted agent_id is the credential).
+	if strings.TrimSpace(r.Header.Get(agentauth.HeaderAgentID)) == "" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	who := s.SoftwareAccess
+	if who == nil {
+		who = &swaccess.Checker{Inventory: s.Inventory}
+	}
+	m, ok := who.Machine(r)
+	if !ok || !s.Toolkits.MachineRunningKit(r.Context(), m.ID, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.serveBlob(w, r, "toolkit/"+fmt.Sprint(int64(id))+"/"+sub+"/"+name)
 }
 
 func (s *Service) uploadUpdate(w http.ResponseWriter, r *http.Request) {

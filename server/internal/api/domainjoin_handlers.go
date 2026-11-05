@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strings"
 
@@ -55,11 +56,12 @@ func handleAgentDomainJoin(r Repos) http.HandlerFunc {
 			http.Error(w, "agent_id required", http.StatusBadRequest)
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), strings.TrimSpace(in.AgentID))
+		caller, err := agentAuth(r).Agent(req, in.AgentID)
 		if err != nil {
-			writeError(w, err)
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		b, err := r.Inventory.GetBinding(req.Context(), m.ID)
 		if err != nil || b.ImageID == nil {
 			noJoin(w)

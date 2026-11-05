@@ -157,6 +157,19 @@ not a hybrid image. Boot the target from the stick **in UEFI mode**.
   [Linux server install](../install/linux-server.md)), and the image's ISO **boot media must be
   ready** — the same readiness a network deploy needs.
 
+### Media enrolment
+
+Machines installed from an exported ISO get their [agent secret](../operations/security.md#agent-secrets)
+automatically, through the image's **media enrolment**, which every export carries. It doesn't
+expire, and exporting again keeps the same one, so sticks you already have keep working. The
+Resolved view shows when it was created.
+
+![Media enrolment card](../images/image-media-enrolment.png)
+
+If a stick is lost, click **Revoke media enrolment**. Every stick exported so far stops enrolling
+machines. A machine later installed from one asks for approval instead. The next export carries a
+new enrolment.
+
 > **The exported ISO carries the answer file**, which includes the local administrator / OOBE
 > credentials from the image's unattend. Treat exported ISOs as sensitive and don't leave them on
 > shared media.

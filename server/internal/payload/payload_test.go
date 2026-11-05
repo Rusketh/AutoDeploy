@@ -13,9 +13,11 @@ import (
 	"testing"
 
 	"github.com/kdomanski/iso9660"
+	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/storage"
+	"github.com/rusketh/autodeploy/server/internal/swaccess"
 )
 
 func newTestService(t *testing.T) (*httptest.Server, *Service, *model.ISORepo, *model.SoftwarePackageRepo, *model.ImageRepo) {
@@ -34,7 +36,12 @@ func newTestService(t *testing.T) (*httptest.Server, *Service, *model.ISORepo, *
 	drivers := model.NewDriverPackageRepo(db)
 	software := model.NewSoftwarePackageRepo(db)
 	images := model.NewImageRepo(db)
-	svc := &Service{Blobs: blobs, ISOs: isos, Drivers: drivers, Software: software}
+	inv := model.NewInventoryRepo(db)
+	svc := &Service{Blobs: blobs, ISOs: isos, Drivers: drivers, Software: software, Inventory: inv,
+		SoftwareAccess: &swaccess.Checker{
+			Inventory: inv, Software: software, Bulk: model.NewBulkRepo(db, inv),
+			Resolver: resolve.New(images, isos, unattend),
+		}}
 	mux := http.NewServeMux()
 	svc.Register(mux)
 	mh := &ManifestHandler{Resolver: resolve.New(images, isos, unattend)}
@@ -206,11 +213,37 @@ func TestISOMediaIndex(t *testing.T) {
 
 func TestSoftwareUploadAndRangeServe(t *testing.T) {
 	ctx := context.Background()
-	srv, _, _, software, _ := newTestService(t)
+	srv, svc, _, software, images := newTestService(t)
 
 	pkg, err := software.Create(ctx, model.SoftwarePackage{Name: "demo-pkg"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	other, _ := software.Create(ctx, model.SoftwarePackage{Name: "not-for-this-machine"})
+	// The downloading agent's machine is bound to an image with the package.
+	img, err := images.Create(ctx, model.Image{Name: "lab",
+		SoftwareLinks: []model.ImageSoftwareLink{{PackageID: pkg.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := svc.SoftwareAccess.Inventory
+	m, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "sw-dl-1"})
+	_ = inv.UpsertBinding(ctx, model.MachineBinding{MachineID: m.ID, ImageID: &img.ID})
+	stranger, _ := inv.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "sw-dl-2"})
+	get := func(id model.ID, agentID string, hdr map[string]string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/payload/software/"+itoa(id), nil)
+		if agentID != "" {
+			req.Header.Set("X-AutoDeploy-Agent-ID", agentID)
+		}
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
 	}
 	content := strings.Repeat("ABCDEFGH", 128) // 1024 bytes
 	req, _ := http.NewRequest(http.MethodPut,
@@ -225,11 +258,22 @@ func TestSoftwareUploadAndRangeServe(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Full GET.
-	resp, err = http.Get(srv.URL + "/payload/software/" + itoa(pkg.ID))
-	if err != nil {
-		t.Fatal(err)
+	// Anonymous, an unknown agent, a machine without the package, and the
+	// right machine asking for a package it isn't entitled to: all refused.
+	for name, r := range map[string]*http.Response{
+		"anonymous":         get(pkg.ID, "", nil),
+		"unknown agent":     get(pkg.ID, "not-an-agent", nil),
+		"other machine":     get(pkg.ID, stranger.AgentID, nil),
+		"unrelated package": get(other.ID, m.AgentID, nil),
+	} {
+		if r.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: status %d, want 403", name, r.StatusCode)
+		}
+		r.Body.Close()
 	}
+
+	// Full GET.
+	resp = get(pkg.ID, m.AgentID, nil)
 	got, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if string(got) != content {
@@ -237,13 +281,7 @@ func TestSoftwareUploadAndRangeServe(t *testing.T) {
 	}
 
 	// Range GET — bytes=10-19.
-	req, _ = http.NewRequest(http.MethodGet,
-		srv.URL+"/payload/software/"+itoa(pkg.ID), nil)
-	req.Header.Set("Range", "bytes=10-19")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp = get(pkg.ID, m.AgentID, map[string]string{"Range": "bytes=10-19"})
 	if resp.StatusCode != http.StatusPartialContent {
 		t.Fatalf("range status = %d, want 206", resp.StatusCode)
 	}

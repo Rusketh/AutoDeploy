@@ -47,6 +47,10 @@ type agentFlags struct {
 	noSelfUpdate    bool
 }
 
+// agentCreds is the process's credential manager (set in main once the
+// agent id is known); nil only in tests that don't set it.
+var agentCreds *credManager
+
 // Version is set at build time via -ldflags
 // "-X main.Version=v0.1.2". Reported on every check-in so the
 // server can decide whether to push a self-update.
@@ -67,6 +71,7 @@ func main() {
 	flag.StringVar(&f.workDir, "work", defaultWorkDir(), "Scratch directory for downloaded payloads")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log steps without executing them")
 	flag.DurationVar(&f.checkInInterval, "check-in", 0, "Resident-mode check-in interval, e.g. 5m. Zero = one-shot.")
+	flag.StringVar(&f.agentID, "agent-id", "", "Server-minted agent id (normally read from the registry; for manual setups and testing)")
 	flag.BoolVar(&f.noSelfUpdate, "no-self-update", false, "Don't apply self-updates even if the server advertises a newer version. Useful for testing or pinning.")
 	flag.Parse()
 
@@ -144,6 +149,17 @@ func main() {
 		ensureEnrolled(context.Background(), log, &f)
 	}
 
+	// The agent's secret: load it (or import the one the deployment staged)
+	// before any authenticated request.
+	agentCreds = newCredManager(log, f)
+
+	// A golden image captured with the agent already enrolled boots every
+	// clone with the original's identity. Detect that (hardware UUID
+	// mismatch) and enrol as this machine instead.
+	if f.server != "" && f.agentID != "" && isCloned(context.Background(), log, f) {
+		reidentify(context.Background(), log, &f)
+	}
+
 	// New model: identify by the server-minted agent_id and poll
 	// /api/v1/agent/self for desired state. This is how the deployed agent
 	// runs -- as a Windows service, polling forever; the SCM Stop handler
@@ -155,7 +171,10 @@ func main() {
 			log.Error("workdir.create", slog.String("error", err.Error()))
 			os.Exit(1)
 		}
+		secureWorkDir(log, f.workDir)
 		c := httpc.New(f.server, f.uuid, f.insecureTLS)
+		c.AgentID = f.agentID // identifies this agent on every request
+		c.Credentials = agentCreds.Credentials
 		if isWindowsService() {
 			if err := runService(func(sctx context.Context) {
 				runSelfLoop(sctx, log, c, f, shipper, f.checkInInterval)
@@ -189,8 +208,17 @@ func main() {
 		log.Error("workdir.create", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+	secureWorkDir(log, f.workDir)
 
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	c.AgentID = f.agentID // identifies this agent on every request
+	if agentCreds != nil {
+		c.Credentials = agentCreds.Credentials
+	}
+
+	// Obtain the agent secret first (exported USB/ISO media carry a token
+	// that authorises it). Without one the machine may still be legacy.
+	agentCreds.Obtain(ctx, c)
 
 	// Fetch the effective software set.
 	var resp struct {
@@ -291,6 +319,10 @@ func main() {
 // path's report response is the fallback source.
 func ensureEnrolled(ctx context.Context, log *slog.Logger, f *agentFlags) {
 	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	c.AgentID = f.agentID // identifies this agent on every request
+	if agentCreds != nil {
+		c.Credentials = agentCreds.Credentials
+	}
 	var resp struct {
 		MachineID int64  `json:"machine_id"`
 		AgentID   string `json:"agent_id"`
@@ -333,6 +365,11 @@ type selfResponse struct {
 	} `json:"jobs"`
 	Warnings            []string `json:"warnings"`
 	PollIntervalSeconds int      `json:"poll_interval_seconds"`
+	// CredentialStatus is "legacy" when this agent has no secret yet (it
+	// should obtain one) or "secured"; CredentialRotateSeconds is how often
+	// it should replace the secret.
+	CredentialStatus        string `json:"credential_status"`
+	CredentialRotateSeconds int64  `json:"credential_rotate_seconds"`
 	// DeploymentID is the primary key of an open (in_progress) deployment
 	// row for this machine. Non-zero when the boot client opened a deployment
 	// that hasn't been closed yet; the agent reports the final outcome after
@@ -358,9 +395,30 @@ type selfResponse struct {
 func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) time.Duration {
 	var resp selfResponse
 	// agent_id is a UUID (URL-safe), so no escaping needed.
-	if err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp); err != nil {
+	err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
+	if httpc.IsStatus(err, 409) {
+		// The server says this secret belongs to other hardware: we are a
+		// clone. The resident loop re-identifies before the next poll.
+		cloneDetected.Store(true)
 		log.Warn("self.fetch", slog.String("error", err.Error()))
 		return 0
+	}
+	if httpc.IsUnauthorized(err) && agentCreds != nil && agentCreds.Unauthorized(ctx, c) {
+		// Switched to (or obtained) a secret the server accepts: retry.
+		err = c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
+	}
+	if err != nil {
+		log.Warn("self.fetch", slog.String("error", err.Error()))
+		return 0
+	}
+	// Upgrade path / rotation: obtain a secret while still on the legacy
+	// protocol; otherwise rotate when due (or finish a pending rotation).
+	if agentCreds != nil {
+		if resp.CredentialStatus == "legacy" {
+			agentCreds.Obtain(ctx, c)
+		} else {
+			agentCreds.Rotate(ctx, c, time.Duration(resp.CredentialRotateSeconds)*time.Second)
+		}
 	}
 	for _, w := range resp.Warnings {
 		log.Warn("self.warning", slog.String("message", w))
@@ -400,10 +458,18 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// The server hands back the deterministic name it should carry; rename and
 	// reboot BEFORE joining AD or installing software, so the domain object and
 	// everything after it use the final name. Resumes after the reboot.
+	claimed := make([]int64, 0, len(resp.Jobs))
+	for _, j := range resp.Jobs {
+		claimed = append(claimed, j.ID)
+	}
 	if maybeRename(ctx, dlog, resp.DesiredName) {
+		// The jobs this poll claimed won't run before the restart; report
+		// them rather than leave them "running" for good.
+		abandonClaimedJobs(ctx, dlog, c, f, claimed, "to apply its new name")
 		return 0 // a rename reboot is scheduled; the rest resumes after reboot
 	}
 	if maybeDomainJoin(ctx, dlog, c, f) {
+		abandonClaimedJobs(ctx, dlog, c, f, claimed, "to join the domain")
 		return 0 // a join reboot is scheduled; the rest resumes after reboot
 	}
 	// Reclaim the boot-media partition (ADBOOT) once. SECURITY: it holds
@@ -466,10 +532,7 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if len(resp.Jobs) > 0 {
 		runner := &steps.OSRunner{Log: log, DryRun: f.dryRun}
 		for _, j := range resp.Jobs {
-			status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
-			_ = c.PostJSON(ctx,
-				fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
-				map[string]any{"status": status, "result_json": result}, nil)
+			runAndReportJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 		}
 	}
 	// Process Windows Update deployment jobs.
@@ -911,7 +974,15 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	if isWindowsService() {
 		svc = serviceName
 	}
+	// Settle any job a previous run claimed but never reported (the machine
+	// restarted mid-job). Reported, never re-run -- see jobjournal.go.
+	reportInterruptedJobs(ctx, log, c, f)
 	pollLoop(ctx, log, interval, func(ctx context.Context) pollLoopResult {
+		if cloneDetected.Swap(false) {
+			reidentify(ctx, log, &f)
+			c.AgentID = f.agentID
+			c.Credentials = agentCreds.Credentials
+		}
 		suggested := runSelfOnce(ctx, log, c, f)
 		shipLogs(log, shipper, f.server, f.insecureTLS)
 		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {
@@ -1062,14 +1133,94 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 	// into a per-package work directory, then resolve bare filenames in
 	// install-step paths against it. Legacy single-file packages (no
 	// Files list) fall back to the {payload} -> pkg-N.bin path.
-	hasWorkdir := len(pkg.Files) > 0 || len(pkg.Bundles) > 0
-	var legacyPayloadPath string
+	hasWorkdir, legacyPayloadPath, fetched := fetchPackagePayload(ctx, log, c, f, runner, pkg, pkgDir, filesDir, legacyBinPath)
+	if !fetched {
+		return nil, false
+	}
+
+	// Rewrite, in order: substitute the legacy {payload} token; resolve
+	// bare filenames against everything in the work dir (uploaded files +
+	// extracted bundle contents); then expand Windows %ENV% in path fields
+	// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
+	// the real location instead of a literal "%ProgramData%" folder.
+	rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
+	if hasWorkdir {
+		// %pkgdir% -> the work dir (any field, any step type); then resolve
+		// remaining bare filenames against everything in the work dir
+		// (uploaded files + extracted bundle contents).
+		rewritten = expandPkgDir(rewritten, filesDir)
+		knownFiles := mapWorkdirFiles(filesDir)
+		rewritten = resolveBareFilenames(rewritten, knownFiles)
+	}
+	rewritten = expandStepEnv(rewritten)
+	// Adapt appx steps to the agent's context: provision machine-wide when we're
+	// SYSTEM (per-user Add-AppxPackage is rejected for that account), and pick up
+	// a Dependencies/ folder for a bundle whose framework packages weren't named.
+	appxDepDir := ""
+	if hasWorkdir {
+		appxDepDir = filesDir
+	}
+	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
+
+	log.Info("package.install.start",
+		slog.String("target", pkg.Name),
+		slog.String("host_os", facts.OSCaption),
+		slog.Int("steps", len(rewritten)))
+	// Run steps from the package work dir so an installer's relative args
+	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
+	// resolve against the downloaded/extracted files, not the service's CWD.
+	if hasWorkdir {
+		runner.WorkDir = filesDir
+	} else {
+		runner.WorkDir = f.workDir
+	}
+	results := steps.Execute(ctx, rewritten, runner, facts)
+	ok := true
+	for i, r := range results {
+		lvl := slog.LevelInfo
+		if r.Error != nil || r.Aborted {
+			lvl = slog.LevelError
+			ok = false
+		}
+		log.Log(ctx, lvl, "package.step",
+			slog.String("package", pkg.Name),
+			slog.Int("step", i+1),
+			slog.String("type", r.Step.Type),
+			slog.Int("exit_code", r.ExitCode),
+			slog.Bool("aborted", r.Aborted),
+			// A step skipped because its FilterOS didn't match the host is
+			// recorded so an operator can see WHY a step didn't run (e.g. the
+			// Windows 10 zip step was passed over on a Windows 11 machine)
+			// rather than wondering whether it silently failed.
+			slog.Bool("skipped", r.Skipped),
+			slog.String("filter_os", r.Step.FilterOS),
+			slog.String("exit_meaning", stepExitMeaning(r)),
+			slog.Any("error", r.Error),
+		)
+	}
+	if ok {
+		log.Info("package.install.ok",
+			slog.String("target", pkg.Name))
+		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
+		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
+	}
+	log.Error("package.install.fail", packageFailAttrs(pkg.Name, results, runner.LastStderr())...)
+	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
+}
+
+// fetchPackagePayload downloads an item's files into filesDir and extracts
+// its bundles there (or, for a legacy single-file package, downloads the
+// payload to legacyBinPath). It reports whether the item has a work dir, the
+// path the legacy {payload} token resolves to (if any) and whether the
+// download succeeded. Shared by software installs and Tool Kit runs.
+func fetchPackagePayload(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner *steps.OSRunner, pkg softwareItem, pkgDir, filesDir, legacyBinPath string) (hasWorkdir bool, legacyPayloadPath string, ok bool) {
+	hasWorkdir = len(pkg.Files) > 0 || len(pkg.Bundles) > 0
 	if hasWorkdir {
 		if err := os.MkdirAll(filesDir, 0o755); err != nil {
 			log.Error("package.workdir",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		downloadOK := true
 		for _, pf := range pkg.Files {
@@ -1151,7 +1302,7 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 				slog.String("dir", filesDir))
 		}
 		if !downloadOK {
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		// A single plain file (no bundles) keeps the legacy {payload}
 		// convenience pointing at it.
@@ -1169,89 +1320,21 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			log.Error("package.download.create",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		if err := c.Download(ctx, url, out); err != nil {
 			_ = out.Close()
 			log.Error("package.download",
 				slog.String("package", pkg.Name),
 				slog.String("error", err.Error()))
-			return nil, false
+			return hasWorkdir, "", false
 		}
 		_ = out.Close()
 		log.Info("package.download.ok",
 			slog.String("package", pkg.Name),
 			slog.String("path", legacyPayloadPath))
 	}
-
-	// Rewrite, in order: substitute the legacy {payload} token; resolve
-	// bare filenames against everything in the work dir (uploaded files +
-	// extracted bundle contents); then expand Windows %ENV% in path fields
-	// (incl. copy/unzip destinations) so e.g. %ProgramData%\... lands in
-	// the real location instead of a literal "%ProgramData%" folder.
-	rewritten := rewriteSteps(pkg.InstallSteps, legacyPayloadPath)
-	if hasWorkdir {
-		// %pkgdir% -> the work dir (any field, any step type); then resolve
-		// remaining bare filenames against everything in the work dir
-		// (uploaded files + extracted bundle contents).
-		rewritten = expandPkgDir(rewritten, filesDir)
-		knownFiles := mapWorkdirFiles(filesDir)
-		rewritten = resolveBareFilenames(rewritten, knownFiles)
-	}
-	rewritten = expandStepEnv(rewritten)
-	// Adapt appx steps to the agent's context: provision machine-wide when we're
-	// SYSTEM (per-user Add-AppxPackage is rejected for that account), and pick up
-	// a Dependencies/ folder for a bundle whose framework packages weren't named.
-	appxDepDir := ""
-	if hasWorkdir {
-		appxDepDir = filesDir
-	}
-	rewritten = finalizeAppxSteps(rewritten, appxDepDir)
-
-	log.Info("package.install.start",
-		slog.String("target", pkg.Name),
-		slog.String("host_os", facts.OSCaption),
-		slog.Int("steps", len(rewritten)))
-	// Run steps from the package work dir so an installer's relative args
-	// (e.g. OfficeSetup.exe /configure NoTeams.xml) and bare filenames
-	// resolve against the downloaded/extracted files, not the service's CWD.
-	if hasWorkdir {
-		runner.WorkDir = filesDir
-	} else {
-		runner.WorkDir = f.workDir
-	}
-	results := steps.Execute(ctx, rewritten, runner, facts)
-	ok := true
-	for i, r := range results {
-		lvl := slog.LevelInfo
-		if r.Error != nil || r.Aborted {
-			lvl = slog.LevelError
-			ok = false
-		}
-		log.Log(ctx, lvl, "package.step",
-			slog.String("package", pkg.Name),
-			slog.Int("step", i+1),
-			slog.String("type", r.Step.Type),
-			slog.Int("exit_code", r.ExitCode),
-			slog.Bool("aborted", r.Aborted),
-			// A step skipped because its FilterOS didn't match the host is
-			// recorded so an operator can see WHY a step didn't run (e.g. the
-			// Windows 10 zip step was passed over on a Windows 11 machine)
-			// rather than wondering whether it silently failed.
-			slog.Bool("skipped", r.Skipped),
-			slog.String("filter_os", r.Step.FilterOS),
-			slog.String("exit_meaning", stepExitMeaning(r)),
-			slog.Any("error", r.Error),
-		)
-	}
-	if ok {
-		log.Info("package.install.ok",
-			slog.String("target", pkg.Name))
-		postDetected, _ := eval.EvaluatePackage(ctx, pkg.DetectionRules)
-		return &pkgReport{PackageID: pkg.PackageID, Installed: true, Detected: postDetected}, false
-	}
-	log.Error("package.install.fail", packageFailAttrs(pkg.Name, results, runner.LastStderr())...)
-	return &pkgReport{PackageID: pkg.PackageID, Failed: true}, true
+	return hasWorkdir, legacyPayloadPath, true
 }
 
 // packageFailAttrs builds package.install.fail's attrs so the event says
@@ -1405,6 +1488,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 		Jobs      []bulkJob `json:"jobs"`
 	}
 
+	reportInterruptedJobs(ctx, log, c, f)
 	pollLoop(ctx, log, f.checkInInterval, func(ctx context.Context) pollLoopResult {
 		var resp checkinResp
 		if err := c.PostJSON(ctx, "/api/v1/agent/checkin",
@@ -1412,10 +1496,7 @@ func runCheckInLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			log.Warn("checkin.fetch", slog.String("error", err.Error()))
 		} else {
 			for _, j := range resp.Jobs {
-				status, result := executeBulkJob(ctx, log, c, f, runner, j.Action, j.Payload)
-				_ = c.PostJSON(ctx,
-					fmt.Sprintf("/api/v1/agent/jobs/%d/result", j.ID),
-					map[string]any{"status": status, "result_json": result}, nil)
+				runAndReportJob(ctx, log, c, f, runner, j.ID, j.Action, j.Payload)
 			}
 		}
 		// Best-effort log ship at the end of each tick so the
@@ -1483,9 +1564,14 @@ func maybeSelfUpdate(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 
 // executeBulkJob dispatches on action and returns (status, result JSON).
 // Result JSON is bounded so the server can store it.
-func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, action, payload string) (string, string) {
+func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags, runner steps.Runner, jobID int64, action, payload string) (string, string) {
 	log.Info("bulk.start", slog.String("action", action))
 	switch action {
+	case "toolkit":
+		// The payload only names the kit; the definition (and any Run As
+		// password) is fetched for this specific job, see toolkit.go.
+		return runToolkitJob(ctx, log, c, f, jobID)
+
 	case "script":
 		// Payload: {"shell":"cmd"|"powershell","body":"..."}
 		var p struct {
@@ -1566,7 +1652,7 @@ func executeBulkJob(ctx context.Context, log *slog.Logger, c *httpc.Client, f ag
 			Warnings []string       `json:"warnings"`
 		}
 		if err := c.GetJSON(ctx,
-			fmt.Sprintf("/api/v1/agent/package-items?package=%d", p.PackageID), &resp); err != nil {
+			fmt.Sprintf("/api/v1/agent/package-items?package=%d&job=%d", p.PackageID, jobID), &resp); err != nil {
 			return "failed", fmt.Sprintf(`{"error":%q}`, err.Error())
 		}
 		for _, wn := range resp.Warnings {
@@ -1752,29 +1838,36 @@ func mapWorkdirFiles(dir string) map[string]string {
 var envExpand = winenv.Expand
 
 func expandStepEnv(in []swspec.InstallStep) []swspec.InstallStep {
+	return expandStepEnvWith(in, envExpand)
+}
+
+// expandStepEnvWith expands %ENV% in every step path and arg list with
+// expand -- the agent's own environment (expandStepEnv) or, for a Tool Kit
+// step run as another account, that account's.
+func expandStepEnvWith(in []swspec.InstallStep, expand func(string) string) []swspec.InstallStep {
 	out := make([]swspec.InstallStep, len(in))
 	copy(out, in)
 	for i := range out {
-		out[i].SourcePath = envExpand(out[i].SourcePath)
-		out[i].DestinationPath = envExpand(out[i].DestinationPath)
-		out[i].MSIPath = envExpand(out[i].MSIPath)
-		out[i].APPXPath = envExpand(out[i].APPXPath)
-		out[i].APPXLicense = envExpand(out[i].APPXLicense)
-		out[i].APPXDependencies = expandEnvAll(out[i].APPXDependencies)
-		out[i].ExePath = envExpand(out[i].ExePath)
-		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs)
-		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs)
+		out[i].SourcePath = expand(out[i].SourcePath)
+		out[i].DestinationPath = expand(out[i].DestinationPath)
+		out[i].MSIPath = expand(out[i].MSIPath)
+		out[i].APPXPath = expand(out[i].APPXPath)
+		out[i].APPXLicense = expand(out[i].APPXLicense)
+		out[i].APPXDependencies = expandEnvAll(out[i].APPXDependencies, expand)
+		out[i].ExePath = expand(out[i].ExePath)
+		out[i].MSIArgs = expandEnvAll(out[i].MSIArgs, expand)
+		out[i].ExeArgs = expandEnvAll(out[i].ExeArgs, expand)
 	}
 	return out
 }
 
-func expandEnvAll(in []string) []string {
+func expandEnvAll(in []string, expand func(string) string) []string {
 	if len(in) == 0 {
 		return in
 	}
 	out := make([]string, len(in))
 	for i, s := range in {
-		out[i] = envExpand(s)
+		out[i] = expand(s)
 	}
 	return out
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -209,9 +210,12 @@ func TestUpdateJobResultUpdatesMachineStatus(t *testing.T) {
 	post := func(jobID model.ID, status string) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]string{"status": status, "result_json": `{"exit_code":3010}`})
-		resp, err := http.Post(
+		req, _ := http.NewRequest("POST",
 			srv.URL+"/api/v1/agent/update-job/"+strconv.FormatInt(int64(jobID), 10)+"/result",
-			"application/json", bytes.NewReader(body))
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-AutoDeploy-Machine-UUID", m.SystemUUID)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,6 +223,18 @@ func TestUpdateJobResultUpdatesMachineStatus(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("result status = %d, want 200", resp.StatusCode)
 		}
+	}
+
+	// A report from anyone but the owning machine is refused.
+	stranger, _ := http.Post(
+		srv.URL+"/api/v1/agent/update-job/"+strconv.FormatInt(int64(jobs[0].ID), 10)+"/result",
+		"application/json", strings.NewReader(`{"status":"ok"}`))
+	if stranger.StatusCode != http.StatusForbidden {
+		t.Fatalf("unauthenticated report: %d, want 403", stranger.StatusCode)
+	}
+	stranger.Body.Close()
+	if got := statusOf(); got != "pending" {
+		t.Fatalf("a refused report changed compliance: %q", got)
 	}
 
 	post(jobs[0].ID, "failed")

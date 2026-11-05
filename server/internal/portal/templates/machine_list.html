@@ -35,6 +35,20 @@
     </span>
   </div>
 </div>
+{{if .Data.PendingSecrets}}
+<div class="flash warn" id="credential-pending-banner"><svg class="icon-inline"><use href="#i-lock"/></svg>
+  <span style="flex:1">{{.Data.PendingSecrets}} request{{if ne .Data.PendingSecrets 1}}s{{end}} for an agent secret need{{if eq .Data.PendingSecrets 1}}s{{end}} your approval. Open the machine and look at <strong>Agent secret</strong>. Approve only machines you just re-imaged or re-installed, or that missed the move to agent secrets.</span>
+  <form method="post" action="/portal/machines/credential/approve-all" class="inline-form"
+        data-confirm="Approve every pending agent secret request? Each requester gets its machine's identity. Machines with more than one competing request are skipped.">
+    <button type="submit" class="sm secondary"><svg><use href="#i-check"/></svg>Approve all pending</button>
+  </form>
+</div>
+{{end}}
+{{if .Data.LegacyAgents}}
+<p class="small muted"><svg class="icon-inline"><use href="#i-shield"/></svg>
+  {{.Data.LegacyAgents}} machine{{if ne .Data.LegacyAgents 1}}s{{end}} still use{{if eq .Data.LegacyAgents 1}}s{{end}} legacy agent authentication (no secret yet). Their agents pick one up automatically after they update.
+</p>
+{{end}}
 {{/* Filters. The status chips are links that keep the rest of the view;
      the selects join the search form above through form="machine-search",
      so Search or Apply submits the text and the filters as one GET. */}}

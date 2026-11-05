@@ -1,0 +1,34 @@
+{{/* toolkit_result renders a Tool Kit job's reported result: the account it
+     ran as, the revision, any timeout / reboot / error, and each step's exit
+     code with its captured output tail behind a disclosure. Data: a
+     *model.ToolkitResult (from the toolkitResult template func); renders
+     nothing for nil. */}}
+{{define "toolkit_result"}}
+{{with .}}
+<div class="toolkit-result small">
+  <div>
+    Ran as <strong>{{runAsText .RunAs .RunAsUser}}</strong>{{if .Revision}} · revision {{.Revision}}{{end}}{{if .DurationS}} · {{.DurationS}}s{{end}}
+    {{if .TimedOut}} · <span class="badge bad">timed out</span>{{end}}
+    {{if .Reboot}} · reboot {{.Reboot}}{{end}}
+  </div>
+  {{if .Error}}<div class="toolkit-err">{{.Error}}</div>{{end}}
+  {{if .Steps}}
+  <details class="mt-1">
+    <summary class="muted">{{len .Steps}} step{{if ne (len .Steps) 1}}s{{end}} — exit codes and output</summary>
+    <ol class="toolkit-steps mt-1">
+      {{range .Steps}}
+      <li>
+        <code>{{.Type}}</code>{{if .Description}} {{.Description}}{{end}}
+        {{if .AsSystem}}<span class="badge muted">SYSTEM</span>{{end}}
+        {{if .Skipped}}<span class="muted">— skipped (OS filter)</span>
+        {{else}}— exit <strong>{{.ExitCode}}</strong>{{end}}
+        {{if .Error}}<div class="toolkit-err">{{.Error}}</div>{{end}}
+        {{if .Output}}<pre class="code-block mt-1">{{.Output}}</pre>{{end}}
+      </li>
+      {{end}}
+    </ol>
+  </details>
+  {{end}}
+</div>
+{{end}}
+{{end}}

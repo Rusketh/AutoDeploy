@@ -3433,3 +3433,244 @@ flags, and real-case boot paths.
 
 **NEXT.** Re-export from the portal and confirm the ISO builds; then the pending
 manual VM boot test (BIOS + UEFI, small disk).
+
+---
+
+## 2026-11-05 — Tool Kits
+
+**WHAT.** A new artifact type: reusable, run-once payloads (files + ordered steps, the
+software-package step format, no detection rules) deployed to one machine or as a bulk operation,
+with a default **Run As** account that each deployment can override.
+
+- **Model** (`model/toolkit.go`, migration `0036`): `toolkit` table with steps, parameters,
+  Run As mode (`system` / `user` / `logged_on_user`), account, encrypted password, timeout,
+  reboot policy and revision. `bulk_credential` holds a per-operation password override.
+  The new `toolkit` bulk action has a payload with the kit id, revision, Run As override,
+  parameter values and `skip_succeeded`. It never carries a password. `skip_succeeded` filters
+  out machines with an ok or pending job for the kit (`BulkRepo.filterToolkitTargets`). Override
+  passwords are deleted in `CompleteJob`, `CancelOperation` and `ExpireOverdueJobs` when the
+  operation finishes, with a scheduler sweep as backstop. A kit can't be deleted while an operation
+  uses it.
+- **API** (`api/toolkit_handlers.go`): `POST /agent/toolkit-job` returns the definition with
+  parameters substituted server-side. `POST /agent/job-credential` returns the password. Both
+  require the job to belong to the caller's `agent_id` machine and to be in the `running` state.
+  Password release is audit-logged as `secret.access`. Files are served from `/payload/toolkit/…`.
+  Adds the `toolkit.run_ok` / `toolkit.run_failed` notifications.
+- **Portal**: Build → Tool Kits (list, form, files/bundle, parameters, per-step "Run as SYSTEM",
+  duplicate, create from a software package, recent runs). A "Run tool kit" action on the bulk form
+  and the machine page. The bulk review step swaps a typed password for an in-memory stash token
+  (30 min, bound to the operator). Per-step results render on the operation, machine and kit pages.
+  The step editor moved into the shared `_steps.html` partial, now used by software packages too.
+- **Agent** (`cmd/autodeploy-agent/toolkit.go`, `internal/runas`): runs the job.
+  - **Specific account:** `LogonUser` (batch, falling back to interactive). Administrators run
+    with the elevated linked token; the profile is loaded.
+  - **Logged-on user:** `WTSQueryUserToken`, with the user's normal unelevated token.
+  - **Process launch:** `CreateProcessAsUser` with an empty desktop (a private window station) for
+    a specific account, or `winsta0\default` for the signed-in user. The process runs in a job
+    object so a timeout kills its whole tree; stdout and stderr are piped back.
+  - **Environment:** step env vars are expanded with the account's environment block, and the
+    account gets read and execute rights (`icacls`) on the per-job work folder; see the follow-ups below.
+  - **Reporting:** a 4 KB output tail per step, timeout, and reboot policy (never after a
+    timeout). `steps.OSRunner` gained `Launcher` and `Tee`; payload download and env expansion
+    were factored out for reuse.
+
+**DECISIONS.**
+- Credentials are fetched just in time, as with domain join, rather than carried in job payloads.
+- Parameters are substituted on the server: the server decides, the agent executes.
+- No RBAC exists, so any operator can run a kit as its stored account. This is documented.
+- Copy and unzip steps run inside the agent, as SYSTEM, using the account's expanded paths.
+
+**STATE.** server and agent `go vet` and `go test -race` pass. The Windows agent build passes.
+`check-secrets.sh` passes.
+- New tests: model (CRUD, revision, validation, payload, parameters, skip-succeeded, credential
+  purge, history); API (agent and job binding, 403/409 refusals, password never in the definition
+  or the audit row); portal (create, edit and duplicate; review page and payload never carry the
+  password; machine action and history); agent (fake Run As session, output capture, SYSTEM steps,
+  abort, timeout, reboot policy, refused credential, no signed-in user); `runas` helpers.
+- End-to-end against a real server binary (Playwright for the portal plus a simulated agent): every
+  check passed and no password appeared in any page, log row or the server log. The new
+  screenshots come from that run.
+
+**NEXT.** Manual Windows VM validation of `internal/runas`, which CI cross-compiles but never
+executes:
+- runs as SYSTEM, a local admin (elevated), a domain user, and the logged-on user;
+- a run when nobody is signed in;
+- a timeout that kills child processes;
+- the account reading and writing the work folder;
+- per-user `appx`.
+
+### Follow-up: stranded "running" jobs and review fixes
+
+**Problem.** `/agent/self` claims a machine's queued jobs (sets them `running`) in its response. If
+the agent then returned early to restart for a rename or a domain join, or a job's own step
+restarted the machine, nothing ever moved those jobs on. They stayed `running` forever. This
+predates Tool Kits, but Tool Kits made it worse: the operation never completed, a deploy-time Run
+As password was never purged, the kit couldn't be deleted, and *skip machines where it already
+succeeded* excluded that machine for good.
+
+**Agent fix (`jobjournal.go`).** Each job is journalled in `<work>/jobs-inflight/` before it runs.
+The marker is removed once the result is posted, or keeps the outcome if the POST fails. When a
+resident loop starts, leftover markers are settled:
+
+- a kept outcome is re-sent;
+- an interrupted `rename` or `reimage` is reported `ok`, because restarting the machine is what
+  those actions do;
+- anything else is reported `failed`, *interrupted*.
+
+Jobs are **never re-run**: a kit whose step restarts the machine would otherwise run, restart and
+run again forever, the same failure mode as the rename boot loop. Jobs claimed on a poll that then
+restarts for a rename or domain join are reported failed (*not run*) before the restart.
+
+**Other fixes.**
+- Parameter substitution is now a single pass, so a value containing another parameter's `%TOKEN%`
+  is never expanded. It used to depend on map iteration order.
+- Editing a scheduled operation away from *Run tool kit* deletes its stored override password.
+- The agent retries the credential fetch once after 5 seconds. This covers the moment between the
+  portal queuing an operation and storing its override password.
+
+### Follow-up 2: second review pass
+
+- **Re-imaged machines left operations open.** Re-imaging deletes a machine's bulk jobs. An
+  operation whose last outstanding job was among them stayed `active` forever, and kept any Tool
+  Kit password override. `DeleteJobsForMachine` now completes such operations, as `CompleteJob`
+  would, purges their override, and returns their IDs so the boot handler sends the finished
+  notification.
+- **Job results were unauthenticated.** Anyone who could reach the server could complete any bulk
+  job or update job, or overwrite its result. `/agent/jobs/{id}/result` and
+  `/agent/update-job/{id}/result` now accept a result only from the owning machine: by `agent_id`
+  in the body, which current agents send, or by the `X-AutoDeploy-Machine-UUID` header, which
+  older agents send and which is the same identity check-in claims jobs with. A bulk job must also
+  still be `running`: a second report, or one for a job never picked up, gets `409`.
+- **Tool kit files were public.** `/payload/toolkit/...` now requires `X-AutoDeploy-Agent-ID` from
+  a machine with a running job for that kit. The agent's `httpc.Client` gained an `AgentID` field,
+  sent on downloads.
+- **Local privilege escalation on the work folder.** `C:\ProgramData` lets ordinary users create
+  files in its subfolders. A local user could plant files beside an installer the agent runs as
+  SYSTEM; this predates Tool Kits. Also, in a kit mixing logged-on-user steps with SYSTEM steps,
+  the user had modify rights and could swap a file a SYSTEM step then ran. Fixes:
+  - when the agent runs as SYSTEM, it restricts the work folder to SYSTEM and Administrators
+    (`secureWorkDir`);
+  - a Run As account now gets read and execute only on its job folder.
+- **Duplicate naming.** A long kit name is now shortened before the " copy" suffix, instead of
+  keeping only its tail.
+
+Re-ran everything: both modules with `-race`, the Windows build, `check-secrets.sh`, and the end to
+end script, now also checking the new refusals. All 25 checks pass.
+
+### Follow-up 3: software definitions and files no longer public
+
+**Problem.** Three unauthenticated routes exposed software:
+- `GET /agent/package-items?package=N` returned any package's full definition: steps, arguments
+  (licence keys, transforms) and file list;
+- `POST /agent/software {image_id}` did the same for any image's set;
+- `/payload/software/…` served every installer and config file.
+
+**Fix.**
+- **`internal/swaccess.Checker`** decides which packages a machine may read: its bound image's
+  set, plus packages of `software_push` jobs running on it, each expanded with
+  `ResolveOrder` so dependencies are included. A positive result is cached for 30 seconds per
+  machine, because a package can be thousands of file requests. A miss always recomputes, so a
+  push that just started isn't refused.
+- **Payload downloads** require the agent's `X-AutoDeploy-Agent-ID` header and an entitled
+  machine. A missing checker means deny.
+- **`package-items`** additionally requires `&job=` to name a running push job on the caller for
+  exactly that package.
+- **`/agent/software`** requires an identified agent whose machine is bound to the image. An
+  unbound machine (first boot from an exported USB/ISO) is bound to it, mirroring the PXE
+  manifest; a machine bound elsewhere is refused.
+- **Agent:** `httpc.Client` sends `AgentID` on every request when set, and `package-items` names
+  the job. Result posts fall back to omitting `agent_id` when a server older than the agent
+  rejects the unknown field with a 400.
+- **Old agents** can't download software until they self-update on their next tick. This is
+  documented in the upgrade notes.
+
+**OPEN, needs a decision.** `agent_id` is the credential behind all of the above, and behind domain
+join, Tool Kit passwords, `/self` and job results. But `POST /agent/enroll`, `/agent/report` and
+the image manifest return a machine's `agent_id` to anyone who presents its SMBIOS UUID. The UUID
+is not secret: it is shown in the portal, used as the log actor, and readable on the machine. The
+agent also logs its `agent_id` at start-up, and that log is shipped to the server. A real
+per-machine secret needs a protocol change across the server, the boot client and deployed
+agents; see the conversation for the options.
+
+### Follow-up 4: agents authenticate with rotating secrets
+
+This resolves the OPEN item above: `agent_id` could be obtained from a machine's SMBIOS UUID.
+
+- **Server**
+  - **Credential store** (migration `0037`, `model/agentcred.go`): the current and previous
+    secret hash, approval requests keyed by nonce, deploy grants, PIN deploy authorisations and
+    media enrollment tokens.
+  - **`internal/agentauth`** is the one gate for every agent endpoint: `/self`, domain-join,
+    hardware, identity, check-in, report, deploy-progress, update-status, job and update-job
+    results, Tool Kit, package-items, `/agent/software`, and software and Tool Kit downloads. A
+    secured machine must present its secret. A legacy machine passes while
+    `AUTODEPLOY_AGENT_LEGACY_AUTH` is on. A revoked machine is refused. An unknown id keeps its
+    old `404`.
+  - **`POST /agent/credential`** issues a secret for: a media token, a deploy grant, first
+    contact of a legacy machine, or an approved nonce. Anything else becomes a pending request
+    with a notification.
+  - **`POST /agent/credential/rotate`** is idempotent, using the cur/prev scheme.
+  - **Manifest** issues the secret when the boot client sends `want_credential` and the deploy is
+    authorised (no PIN configured, or `validate-pin` passed within 30 minutes). It uses
+    keep-previous, so an aborted deploy doesn't lock out the old OS. Otherwise it creates a deploy
+    grant.
+  - **ISO export** bakes `enroll.json` with a 90-day token.
+- **Portal:** an Agent secret panel with approve, deny and revoke, and machine list banners.
+- **Boot client:** asks for the secret and stages `agent-credential.json` next to the agent.
+- **Agent** (`credentials.go`):
+  - keeps the secret in a protected store and imports the staged file;
+  - follows the upgrade path when `/self` says `legacy`;
+  - rotates with a persisted pending secret;
+  - on a 401, recovers onto the pending secret or asks again;
+  - stops asking a server that has no `/agent/credential` endpoint.
+- **Tests:**
+  - **Unit:** model rotation, including lost responses, a lost pending secret and keep-previous;
+    API (upgrade path, every refusal, approvals, grants, media, legacy off); manifest; portal;
+    agent (a fault-injecting fake server for lost responses, crash mid-rotation, recovery,
+    approval across restart, revocation, staged import, media, old server).
+- **End to end** (`scripts/e2e/run-agent-secrets.sh`): builds the release (`origin/main`) and new
+  binaries, then runs:
+  1. a release site;
+  2. an in-place server upgrade, with the release agent still working;
+  3. an agent upgrade, which obtains a secret so the old protocol is refused;
+  4. rotation, during which the agent is never refused;
+  5. deploy-time issuance and the old boot client grant;
+  6. a takeover attempt that is held for approval and then leaves a single holder;
+  7. a new agent against the release server.
+
+  All checks pass.
+
+## 2026-11-05 — Agent secrets: non-expiring media, existing inventory, clones
+
+The user raised three concerns: refreshing USB sticks every 90 days isn't friendly; how does
+existing inventory get a secret; and what about golden-image clones.
+
+- **Media enrolment doesn't expire.** The token is stored encrypted (`token_cipher`, migration
+  0038), and every export reuses it, so existing sticks keep working. **Revoke media enrolment**
+  on the image's Resolved view kills every stick made so far. A secured machine that is still
+  unbound may bind to an image only if its secret came from that image's media
+  (`issued_image_id`).
+- **Existing inventory.** Self-update (`update-info` and download) needs no secret. An old agent
+  updates as usual, and the new agent gets its secret on first contact. The e2e now proves this
+  with a real self-update: the release agent is stamped `v1.0.0`, the new agent `v9.9.9` is
+  published in `downloads/`, and the release agent downloads it, swaps itself and relaunches.
+  **Approve all pending** (Machines banner) handles stragglers in bulk. It skips machines with
+  competing requests.
+- **Clones.**
+  - The agent records the hardware UUID with its credential.
+  - At startup it checks that the credential file names this hardware, and asks
+    `GET /agent/whoami` (no secret, yes/no only) for golden images captured before secrets.
+  - On a mismatch it drops the identity and enrols as a new machine.
+  - New machines (first seen under an hour ago) get a secret automatically
+    (`AUTODEPLOY_AGENT_AUTO_ENROLL_NEW`, default on), even with legacy auth off.
+  - Server backstop: a secret presented with another machine's UUID is refused with `409`
+    before it is checked. This means a clone can't confirm a rotation for the original. A `409`
+    mid-run makes the agent re-identify. UUID comparison tolerates case, braces and the
+    mixed-endian form.
+- **Tests:**
+  - **Unit:** model (token reuse, replace and revoke; approve-all), agentauth (`SameUUID`, `409`),
+    API (whoami, clone `409`, auto-enrol of new and old machines, media-only binding), portal
+    (approve-all, revoke media), agent (clone from a copied credential and from whoami).
+  - **End to end:** phase C is now a real self-update. New phases cover approve-all, clones with
+    legacy auth off (copied disk, golden image, server backstop, original untouched), and the
+    media enrolment card. Screenshots go to `docs/images` (`E2E_SHOTS`).

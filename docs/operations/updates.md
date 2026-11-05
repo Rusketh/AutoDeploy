@@ -113,9 +113,45 @@ will notice, and what to check:
   to continue unless the PC booted in **UEFI** mode and disk 0 is an internal disk that is not the
   USB stick. Such a PC powers off with a message instead of wiping the wrong disk. Re-export images
   you deploy by USB; network (PXE) deploys are unchanged.
-- **Agents and boot clients**: older agents and boot clients in the field keep working against this
-  server, and the new ones keep working against an older server until you upgrade it (they only add
-  optional log fields and a header). Update them at your own pace.
+- **Agents and boot clients**: older boot clients keep working against this server. Older agents
+  must update before they can download software (they do so on their next check-in; see
+  [Upgrading to the Tool Kits release](#upgrading-to-the-tool-kits-release)). New agents keep
+  working against an older server.
+
+### Upgrading to the Tool Kits release
+
+This release adds [Tool Kits](../portal/toolkits.md) (database migration `0036`, applied
+automatically) and closes several gaps in what machines on the network can read or change:
+
+- **Software is no longer public.** A package's definition and files are served only to an agent
+  whose machine needs that package: the package is in its image's software set, or a *Push
+  software* job for it is running on that machine. Dependencies count in both cases. Agents send
+  their id on every request. **Older agents can't download software until they update.** Agents
+  update themselves on their next check-in, so expect at most one missed install per machine;
+  the install is retried on the next poll. A *Push software* job that an old agent picks up before
+  it updates fails; run it again.
+- **A machine imaged from an exported USB/ISO** is bound to the image baked into the media the
+  first time its agent asks for that image's software. This matches what a network (PXE) deploy
+  already does. A machine already bound to a different image is refused.
+- **Job results are accepted only from the machine the job belongs to**, and a bulk job only while
+  it is running. A script that posted results to `/api/v1/agent/jobs/{id}/result` must identify the
+  machine; see the [API reference](../reference/api.md#client--agent-endpoints).
+- **Agents now authenticate with a secret** ([details](security.md#agent-secrets)). Nothing
+  changes at upgrade time: machines without a secret keep the old protocol. Each agent obtains a
+  secret on its own the first time it checks in after updating, and rotates it every 30 days.
+  Afterwards:
+  1. **Update the boot image** (`autodeploy-boot`). Network deploys then hand the new
+     installation its secret directly. An older boot image still works, through a one-time deploy
+     grant.
+  2. **Export** USB/ISO media you keep for re-imaging **once more**, so they carry a media
+     enrolment. It doesn't expire, so you won't need to do this again. Sticks made before this
+     version still work for machines that have never had a secret. For other machines, the new
+     installation's request appears for your approval; **Approve all pending** on the Machines
+     page handles a whole room at once.
+  3. When the **Machines** page no longer says machines use legacy agent authentication, set
+     `AUTODEPLOY_AGENT_LEGACY_AUTH=false` in `/etc/default/autodeploy` and restart the service.
+- **On Windows, the agent's work folder** (`C:\ProgramData\AutoDeploy\work`) is restricted to
+  SYSTEM and Administrators.
 
 ## Updating the agent
 

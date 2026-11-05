@@ -23,7 +23,20 @@ const (
 	// operation is created, not carried in the job payload; the job just
 	// tells the agent to reboot. Payload is "{}".
 	BulkActionReimage = "reimage"
+	// BulkActionToolkit runs a Tool Kit once on each machine. Payload is a
+	// ToolkitPayload (kit id, Run As override, parameter values); it never
+	// carries a password -- an override lives in bulk_credential.
+	BulkActionToolkit = "toolkit"
 )
+
+// validBulkAction reports whether action is a known bulk action.
+func validBulkAction(action string) bool {
+	switch action {
+	case BulkActionRename, BulkActionSoftwarePush, BulkActionScript, BulkActionReimage, BulkActionToolkit:
+		return true
+	}
+	return false
+}
 
 // BulkActionLabel is a short human label for an action token, used in default
 // names/descriptions and the UI.
@@ -37,6 +50,8 @@ func BulkActionLabel(action string) string {
 		return "Run script"
 	case BulkActionReimage:
 		return "Re-image"
+	case BulkActionToolkit:
+		return "Run tool kit"
 	default:
 		return action
 	}
@@ -362,13 +377,14 @@ func (r *BulkRepo) PreviewTargets(ctx context.Context, t BulkTarget) ([]MachineR
 // next_run_at and no jobs yet -- the scheduler materialises them when due.
 func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkOperation, []BulkJob, error) {
 	op = withScheduleDefaults(op)
-	switch op.Action {
-	case BulkActionRename, BulkActionSoftwarePush, BulkActionScript, BulkActionReimage:
-	default:
+	if !validBulkAction(op.Action) {
 		return BulkOperation{}, nil, fmt.Errorf("%w: unknown action %q", ErrValidation, op.Action)
 	}
 	if !json.Valid([]byte(op.Payload)) {
 		return BulkOperation{}, nil, fmt.Errorf("%w: payload must be valid JSON", ErrValidation)
+	}
+	if err := r.validateActionPayload(ctx, op.Action, op.Payload); err != nil {
+		return BulkOperation{}, nil, err
 	}
 	if err := validateSchedule(op); err != nil {
 		return BulkOperation{}, nil, err
@@ -399,6 +415,10 @@ func (r *BulkRepo) CreateOperation(ctx context.Context, op BulkOperation) (BulkO
 		// Resolve targets BEFORE opening the transaction: the pool caps at
 		// one connection, so the open tx would deadlock a second read.
 		targets, err = r.PreviewTargets(ctx, op.Target)
+		if err != nil {
+			return BulkOperation{}, nil, err
+		}
+		targets, err = r.filterToolkitTargets(ctx, op.Action, op.Payload, targets)
 		if err != nil {
 			return BulkOperation{}, nil, err
 		}
@@ -660,6 +680,12 @@ func (r *BulkRepo) CompleteJob(ctx context.Context, jobID ID, status, resultJSON
 		return 0, err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		// The operation is finished: a Run As password override has no
+		// further use, so it is deleted now rather than kept at rest.
+		if _, err := r.db.ExecContext(ctx,
+			`DELETE FROM bulk_credential WHERE operation_id=?`, opID); err != nil {
+			return ID(opID), err
+		}
 		return ID(opID), nil
 	}
 	return 0, nil
@@ -695,10 +721,67 @@ func (r *BulkRepo) GetJob(ctx context.Context, jobID ID) (BulkJob, error) {
 // freshly-built OS unexpectedly, and finished jobs' results describe an OS
 // that no longer exists. The parent bulk_operation rows (the operator's
 // fleet-wide intent) are left intact.
-func (r *BulkRepo) DeleteJobsForMachine(ctx context.Context, machineID ID) error {
-	_, err := r.db.ExecContext(ctx,
-		`DELETE FROM bulk_job WHERE machine_id=?`, machineID)
-	return err
+//
+// An operation whose last outstanding job was among those deleted would
+// otherwise stay "active" forever (and keep any Tool Kit Run As password
+// override at rest), so each non-recurring operation left with nothing
+// queued or running is completed here, exactly as CompleteJob would, and its
+// override is deleted. The IDs of the operations completed this way are
+// returned so the caller can emit their finished notifications.
+func (r *BulkRepo) DeleteJobsForMachine(ctx context.Context, machineID ID) ([]ID, error) {
+	// Affected operations, read before the transaction (one-connection pool).
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT operation_id FROM bulk_job WHERE machine_id=?`, int64(machineID))
+	if err != nil {
+		return nil, err
+	}
+	var opIDs []ID
+	for rows.Next() {
+		var id ID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		opIDs = append(opIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM bulk_job WHERE machine_id=?`, int64(machineID)); err != nil {
+		return nil, err
+	}
+	var completed []ID
+	for _, opID := range opIDs {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE bulk_operation SET status='completed'
+			WHERE id=? AND status='active' AND schedule_kind!='recurring'
+			  AND NOT EXISTS (
+			    SELECT 1 FROM bulk_job
+			    WHERE operation_id=bulk_operation.id AND status IN ('queued','running'))`,
+			int64(opID))
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			completed = append(completed, opID)
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM bulk_credential WHERE operation_id=?`, int64(opID)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return completed, nil
 }
 
 // LatestReimageJob returns the most recent re-image job queued for a machine

@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/auth"
@@ -81,6 +83,20 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
 	Groups *model.MachineGroupRepo
+	// AgentAuth authenticates agent requests (agent id + secret, or the
+	// legacy protocol for machines without a secret). nil = legacy-accepting
+	// (see agentAuth).
+	AgentAuth *agentauth.Authenticator
+	// Credentials stores agents' secrets, requests and deploy grants.
+	Credentials *model.AgentCredentialRepo
+	// AgentSecretRotation is how often agents should rotate their secret.
+	AgentSecretRotation time.Duration
+	// AgentAutoEnrollNew issues a secret to a machine first seen within the
+	// last hour on its first request, even with legacy auth off.
+	AgentAutoEnrollNew bool
+	// Toolkits stores Tool Kits and per-operation Run As overrides; the
+	// agent fetches a toolkit job's steps and credential through it.
+	Toolkits *model.ToolkitRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -105,6 +121,8 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterWinget(mux, r)
 	RegisterNotifications(mux, r)
 	RegisterWebhooks(mux, r)
+	RegisterToolkit(mux, r)
+	RegisterAgentCredentials(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", requireAuth(r, handleListISOs(r)))

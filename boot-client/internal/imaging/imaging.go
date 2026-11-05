@@ -211,6 +211,12 @@ type MediaPlan struct {
 	// alongside the agent via the $OEM$ tree (empty = no lock screen). The
 	// generated SetupComplete.cmd registers it and arms the lock marker.
 	CredProviderPath string
+	// AgentCredentialPath is a one-time file holding the machine's agent id
+	// and secret (issued in the manifest). Staged next to the agent as
+	// %WINDIR%\AutoDeploy\agent-credential.json; the agent imports it into
+	// its protected store on first start and deletes it. Empty = none (the
+	// agent then obtains a secret itself).
+	AgentCredentialPath string
 	// CallbackScriptPath is adcb.ps1, the install-status milestone reporter
 	// staged into C:\Windows\Setup\Scripts via the $OEM$ tree and invoked by
 	// the generated unattend during the specialize and first-logon passes.
@@ -789,6 +795,11 @@ func stageAgent(ctx context.Context, plan MediaPlan, r Runner, mount string) err
 	// image opted into the lock. SetupComplete.cmd registers it post-Setup.
 	if plan.CredProviderPath != "" {
 		if err := r.Exec(ctx, "cp", plan.CredProviderPath, filepath.Join(agentDir, "autodeploy-credprovider.dll")); err != nil {
+			return err
+		}
+	}
+	if plan.AgentCredentialPath != "" {
+		if err := r.Exec(ctx, "cp", plan.AgentCredentialPath, filepath.Join(agentDir, "agent-credential.json")); err != nil {
 			return err
 		}
 	}

@@ -373,8 +373,13 @@ func imageResolved(r Repos) http.HandlerFunc {
 			failPage(w, req, r, http.StatusInternalServerError, err)
 			return
 		}
+		var media *model.MediaToken
+		if r.Credentials != nil {
+			t := r.Credentials.ImageEnrollTokenInfo(req.Context(), id)
+			media = &t
+		}
 		render(w, req, r, "image_resolved.html", "Resolved configuration", map[string]any{
-			"R": res,
+			"R": res, "MediaToken": media,
 		})
 	}
 }

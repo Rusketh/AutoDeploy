@@ -45,6 +45,7 @@ var entityPaths = map[string]string{
 	model.KindUnattend:   "/portal/unattends/%d/edit",
 	model.KindDriver:     "/portal/drivers/%d/edit",
 	model.KindSoftware:   "/portal/software/%d/edit",
+	model.KindToolkit:    "/portal/toolkits/%d/edit",
 	model.KindLoadout:    "/portal/loadouts/%d/edit",
 	model.KindGroup:      "/portal/groups/%d/edit",
 	model.KindImageGroup: "/portal/images/groups",

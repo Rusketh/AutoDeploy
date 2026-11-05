@@ -44,6 +44,7 @@ Pick the action type; the form reveals only the fields it needs:
 | Rename machine | Find/replace (regex) on each machine's current name | **Find** (regex) + **Replace** |
 | Run a script | Run a PowerShell or cmd script on each machine | **Shell** + **Body** |
 | Push software | Install a package (and its dependencies) on each machine | **Software package** |
+| Run tool kit | Run a [tool kit](toolkits.md) once on each machine | **Tool kit**, its **parameters**, **Run as** (the kit's account, SYSTEM, the logged-on user, or another account and password), and optionally **skip machines where it already succeeded** |
 | Re-image | Rebuild each machine from an image | **Image** (optional — defaults to each machine's bound image) |
 
 ### 4. Choose when it runs

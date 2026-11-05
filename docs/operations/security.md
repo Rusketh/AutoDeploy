@@ -83,6 +83,106 @@ openssl rand -hex 32
 > webhook secrets become unrecoverable. Include it (or the key file) in your
 > [backup plan](backup-and-retention.md).
 
+## Agent secrets
+
+Each machine's agent proves its identity with a **secret**, not just its agent id. A machine's
+agent id and hardware UUID are not secret: they appear in the portal and in logs, and some
+endpoints return them. On every request the agent sends its agent id and secret in the
+`X-AutoDeploy-Agent-ID` and `X-AutoDeploy-Agent-Secret` headers.
+
+- **Storage.** The server stores only a SHA-256 hash of each secret, so the secret itself can't
+  be read back. The agent keeps its secret in
+  `C:\ProgramData\AutoDeploy\identity\credential.json`, which only SYSTEM and Administrators
+  can read. The secret is never logged, written to the registry, or put in `SetupComplete.cmd`.
+- **Rotation without losing sync.** The agent replaces its secret every
+  `AUTODEPLOY_AGENT_SECRET_ROTATION` (30 days by default):
+  1. It saves the next secret to disk **before** asking the server to switch.
+  2. The server keeps the old secret valid until the agent first uses the new one.
+  3. The switch is safe to repeat.
+
+  So a lost response, a crash or a restart part-way through never leaves the agent and server
+  without a shared secret; the agent simply finishes the rotation on its next check-in.
+- **How a machine gets its secret:**
+  - **Network (PXE) deploy.** The boot client receives the new installation's secret in the
+    deployment manifest. When an [access PIN](#the-pxe-access-pin) is set, this happens only
+    after the PIN was entered for that machine. It is staged as a one-time file the agent imports
+    and deletes. If imaging fails and the machine boots back into its old Windows, that agent
+    keeps working.
+  - **Older boot images** can't carry the secret. They leave a one-time *deploy grant* (valid
+    for 24 hours) that the new installation's agent redeems.
+  - **Exported USB/ISO media** carry a media enrolment for their image. It doesn't expire, and
+    every export of the image carries the same one, so sticks you made earlier keep working and
+    you never need to refresh them. If a stick is lost, use **Revoke media enrolment** on the
+    image's Resolved view: every stick exported so far stops enrolling machines, and the next
+    export carries a new enrolment. A machine that enrols from a stick may be bound only to that
+    stick's image.
+  - **First contact.** A machine that has never had a secret gets one the first time its agent
+    asks, while `AUTODEPLOY_AGENT_LEGACY_AUTH` is on. This is how existing machines pick up a
+    secret: their old agent updates itself as usual (self-update needs no secret), and the new
+    agent asks for one on its next check-in.
+  - **New machines.** A machine the server first saw less than an hour ago gets its secret
+    automatically, even with legacy authentication off. It has no identity yet that anyone could
+    take over. This covers new manual installs and clones (below). Set
+    `AUTODEPLOY_AGENT_AUTO_ENROLL_NEW=false` to require approval instead.
+  - **Anything else needs your approval.** That includes a second agent claiming a machine that
+    already has a secret, or a machine whose secret was revoked. The request appears on the
+    machine's page under **Agent secret**, a *Agent secret needs approval* notification is
+    raised, and the machine list shows a banner. Approve only machines you have just re-imaged
+    or re-installed. Approving gives the requester a new secret, and any earlier secret stops
+    working. **Revoke secret** on the machine's page locks the agent out until you approve a new
+    request.
+  - **Approve all pending** on the Machines page approves every waiting request at once, for
+    example after re-imaging a room from older media. A machine with more than one competing
+    request is skipped and left for you to decide on its own page.
+- **Clones and golden images.** An image captured from a machine whose agent had already enrolled
+  boots every clone with that machine's identity. The agent records the hardware UUID it enrolled
+  on and detects a clone at startup in two ways:
+  - **Its credential file names other hardware.** The disk was copied with the secret.
+  - **The server says its agent id belongs to other hardware.** The image was captured before
+    secrets, so the agent has an id but no credential file.
+
+  In either case the clone discards the inherited identity and enrols as itself: a new machine
+  record, its own agent id and, as a new machine, its own secret. The original machine is not
+  touched and no approval request is raised against it. As a backstop, the server refuses a secret
+  presented from hardware other than the machine it belongs to (`409`), so a clone can never act
+  as the original or rotate its secret. Firmware that reports the UUID in mixed-endian form is
+  recognised as the same hardware.
+- **Upgrade path.** Machines that have never been issued a secret keep the old protocol while
+  `AUTODEPLOY_AGENT_LEGACY_AUTH` is on (the default), so existing sites keep working through the
+  upgrade. Once a machine holds a secret, requests for it without the secret are refused. When the
+  Machines page no longer reports machines on legacy authentication, set
+  `AUTODEPLOY_AGENT_LEGACY_AUTH=false`. From then on, knowing a machine's agent id or UUID is
+  never enough to act as it.
+
+### Tool kit Run As passwords
+
+A [tool kit's](../portal/toolkits.md) Run As password, and any password an operator enters when
+deploying a kit as a different account, are encrypted with the same key:
+
+- **Never shown or carried in a page.** After saving, the portal only says a password is stored.
+  The bulk review page carries an opaque token instead of the password; the token is held in
+  server memory for at most 30 minutes and is tied to the operator who entered it.
+- **Never put in a job payload.** The agent asks for the password just before the run, using its
+  `agent_id`. The server releases it only for a job that belongs to that machine and is running.
+  Every release is logged as `secret.access`, without the value.
+- **Deleted when the operation ends.** A password entered at deploy time is deleted when the
+  operation completes or is cancelled. The bulk scheduler also sweeps for and removes any left
+  behind.
+- On the machine, the agent uses the password once to log the account on and does not store it.
+
+Software packages are restricted too. Their definitions can include licence keys, transforms or
+response-file arguments. A package's definition and files are served only to an identified agent
+whose machine needs that package, through its image or a running *Push software* job. Dependencies
+are included. Nothing about a package is served anonymously.
+
+Tool kit files are also restricted. They are served only to the agent of a machine that is running
+the kit at that moment. On the machine, the agent's work folder (`C:\ProgramData\AutoDeploy\work`)
+is limited to SYSTEM and Administrators. A Run As account gets read and execute rights on its own
+job's folder, and nothing more.
+
+AutoDeploy has no per-user permissions, so any portal user can run a kit as its stored account.
+Give such accounts only the rights the kit needs.
+
 The repository includes `scripts/check-secrets.sh`, a CI source-code tripwire (not a key
 validator). It greps the Go source (`server/`, `boot-client/`, `agent/`) for secret-named values
 (`pin`, `password`, `recoveryKey`, …) passed to `slog`/`fmt` logging or print calls, and for stray

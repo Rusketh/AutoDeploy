@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"net/http"
 	"strconv"
 	"time"
@@ -232,11 +233,12 @@ func handleAgentUpdateStatus(r Repos) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
 			return
 		}
-		m, err := r.Inventory.GetByAgentID(req.Context(), in.AgentID)
+		caller, err := agentAuth(r).Agent(req, in.AgentID)
 		if err != nil {
-			writeError(w, err)
+			agentauth.Write(w, err)
 			return
 		}
+		m := caller.Machine
 		statuses := make([]model.MachineUpdateStatus, len(in.KBNumbers))
 		for i, kb := range in.KBNumbers {
 			statuses[i] = model.MachineUpdateStatus{
@@ -265,9 +267,19 @@ func handleAgentUpdateJobResult(r Repos) http.HandlerFunc {
 		var in struct {
 			Status     string `json:"status"`
 			ResultJSON string `json:"result_json"`
+			// AgentID authenticates the report; older agents are identified
+			// by their X-AutoDeploy-Machine-UUID header instead.
+			AgentID string `json:"agent_id,omitempty"`
 		}
 		if err := decodeJSON(req, &in); err != nil {
 			writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+			return
+		}
+		// Only the machine the job belongs to may report it: otherwise
+		// anyone could mark an update installed and fake compliance.
+		owner, oerr := r.Updates.GetUpdateJob(req.Context(), model.ID(jobID))
+		if oerr != nil || !jobReporterMatches(req, r, owner.MachineID, in.AgentID) {
+			writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 			return
 		}
 		if err := r.Updates.CompleteUpdateJob(req.Context(), model.ID(jobID), in.Status, in.ResultJSON); err != nil {

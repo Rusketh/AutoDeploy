@@ -118,10 +118,43 @@ next check-in, typically within a few minutes):
 - **Run a script** — a PowerShell or cmd script.
 - **Push software** — install a package (and its dependencies; detection rules skip what's already
   present).
+- **Run tool kit** — run a [tool kit](toolkits.md) once, as its default account or one you choose,
+  with its parameters. The results appear in the **Tool Kit runs** section of the page, with each
+  step's exit code and output.
 - **Re-image** — rebuild from an image (this machine's bound image, or one you choose). Destructive;
   the machine network-boots and re-images on its next check-in.
 
 The same actions across many machines at once are [bulk operations](bulk-operations.md).
+
+### Agent secret
+
+Shows how the machine's agent proves its identity:
+
+| Status | Meaning |
+|--------|---------|
+| **Secured** | The agent has a secret. The panel shows when the secret was last replaced (agents rotate it automatically). |
+| **Legacy** | The agent hasn't been issued a secret yet. It obtains one by itself after it updates. |
+| **Approval required** | The secret was revoked, or another agent asked for one. The agent is refused until you approve a request. |
+
+Requests for a secret that need approval are listed with when they were made, the IP address they
+came from and why they need approval. Each has **Approve** and **Deny**. Approve only when you have
+just re-imaged or re-installed the machine: whoever made the request gets the machine's identity, and
+any previous secret stops working. **Revoke secret** locks the current agent out until you approve a
+new request. See [Agent secrets](../operations/security.md#agent-secrets).
+
+![Agent secret panel with a pending request](../images/machine-credential-pending.png)
+
+When requests are waiting, the machine list shows a banner. **Approve all pending** approves every
+waiting request at once. A machine with more than one competing request is skipped, so you can
+decide on its own page which one is genuine.
+
+![Approve all pending banner](../images/machines-approve-all.png)
+
+The list also says how many machines still use legacy agent authentication. They pick up a secret
+by themselves after their agent updates.
+
+A machine cloned from another (a golden image, a copied disk) notices and enrols as a machine of
+its own. It appears in the list as a new machine and never takes over the original's entry.
 
 ### History and detected software
 

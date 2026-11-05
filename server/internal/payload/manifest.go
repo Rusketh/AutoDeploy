@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/addomain"
 	"github.com/rusketh/autodeploy/server/internal/match"
@@ -26,9 +28,15 @@ type Manifest struct {
 	// writes it (with the server URL) into the registry at deploy time so
 	// the resident agent can identify itself without trusting the BIOS
 	// UUID. Empty on the identity-less GET path.
-	AgentID  string         `json:"agent_id,omitempty"`
-	Items    []ManifestItem `json:"items"`
-	Warnings []string       `json:"warnings,omitempty"`
+	AgentID string `json:"agent_id,omitempty"`
+	// AgentSecret is the machine's newly issued agent secret, present only
+	// when the boot client asked for one (want_credential) and the deploy is
+	// authorised (the access PIN was entered, or no PIN is configured). The
+	// boot client stages it for the agent to import on first boot; it never
+	// goes into SetupComplete.cmd or the registry.
+	AgentSecret string         `json:"agent_secret,omitempty"`
+	Items       []ManifestItem `json:"items"`
+	Warnings    []string       `json:"warnings,omitempty"`
 	// SetupLock tells the boot client this image locks the machine with a
 	// branded setup screen until the agent finishes the initial software
 	// rollout. When true, the client fetches the credential provider DLL and
@@ -94,6 +102,27 @@ type ManifestHandler struct {
 	// resumable download wait for bytes that aren't there. Nil falls back to
 	// the recorded size.
 	Blobs *storage.BlobStore
+	// Creds issues the deployed OS its agent secret. Nil: no secrets are
+	// issued (the new OS's agent then follows the upgrade path).
+	Creds *model.AgentCredentialRepo
+	// PINEnabled reports whether the access PIN gates deploys. When it
+	// does, a secret is issued only for a machine whose boot client passed
+	// the PIN within the last DeployAuthWindow.
+	PINEnabled func(ctx context.Context) bool
+}
+
+// DeployAuthWindow is how long a successful access-PIN entry authorises
+// issuing that machine's agent secret.
+const DeployAuthWindow = 30 * time.Minute
+
+// deployGrantTTL bounds how long an older boot client's freshly installed OS
+// may take to redeem its one-time right to a new agent secret.
+const deployGrantTTL = 24 * time.Hour
+
+// manifestOptions are extra request fields alongside the identity.
+type manifestOptions struct {
+	// WantCredential: the boot client can stage an agent secret.
+	WantCredential bool `json:"want_credential"`
 }
 
 // SiteHeader is the HTTP header the Boot Client / agent sets to tell
@@ -117,11 +146,17 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 		// Accept GET (no identity → drivers skipped) or POST (identity →
 		// drivers matched). The GET path keeps the portal's
 		// "view manifest" link usable.
+		var opts manifestOptions
 		if r.Method == http.MethodPost && r.ContentLength > 0 {
-			if err := json.NewDecoder(r.Body).Decode(&identity); err != nil {
-				http.Error(w, "invalid identity body: "+err.Error(), http.StatusBadRequest)
+			body, rerr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if rerr == nil {
+				rerr = json.Unmarshal(body, &identity)
+			}
+			if rerr != nil {
+				http.Error(w, "invalid identity body: "+rerr.Error(), http.StatusBadRequest)
 				return
 			}
+			_ = json.Unmarshal(body, &opts)
 		}
 		// Site routing: prefer the header the Boot Client sends; fall
 		// back to the machine record's last_site if we know the
@@ -137,6 +172,7 @@ func (h *ManifestHandler) Handler() http.HandlerFunc {
 			writeModelErr(w, err)
 			return
 		}
+		h.provisionAgentCredential(r.Context(), &m, identity, opts)
 		respondJSON(w, http.StatusOK, m)
 	}
 }
@@ -400,4 +436,38 @@ func baseURL(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
+}
+
+// provisionAgentCredential gives the OS this deploy installs its agent secret
+// -- only when the deploy is authorised: no access PIN is configured, or this
+// machine's boot client entered it within DeployAuthWindow. A boot client
+// that can stage the secret (want_credential) receives it in the manifest;
+// the machine's existing secret stays valid until the new one is used, so a
+// deploy that aborts and boots back into the old OS doesn't lock its agent
+// out. An older boot client gets a one-time deploy grant instead, which the
+// new OS's agent redeems when it asks for a secret.
+func (h *ManifestHandler) provisionAgentCredential(ctx context.Context, m *Manifest, identity match.Identity, opts manifestOptions) {
+	if h.Creds == nil || h.Inventory == nil || identity.SystemUUID == "" || m.AgentID == "" {
+		return
+	}
+	if h.PINEnabled != nil && h.PINEnabled(ctx) && !h.Creds.DeployAuthorized(ctx, identity.SystemUUID, DeployAuthWindow) {
+		m.Warnings = append(m.Warnings, "agent secret not issued: the access PIN was not entered for this machine; its agent will need an operator's approval")
+		return
+	}
+	rec, err := h.Inventory.GetByUUID(ctx, identity.SystemUUID)
+	if err != nil {
+		return
+	}
+	if opts.WantCredential {
+		secret, err := h.Creds.Issue(ctx, rec.ID, "pxe", true)
+		if err != nil {
+			m.Warnings = append(m.Warnings, "agent secret: "+err.Error())
+			return
+		}
+		m.AgentSecret = secret
+		return
+	}
+	if err := h.Creds.GrantDeploy(ctx, rec.ID, deployGrantTTL); err != nil {
+		m.Warnings = append(m.Warnings, "agent secret grant: "+err.Error())
+	}
 }

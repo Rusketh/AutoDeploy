@@ -22,6 +22,7 @@ Steps are stored as a JSON **array**; each element has a `type` field — one of
 | `filter_os` | no | Run the step only on a matching OS — see [OS filters](#os-filters). |
 | `success_codes` | no | Exit codes treated as success in addition to `0` (array of integers). |
 | `continue_on_failure` | no | If `true`, a failure doesn't abort the rest of the package (default `false`). |
+| `run_as_system` | no | [Tool kits](../portal/toolkits.md) only: run this step as SYSTEM even when the kit runs as another account (default `false`). Ignored for software packages, which always run as SYSTEM. |
 
 ## OS filters
 

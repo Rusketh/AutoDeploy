@@ -177,6 +177,51 @@
 </details>
 {{end}}
 
+{{with .Data.Credential}}
+<section id="agent-credential-panel">
+<div class="section-head" id="agent-credential"><h3>Agent secret</h3><div class="line"></div></div>
+<dl class="kv">
+  <dt>Status</dt>
+  <dd>
+    {{if eq .Status "secured"}}<span class="badge ok">Secured</span> The agent proves its identity with a secret{{if .RotatedAt}}, last replaced {{timeAgo .RotatedAt}}{{end}}{{if .IssuedVia}} <span class="small muted">(issued via {{.IssuedVia}})</span>{{end}}.
+      {{if .RotationUnconfirmed}}<div class="small muted">A new secret is waiting for the agent's next check-in; the previous one works until then.</div>{{end}}
+    {{else if eq .Status "approval_required"}}<span class="badge bad">Approval required</span> This machine has no working secret{{if eq .IssuedVia "revoked"}} (revoked){{end}}. Its agent is refused until you approve its next request below.
+    {{else}}<span class="badge warn">Legacy</span> This agent hasn't been issued a secret yet. It picks one up automatically after it updates.
+    {{end}}
+  </dd>
+  {{if .LastUsed}}<dt>Last used</dt><dd>{{timeAgo .LastUsed}}</dd>{{end}}
+</dl>
+{{if .Requests}}
+<div class="tablewrap"><table>
+  <thead><tr><th>Requested</th><th>From</th><th>Why it needs approval</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Requests}}
+    <tr>
+      <td class="small">{{timeAgo .CreatedAt}}</td>
+      <td class="small"><code>{{.RemoteAddr}}</code></td>
+      <td class="small">{{.Reason}}</td>
+      <td class="small">{{.Status}}{{if .DecidedBy}} <span class="muted">by {{.DecidedBy}}</span>{{end}}</td>
+      <td class="actions">
+        {{if eq .Status "pending"}}
+        <form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/requests/{{int64 .ID}}/approve" data-confirm="Approve this request? Only do this if you just re-imaged or re-installed this machine — whoever made the request gets the machine's identity.">
+          <button type="submit" class="sm"><svg><use href="#i-check"/></svg>Approve</button></form>
+        <form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/requests/{{int64 .ID}}/deny">
+          <button type="submit" class="secondary sm"><svg><use href="#i-x"/></svg>Deny</button></form>
+        {{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table></div>
+{{end}}
+{{if eq .Status "secured"}}
+<form method="post" action="/portal/machines/{{int64 $m.ID}}/credential/revoke" data-confirm="Revoke this machine's agent secret? Its agent is refused until you approve a new request.">
+  <button type="submit" class="ghost sm danger"><svg><use href="#i-lock"/></svg>Revoke secret</button>
+</form>
+{{end}}
+</section>
+{{end}}
+
 <div class="section-head"><h3>Identity &amp; hardware</h3><div class="line"></div></div>
 <dl class="kv">
   <dt>Reported name</dt><dd>{{if $m.ReportedName}}<strong>{{$m.ReportedName}}</strong>{{else}}<span class="muted">— not reported yet</span>{{end}}</dd>
@@ -237,9 +282,32 @@
 {{$ae := .Data.ActionError}}
 <form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
   {{template "form_error" $ae}}
-  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "AP" .Data.AP "ConfirmName" $name "Err" $ae)}}
+  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "Toolkits" .Data.Toolkits "AP" .Data.AP "ConfirmName" $name "Err" $ae)}}
   <div class="actions"><button type="submit" class="danger" data-needs-action disabled title="Choose an action first"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
+
+<div class="section-head" id="toolkit-runs"><h3>Tool Kit runs</h3><div class="line"></div></div>
+{{if .Data.ToolkitRuns}}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Tool kit</th><th>Status</th><th>Queued</th><th>By</th><th>Result</th></tr></thead>
+  <tbody>
+    {{range .Data.ToolkitRuns}}
+    {{$js := jobStatus .Status}}
+    <tr>
+      <td>{{entityLink "toolkit" .Payload.ToolkitID}}<div class="small muted"><a href="/portal/bulk/{{int64 .OperationID}}">{{if .OperationName}}{{.OperationName}}{{else}}operation {{idLabel .OperationID}}{{end}}</a></div></td>
+      <td>{{template "status_badge" $js}}</td>
+      <td class="small muted">{{timeAgo .QueuedAt}}</td>
+      <td class="small">{{.CreatedBy}}</td>
+      <td>{{if .HasResult}}{{template "toolkit_result" (toolkitResultPtr .Result)}}{{else}}<span class="muted small">—</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="small muted">No tool kits have run on this machine. Use <a href="#actions">Run an action</a> above to run one.</p>
+{{end}}
 
 <div class="section-head"><h3>Detected software</h3><div class="line"></div></div>
 {{if .Data.Detected}}

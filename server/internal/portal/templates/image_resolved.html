@@ -74,6 +74,23 @@
   installation" dialog — the ISO's own answer file already handles Setup. Raw "DD image" writers
   (dd, balenaEtcher, Rufus DD mode) produce a stick that will not boot. Boot the target in UEFI mode.
 </p>
+{{with .Data.MediaToken}}
+<div class="card mb-3" id="media-enrolment">
+  <div class="small">
+    <strong>Media enrolment.</strong>
+    {{if .Exists}}
+      Sticks exported from this image since {{timeAbs .CreatedAt}} can enrol the machines they install, which get their agent secret automatically. Every export carries the same enrolment, so sticks you already have keep working. Nothing expires.
+      <form method="post" action="/portal/images/{{int64 $r.ImageID}}/media-enrolment/revoke" class="mt-2"
+            data-confirm="Revoke enrolment for every USB/ISO exported from this image so far? Machines installed from those sticks will need your approval before their agent works. Export again to make new sticks.">
+        <button type="submit" class="secondary sm danger"><svg><use href="#i-lock"/></svg>Revoke media enrolment</button>
+        <span class="muted">Use this if a stick is lost. The next export carries a new enrolment.</span>
+      </form>
+    {{else}}
+      No exported media can enrol machines yet. The next ISO you build carries an enrolment that lets the machines it installs get their agent secret automatically. It stays valid until you revoke it here.
+    {{end}}
+  </div>
+</div>
+{{end}}
 {{$ready := false}}{{if $r.ISO}}{{if $r.ISO.DeployReady}}{{$ready = true}}{{end}}{{end}}
 {{if $ready}}
 <style>#export-box [hidden]{display:none!important}</style>

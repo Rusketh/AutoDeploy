@@ -63,7 +63,11 @@ func bulkReview(r Repos, editing bool) http.HandlerFunc {
 			}
 			op = &o
 		}
-		p, err := parseBulkForm(req, displayLoc(r))
+		var opID model.ID
+		if op != nil {
+			opID = op.ID
+		}
+		p, err := parseBulkForm(req, displayLoc(r), r.Toolkits, opID)
 		if req.FormValue(reviewBackField) != "" {
 			// Back to edit: the form again, every input as submitted.
 			bulkFormRender(w, req, r, op, nil)
@@ -128,7 +132,9 @@ func buildBulkReview(req *http.Request, r Repos, p bulkParams) bulkReviewView {
 		Destructive: p.Action == model.BulkActionReimage,
 		WakeOnLAN:   p.WakeOnLAN,
 		CancelAfter: model.BulkOperation{CancelAfterMinutes: p.CancelAfterMinutes}.CancelAfterLabel(),
-		Hidden:      reviewHiddenFields(req),
+		// A typed Run As password is swapped for a stash token: the review
+		// page never carries the password itself.
+		Hidden: stashReviewPassword(req, reviewHiddenFields(req)),
 	}
 
 	// What the action does.
@@ -151,6 +157,31 @@ func buildBulkReview(req *http.Request, r Repos, p bulkParams) bulkReviewView {
 			img = entityLinkHTML(names, model.KindImage, p.ReimageImageID)
 		}
 		v.ActionDetail = "Wipe each machine and install " + img + ". Machines restart into network boot at their next check-in; everything on their disks is erased."
+	case model.BulkActionToolkit:
+		var kit *model.Toolkit
+		ts := summarizeToolkitPayload(p.Payload, nil)
+		if r.Toolkits != nil {
+			if k, err := r.Toolkits.Get(req.Context(), ts.ToolkitID); err == nil {
+				kit = &k
+				ts = summarizeToolkitPayload(p.Payload, kit)
+			}
+		}
+		detail := "Run " + entityLinkHTML(names, model.KindToolkit, ts.ToolkitID) +
+			" once on each machine, as <strong>" + template.HTML(esc(ts.RunAs)) + "</strong>."
+		if len(ts.Params) > 0 {
+			detail += " Parameters: "
+			for i, pv := range ts.Params {
+				if i > 0 {
+					detail += ", "
+				}
+				detail += "<code>" + template.HTML(esc(pv)) + "</code>"
+			}
+			detail += "."
+		}
+		if ts.SkipSucceeded {
+			detail += " Machines where it already succeeded are skipped."
+		}
+		v.ActionDetail = detail
 	}
 
 	// Which machines.
@@ -197,6 +228,14 @@ func buildBulkReview(req *http.Request, r Repos, p bulkParams) bulkReviewView {
 			pkg = n
 		}
 		v.Headline = "Install " + pkg + " on " + machines
+	case model.BulkActionToolkit:
+		kit := "a tool kit"
+		if tp, err := model.ParseToolkitPayload(p.Payload); err == nil {
+			if n, ok := names.Name(model.KindToolkit, tp.ToolkitID); ok {
+				kit = n
+			}
+		}
+		v.Headline = "Run " + kit + " on " + machines
 	default: // "Rename 3 machines", "Re-image 24 machines"
 		v.Headline = v.ActionLabel + " " + machines
 	}

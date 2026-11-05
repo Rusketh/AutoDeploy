@@ -125,6 +125,7 @@ const (
 	KindMirror     = "mirror"
 	KindUpdate     = "update" // Windows Update KB
 	KindWebhook    = "webhook"
+	KindToolkit    = "toolkit"
 )
 
 const kindQueryPrefix = "SELECT id, "
@@ -143,6 +144,7 @@ var kindQueries = map[string]string{
 	KindMirror:     kindQueryPrefix + "name FROM payload_mirror",
 	KindUpdate:     kindQueryPrefix + "kb_number FROM windows_update",
 	KindWebhook:    kindQueryPrefix + "name FROM webhook",
+	KindToolkit:    kindQueryPrefix + "name FROM toolkit",
 }
 
 // kindAliases normalises the spellings that appear in log targets and
@@ -161,6 +163,7 @@ var kindAliases = map[string]string{
 	"mirror": KindMirror, "mirrors": KindMirror, "payload_mirror": KindMirror,
 	"update": KindUpdate, "updates": KindUpdate, "windows_update": KindUpdate,
 	"webhook": KindWebhook,
+	"toolkit": KindToolkit, "toolkits": KindToolkit, "tool_kit": KindToolkit,
 }
 
 // NormalizeKind maps a kind spelling ("software_package", "machines") to its
