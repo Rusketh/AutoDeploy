@@ -407,6 +407,49 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 	}
 
 	// Install steps.
+	steps, serr := parseStepsFromForm(req, false)
+	if serr != nil && firstErr == nil {
+		firstErr = serr
+	}
+	sj, _ := json.Marshal(steps)
+	pkg.StepsJSON = string(sj)
+	if len(steps) == 0 {
+		pkg.StepsJSON = "[]"
+	}
+
+	// Dependencies: other packages this one requires. Resolving this
+	// package will auto-include them (transitively) and install them first.
+	// A package can't depend on itself.
+	var deps []model.ID
+	for _, s := range req.Form["depends_on"] {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
+			deps = append(deps, model.ID(n))
+		}
+	}
+	pkg.DependsOn = deps
+
+	// Supersedence: the package this one succeeds (replaces). When both this
+	// package and the one it succeeds resolve onto a machine, only this one
+	// installs. Empty / "0" = supersedes nothing. A package can't succeed
+	// itself (guarded again in the model for the update path, where pkg.ID is
+	// set after this build).
+	if s := strings.TrimSpace(req.FormValue("succeeds_id")); s != "" && s != "0" {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
+			id := model.ID(n)
+			pkg.SucceedsID = &id
+		}
+	}
+
+	return pkg, firstErr
+}
+
+// parseStepsFromForm reads the shared step editor's fields (step_index[] plus
+// step_<idx>_<field>) into steps, in submitted (DOM) order. Every step is
+// returned even when one is invalid, alongside the first error, so a
+// rejected form re-renders with the operator's work intact. allowRunAs reads
+// the per-step "Run as SYSTEM" checkbox, which only Tool Kits offer.
+func parseStepsFromForm(req *http.Request, allowRunAs bool) ([]swspec.InstallStep, error) {
+	var firstErr error
 	steps := []swspec.InstallStep{}
 	for i, idx := range req.Form["step_index[]"] {
 		s := swspec.InstallStep{
@@ -458,41 +501,15 @@ func buildSoftwareFromForm(req *http.Request) (model.SoftwarePackage, error) {
 				}
 			}
 		}
+		if allowRunAs {
+			s.RunAsSystem = req.FormValue("step_"+idx+"_run_as_system") != ""
+		}
 		if err := s.Validate(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("install step %d: %w", i+1, err)
 		}
 		steps = append(steps, s)
 	}
-	sj, _ := json.Marshal(steps)
-	pkg.StepsJSON = string(sj)
-	if len(steps) == 0 {
-		pkg.StepsJSON = "[]"
-	}
-
-	// Dependencies: other packages this one requires. Resolving this
-	// package will auto-include them (transitively) and install them first.
-	// A package can't depend on itself.
-	var deps []model.ID
-	for _, s := range req.Form["depends_on"] {
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
-			deps = append(deps, model.ID(n))
-		}
-	}
-	pkg.DependsOn = deps
-
-	// Supersedence: the package this one succeeds (replaces). When both this
-	// package and the one it succeeds resolve onto a machine, only this one
-	// installs. Empty / "0" = supersedes nothing. A package can't succeed
-	// itself (guarded again in the model for the update path, where pkg.ID is
-	// set after this build).
-	if s := strings.TrimSpace(req.FormValue("succeeds_id")); s != "" && s != "0" {
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 && model.ID(n) != pkg.ID {
-			id := model.ID(n)
-			pkg.SucceedsID = &id
-		}
-	}
-
-	return pkg, firstErr
+	return steps, firstErr
 }
 
 // splitArgs is a tiny POSIX-ish splitter that respects double-quoted

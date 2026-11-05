@@ -103,6 +103,17 @@ func (s *Scheduler) expireOverdue(ctx context.Context, now time.Time) {
 		s.log().Warn("bulksched.expire.fail", slog.String("error", err.Error()))
 		return
 	}
+	// Backstop for Run As password overrides: CompleteJob/CancelOperation
+	// delete them as an operation finishes; this catches any left behind.
+	if n, perr := s.Bulk.PurgeFinishedCredentials(ctx); perr != nil {
+		s.log().Warn("bulksched.credential_purge.fail", slog.String("error", perr.Error()))
+	} else if n > 0 {
+		s.log().Info("bulksched.credential_purge.ok",
+			slog.String("actor", "system"),
+			slog.String("action", "bulk.credentials_purged"),
+			slog.String("target", "bulk_credential"),
+			slog.Int64("removed", n))
+	}
 	if cancelled > 0 {
 		s.log().Info("bulksched.expire.ok",
 			slog.String("actor", "system"),

@@ -79,6 +79,8 @@ type Repos struct {
 	// ImportedAssets stores operator-imported assets (serial/model → name/OU)
 	// that pre-seed a machine's binding the first time it is seen.
 	ImportedAssets *model.ImportedAssetRepo
+	// Toolkits stores Tool Kits (Build -> Tool Kits).
+	Toolkits *model.ToolkitRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -161,6 +163,7 @@ func Register(mux *http.ServeMux, r Repos) error {
 	registerDriverRoutes(get, post, r)
 	registerSoftwareRoutes(get, post, r)
 	registerLoadoutRoutes(get, post, r)
+	registerToolkitRoutes(get, post, r)
 	registerImageRoutes(get, post, r)
 	registerInventoryRoutes(get, post, r)
 	registerImportRoutes(get, post, r)
@@ -689,6 +692,7 @@ var layoutPartials = []string{
 	"templates/_action_picker.html", "templates/_pagination.html",
 	"templates/_machine_picker.html", "templates/_search.html", "templates/_form_error.html",
 	"templates/_deployment_timeline.html", "templates/_bulk_progress.html",
+	"templates/_steps.html", "templates/_toolkit_result.html",
 }
 
 // render parses _layout + the named page, executes the layout, and

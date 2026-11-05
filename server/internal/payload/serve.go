@@ -42,6 +42,9 @@ type Service struct {
 	DomainJoin *model.DomainJoinRepo
 	// Updates serves .msu payload blobs for Windows Update deployment jobs.
 	Updates *model.WindowsUpdateRepo
+	// Toolkits serves Tool Kit files and bundles to the agent. Optional; nil
+	// disables the /payload/toolkit/* routes.
+	Toolkits *model.ToolkitRepo
 	// Throttle, when non-nil, bounds concurrent /payload/* requests so a
 	// 500-machine PXE burst queues rather than thrashes file descriptors.
 	Throttle *Throttle
@@ -108,6 +111,10 @@ func (s *Service) Register(mux *http.ServeMux) {
 	// and BlobStore.Resolve is the backstop against path traversal.
 	mux.Handle("GET /payload/software/{id}/files/{name...}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareFile)))
 	mux.Handle("GET /payload/software/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveSoftwareBundle)))
+	// Tool Kit files: same layout and sanitisation as software packages,
+	// under toolkit/<id>/{files,bundle}.
+	mux.Handle("GET /payload/toolkit/{id}/files/{name...}", s.throttleHandler(http.HandlerFunc(s.serveToolkitFile)))
+	mux.Handle("GET /payload/toolkit/{id}/bundle/{name}", s.throttleHandler(http.HandlerFunc(s.serveToolkitBundle)))
 	mux.Handle("GET /payload/updates/{id}", s.throttleHandler(http.HandlerFunc(s.serveUpdate)))
 	mux.HandleFunc("GET /payload/unattend/{id}", s.serveUnattend)
 }
@@ -572,6 +579,43 @@ func (s *Service) serveSoftwareBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := "software/" + fmt.Sprint(int64(id)) + "/bundle/" + name
 	s.serveBlob(w, r, rel)
+}
+
+// serveToolkitFile streams one file from a Tool Kit's files/ tree. Same
+// sanitisation and containment as serveSoftwareFile.
+func (s *Service) serveToolkitFile(w http.ResponseWriter, r *http.Request) {
+	s.serveToolkitBlob(w, r, "files", true)
+}
+
+// serveToolkitBundle streams one Tool Kit bundle zip.
+func (s *Service) serveToolkitBundle(w http.ResponseWriter, r *http.Request) {
+	s.serveToolkitBlob(w, r, "bundle", false)
+}
+
+func (s *Service) serveToolkitBlob(w http.ResponseWriter, r *http.Request, sub string, allowSubdirs bool) {
+	if s.Toolkits == nil {
+		http.Error(w, "tool kits not configured", http.StatusNotFound)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	bad := name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, `\`) || strings.Contains(name, "..")
+	if !allowSubdirs && strings.Contains(name, "/") {
+		bad = true
+	}
+	if bad {
+		http.Error(w, "bad filename", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Toolkits.Get(r.Context(), id); err != nil {
+		writeModelErr(w, err)
+		return
+	}
+	s.serveBlob(w, r, "toolkit/"+fmt.Sprint(int64(id))+"/"+sub+"/"+name)
 }
 
 func (s *Service) uploadUpdate(w http.ResponseWriter, r *http.Request) {

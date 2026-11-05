@@ -58,7 +58,7 @@ func renderMachineDetail(t *testing.T, data map[string]any) string {
 		},
 	})
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(assetsFS,
-		"templates/machine_detail.html", "templates/_action_picker.html", "templates/_deployment_timeline.html", "templates/_form_error.html")
+		"templates/machine_detail.html", "templates/_action_picker.html", "templates/_deployment_timeline.html", "templates/_form_error.html", "templates/_toolkit_result.html", "templates/_bulk_progress.html")
 	if err != nil {
 		t.Fatalf("parse machine_detail.html: %v", err)
 	}

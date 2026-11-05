@@ -1,0 +1,204 @@
+{{define "body"}}
+{{$k := .Data.Kit}}
+{{$new := .Data.IsNew}}
+{{$files := .Data.Files}}
+{{$hasfiles := gt (len $files) 0}}
+{{$bundles := .Data.Bundles}}
+{{$base := .Data.Base}}
+{{$fe := .Data.FormError}}
+<div class="toolbar">
+  <h2>{{if $new}}New tool kit{{else}}Edit tool kit: {{$k.Name}} <span class="muted small">revision {{$k.Revision}}</span>{{end}}</h2>
+  {{if not $new}}
+  <div class="right">
+    <a class="btn" href="/portal/bulk/new?toolkit_id={{int64 $k.ID}}"><svg><use href="#i-bolt"/></svg>Run on machines…</a>
+    <form method="POST" action="{{$base}}/duplicate" class="inline-form">
+      <button type="submit" class="secondary"><svg><use href="#i-copy"/></svg>Duplicate</button>
+    </form>
+  </div>
+  {{end}}
+</div>
+
+<style>
+  .filetree, .filetree ul { list-style: none; margin: 0; }
+  .filetree { padding-left: 0; }
+  .filetree ul { padding-left: 1.25rem; border-left: 1px solid var(--border, #2a2f3a); margin-left: .55rem; }
+  .filetree-row { display: flex; align-items: center; gap: .45rem; padding: .18rem 0; }
+  .filetree-icon { width: 16px; height: 16px; flex: none; opacity: .85; }
+  .filetree-row .inline-form { margin-left: auto; }
+  .folder-pick { background: none; border: none; padding: 0; font: inherit; color: var(--link, #4a9eff); text-decoration: underline; cursor: pointer; }
+</style>
+
+{{if and (not $new) (or .Data.PendingOps .Data.PendingJobs)}}
+<div class="flash warn">
+  <svg class="icon-inline"><use href="#i-alert"/></svg>
+  {{.Data.PendingOps}} scheduled or running operation{{if ne .Data.PendingOps 1}}s{{end}} use{{if eq .Data.PendingOps 1}}s{{end}} this tool kit ({{.Data.PendingJobs}} machine{{if ne .Data.PendingJobs 1}}s{{end}} still waiting or running). Machines that haven't started yet will run whatever you save here; each job records the revision it actually ran.
+</div>
+{{end}}
+
+{{if not $new}}
+<fieldset class="mb-4">
+  <legend>Files</legend>
+  {{if $hasfiles}}
+  <p class="hint mt-0">The agent downloads <strong>every file below</strong> into a work folder on the machine before the steps run, and the steps run from that folder. Reference a file by its name (e.g. <code>fix.ps1</code>) or relative path (e.g. <code>tools/diag.exe</code>). When the kit runs as another account, that account is given read access to the folder.</p>
+  <div class="filetree-wrap mt-3">{{template "filetree" dict "Nodes" $files "Base" $base}}</div>
+  {{template "upload_dropzone" dict "Base" $base "Empty" false}}
+  {{else}}
+  <div class="empty">
+    <svg class="empty-icon"><use href="#i-box"/></svg>
+    <h3>No files yet</h3>
+    <p class="small muted">A tool kit doesn't need files — a script step can do everything — but you can upload tools, scripts or a whole folder here.</p>
+    {{template "upload_dropzone" dict "Base" $base "Empty" true}}
+  </div>
+  {{end}}
+</fieldset>
+
+<fieldset class="mb-4">
+  <legend>Bundle (zip, auto-extracted)</legend>
+  <p class="hint mt-0">One zip of everything the kit needs; the agent extracts it into the work folder before running the steps.</p>
+  {{if $bundles}}
+  <div class="tablewrap mt-3"><table>
+    <thead><tr><th>Bundle</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
+    <tbody>
+      {{range $bundles}}
+      <tr>
+        <td><code class="code-name">{{.Name}}</code></td>
+        <td class="num small muted">{{humanBytes .Size}}</td>
+        <td class="small muted">{{relTime .ModTime}}</td>
+        <td class="right">
+          <form method="POST" action="{{$base}}/bundle/{{.Name}}/delete" onsubmit="return confirm('Remove bundle {{.Name}}?');" class="inline-form">
+            <button type="submit" class="ghost sm" title="Delete {{.Name}}"><svg><use href="#i-trash"/></svg></button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table></div>
+  {{end}}
+  <form class="dropzone mt-3" method="POST" action="{{$base}}/bundle" enctype="multipart/form-data" data-upload-progress data-dropzone>
+    <svg class="dropzone-icon"><use href="#i-plus"/></svg>
+    <div class="dropzone-text"><strong>Choose a .zip</strong> or drag it here</div>
+    <input type="file" name="file" accept=".zip,application/zip" required>
+  </form>
+</fieldset>
+{{end}}
+
+<form class="std" method="POST" action="{{if $new}}/portal/toolkits{{else}}{{$base}}{{end}}" data-dirty-guard autocomplete="off">
+  {{template "form_error" $fe}}
+  <fieldset><legend>Identity</legend>
+    <label><span class="lbl">Name</span><input type="text" name="name" value="{{$k.Name}}" required maxlength="128" {{invalidAttr $fe "name"}}>{{fieldError $fe "name"}}</label>
+    <label><span class="lbl">Description</span><input type="text" name="description" value="{{$k.Description}}" maxlength="200"></label>
+  </fieldset>
+
+  <fieldset><legend>Run As</legend>
+    <p class="hint">The account the steps run as by default. You can choose a different account each time you deploy the kit.</p>
+    <div class="toolkit-runas">
+      <label class="check"><input type="radio" name="run_as_mode" value="system" {{if or (eq $k.RunAsMode "system") (eq $k.RunAsMode "")}}checked{{end}}><span><strong>SYSTEM</strong> — the agent's own account (full control of the machine)</span></label>
+      <label class="check"><input type="radio" name="run_as_mode" value="logged_on_user" {{if eq $k.RunAsMode "logged_on_user"}}checked{{end}}><span><strong>The logged-on user</strong> — runs in the signed-in user's session, no password needed. Fails if nobody is signed in.</span></label>
+      <label class="check"><input type="radio" name="run_as_mode" value="user" {{if eq $k.RunAsMode "user"}}checked{{end}}><span><strong>A specific account</strong> — a domain or local account, with its password</span></label>
+    </div>
+    <div data-runas-user {{if ne $k.RunAsMode "user"}}hidden{{end}}>
+      <div class="row">
+        <label><span class="lbl">Account</span><input type="text" name="run_as_user" value="{{$k.RunAsUser}}" placeholder="DOMAIN\user, user@domain or .\localuser" {{invalidAttr $fe "run_as_user"}}>{{fieldError $fe "run_as_user"}}</label>
+        <label><span class="lbl">Password</span><input type="password" name="run_as_password" value="" autocomplete="new-password" placeholder="{{if $k.HasPassword}}Stored — leave blank to keep it{{end}}" {{invalidAttr $fe "run_as_password"}}>{{fieldError $fe "run_as_password"}}</label>
+      </div>
+      <p class="hint">{{if $k.HasPassword}}<span class="badge ok">Password stored</span> {{end}}Encrypted at rest and only ever sent to an agent that is running this kit, which is recorded in the audit log. It is never shown again. The account needs the <em>Log on as a batch job</em> right on the target machines (administrators have it by default).</p>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>Run settings</legend>
+    <div class="row">
+      <label><span class="lbl">Timeout (minutes)</span><input type="number" name="timeout_minutes" min="0" max="1440" value="{{$k.TimeoutMinutes}}" {{invalidAttr $fe "timeout_minutes"}}>
+        <span class="hint">The run is stopped and marked failed after this long. 0 = no timeout.</span>{{fieldError $fe "timeout_minutes"}}</label>
+      <label><span class="lbl">Restart afterwards</span>
+        <select name="reboot_policy">
+          {{range .Data.RebootPolicies}}<option value="{{.}}" {{if eq . $k.RebootPolicy}}selected{{end}}>{{rebootLabel .}}</option>{{end}}
+        </select>
+        <span class="hint">Restarts the machine about a minute after the run reports its result.</span></label>
+    </div>
+  </fieldset>
+
+  <fieldset><legend>Parameters</legend>
+    <p class="hint">Named values the operator can change at deploy time. Write <code>%NAME%</code> in any step field (paths, arguments, script bodies) and it is replaced with the value. Names are letters, digits and underscores; <code>%pkgdir%</code> is reserved.</p>
+    <div id="params">
+      {{range $i, $p := $k.Params}}
+      <div class="block row">
+        <input type="hidden" name="param_index[]" value="{{$i}}">
+        <label><span class="lbl">Name</span><input type="text" name="param_{{$i}}_name" value="{{$p.Name}}" placeholder="SITE"></label>
+        <label><span class="lbl">Label</span><input type="text" name="param_{{$i}}_label" value="{{$p.Label}}" placeholder="Site code"></label>
+        <label><span class="lbl">Default</span><input type="text" name="param_{{$i}}_default" value="{{$p.Default}}"></label>
+        <label class="check"><input type="checkbox" name="param_{{$i}}_required" value="1" {{if $p.Required}}checked{{end}}><span>Required</span></label>
+        <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this parameter"><svg><use href="#i-trash"/></svg></button>
+      </div>
+      {{end}}
+    </div>
+    {{fieldError $fe "params"}}
+    <button type="button" class="secondary" onclick="addParam()"><svg><use href="#i-plus"/></svg>Add parameter</button>
+  </fieldset>
+
+  <fieldset><legend>Steps</legend>
+    <p class="hint">Steps run <strong>in order</strong>, once, every time the kit is deployed — there are no detection rules. A failed step stops the run unless its <em>If this step fails</em> is set to continue. Paths accept an uploaded file's name, an absolute path, Windows environment variables (expanded for the Run As account) and <code>%pkgdir%</code> (the work folder).</p>
+    <datalist id="os-filter-options"><option value="Windows 11"></option><option value="Windows 10"></option></datalist>
+    <div id="steps">
+      {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s "RunAs" true}}{{end}}
+    </div>
+    <button type="button" class="secondary" onclick="addStep()"><svg><use href="#i-plus"/></svg>Add step</button>
+  </fieldset>
+
+  <div class="actions">
+    <a class="btn secondary" href="/portal/toolkits">Cancel</a>
+    <button type="submit"><svg><use href="#i-check"/></svg>{{if $new}}Create{{else}}Save changes{{end}}</button>
+  </div>
+</form>
+
+{{if not $new}}
+<div class="section-head"><h3>Recent runs</h3><div class="line"></div></div>
+{{if .Data.Runs}}
+<div class="tablewrap"><table>
+  <thead><tr><th>Machine</th><th>Status</th><th>Queued</th><th>By</th><th>Result</th></tr></thead>
+  <tbody>
+    {{range .Data.Runs}}
+    {{$js := jobStatus .Status}}
+    <tr>
+      <td>{{entityLink "machine" .MachineID}}<div class="small muted"><a href="/portal/bulk/{{int64 .OperationID}}">{{if .OperationName}}{{.OperationName}}{{else}}operation {{idLabel .OperationID}}{{end}}</a></div></td>
+      <td>{{template "status_badge" $js}}</td>
+      <td class="small muted">{{timeAgo .QueuedAt}}</td>
+      <td class="small">{{.CreatedBy}}</td>
+      <td>{{if .HasResult}}{{template "toolkit_result" (toolkitResultPtr .Result)}}{{else}}<span class="muted small">—</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table></div>
+{{else}}
+<p class="small muted">This tool kit hasn't run yet.</p>
+{{end}}
+
+<div class="section-head"><h3>Delete</h3><div class="line"></div></div>
+<form method="POST" action="{{$base}}/delete" data-confirm="Delete tool kit “{{$k.Name}}” and its files? Its run history stays on each operation.">
+  <p class="small muted">A tool kit can't be deleted while a scheduled or running operation uses it.</p>
+  <button class="danger" type="submit"><svg><use href="#i-trash"/></svg>Delete tool kit</button>
+</form>
+{{end}}
+
+<script>
+(function(){
+  document.querySelectorAll('input[name="run_as_mode"]').forEach(function(r){
+    r.addEventListener('change', function(){
+      document.querySelector('[data-runas-user]').hidden = r.value !== 'user' || !r.checked;
+    });
+  });
+})();
+var nextParamIdx = {{len $k.Params}};
+function addParam(){
+  var i = String(nextParamIdx++);
+  var html = '<div class="block row"><input type="hidden" name="param_index[]" value="' + i + '">' +
+    '<label><span class="lbl">Name</span><input type="text" name="param_' + i + '_name" placeholder="SITE"></label>' +
+    '<label><span class="lbl">Label</span><input type="text" name="param_' + i + '_label" placeholder="Site code"></label>' +
+    '<label><span class="lbl">Default</span><input type="text" name="param_' + i + '_default"></label>' +
+    '<label class="check"><input type="checkbox" name="param_' + i + '_required" value="1"><span>Required</span></label>' +
+    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this parameter"><svg><use href="#i-trash"/></svg></button></div>';
+  var wrap = document.createElement('div'); wrap.innerHTML = html;
+  document.getElementById('params').appendChild(wrap.firstChild);
+}
+</script>
+{{template "steps_script" dict "Count" (len .Data.Steps) "RunAs" true}}
+{{end}}

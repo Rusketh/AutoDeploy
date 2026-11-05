@@ -21,22 +21,25 @@ type DetectionRule struct {
 
 // InstallStep mirrors server/internal/swspec.InstallStep.
 type InstallStep struct {
-	Type              string   `json:"type"`
-	Description       string   `json:"description,omitempty"`
-	FilterOS          string   `json:"filter_os,omitempty"`
-	SuccessCodes      []int    `json:"success_codes,omitempty"`
-	ContinueOnFailure bool     `json:"continue_on_failure,omitempty"`
-	SourcePath        string   `json:"source_path,omitempty"`
-	DestinationPath   string   `json:"destination_path,omitempty"`
-	MSIPath           string   `json:"msi_path,omitempty"`
-	MSIArgs           []string `json:"msi_args,omitempty"`
-	APPXPath          string   `json:"appx_path,omitempty"`
-	APPXDependencies  []string `json:"appx_dependencies,omitempty"`
-	APPXLicense       string   `json:"appx_license,omitempty"`
-	APPXProvision     bool     `json:"appx_provision,omitempty"`
-	ScriptBody        string   `json:"script_body,omitempty"`
-	ExePath           string   `json:"exe_path,omitempty"`
-	ExeArgs           []string `json:"exe_args,omitempty"`
-	WingetID          string   `json:"winget_id,omitempty"`
-	WingetArgs        []string `json:"winget_args,omitempty"`
+	Type              string `json:"type"`
+	Description       string `json:"description,omitempty"`
+	FilterOS          string `json:"filter_os,omitempty"`
+	SuccessCodes      []int  `json:"success_codes,omitempty"`
+	ContinueOnFailure bool   `json:"continue_on_failure,omitempty"`
+	// RunAsSystem: run this step as SYSTEM even inside a Tool Kit whose
+	// Run As account is a user (see server swspec).
+	RunAsSystem      bool     `json:"run_as_system,omitempty"`
+	SourcePath       string   `json:"source_path,omitempty"`
+	DestinationPath  string   `json:"destination_path,omitempty"`
+	MSIPath          string   `json:"msi_path,omitempty"`
+	MSIArgs          []string `json:"msi_args,omitempty"`
+	APPXPath         string   `json:"appx_path,omitempty"`
+	APPXDependencies []string `json:"appx_dependencies,omitempty"`
+	APPXLicense      string   `json:"appx_license,omitempty"`
+	APPXProvision    bool     `json:"appx_provision,omitempty"`
+	ScriptBody       string   `json:"script_body,omitempty"`
+	ExePath          string   `json:"exe_path,omitempty"`
+	ExeArgs          []string `json:"exe_args,omitempty"`
+	WingetID         string   `json:"winget_id,omitempty"`
+	WingetArgs       []string `json:"winget_args,omitempty"`
 }

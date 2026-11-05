@@ -51,6 +51,12 @@
   </dd>
   {{if .Data.Image}}<dt>Image</dt><dd>{{.Data.Image}}</dd>{{end}}
   {{if .Data.Package}}<dt>Software</dt><dd>{{.Data.Package}}</dd>{{end}}
+  {{with .Data.ToolkitSummary}}
+  <dt>Tool kit</dt><dd>{{$.Data.Toolkit}}{{if .Revision}} <span class="small muted">revision {{.Revision}} when queued</span>{{end}}</dd>
+  <dt>Runs as</dt><dd>{{.RunAs}}</dd>
+  {{if .Params}}<dt>Parameters</dt><dd>{{range .Params}}<code>{{.}}</code> {{end}}</dd>{{end}}
+  {{if .SkipSucceeded}}<dt>Repeat runs</dt><dd class="small">Machines where it already succeeded are skipped</dd>{{end}}
+  {{end}}
   <dt>Machines</dt><dd>{{.Data.Target}}</dd>
   <dt>When</dt><dd>
     {{scheduleText $op}}
@@ -90,7 +96,7 @@
       <td data-sort-value="{{$js.Label}}">{{template "status_badge" $js}}</td>
       <td class="small muted" data-sort-value="{{if .ClaimedAt}}{{(deref .ClaimedAt).Unix}}{{else}}0{{end}}">{{if .ClaimedAt}}{{timeAgo .ClaimedAt}}{{else}}—{{end}}</td>
       <td class="small muted" data-sort-value="{{if .CompletedAt}}{{(deref .CompletedAt).Unix}}{{else}}0{{end}}">{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}—{{end}}</td>
-      <td class="small">{{with jobResult .ResultJSON}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small">{{with toolkitResult .ResultJSON}}{{template "toolkit_result" .}}{{else}}{{with jobResult .ResultJSON}}{{.}}{{else}}<span class="muted">—</span>{{end}}{{end}}</td>
       <td class="num"><code>{{idLabel .ID}}</code></td>
     </tr>
     {{end}}

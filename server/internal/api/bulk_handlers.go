@@ -277,6 +277,7 @@ func handleAgentJobResult(r Repos) http.HandlerFunc {
 			return
 		}
 		emitSoftwarePushResult(req, r, id, in.Status)
+		emitToolkitResult(req, r, id, in.Status)
 		emitBulkFinished(req, r, completedOp)
 		w.WriteHeader(http.StatusNoContent)
 	}

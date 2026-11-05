@@ -386,6 +386,11 @@ func bulkTemplateFuncs(loc *time.Location) template.FuncMap {
 		"actionLabel":     model.BulkActionLabel,
 		"scheduleText":    func(op model.BulkOperation) string { return scheduleText(op, loc) },
 		"humanToken":      humanToken,
+		// Tool Kits (toolkit.go).
+		"toolkitResult":    toolkitResultFor,
+		"toolkitResultPtr": func(r model.ToolkitResult) *model.ToolkitResult { return &r },
+		"runAsText":        runAsText,
+		"rebootLabel":      model.RebootLabel,
 		// Windows Update pages (windowsupdate.go).
 		"osLabel":          osFilterLabel,
 		"severityTone":     severityTone,

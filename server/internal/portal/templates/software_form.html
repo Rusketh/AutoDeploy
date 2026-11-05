@@ -36,15 +36,15 @@
     The agent downloads <strong>every file below</strong> into a per-package work directory on the target, sub-directories and all. In your install steps, reference a file by its bare filename (e.g. <code>setup.exe</code>) or, for files inside a folder, by its relative path (e.g. <code>drivers/oem.inf</code>) -- the agent resolves it to the on-disk path automatically.
   </p>
   <div class="filetree-wrap mt-3">
-    {{template "filetree" dict "Nodes" $files "PkgID" (int64 $p.ID)}}
+    {{template "filetree" dict "Nodes" $files "Base" (printf "/portal/software/%d" (int64 $p.ID))}}
   </div>
-  {{template "software_upload_dropzone" dict "PkgID" (int64 $p.ID) "Empty" false}}
+  {{template "upload_dropzone" dict "Base" (printf "/portal/software/%d" (int64 $p.ID)) "Empty" false}}
   {{else}}
   <div class="empty">
     <svg class="empty-icon"><use href="#i-box"/></svg>
     <h3>No files uploaded yet</h3>
     <p class="small muted">Upload the file (or files) this package needs — a single file, several files, or a whole folder (its structure is preserved). Reference each one by its filename (or relative path) in your install steps below.</p>
-    {{template "software_upload_dropzone" dict "PkgID" (int64 $p.ID) "Empty" true}}
+    {{template "upload_dropzone" dict "Base" (printf "/portal/software/%d" (int64 $p.ID)) "Empty" true}}
   </div>
   {{end}}
 </fieldset>
@@ -159,7 +159,7 @@
       <option value="Windows 10"></option>
     </datalist>
     <div id="steps">
-      {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s}}{{end}}
+      {{range $i, $s := .Data.Steps}}{{template "stepblock" dict "Idx" $i "S" $s "RunAs" false}}{{end}}
     </div>
     <button type="button" class="secondary" onclick="addStep()"><svg><use href="#i-plus"/></svg>Add install step</button>
   </fieldset>
@@ -177,24 +177,6 @@ function ruleTypeChanged(sel){
     var d = b.querySelector('.rule-'+t);
     if (d) d.style.display = (sel.value===t)?'block':'none';
   });
-}
-function stepTypeChanged(sel){
-  var b = sel.closest('.block');
-  // copy and unzip share the source/destination inputs, so the
-  // shared .step-srcdst div is visible for either type. The hint
-  // text below the inputs tweaks itself to match.
-  ['copy','msi','appx','cmd','powershell','exe','winget'].forEach(function(t){
-    var d = b.querySelector('.step-'+t);
-    if (d) d.style.display = (sel.value===t)?'block':'none';
-  });
-  var srcdst = b.querySelector('.step-srcdst');
-  if (srcdst) srcdst.style.display = (sel.value==='copy' || sel.value==='unzip') ? 'block' : 'none';
-  var hint = b.querySelector('.step-srcdst-hint');
-  if (hint) {
-    hint.textContent = (sel.value==='unzip')
-      ? 'Source: the .zip file -- bare filename of an uploaded zip (e.g. bundle.zip) or a full path. Destination: directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).'
-      : 'Copy from Source to Destination. Write a bare filename to refer to a file you uploaded above; absolute paths and %ProgramFiles%-style env vars also work.';
-  }
 }
 var nextRuleIdx = {{len .Data.Rules}};
 function addRule(){
@@ -228,60 +210,8 @@ function addRule(){
   var wrap = document.createElement('div'); wrap.innerHTML = html;
   document.getElementById('rules').appendChild(wrap.firstChild);
 }
-var nextStepIdx = {{len .Data.Steps}};
-function addStep(){
-  var idx = String(nextStepIdx++);
-  var html = '<div class="block"><input type="hidden" name="step_index[]" value="' + idx + '">' +
-    '<div class="row"><label><span class="lbl">What does this step do?</span>' +
-    '<select name="step_' + idx + '_type" onchange="stepTypeChanged(this)">' +
-    '<option value="copy" selected>Copy a file</option>' +
-    '<option value="unzip">Extract a ZIP archive</option>' +
-    '<option value="msi">Install an MSI (msiexec /quiet)</option>' +
-    '<option value="appx">Install an APPX/MSIX package</option>' +
-    '<option value="exe">Run an EXE installer</option>' +
-    '<option value="cmd">Run a cmd.exe script</option>' +
-    '<option value="powershell">Run a PowerShell script</option>' +
-    '<option value="winget">Install via winget</option></select></label>' +
-    '<label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_' + idx + '_desc" placeholder="e.g. Install <app>"></label>' +
-    '<button type="button" class="ghost sm" onclick="moveBlock(this,-1)" title="Move this step up"><svg><use href="#i-arrow-up"/></svg></button>' +
-    '<button type="button" class="ghost sm" onclick="moveBlock(this,1)" title="Move this step down"><svg><use href="#i-arrow-down"/></svg></button>' +
-    '<button type="button" class="ghost sm" onclick="this.closest(\'.block\').remove()" title="Remove this step"><svg><use href="#i-trash"/></svg></button></div>' +
-    '<div class="row"><label><span class="lbl">Success exit codes (comma-sep)</span><input type="text" name="step_' + idx + '_success_codes" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>' +
-    '<label><span class="lbl">If this step fails…</span><select name="step_' + idx + '_continue"><option value="">Abort the whole package</option><option value="1">Continue with the next step</option></select></label></div>' +
-    '<div class="row"><label><span class="lbl">Only run on this OS <span class="muted small">(blank = every OS)</span></span>' +
-    '<input type="text" name="step_' + idx + '_filter_os" list="os-filter-options" placeholder="e.g. Windows 11">' +
-    '<span class="hint">Matches the target\'s OS name as a case-insensitive substring (e.g. <code>Windows 11</code> matches <code>Microsoft Windows 11 Pro</code>). Blank = every OS. A step whose filter doesn\'t match is skipped, not failed.</span></label></div>' +
-    '<div class="step-srcdst"><label><span class="lbl">Source path</span><input type="text" name="step_' + idx + '_source_path" placeholder="config.json"></label>' +
-    '<label><span class="lbl">Destination path</span><input type="text" name="step_' + idx + '_destination_path" placeholder="C:\\Program Files\\…"></label>' +
-    '<span class="hint step-srcdst-hint">Copy from <strong>Source</strong> to <strong>Destination</strong>. Write a bare filename to refer to a file you uploaded above; absolute paths and <code>%ProgramFiles%</code>-style env vars also work.</span></div>' +
-    '<div class="step-msi" style="display:none"><label><span class="lbl">MSI file path</span><input type="text" name="step_' + idx + '_msi_path" placeholder="setup.msi"></label>' +
-    '<label><span class="lbl">Extra msiexec args</span><input type="text" name="step_' + idx + '_msi_args" placeholder="TARGETDIR=C:\\Foo"></label>' +
-    '<span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. Write the uploaded MSI’s filename here (e.g. <code>setup.msi</code>).</span></div>' +
-    '<div class="step-appx" style="display:none"><label><span class="lbl">APPX / MSIX / bundle file path</span><input type="text" name="step_' + idx + '_appx_path" placeholder="app.msixbundle"></label>' +
-    '<label><span class="lbl">Dependency packages <span class="muted small">(space-separated)</span></span><input type="text" name="step_' + idx + '_appx_dependencies" placeholder="Microsoft.VCLibs….appx Microsoft.UI.Xaml….appx"></label>' +
-    '<label><span class="lbl">Offline licence file <span class="muted small">(machine-wide only)</span></span><input type="text" name="step_' + idx + '_appx_license" placeholder="App_License1.xml"></label>' +
-    '<label class="check"><input type="checkbox" name="step_' + idx + '_appx_provision" value="1"> Install for all users (machine-wide)</label>' +
-    '<span class="hint">Runs <code>Add-AppxPackage</code> (current user) or, when <em>all users</em> is ticked, <code>Add-AppxProvisionedPackage -Online</code>. A <code>.msixbundle</code>/<code>.appxbundle</code> usually needs its framework packages listed as dependencies. Reference an uploaded file by bare name or <code>{payload}</code>.</span></div>' +
-    '<div class="step-cmd" style="display:none"><label><span class="lbl">cmd /C script body</span><textarea name="step_' + idx + '_cmd_script_body" rows="6" placeholder="reg add HKLM\\Software\\Acme /v Installed /t REG_SZ /d 1 /f"></textarea></label></div>' +
-    '<div class="step-powershell" style="display:none"><label><span class="lbl">PowerShell script body</span><textarea name="step_' + idx + '_ps_script_body" rows="6" placeholder="Set-ItemProperty -Path \'HKLM:\\\\…\' -Name X -Value 1"></textarea></label></div>' +
-    '<div class="step-exe" style="display:none"><label><span class="lbl">EXE file path</span><input type="text" name="step_' + idx + '_exe_path" placeholder="setup.exe"></label>' +
-    '<label><span class="lbl">Args</span><input type="text" name="step_' + idx + '_exe_args" placeholder="/S /quiet"></label>' +
-    '<span class="hint">Runs the EXE with the given args. Common silent flags: <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, <code>/VERYSILENT</code>.</span></div>' +
-    '<div class="step-winget" style="display:none"><label><span class="lbl">Winget package ID</span><input type="text" name="step_' + idx + '_winget_id" placeholder="Publisher.AppName"></label>' +
-    '<label><span class="lbl">Extra args</span><input type="text" name="step_' + idx + '_winget_args" placeholder="--scope machine"></label>' +
-    '<span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span></div></div>';
-  var wrap = document.createElement('div'); wrap.innerHTML = html;
-  document.getElementById('steps').appendChild(wrap.firstChild);
-}
-// moveBlock swaps a rule/step block with its neighbour. Submit order
-// follows DOM order (the server reads rule_index[]/step_index[] in the
-// order they arrive), so reordering blocks reorders the saved array.
-function moveBlock(btn, dir){
-  var b = btn.closest('.block'), p = b.parentNode;
-  if (dir < 0 && b.previousElementSibling) p.insertBefore(b, b.previousElementSibling);
-  else if (dir > 0 && b.nextElementSibling) p.insertBefore(b.nextElementSibling, b);
-}
 </script>
+{{template "steps_script" dict "Count" (len .Data.Steps) "RunAs" false}}
 {{end}}
 
 {{define "ruleblock"}}
@@ -343,124 +273,4 @@ function moveBlock(btn, dir){
     <span class="hint">Exact match against <code>winget list --id &lt;id&gt; --exact</code>. Winget must be installed on the target machine.</span>
   </div>
 </div>
-{{end}}
-
-{{define "stepblock"}}
-{{$i := .Idx}}{{$s := .S}}
-<div class="block">
-  <input type="hidden" name="step_index[]" value="{{$i}}">
-  <div class="row">
-    <label><span class="lbl">What does this step do?</span>
-      <select name="step_{{$i}}_type" onchange="stepTypeChanged(this)">
-        <option value="copy"       {{if eq $s.Type "copy"}}selected{{end}}>Copy a file</option>
-        <option value="unzip"      {{if eq $s.Type "unzip"}}selected{{end}}>Extract a ZIP archive</option>
-        <option value="msi"        {{if eq $s.Type "msi"}}selected{{end}}>Install an MSI (msiexec /quiet)</option>
-        <option value="appx"       {{if eq $s.Type "appx"}}selected{{end}}>Install an APPX/MSIX package</option>
-        <option value="exe"        {{if eq $s.Type "exe"}}selected{{end}}>Run an EXE installer</option>
-        <option value="cmd"        {{if eq $s.Type "cmd"}}selected{{end}}>Run a cmd.exe script</option>
-        <option value="powershell" {{if eq $s.Type "powershell"}}selected{{end}}>Run a PowerShell script</option>
-        <option value="winget"     {{if eq $s.Type "winget"}}selected{{end}}>Install via winget</option>
-      </select>
-    </label>
-    <label><span class="lbl">Description (shown in logs)</span><input type="text" name="step_{{$i}}_desc" value="{{$s.Description}}" placeholder="e.g. Install <app>"></label>
-    <button type="button" class="ghost sm" onclick="moveBlock(this,-1)" title="Move this step up"><svg><use href="#i-arrow-up"/></svg></button>
-    <button type="button" class="ghost sm" onclick="moveBlock(this,1)" title="Move this step down"><svg><use href="#i-arrow-down"/></svg></button>
-    <button type="button" class="ghost sm" onclick="this.closest('.block').remove()" title="Remove this step"><svg><use href="#i-trash"/></svg></button>
-  </div>
-  <div class="row">
-    <label><span class="lbl">Success exit codes <span class="muted small">(comma-sep)</span></span><input type="text" name="step_{{$i}}_success_codes" value="{{range $j, $c := $s.SuccessCodes}}{{if $j}},{{end}}{{$c}}{{end}}" placeholder="0 (default); add 3010 for installers that ask for reboot"></label>
-    <label><span class="lbl">If this step fails…</span>
-      <select name="step_{{$i}}_continue">
-        <option value=""  {{if not $s.ContinueOnFailure}}selected{{end}}>Abort the whole package</option>
-        <option value="1" {{if $s.ContinueOnFailure}}selected{{end}}>Continue with the next step</option>
-      </select>
-    </label>
-  </div>
-  <div class="row">
-    <label><span class="lbl">Only run on this OS <span class="muted small">(blank = every OS)</span></span>
-      <input type="text" name="step_{{$i}}_filter_os" value="{{$s.FilterOS}}" list="os-filter-options" placeholder="e.g. Windows 11">
-      <span class="hint">Matches the target's OS name as a case-insensitive <strong>substring</strong> -- e.g. <code>Windows 11</code> matches <code>Microsoft Windows 11 Pro</code>. Leave blank to run on every OS. Use this to put a Windows 11 step and a Windows 10 step in one package and have each apply only on the matching edition; a step whose filter doesn't match is skipped, not failed.</span>
-    </label>
-  </div>
-  <div class="step-srcdst" {{if and (ne $s.Type "copy") (ne $s.Type "unzip")}}style="display:none"{{end}}>
-    <label><span class="lbl">Source path</span><input type="text" name="step_{{$i}}_source_path" value="{{$s.SourcePath}}" placeholder="config.json"></label>
-    <label><span class="lbl">Destination path</span><input type="text" name="step_{{$i}}_destination_path" value="{{$s.DestinationPath}}" placeholder="C:\Program Files\…"></label>
-    <span class="hint step-srcdst-hint">{{if eq $s.Type "unzip"}}<strong>Source:</strong> the .zip file -- bare filename of an uploaded zip (e.g. <code>bundle.zip</code>) or a full path. <strong>Destination:</strong> directory to extract into. Each entry is verified to live under the destination before any bytes are written (zip-slip defence).{{else}}Copy from <strong>Source</strong> to <strong>Destination</strong>. Write a bare filename to refer to a file you uploaded above; absolute paths and <code>%ProgramFiles%</code>-style env vars also work.{{end}}</span>
-  </div>
-  <div class="step-msi" {{if ne $s.Type "msi"}}style="display:none"{{end}}>
-    <label><span class="lbl">MSI file path</span><input type="text" name="step_{{$i}}_msi_path" value="{{$s.MSIPath}}" placeholder="setup.msi"></label>
-    <label><span class="lbl">Extra msiexec args <span class="muted small">(added after /quiet /norestart)</span></span><input type="text" name="step_{{$i}}_msi_args" value="{{range $j, $a := $s.MSIArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="TARGETDIR=C:\Foo"></label>
-    <span class="hint">Runs <code>msiexec /i &lt;path&gt; /quiet /norestart [extra args]</code>. If you uploaded the .msi above, just write <code>{payload}</code> as the path.</span>
-  </div>
-  <div class="step-appx" {{if ne $s.Type "appx"}}style="display:none"{{end}}>
-    <label><span class="lbl">APPX / MSIX / bundle file path</span><input type="text" name="step_{{$i}}_appx_path" value="{{$s.APPXPath}}" placeholder="app.msixbundle"></label>
-    <label><span class="lbl">Dependency packages <span class="muted small">(space-separated)</span></span><input type="text" name="step_{{$i}}_appx_dependencies" value="{{range $j, $a := $s.APPXDependencies}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="Microsoft.VCLibs….appx Microsoft.UI.Xaml….appx"></label>
-    <label><span class="lbl">Offline licence file <span class="muted small">(machine-wide only)</span></span><input type="text" name="step_{{$i}}_appx_license" value="{{$s.APPXLicense}}" placeholder="App_License1.xml"></label>
-    <label class="check"><input type="checkbox" name="step_{{$i}}_appx_provision" value="1" {{if $s.APPXProvision}}checked{{end}}><span>Install for all users (machine-wide)</span></label>
-    <span class="hint">Runs <code>Add-AppxPackage -Path &lt;path&gt;</code> (current user) or, when <em>all users</em> is ticked, <code>Add-AppxProvisionedPackage -Online</code> via PowerShell. A <code>.msixbundle</code>/<code>.appxbundle</code> usually needs its framework packages listed as dependencies (else install fails with <code>0x80073CF3</code>). If you uploaded a file above, write its name or <code>{payload}</code>.</span>
-  </div>
-  <div class="step-cmd" {{if ne $s.Type "cmd"}}style="display:none"{{end}}>
-    <label><span class="lbl">cmd /C script body</span><textarea name="step_{{$i}}_cmd_script_body" rows="6" placeholder="reg add HKLM\Software\Acme /v Installed /t REG_SZ /d 1 /f">{{if eq $s.Type "cmd"}}{{$s.ScriptBody}}{{end}}</textarea></label>
-    <span class="hint">Runs <code>cmd /C &lt;body&gt;</code>. Multi-line bodies work; use <code>&amp;&amp;</code> to chain. Reference the uploaded installer as <code>{payload}</code>.</span>
-  </div>
-  <div class="step-powershell" {{if ne $s.Type "powershell"}}style="display:none"{{end}}>
-    <label><span class="lbl">PowerShell script body</span><textarea name="step_{{$i}}_ps_script_body" rows="6" placeholder="Set-ItemProperty -Path 'HKLM:\…' -Name X -Value 1">{{if eq $s.Type "powershell"}}{{$s.ScriptBody}}{{end}}</textarea></label>
-    <span class="hint">Body is piped to <code>powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -</code>. Reference the uploaded installer as <code>{payload}</code>.</span>
-  </div>
-  <div class="step-exe" {{if ne $s.Type "exe"}}style="display:none"{{end}}>
-    <label><span class="lbl">EXE file path</span><input type="text" name="step_{{$i}}_exe_path" value="{{$s.ExePath}}" placeholder="setup.exe"></label>
-    <label><span class="lbl">Args</span><input type="text" name="step_{{$i}}_exe_args" value="{{range $j, $a := $s.ExeArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="/S /quiet"></label>
-    <span class="hint">Runs the EXE with the given args. If you uploaded the installer above, just write <code>{payload}</code>; common silent-install flags are <code>/S</code>, <code>/silent</code>, <code>/quiet</code>, or <code>/VERYSILENT</code> depending on the installer.</span>
-  </div>
-  <div class="step-winget" {{if ne $s.Type "winget"}}style="display:none"{{end}}>
-    <label><span class="lbl">Winget package ID</span><input type="text" name="step_{{$i}}_winget_id" value="{{$s.WingetID}}" placeholder="Publisher.AppName"></label>
-    <label><span class="lbl">Extra args</span><input type="text" name="step_{{$i}}_winget_args" value="{{range $j, $a := $s.WingetArgs}}{{if $j}} {{end}}{{$a}}{{end}}" placeholder="--scope machine"></label>
-    <span class="hint">Runs <code>winget install --id &lt;id&gt; --silent [extra args]</code>. Winget must be installed on the target machine.</span>
-  </div>
-</div>
-{{end}}
-
-{{/* filetree renders payload files as a nested tree. Data: a dict with
-     "Nodes" (a []*fileNode) and "PkgID" (int64). Directory rows delete the
-     whole sub-tree; file rows delete just the file. Both post the node's
-     slash-relative Path to /files/delete. */}}
-{{define "filetree"}}
-<ul class="filetree">
-  {{range .Nodes}}
-  <li>
-    <span class="filetree-row">
-      {{if .IsDir}}<svg class="filetree-icon"><use href="#i-folder"/></svg>{{else}}<svg class="filetree-icon"><use href="#i-file"/></svg>{{end}}
-      <code class="code-name">{{.Name}}{{if .IsDir}}/{{end}}</code>
-      {{if not .IsDir}}
-      <button type="button" class="copy" data-copy="{{.Path}}" aria-label="Copy relative path" title="Copy {{.Path}}"><svg><use href="#i-copy"/></svg></button>
-      <span class="small muted">{{humanBytes .Size}}</span>
-      <span class="small muted">{{relTime .ModTime}}</span>
-      {{end}}
-      <form method="POST" action="/portal/software/{{$.PkgID}}/files/delete"
-            onsubmit="return confirm('{{if .IsDir}}Remove the folder “{{.Path}}” and everything inside it{{else}}Remove “{{.Path}}”{{end}} from this package? Detection rules and install steps stay.');"
-            class="inline-form">
-        <input type="hidden" name="name" value="{{.Path}}">
-        <button type="submit" class="ghost sm" title="Delete {{.Path}}"><svg><use href="#i-trash"/></svg></button>
-      </form>
-    </span>
-    {{if and .IsDir .Children}}{{template "filetree" dict "Nodes" .Children "PkgID" $.PkgID}}{{end}}
-  </li>
-  {{end}}
-</ul>
-{{end}}
-
-{{/* software_upload_dropzone is the single, merged upload area: it accepts
-     one file, several files, or a whole folder (structure preserved), by
-     click or drag. Data: a dict with "PkgID" (int64) and "Empty" (bool).
-     data-folder-capable tells app.js to use the per-file uploader that
-     carries each file's relative path. */}}
-{{define "software_upload_dropzone"}}
-<form class="dropzone mt-3{{if .Empty}} upload-empty-form{{end}}" method="POST" action="/portal/software/{{.PkgID}}/upload" enctype="multipart/form-data" data-upload-progress data-dropzone data-folder-capable>
-  <svg class="dropzone-icon"><use href="#i-plus"/></svg>
-  <div class="dropzone-text"><strong>Choose files</strong> or drag files &amp; folders here</div>
-  <div class="dropzone-hint">A file, several files, or a whole folder — sub-directories are preserved (e.g. <code>drivers/oem.inf</code>)</div>
-  <input type="file" name="file" multiple>
-  <div class="small mt-2">or <button type="button" class="folder-pick" data-folder-pick>select a whole folder…</button></div>
-  <input type="file" webkitdirectory directory multiple hidden data-folder-input>
-</form>
 {{end}}

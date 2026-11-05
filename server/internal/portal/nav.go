@@ -38,6 +38,7 @@ var navLayout = []navGroup{
 		{Label: "Drivers", URL: "/portal/drivers", Icon: "i-cpu"},
 		{Label: "Software", URL: "/portal/software", Icon: "i-box"},
 		{Label: "Loadouts", URL: "/portal/loadouts", Icon: "i-stack"},
+		{Label: "Tool Kits", URL: "/portal/toolkits", Icon: "i-wrench"},
 	}},
 	{Key: "patching", Label: "Patching", Icon: "i-shield-check", Items: []navItem{
 		{Label: "Windows Updates", URL: "/portal/updates", Icon: "i-refresh", Prefixes: []string{"/portal/update-deployments"}},

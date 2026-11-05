@@ -81,6 +81,9 @@ type Repos struct {
 	WebhookRepo *model.WebhookRepo
 	// Groups manages AutoDeploy machine groups (manual + dynamic, nestable).
 	Groups *model.MachineGroupRepo
+	// Toolkits stores Tool Kits and per-operation Run As overrides; the
+	// agent fetches a toolkit job's steps and credential through it.
+	Toolkits *model.ToolkitRepo
 	// Emitter fans out events to all notification channels.
 	Emitter *notify.Emitter
 	// Waker sends Wake-on-LAN packets for bulk operations that request it.
@@ -105,6 +108,7 @@ func Register(mux *http.ServeMux, r Repos) {
 	RegisterWinget(mux, r)
 	RegisterNotifications(mux, r)
 	RegisterWebhooks(mux, r)
+	RegisterToolkit(mux, r)
 
 	// ISO
 	mux.HandleFunc("GET /api/v1/isos", requireAuth(r, handleListISOs(r)))

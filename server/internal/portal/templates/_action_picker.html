@@ -1,5 +1,6 @@
 {{define "action_picker"}}
-{{- /* dict params: Mode ("bulk"|"single"), Packages, Images, AP (prefill map).
+{{- /* dict params: Mode ("bulk"|"single"), Packages, Images, Toolkits
+       ([]toolkitPickerKit), AP (prefill map).
        Optional: ConfirmName (single mode: the machine name a re-image must be
        confirmed with), Err (*FormError for inline field messages).
        No action is preselected unless AP.Action names one; a submit button
@@ -7,6 +8,9 @@
 {{$mode := .Mode}}
 {{$ap := .AP}}
 {{$err := .Err}}
+{{- /* TkErr: field errors for the Tool Kit panel only (the bulk form shows
+       its other action errors below the picker). Defaults to Err. */ -}}
+{{$tkErr := .Err}}{{with .TkErr}}{{$tkErr = .}}{{end}}
 <fieldset class="action-picker" role="radiogroup" aria-label="Action">
   <label class="action-tile">
     <input type="radio" name="action" value="rename" {{if eq $ap.Action "rename"}}checked{{end}}>
@@ -19,6 +23,10 @@
   <label class="action-tile">
     <input type="radio" name="action" value="software_push" {{if eq $ap.Action "software_push"}}checked{{end}}>
     <svg><use href="#i-box"/></svg><span class="t">Push software</span>
+  </label>
+  <label class="action-tile">
+    <input type="radio" name="action" value="toolkit" {{if eq $ap.Action "toolkit"}}checked{{end}}>
+    <svg><use href="#i-wrench"/></svg><span class="t">Run tool kit</span>
   </label>
   <label class="action-tile danger">
     <input type="radio" name="action" value="reimage" {{if eq $ap.Action "reimage"}}checked{{end}}>
@@ -60,6 +68,69 @@
       {{fieldError $err "software_package_id"}}
     </label>
     <p class="hint">Installs the package and anything it depends on, skipping what is already installed.</p>
+  </div>
+
+  <div class="action-panel" data-action-panel="toolkit" {{if ne $ap.Action "toolkit"}}hidden{{end}} data-toolkit-panel>
+    {{if .Toolkits}}
+    <label><span class="lbl">Tool kit</span>
+      <select name="toolkit_id" data-toolkit-select {{invalidAttr $tkErr "toolkit_id"}}>
+        <option value="">— choose a tool kit —</option>
+        {{range .Toolkits}}<option value="{{.ID}}" {{if eq .ID $ap.ToolkitID}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+      {{fieldError $tkErr "toolkit_id"}}
+    </label>
+    {{range .Toolkits}}
+    <div class="toolkit-params" data-toolkit-kit="{{.ID}}" {{if ne .ID $ap.ToolkitID}}hidden{{end}}>
+      <p class="small muted mt-0">{{if .Description}}{{.Description}} · {{end}}Runs as <strong>{{.RunAsText}}</strong> by default.{{if .MissingPassword}} <span class="warn-text">No password is stored for that account — choose a different account below.</span>{{end}}</p>
+      {{range .Params}}
+      <label><span class="lbl">{{.Label}}{{if .Required}} <span class="muted">(required)</span>{{end}} <code class="small">%{{.Name}}%</code></span>
+        <input type="text" name="{{.Field}}" value="{{.Value}}" {{invalidAttr $tkErr .Field}}>
+        {{fieldError $tkErr .Field}}
+      </label>
+      {{end}}
+    </div>
+    {{end}}
+    <fieldset class="toolkit-runas" {{invalidAttr $tkErr "toolkit_run_as"}}>
+      <legend class="small">Run as</legend>
+      <label class="check"><input type="radio" name="toolkit_run_as" value="kit" {{if or (eq $ap.ToolkitRunAs "kit") (eq $ap.ToolkitRunAs "")}}checked{{end}}><span>The tool kit's own account</span></label>
+      <label class="check"><input type="radio" name="toolkit_run_as" value="system" {{if eq $ap.ToolkitRunAs "system"}}checked{{end}}><span>SYSTEM</span></label>
+      <label class="check"><input type="radio" name="toolkit_run_as" value="logged_on_user" {{if eq $ap.ToolkitRunAs "logged_on_user"}}checked{{end}}><span>The logged-on user <span class="muted small">(fails if nobody is signed in)</span></span></label>
+      <label class="check"><input type="radio" name="toolkit_run_as" value="user" {{if eq $ap.ToolkitRunAs "user"}}checked{{end}}><span>A different account…</span></label>
+      {{fieldError $tkErr "toolkit_run_as"}}
+    </fieldset>
+    <div data-toolkit-user {{if ne $ap.ToolkitRunAs "user"}}hidden{{end}}>
+      <label><span class="lbl">Account</span><input type="text" name="toolkit_run_as_user" value="{{$ap.ToolkitRunAsUser}}" placeholder="DOMAIN\user or user@domain" autocomplete="off" {{invalidAttr $tkErr "toolkit_run_as_user"}}>{{fieldError $tkErr "toolkit_run_as_user"}}</label>
+      <label><span class="lbl">Password</span><input type="password" name="toolkit_run_as_password" value="" autocomplete="new-password" placeholder="{{if $ap.ToolkitStoredPassword}}Already entered — leave blank to keep it{{end}}" {{invalidAttr $tkErr "toolkit_run_as_password"}}>{{fieldError $tkErr "toolkit_run_as_password"}}</label>
+      {{if $ap.ToolkitPasswordToken}}<input type="hidden" name="toolkit_password_token" value="{{$ap.ToolkitPasswordToken}}">{{end}}
+      <p class="hint">Stored encrypted for this {{if eq $mode "single"}}run{{else}}operation{{end}} only and deleted when it finishes. Leave blank to use the tool kit's stored password when this is the tool kit's own account.</p>
+    </div>
+    {{if eq $mode "bulk"}}
+    <label class="check"><input type="checkbox" name="toolkit_skip_succeeded" value="1" {{if $ap.ToolkitSkipSucceeded}}checked{{end}}><span>Skip machines where this tool kit already succeeded (or is still pending)</span></label>
+    {{end}}
+    <p class="small muted">Runs once per machine at its next check-in. Every run, and every release of a stored password to an agent, is recorded in the audit log.</p>
+    <script>
+    (function(){
+      var panel = document.currentScript.closest('[data-toolkit-panel]');
+      if (!panel) return;
+      var sel = panel.querySelector('[data-toolkit-select]');
+      function syncKit(){
+        panel.querySelectorAll('[data-toolkit-kit]').forEach(function(d){
+          d.hidden = !sel || d.getAttribute('data-toolkit-kit') !== sel.value;
+        });
+      }
+      function syncUser(){
+        var on = panel.querySelector('input[name="toolkit_run_as"]:checked');
+        var box = panel.querySelector('[data-toolkit-user]');
+        if (box) box.hidden = !(on && on.value === 'user');
+      }
+      if (sel) sel.addEventListener('change', syncKit);
+      panel.querySelectorAll('input[name="toolkit_run_as"]').forEach(function(r){ r.addEventListener('change', syncUser); });
+      syncKit(); syncUser();
+    })();
+    </script>
+    {{else}}
+    <p class="hint">No tool kits exist yet. <a href="/portal/toolkits/new">Create a tool kit</a> first.</p>
+    {{end}}
   </div>
 
   <div class="action-panel" data-action-panel="reimage" {{if ne $ap.Action "reimage"}}hidden{{end}}>

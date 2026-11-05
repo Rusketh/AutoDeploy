@@ -17,7 +17,7 @@
   {{fieldError $fe "filter_name"}}{{fieldError $fe "machine_ids"}}
 
   <div class="section-head"><h3>2. Action</h3><div class="line"></div></div>
-  {{template "action_picker" (dict "Mode" "bulk" "Packages" .Data.Packages "Images" .Data.Images "AP" $ap)}}
+  {{template "action_picker" (dict "Mode" "bulk" "Packages" .Data.Packages "Images" .Data.Images "Toolkits" .Data.Toolkits "AP" $ap "TkErr" .Data.FormError)}}
   <div data-move-errors>{{fieldError $fe "action"}}{{fieldError $fe "rename_find"}}{{fieldError $fe "script_body"}}{{fieldError $fe "software_package_id"}}</div>
 
   <div class="section-head"><h3>3. When</h3><div class="line"></div></div>

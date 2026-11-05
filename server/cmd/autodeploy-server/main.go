@@ -244,6 +244,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Notifications: r.Notifications,
 		WebhookRepo:   r.Webhooks,
 		Groups:        r.Groups,
+		Toolkits:      r.Toolkits,
 		Emitter:       emitter,
 		Waker:         waker,
 	}
@@ -259,6 +260,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Inventory:  r.Inventory,
 		DomainJoin: r.DomainJoin,
 		Updates:    r.Updates,
+		Toolkits:   r.Toolkits,
 		RequireAuth: func(w http.ResponseWriter, req *http.Request) bool {
 			if _, ok := api.UserFromRequest(req, apiRepos); !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -316,6 +318,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		WebhookRepo:    r.Webhooks,
 		Groups:         r.Groups,
 		ImportedAssets: r.ImportedAssets,
+		Toolkits:       r.Toolkits,
 		Emitter:        emitter,
 		Waker:          waker,
 		SecretsBox:     bx,
@@ -482,6 +485,7 @@ type appRepos struct {
 	Groups         *model.MachineGroupRepo
 	ImageGroups    *model.ImageGroupRepo
 	ImportedAssets *model.ImportedAssetRepo
+	Toolkits       *model.ToolkitRepo
 	Emitter        *notify.Emitter
 }
 
@@ -509,6 +513,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	notifications := model.NewNotificationRepo(db)
 	webhooks := model.NewWebhookRepo(db, bx)
 	importedAssets := model.NewImportedAssetRepo(db)
+	toolkits := model.NewToolkitRepo(db, bx)
 	// Let first-contact enrollment apply operator-imported name/OU (self-clean
 	// staging table matched on serial+model).
 	inventory.SetAssetImporter(importedAssets)
@@ -529,6 +534,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 		Groups:         groups,
 		ImageGroups:    imageGroups,
 		ImportedAssets: importedAssets,
+		Toolkits:       toolkits,
 	}
 }
 

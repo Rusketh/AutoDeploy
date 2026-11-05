@@ -91,6 +91,13 @@ type InstallStep struct {
 	// edition; a step whose filter doesn't match is skipped, not failed.
 	FilterOS string `json:"filter_os,omitempty"`
 
+	// RunAsSystem forces this step to run as the agent's own SYSTEM account
+	// even when the Tool Kit it belongs to runs as another account. It lets
+	// one kit mix an elevated machine-wide action (install into Program
+	// Files) with per-user configuration done as the Run As account. Ignored
+	// for software packages, which always run as SYSTEM.
+	RunAsSystem bool `json:"run_as_system,omitempty"`
+
 	// Per-step result handling.
 	SuccessCodes      []int `json:"success_codes,omitempty"`       // default [0]
 	ContinueOnFailure bool  `json:"continue_on_failure,omitempty"` // default false (abort)

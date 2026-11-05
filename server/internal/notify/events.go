@@ -40,6 +40,9 @@ const (
 	EventSoftwareInstallOK     = "software.install_ok"
 	EventSoftwareInstallFailed = "software.install_failed"
 
+	EventToolkitRunOK     = "toolkit.run_ok"
+	EventToolkitRunFailed = "toolkit.run_failed"
+
 	EventMachineFirstSeen      = "machine.first_seen"
 	EventMachineOffline        = "machine.offline"
 	EventMachineHardwareChange = "machine.hardware_change"
@@ -64,6 +67,7 @@ var EventCategories = []struct {
 	{"Deployments", []string{EventDeployStarted, EventDeployCompleted, EventDeployFailed, EventDeployReimage}},
 	{"Bulk operations", []string{EventBulkCreated, EventBulkCompleted, EventBulkFailed, EventBulkPartial}},
 	{"Software installs", []string{EventSoftwareInstallOK, EventSoftwareInstallFailed}},
+	{"Tool Kits", []string{EventToolkitRunOK, EventToolkitRunFailed}},
 	{"Machine inventory", []string{EventMachineFirstSeen, EventMachineOffline, EventMachineHardwareChange}},
 	{"Active Directory", []string{EventADJoinFailed, EventADTrustFailed}},
 	{"Windows Updates", []string{EventUpdateDeployed, EventUpdateComplianceFail}},
@@ -83,6 +87,8 @@ var eventLabels = map[string]string{
 	EventBulkPartial:           "Bulk operation partly failed",
 	EventSoftwareInstallOK:     "Software installed",
 	EventSoftwareInstallFailed: "Software install failed",
+	EventToolkitRunOK:          "Tool kit ran",
+	EventToolkitRunFailed:      "Tool kit failed",
 	EventMachineFirstSeen:      "New machine seen",
 	EventMachineOffline:        "Machine went offline",
 	EventMachineHardwareChange: "Machine hardware changed",

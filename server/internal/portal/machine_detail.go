@@ -181,6 +181,8 @@ func machineDetailPage(w http.ResponseWriter, req *http.Request, r Repos, id mod
 		"DeployActive": deployActive, "DeployLabel": deployLabel,
 		"DeployPercent": deployPercent, "DeployIndeterminate": deployIndeterminate,
 		"AP":           ap,
+		"Toolkits":     toolkitPickerKits(req.Context(), r, ap),
+		"ToolkitRuns":  machineToolkitRuns(req, r, id),
 		"BindingError": form.BindingError,
 		"ActionError":  form.ActionError,
 	}
@@ -217,6 +219,9 @@ func actionPrefillFromForm(req *http.Request) map[string]any {
 	}
 	ap["ReimageImageID"] = int64(reimageImageIDFromForm(req))
 	ap["ReimageConfirm"] = req.FormValue("reimage_confirm")
+	// A single-machine submit has no review step: its password is never
+	// stashed, so a rejected submit asks for it again.
+	toolkitPrefillFromRequest(ap, req, false)
 	return ap
 }
 
@@ -278,7 +283,21 @@ func machineAction(r Repos) http.HandlerFunc {
 				return
 			}
 		}
-		payload, perr := actionPayloadFromForm(req)
+		var cred toolkitCred
+		var payload string
+		var perr error
+		if action == model.BulkActionToolkit {
+			payload, cred, perr = toolkitPayloadFromForm(req, r.Toolkits, 0)
+			var fieldFail *bulkFieldErr
+			if errors.As(perr, &fieldFail) {
+				fe := fieldFormError(fieldFail.Field, fieldFail.Msg)
+				fe.Message = "Tool kit not queued — fix the highlighted field below."
+				reject(fe)
+				return
+			}
+		} else {
+			payload, perr = actionPayloadFromForm(req)
+		}
 		if perr != nil {
 			field := map[string]string{
 				model.BulkActionRename: "rename_new_name", model.BulkActionScript: "script_body",
@@ -306,9 +325,16 @@ func machineAction(r Repos) http.HandlerFunc {
 			reject(&FormError{Message: "Couldn't queue the action: " + friendlyError("machine", http.StatusUnprocessableEntity, err)})
 			return
 		}
+		if err := storeToolkitCredential(req.Context(), r, op, cred); err != nil {
+			_ = r.Bulk.CancelOperation(req.Context(), op.ID)
+			reject(&FormError{Message: "Couldn't store the Run As password, so nothing was queued: " + err.Error()})
+			return
+		}
 		r.Emitter.Emit(req.Context(), notify.BulkCreatedEvent(op))
 		if action == model.BulkActionReimage {
 			flash(w, "ok", "Re-image queued. The machine will reboot and re-image on its next check-in.")
+		} else if action == model.BulkActionToolkit {
+			flash(w, "ok", "Tool kit queued. It runs at the machine's next check-in; the result appears under Tool Kit runs.")
 		} else {
 			flash(w, "ok", "Action queued for this machine.")
 		}
@@ -471,4 +497,13 @@ func machineBindingSubmit(r Repos) http.HandlerFunc {
 		flash(w, "ok", "Binding saved.")
 		http.Redirect(w, req, fmt.Sprintf("/portal/machines/%d", id), http.StatusFound)
 	}
+}
+
+// machineToolkitRuns is the machine's recent Tool Kit history.
+func machineToolkitRuns(req *http.Request, r Repos, id model.ID) []model.ToolkitRun {
+	if r.Toolkits == nil {
+		return nil
+	}
+	runs, _ := r.Toolkits.RunsForMachine(req.Context(), id, 20)
+	return runs
 }

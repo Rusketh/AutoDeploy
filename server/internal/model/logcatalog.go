@@ -377,6 +377,13 @@ var logCatalog = map[string]logEntry{
 	"software.bundle.write_failed": eFail(LogCatSoftware, "Couldn't save an uploaded files bundle[: {error}]", "Check free space on the server's data disk."),
 	"software.bundle.file_ok":      eOK(LogCatSoftware, "Uploaded files bundle[ {file}] to {target} || Files bundle uploaded"),
 	"software.bundle.empty":        e(LogCatSoftware, "Files-bundle upload contained no files"),
+	"toolkit.upload.stream_error":  eFail(LogCatSoftware, "Tool kit upload was interrupted[: {error}]", "Retry the upload; check the connection to the server."),
+	"toolkit.upload.write_failed":  eFail(LogCatSoftware, "Couldn't save an uploaded tool kit file[: {error}]", "Check free space on the server's data disk."),
+	"toolkit.upload.file_ok":       eOK(LogCatSoftware, "Uploaded[ {file}] to {target} || Tool kit file uploaded"),
+	"toolkit.bundle.write_failed":  eFail(LogCatSoftware, "Couldn't save an uploaded tool kit bundle[: {error}]", "Check free space on the server's data disk."),
+	"toolkit.bundle.file_ok":       eOK(LogCatSoftware, "Uploaded tool kit bundle[ {file}] to {target} || Tool kit bundle uploaded"),
+	"toolkit.credential.set":       e(LogCatSecurity, "{user} set the Run As password of {target}[ for {account}]"),
+	"toolkit.credential.cleared":   e(LogCatSecurity, "{user} cleared the Run As password of {target}"),
 
 	// ---- Server: background jobs (stdout only; listed so they read well if
 	// ever stored) --------------------------------------------------------
@@ -395,6 +402,8 @@ var logCatalog = map[string]logEntry{
 	"bulksched.advance.fail":                e(LogCatAdmin, "Couldn't advance a recurring bulk operation[: {error}]"),
 	"bulksched.expire.ok":                   e(LogCatAdmin, "Expired bulk operations closed"),
 	"bulksched.expire.fail":                 e(LogCatAdmin, "Couldn't close expired bulk operations[: {error}]"),
+	"bulksched.credential_purge.ok":         e(LogCatSecurity, "Deleted the Run As passwords of finished bulk operations"),
+	"bulksched.credential_purge.fail":       e(LogCatSecurity, "Couldn't delete the Run As passwords of finished bulk operations[: {error}]"),
 	"bulksched.list_due.fail":               e(LogCatAdmin, "Couldn't list scheduled bulk operations[: {error}]"),
 	"isobuild.exec":                         e(LogCatSystem, "Building an ISO[ ({args})]"),
 	"isobuild.exec.stdout":                  {Msg: "{line}", Cat: LogCatSystem, Level: "INFO"},
@@ -437,6 +446,7 @@ var AuditNouns = map[string]string{
 	"software": "software package", "loadout": "loadout", "mirror": "payload mirror",
 	"webhook": "webhook", "account": "user account", "update": "Windows update",
 	"image_group": "image group", "bulk": "bulk operation", "update_deployment": "update deployment",
+	"toolkit": "tool kit",
 }
 
 // auditVerbs are the past-tense verbs for audited actions.

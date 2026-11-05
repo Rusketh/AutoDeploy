@@ -237,9 +237,32 @@
 {{$ae := .Data.ActionError}}
 <form class="std" method="post" action="/portal/machines/{{int64 $m.ID}}/action">
   {{template "form_error" $ae}}
-  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "AP" .Data.AP "ConfirmName" $name "Err" $ae)}}
+  {{template "action_picker" (dict "Mode" "single" "Packages" .Data.Packages "Images" .Data.Images "Toolkits" .Data.Toolkits "AP" .Data.AP "ConfirmName" $name "Err" $ae)}}
   <div class="actions"><button type="submit" class="danger" data-needs-action disabled title="Choose an action first"><svg><use href="#i-bolt"/></svg>Queue action</button></div>
 </form>
+
+<div class="section-head" id="toolkit-runs"><h3>Tool Kit runs</h3><div class="line"></div></div>
+{{if .Data.ToolkitRuns}}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Tool kit</th><th>Status</th><th>Queued</th><th>By</th><th>Result</th></tr></thead>
+  <tbody>
+    {{range .Data.ToolkitRuns}}
+    {{$js := jobStatus .Status}}
+    <tr>
+      <td>{{entityLink "toolkit" .Payload.ToolkitID}}<div class="small muted"><a href="/portal/bulk/{{int64 .OperationID}}">{{if .OperationName}}{{.OperationName}}{{else}}operation {{idLabel .OperationID}}{{end}}</a></div></td>
+      <td>{{template "status_badge" $js}}</td>
+      <td class="small muted">{{timeAgo .QueuedAt}}</td>
+      <td class="small">{{.CreatedBy}}</td>
+      <td>{{if .HasResult}}{{template "toolkit_result" (toolkitResultPtr .Result)}}{{else}}<span class="muted small">—</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="small muted">No tool kits have run on this machine. Use <a href="#actions">Run an action</a> above to run one.</p>
+{{end}}
 
 <div class="section-head"><h3>Detected software</h3><div class="line"></div></div>
 {{if .Data.Detected}}
