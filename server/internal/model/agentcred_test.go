@@ -1,8 +1,11 @@
 package model
 
 import (
+	"path/filepath"
+
 	"context"
 	"errors"
+	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"testing"
 	"time"
 )
@@ -163,15 +166,38 @@ func TestAgentCredentialRequestsGrantsTokens(t *testing.T) {
 		t.Fatal("PIN authorisation not recorded")
 	}
 
-	// Media tokens: re-export invalidates the old one.
-	img, _ := NewImageRepo(db).Create(ctx, Image{Name: "img"})
-	t1, _ := creds.NewImageEnrollToken(ctx, img.ID, time.Hour)
-	if !creds.ValidImageEnrollToken(ctx, img.ID, t1) || creds.ValidImageEnrollToken(ctx, img.ID, "nope") {
-		t.Fatal("token check")
+	// Media tokens: no expiry; with a secrets box every export reuses the
+	// same token; revoking or replacing invalidates older media.
+	bx, err := secrets.Open("", filepath.Join(t.TempDir(), "k.bin"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	t2, _ := creds.NewImageEnrollToken(ctx, img.ID, time.Hour)
+	creds.WithSecretsBox(bx)
+	img, _ := NewImageRepo(db).Create(ctx, Image{Name: "img"})
+	if creds.ImageEnrollTokenInfo(ctx, img.ID).Exists {
+		t.Fatal("token before any export")
+	}
+	t1, _ := creds.EnsureImageEnrollToken(ctx, img.ID)
+	t1again, _ := creds.EnsureImageEnrollToken(ctx, img.ID)
+	if t1 == "" || t1 != t1again || !creds.ValidImageEnrollToken(ctx, img.ID, t1) || creds.ValidImageEnrollToken(ctx, img.ID, "nope") {
+		t.Fatal("re-export must reuse the standing token")
+	}
+	if !creds.ImageEnrollTokenInfo(ctx, img.ID).Exists {
+		t.Fatal("token info")
+	}
+	t2, _ := creds.NewImageEnrollToken(ctx, img.ID)
 	if creds.ValidImageEnrollToken(ctx, img.ID, t1) || !creds.ValidImageEnrollToken(ctx, img.ID, t2) {
-		t.Fatal("re-export didn't replace the token")
+		t.Fatal("replacing didn't invalidate older media")
+	}
+	if err := creds.RevokeImageEnrollToken(ctx, img.ID); err != nil {
+		t.Fatal(err)
+	}
+	if creds.ValidImageEnrollToken(ctx, img.ID, t2) || creds.ImageEnrollTokenInfo(ctx, img.ID).Exists {
+		t.Fatal("revoked token still valid")
+	}
+	t3, _ := creds.EnsureImageEnrollToken(ctx, img.ID)
+	if t3 == t2 || !creds.ValidImageEnrollToken(ctx, img.ID, t3) {
+		t.Fatal("export after revoke must carry a new token")
 	}
 
 	if n, _ := creds.LegacyMachineCount(ctx); n != 1 {
@@ -180,5 +206,27 @@ func TestAgentCredentialRequestsGrantsTokens(t *testing.T) {
 	_, _ = creds.Issue(ctx, m, "approved", false)
 	if n, _ := creds.LegacyMachineCount(ctx); n != 0 {
 		t.Fatalf("legacy count after issue = %d", n)
+	}
+}
+
+func TestAgentCredentialApproveAllPending(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	inv := NewInventoryRepo(db)
+	creds := NewAgentCredentialRepo(db)
+	a := seedMachine(t, inv, "aa-1", "A", "")
+	b := seedMachine(t, inv, "bb-1", "B", "")
+	ra, _, _ := creds.RequestCredential(ctx, a, "nonce-a-111111111111111111111111111111", "", "")
+	_, _, _ = creds.RequestCredential(ctx, b, "nonce-b-111111111111111111111111111111", "", "")
+	_, _, _ = creds.RequestCredential(ctx, b, "nonce-b-222222222222222222222222222222", "", "")
+	n, skipped, err := creds.ApproveAllPending(ctx, "admin")
+	if err != nil || n != 1 || skipped != 1 {
+		t.Fatalf("approve all = %d approved, %d skipped, %v", n, skipped, err)
+	}
+	if got, _, _ := creds.RequestCredential(ctx, a, "nonce-a-111111111111111111111111111111", "", ""); got.ID != ra.ID || got.Status != CredRequestApproved {
+		t.Fatalf("single request not approved: %+v", got)
+	}
+	if c, _ := creds.PendingRequestCount(ctx); c != 2 {
+		t.Fatalf("competing requests should stay pending, %d pending", c)
 	}
 }

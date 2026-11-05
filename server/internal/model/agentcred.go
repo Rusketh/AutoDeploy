@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
 
@@ -55,9 +56,12 @@ type AgentCredential struct {
 	MachineID ID
 	Status    string
 	IssuedVia string
-	IssuedAt  *time.Time
-	RotatedAt *time.Time
-	LastUsed  *time.Time
+	// IssuedImageID is the image whose exported media authorised the
+	// secret (IssuedVia "media"); 0 otherwise.
+	IssuedImageID ID
+	IssuedAt      *time.Time
+	RotatedAt     *time.Time
+	LastUsed      *time.Time
 	// RotationUnconfirmed is true between a rotation and the agent's first
 	// request with the new secret (the previous secret still works).
 	RotationUnconfirmed bool
@@ -76,11 +80,22 @@ type CredentialRequest struct {
 }
 
 // AgentCredentialRepo stores agent credentials and their supporting grants.
-type AgentCredentialRepo struct{ db *storage.DB }
+type AgentCredentialRepo struct {
+	db *storage.DB
+	// bx encrypts media enrollment tokens so a re-export can reuse them.
+	// nil: tokens can't be recovered, so each export mints a new one.
+	bx *secrets.Box
+}
 
 // NewAgentCredentialRepo binds the repo to a database.
 func NewAgentCredentialRepo(db *storage.DB) *AgentCredentialRepo {
 	return &AgentCredentialRepo{db: db}
+}
+
+// WithSecretsBox lets the repo keep media enrollment tokens recoverable.
+func (r *AgentCredentialRepo) WithSecretsBox(bx *secrets.Box) *AgentCredentialRepo {
+	r.bx = bx
+	return r
 }
 
 // NewAgentSecret returns a fresh random secret (32 bytes, base64url).
@@ -106,6 +121,7 @@ func hashEq(a, b string) bool {
 }
 
 type credRow struct {
+	image           ID
 	cur, prev, via  string
 	issued, rotated sql.NullTime
 	used            sql.NullTime
@@ -115,9 +131,9 @@ type credRow struct {
 func (r *AgentCredentialRepo) row(ctx context.Context, machineID ID) (credRow, error) {
 	var c credRow
 	err := r.db.QueryRowContext(ctx, `
-		SELECT secret_hash, prev_secret_hash, issued_via, issued_at, rotated_at, last_used_at
+		SELECT secret_hash, prev_secret_hash, issued_via, issued_image_id, issued_at, rotated_at, last_used_at
 		FROM agent_credential WHERE machine_id=?`, int64(machineID)).Scan(
-		&c.cur, &c.prev, &c.via, &c.issued, &c.rotated, &c.used)
+		&c.cur, &c.prev, &c.via, &c.image, &c.issued, &c.rotated, &c.used)
 	if errors.Is(err, sql.ErrNoRows) {
 		return credRow{}, nil
 	}
@@ -146,7 +162,7 @@ func (r *AgentCredentialRepo) Get(ctx context.Context, machineID ID) (AgentCrede
 	if !c.exists {
 		return out, nil
 	}
-	out.IssuedVia = c.via
+	out.IssuedVia, out.IssuedImageID = c.via, c.image
 	out.IssuedAt, out.RotatedAt, out.LastUsed = nt(c.issued), nt(c.rotated), nt(c.used)
 	if c.cur == "" {
 		out.Status = CredApproval
@@ -184,7 +200,7 @@ func (r *AgentCredentialRepo) Issue(ctx context.Context, machineID ID, via strin
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(machine_id) DO UPDATE SET
 		    secret_hash=excluded.secret_hash, prev_secret_hash=excluded.prev_secret_hash,
-		    issued_via=excluded.issued_via, issued_at=excluded.issued_at,
+		    issued_via=excluded.issued_via, issued_image_id=0, issued_at=excluded.issued_at,
 		    rotated_at=excluded.rotated_at, last_used_at=NULL, updated_at=excluded.updated_at`,
 		int64(machineID), hashSecret(secret), prev, via, now, now, now)
 	if err != nil {
@@ -377,6 +393,48 @@ func (r *AgentCredentialRepo) Requests(ctx context.Context, machineID ID, limit 
 	return out, rows.Err()
 }
 
+// ApproveAllPending approves, for every machine with exactly one pending
+// request, that request. Machines with several competing requests (e.g.
+// clones fighting over one identity) are skipped: an operator must pick on
+// the machine's page. Returns how many were approved and skipped.
+func (r *AgentCredentialRepo) ApproveAllPending(ctx context.Context, by string) (approved, skipped int, err error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT machine_id, COUNT(*), MAX(id) FROM agent_credential_request
+		WHERE status='pending' GROUP BY machine_id`)
+	if err != nil {
+		return 0, 0, err
+	}
+	type one struct {
+		n  int
+		id ID
+	}
+	var todo []one
+	for rows.Next() {
+		var mid ID
+		var o one
+		if err := rows.Scan(&mid, &o.n, &o.id); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		todo = append(todo, o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	for _, o := range todo {
+		if o.n != 1 {
+			skipped++
+			continue
+		}
+		if _, err := r.Decide(ctx, o.id, true, by); err != nil {
+			return approved, skipped, err
+		}
+		approved++
+	}
+	return approved, skipped, nil
+}
+
 // PendingRequestCount counts requests awaiting an operator.
 func (r *AgentCredentialRepo) PendingRequestCount(ctx context.Context) (int, error) {
 	var n int
@@ -429,35 +487,88 @@ func (r *AgentCredentialRepo) RedeemDeployGrant(ctx context.Context, machineID I
 
 // ---- Exported media ----------------------------------------------------------
 
-// NewImageEnrollToken creates (replacing any earlier one) the token an
-// exported USB/ISO of the image carries. Re-exporting invalidates the token
-// of older media.
-func (r *AgentCredentialRepo) NewImageEnrollToken(ctx context.Context, imageID ID, ttl time.Duration) (string, error) {
+// SetIssuedImage records the image whose media authorised the machine's
+// current secret.
+func (r *AgentCredentialRepo) SetIssuedImage(ctx context.Context, machineID, imageID ID) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE agent_credential SET issued_image_id=? WHERE machine_id=?`, int64(imageID), int64(machineID))
+	return err
+}
+
+// MediaToken describes an image's media enrollment token (never the token).
+type MediaToken struct {
+	Exists    bool
+	CreatedAt time.Time
+}
+
+// ImageEnrollTokenInfo reports whether the image has a live media token.
+func (r *AgentCredentialRepo) ImageEnrollTokenInfo(ctx context.Context, imageID ID) MediaToken {
+	var t MediaToken
+	err := r.db.QueryRowContext(ctx,
+		`SELECT created_at FROM image_enroll_token WHERE image_id=?`, int64(imageID)).Scan(&t.CreatedAt)
+	t.Exists = err == nil
+	return t
+}
+
+// EnsureImageEnrollToken returns the image's media token, creating one if it
+// has none. Tokens don't expire: every export of the image carries the same
+// token, so sticks made earlier keep working until the operator revokes it.
+// (Without a secrets box the token can't be recovered, so a new one is made
+// and earlier media stop working.)
+func (r *AgentCredentialRepo) EnsureImageEnrollToken(ctx context.Context, imageID ID) (string, error) {
+	var cipher string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT token_cipher FROM image_enroll_token WHERE image_id=?`, int64(imageID)).Scan(&cipher)
+	if err == nil && cipher != "" && r.bx != nil {
+		if tok, derr := r.bx.Decrypt(cipher); derr == nil && tok != "" {
+			return tok, nil
+		}
+	}
+	return r.NewImageEnrollToken(ctx, imageID)
+}
+
+// NewImageEnrollToken creates (replacing any earlier one) the image's media
+// token: media exported before stop enrolling machines.
+func (r *AgentCredentialRepo) NewImageEnrollToken(ctx context.Context, imageID ID) (string, error) {
 	tok, err := NewAgentSecret()
 	if err != nil {
 		return "", err
 	}
+	cipher := ""
+	if r.bx != nil {
+		if cipher, err = r.bx.Encrypt(tok); err != nil {
+			return "", err
+		}
+	}
 	now := time.Now().UTC()
+	// expires_at is retained for schema compatibility; tokens don't expire.
+	never := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO image_enroll_token (image_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(image_id) DO UPDATE SET token_hash=excluded.token_hash,
+		INSERT INTO image_enroll_token (image_id, token_hash, token_cipher, created_at, expires_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(image_id) DO UPDATE SET token_hash=excluded.token_hash, token_cipher=excluded.token_cipher,
 		    created_at=excluded.created_at, expires_at=excluded.expires_at`,
-		int64(imageID), hashSecret(tok), now, now.Add(ttl))
+		int64(imageID), hashSecret(tok), cipher, now, never)
 	if err != nil {
 		return "", err
 	}
 	return tok, nil
 }
 
-// ValidImageEnrollToken reports whether token is the image's current,
-// unexpired media token.
+// RevokeImageEnrollToken invalidates every exported medium of the image. The
+// next export carries a new token.
+func (r *AgentCredentialRepo) RevokeImageEnrollToken(ctx context.Context, imageID ID) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM image_enroll_token WHERE image_id=?`, int64(imageID))
+	return err
+}
+
+// ValidImageEnrollToken reports whether token is the image's current media
+// token.
 func (r *AgentCredentialRepo) ValidImageEnrollToken(ctx context.Context, imageID ID, token string) bool {
 	if token == "" {
 		return false
 	}
 	var h string
-	var exp time.Time
 	err := r.db.QueryRowContext(ctx,
-		`SELECT token_hash, expires_at FROM image_enroll_token WHERE image_id=?`, int64(imageID)).Scan(&h, &exp)
-	return err == nil && time.Now().Before(exp) && hashEq(hashSecret(token), h)
+		`SELECT token_hash FROM image_enroll_token WHERE image_id=?`, int64(imageID)).Scan(&h)
+	return err == nil && hashEq(hashSecret(token), h)
 }

@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/model"
 	"github.com/rusketh/autodeploy/server/internal/resolve"
@@ -44,10 +43,6 @@ type ISOExportDeps struct {
 	// agents follow the first-contact / approval path instead).
 	Creds *model.AgentCredentialRepo
 }
-
-// mediaEnrollTokenTTL is how long exported media can enrol machines.
-// Re-exporting the image replaces the token (older media stop working).
-const mediaEnrollTokenTTL = 90 * 24 * time.Hour
 
 // ISOExportOptions parameterise a single export.
 type ISOExportOptions struct {
@@ -225,7 +220,9 @@ func (d ISOExportDeps) ExportImageISO(ctx context.Context, opts ISOExportOptions
 			return fmt.Errorf("iso export: stage agent: %w", err)
 		}
 		if d.Creds != nil {
-			tok, terr := d.Creds.NewImageEnrollToken(ctx, opts.ImageID, mediaEnrollTokenTTL)
+			// The image's standing token: every export carries the same
+			// one, so sticks made earlier keep working until revoked.
+			tok, terr := d.Creds.EnsureImageEnrollToken(ctx, opts.ImageID)
 			if terr != nil {
 				return fmt.Errorf("iso export: enrollment token: %w", terr)
 			}

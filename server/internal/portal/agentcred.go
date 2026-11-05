@@ -17,6 +17,8 @@ func init() {
 		post("/portal/machines/{id}/credential/requests/{rid}/approve", credentialDecide(r, true))
 		post("/portal/machines/{id}/credential/requests/{rid}/deny", credentialDecide(r, false))
 		post("/portal/machines/{id}/credential/revoke", credentialRevoke(r))
+		post("/portal/images/{id}/media-enrolment/revoke", mediaEnrolmentRevoke(r))
+		post("/portal/machines/credential/approve-all", credentialApproveAll(r))
 	}
 }
 
@@ -85,5 +87,45 @@ func credentialRevoke(r Repos) http.HandlerFunc {
 			flash(w, "ok", "Secret revoked. The agent is refused until you approve its next request for a secret.")
 		}
 		http.Redirect(w, req, credentialAnchor(id), http.StatusFound)
+	}
+}
+
+// mediaEnrolmentRevoke invalidates every USB/ISO exported from the image (a
+// lost stick); the next export carries a new enrolment.
+func mediaEnrolmentRevoke(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, _ := pathID(req)
+		if r.Credentials == nil {
+			failPage(w, req, r, http.StatusNotFound, fmt.Errorf("agent credentials are not configured"))
+			return
+		}
+		if err := r.Credentials.RevokeImageEnrollToken(req.Context(), id); err != nil {
+			flash(w, "err", "Couldn't revoke: "+err.Error())
+		} else {
+			flash(w, "ok", "Media enrolment revoked. Sticks exported earlier can no longer enrol machines; export again to make new ones.")
+		}
+		http.Redirect(w, req, fmt.Sprintf("/portal/images/%d/resolved#media-enrolment", int64(id)), http.StatusFound)
+	}
+}
+
+// credentialApproveAll approves every machine's single pending request
+// (machines with competing requests are left for a per-machine decision).
+func credentialApproveAll(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if r.Credentials == nil {
+			failPage(w, req, r, http.StatusNotFound, fmt.Errorf("agent credentials are not configured"))
+			return
+		}
+		n, skipped, err := r.Credentials.ApproveAllPending(req.Context(), portalUsername(req))
+		switch {
+		case err != nil:
+			flash(w, "err", "Couldn't approve: "+err.Error())
+		case skipped > 0:
+			flash(w, "warn", fmt.Sprintf("Approved %d request%s. %d machine%s have more than one request: open each to choose which to approve.",
+				n, plural(n), skipped, plural(skipped)))
+		default:
+			flash(w, "ok", fmt.Sprintf("Approved %d request%s. The agents pick up their secrets at their next check-in.", n, plural(n)))
+		}
+		http.Redirect(w, req, "/portal/machines", http.StatusFound)
 	}
 }

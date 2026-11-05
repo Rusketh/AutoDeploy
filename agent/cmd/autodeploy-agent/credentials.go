@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rusketh/autodeploy/agent/internal/httpc"
@@ -36,7 +38,10 @@ import (
 // agentCredential is the agent's on-disk credential state.
 type agentCredential struct {
 	AgentID string `json:"agent_id"`
-	Secret  string `json:"secret,omitempty"`
+	// SystemUUID is the hardware the secret was issued to. A copy of this
+	// file on other hardware (a clone) is detected and discarded.
+	SystemUUID string `json:"system_uuid,omitempty"`
+	Secret     string `json:"secret,omitempty"`
 	// Pending is the next secret, saved before the rotation request.
 	Pending   string    `json:"pending_secret,omitempty"`
 	RotatedAt time.Time `json:"rotated_at,omitempty"`
@@ -149,6 +154,9 @@ func newCredManager(log *slog.Logger, f agentFlags) *credManager {
 	if c.AgentID != "" && f.agentID != "" && c.AgentID != f.agentID {
 		c = agentCredential{}
 	}
+	if c.SystemUUID == "" && c.Secret != "" {
+		c.SystemUUID = f.uuid // credentials saved before hardware binding
+	}
 	m.c = c
 	m.importStaged()
 	return m
@@ -174,7 +182,7 @@ func (m *credManager) importStaged() {
 		_ = os.Remove(p)
 		return
 	}
-	c := agentCredential{AgentID: in.AgentID, Secret: in.Secret, RotatedAt: credentialNow()}
+	c := agentCredential{AgentID: in.AgentID, Secret: in.Secret, SystemUUID: m.f.uuid, RotatedAt: credentialNow()}
 	if err := saveCredential(m.log, m.f, c); err != nil {
 		m.log.Warn("agent.credential.error", slog.String("error", "store staged secret: "+err.Error()))
 		return // keep the file; retry on next start
@@ -292,7 +300,7 @@ func (m *credManager) Obtain(ctx context.Context, c *httpc.Client) bool {
 		if resp.AgentID != "" {
 			id = resp.AgentID
 		}
-		next := agentCredential{AgentID: id, Secret: resp.Secret, RotatedAt: credentialNow()}
+		next := agentCredential{AgentID: id, Secret: resp.Secret, SystemUUID: m.f.uuid, RotatedAt: credentialNow()}
 		if err := saveCredential(m.log, m.f, next); err != nil {
 			// Not saved: use it for this process only and log loudly;
 			// the server considers it issued, so a restart would need
@@ -405,4 +413,91 @@ func (m *credManager) Unauthorized(ctx context.Context, c *httpc.Client) bool {
 	}
 	m.mu.Unlock()
 	return m.Obtain(ctx, c)
+}
+
+// ---- Clones -------------------------------------------------------------------
+
+// sameUUID compares SMBIOS UUIDs as the same hardware (case, braces, hyphens
+// and the byte-swapped mixed-endian form ignored); mirrors the server's
+// agentauth.SameUUID.
+func sameUUID(a, b string) bool {
+	na, nb := normUUID(a), normUUID(b)
+	if na == "" || nb == "" {
+		return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	}
+	return na == nb || na == swapUUID(nb)
+}
+
+func normUUID(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.NewReplacer("{", "", "}", "", "-", "").Replace(s)
+	if len(s) != 32 {
+		return ""
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return ""
+		}
+	}
+	return s
+}
+
+func swapUUID(s string) string {
+	rev := func(h string) string {
+		out := make([]byte, 0, len(h))
+		for i := len(h) - 2; i >= 0; i -= 2 {
+			out = append(out, h[i], h[i+1])
+		}
+		return string(out)
+	}
+	return rev(s[0:8]) + rev(s[8:12]) + rev(s[12:16]) + s[16:]
+}
+
+// cloneDetected is set when the server refuses this agent's secret as coming
+// from different hardware (409 "cloned identity"); the resident loop then
+// re-identifies the agent before its next poll.
+var cloneDetected atomic.Bool
+
+// isCloned reports whether this agent's identity belongs to other hardware:
+// a stored secret issued to a different SMBIOS UUID, or the server saying
+// the agent id belongs to a machine with a different UUID (a golden image
+// captured with the agent already enrolled, or a copied disk).
+func isCloned(ctx context.Context, log *slog.Logger, f agentFlags) bool {
+	if f.uuid == "" || f.agentID == "" {
+		return false
+	}
+	if c, err := loadCredential(f); err == nil && c.SystemUUID != "" && c.AgentID == f.agentID && !sameUUID(c.SystemUUID, f.uuid) {
+		return true
+	}
+	c := httpc.New(f.server, f.uuid, f.insecureTLS)
+	c.AgentID = f.agentID
+	if agentCreds != nil {
+		c.Credentials = agentCreds.Credentials
+	}
+	var who struct {
+		SameHardware *bool `json:"same_hardware"`
+	}
+	err := c.GetJSON(ctx, "/api/v1/agent/whoami?id="+f.agentID, &who)
+	switch {
+	case httpc.IsStatus(err, 409):
+		return true
+	case err != nil:
+		return false // older server, or unreachable: keep the identity
+	}
+	return who.SameHardware != nil && !*who.SameHardware
+}
+
+// reidentify drops an identity that belongs to other hardware and enrols
+// this machine as itself: its own machine record, agent id and (via the
+// usual paths) its own secret. The original machine is left untouched.
+func reidentify(ctx context.Context, log *slog.Logger, f *agentFlags) {
+	log.Warn("agent.clone.detected", slog.String("inherited_agent_id", f.agentID),
+		slog.String("system_uuid", f.uuid))
+	_ = os.Remove(credentialFile(*f))
+	f.agentID = ""
+	_ = saveConfig(f.server, "")
+	agentCreds = nil
+	ensureEnrolled(ctx, log, f)
+	agentCreds = newCredManager(log, *f)
+	log.Info("agent.clone.reenrolled", slog.String("agent_id", f.agentID))
 }

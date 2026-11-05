@@ -142,6 +142,20 @@ just re-imaged or re-installed the machine: whoever made the request gets the ma
 any previous secret stops working. **Revoke secret** locks the current agent out until you approve a
 new request. See [Agent secrets](../operations/security.md#agent-secrets).
 
+![Agent secret panel with a pending request](../images/machine-credential-pending.png)
+
+When requests are waiting, the machine list shows a banner. **Approve all pending** approves every
+waiting request at once. A machine with more than one competing request is skipped, so you can
+decide on its own page which one is genuine.
+
+![Approve all pending banner](../images/machines-approve-all.png)
+
+The list also says how many machines still use legacy agent authentication. They pick up a secret
+by themselves after their agent updates.
+
+A machine cloned from another (a golden image, a copied disk) notices and enrols as a machine of
+its own. It appears in the list as a new machine and never takes over the original's entry.
+
 ### History and detected software
 
 Further down, the page lists the machine's **deployment history** (start/finish, image, outcome,

@@ -271,6 +271,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		AgentAuth:           agentAuthenticator,
 		Credentials:         r.Credentials,
 		AgentSecretRotation: cfg.AgentSecretRotation,
+		AgentAutoEnrollNew:  cfg.AgentAutoEnrollNew,
 	}
 
 	api.Register(mux, apiRepos)
@@ -549,7 +550,7 @@ func repos(db *storage.DB, bx *secrets.Box) appRepos {
 	webhooks := model.NewWebhookRepo(db, bx)
 	importedAssets := model.NewImportedAssetRepo(db)
 	toolkits := model.NewToolkitRepo(db, bx)
-	credentials := model.NewAgentCredentialRepo(db)
+	credentials := model.NewAgentCredentialRepo(db).WithSecretsBox(bx)
 	// Let first-contact enrollment apply operator-imported name/OU (self-clean
 	// staging table matched on serial+model).
 	inventory.SetAssetImporter(importedAssets)

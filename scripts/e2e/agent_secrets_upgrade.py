@@ -6,9 +6,11 @@ Phases:
      origin/main). Software installs and bulk jobs work.
   B. Server upgraded in place (same data dir; migrations run). The old agent
      keeps working unchanged (legacy authentication).
-  C. Agent upgraded (new binary, same machine). It obtains a secret on its own
-     (first contact); from then on the old protocol is refused for that
-     machine, and everything still works over the secured channel.
+  C. Agent upgraded by its own self-update: the new agent is published in the
+     server's downloads, the release agent (which has no secret) downloads
+     it, swaps its binary and relaunches; the new agent obtains a secret on
+     its own (first contact). From then on the old protocol is refused for
+     that machine, and everything still works over the secured channel.
   D. Rotation: the server's rotation period is shortened; the agent rotates,
      the server confirms, and the agent is never refused.
   E. New channel at deploy: a new boot client's manifest carries the secret;
@@ -16,8 +18,17 @@ Phases:
   F. Takeover attempt: a second agent claiming the same machine is held for
      approval; only after an operator approves does it get a secret, and the
      original agent is then locked out (single holder).
+  G. Approve all pending: the locked-out original asks again; one bulk
+     approval in the portal hands it back its secret.
+  H. Clones (legacy auth now OFF, as on a fully migrated site):
+     - a disk copied with the agent's credential file onto other hardware
+       detects the clone, enrols as a new machine and gets its own secret;
+     - a golden image captured before secrets (agent id but no credential)
+       finds out via whoami and does the same;
+     - the server refuses the original's secret from foreign hardware (409);
+     - the original machine is untouched throughout.
 """
-import http.cookiejar, json, os, signal, sqlite3, subprocess, sys, time, urllib.request, urllib.error
+import hashlib, http.cookiejar, json, os, re, shutil, signal, sqlite3, subprocess, sys, time, urllib.request, urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Binaries and scratch space come from run-agent-secrets.sh (or the env).
@@ -91,9 +102,40 @@ def start_server(binary, extra=None):
     raise SystemExit("server didn't start")
 
 
-def start_agent(name, binary, uuid, work):
-    start(name, [os.path.join(BIN, binary), "--server", BASE, "--uuid", uuid, "--work", work,
-                 "--check-in", "5s", "--no-self-update", "--dry-run"])
+def start_agent(name, binary, uuid, work, self_update=False, extra=()):
+    exe = binary if os.path.isabs(binary) else os.path.join(BIN, binary)
+    argv = [exe, "--server", BASE, "--uuid", uuid, "--work", work, "--check-in", "5s", "--dry-run"]
+    if not self_update:
+        argv.append("--no-self-update")
+    start(name, argv + list(extra))
+
+
+def sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def pids_running(exe):
+    """PIDs of agent processes running exe (not the updater script)."""
+    out = subprocess.run(["pgrep", "-f", "^" + re.escape(exe) + " --server"], capture_output=True, text=True).stdout
+    return [int(p) for p in out.split()]
+
+
+SHOTS = os.environ.get("E2E_SHOTS", "")
+
+
+def shot(name, path, selector):
+    """Screenshot an element of a portal page into $E2E_SHOTS (optional)."""
+    if not SHOTS:
+        return
+    cookies = json.dumps([{"name": c.name, "value": c.value} for c in jar])
+    r = subprocess.run(["node", os.path.join(HERE, "shot.js"), BASE, cookies, path, selector,
+                        os.path.join(SHOTS, name)], capture_output=True, text=True)
+    check(r.returncode == 0, f"screenshot {name}" + (": " + r.stderr.strip() if r.returncode else ""))
+
+
+def portal_post(path):
+    return admin("POST", path, raw=b"", headers={"Content-Type": "application/x-www-form-urlencoded"})
 
 
 jar = http.cookiejar.CookieJar()
@@ -176,7 +218,12 @@ def main():
     assert code in (200, 201), (code, body)
     img = json.loads(body)["id"]
 
-    start_agent("agent1", "agent-old", UUID, work1)
+    # The machine's installed agent: a copy of the release binary, run with
+    # self-update ON (as deployed agents run), so phase C can upgrade it.
+    exe1 = os.path.join(RUN, "machine1", "bin", "autodeploy-agent")
+    os.makedirs(os.path.dirname(exe1), exist_ok=True)
+    shutil.copy2(os.path.join(BIN, "agent-old"), exe1)
+    start_agent("agent1", exe1, UUID, work1, self_update=True)
     mid = wait("machine enrolment", lambda: (db("SELECT id FROM machine_record WHERE system_uuid=?", (UUID,)) or [[None]])[0][0])
     agent_id = db("SELECT agent_id FROM machine_record WHERE id=?", (mid,))[0][0]
     code, _ = admin("PUT", f"/api/v1/machines/{mid}/binding", {"machine_id": mid, "image_id": img})
@@ -203,12 +250,43 @@ def main():
     check(code == 200, "B: legacy /self still accepted for a legacy machine")
 
     # ---- C. agent upgraded -------------------------------------------------
-    print("== C. agent upgraded (new binary, same machine)")
-    stop("agent1")
-    start_agent("agent1new", "agent-new", UUID, work1)
-    row = wait("secret issued", lambda: db("SELECT secret_hash, issued_via FROM agent_credential WHERE machine_id=? AND secret_hash!=''", (mid,)))
-    check(bool(row) and row[0][1] == "first-contact", "C: upgraded agent obtained a secret on first contact")
+    print("== C. agent upgraded by self-update (new agent published on the server)")
+    old_ver = subprocess.run([exe1, "--version"], capture_output=True, text=True).stdout.strip()
+    new_ver = subprocess.run([os.path.join(BIN, "agent-new"), "--version"], capture_output=True, text=True).stdout.strip()
+    dl = os.path.join(DATA, "downloads")
+    os.makedirs(dl, exist_ok=True)
+    shutil.copy2(os.path.join(BIN, "agent-new"), os.path.join(dl, "autodeploy-agent-linux-amd64"))
+    with open(os.path.join(dl, "autodeploy-agent-linux-amd64.version"), "w") as f:
+        f.write(new_ver + "\n")
+    code, body = call("POST", "/api/v1/agent/update-info", {"os": "linux", "arch": "amd64", "current_version": old_ver})
+    check(code == 200 and json.loads(body).get("update_available"),
+          f"C: server offers {new_ver} to the {old_ver} agent (update-info needs no secret)")
+    new_sha = sha256(os.path.join(BIN, "agent-new"))
+    # The release agent exits so its updater can swap the binary. Reap it
+    # as a service manager would (the updater waits for the PID to go; an
+    # unreaped zombie would look alive to it).
+    try:
+        procs["agent1"].wait(120)
+        check(True, "C: release agent process exited for the swap")
+    except subprocess.TimeoutExpired:
+        check(False, "C: release agent process exited for the swap")
+    procs.pop("agent1", None)
+    check("selfupdate.downloaded" in logtext("agent1"), "C: release agent logged the verified download")
+    check(bool(wait("self-update swaps the binary", lambda: os.path.exists(exe1) and sha256(exe1) == new_sha, 60)),
+          "C: updater swapped in the new binary and relaunched the agent")
+    row = wait("secret issued", lambda: db("SELECT secret_hash, issued_via FROM agent_credential WHERE machine_id=? AND secret_hash!=''", (mid,)), 90)
+    check(bool(row) and row[0][1] == "first-contact", "C: self-updated agent obtained a secret on first contact")
     cred_file = os.path.join(RUN, "machine1", "identity", "credential.json")
+    check(bool(wait("credential file", lambda: os.path.exists(cred_file) and json.load(open(cred_file)).get("secret"), 30)),
+          "C: self-updated agent stored its secret")
+    check(subprocess.run([exe1, "--version"], capture_output=True, text=True).stdout.strip() == new_ver,
+          f"C: installed agent now reports {new_ver}")
+    # The relaunched agent logs to /dev/null; restart it under the harness
+    # (same binary, same machine) so the rest of the run can read its log.
+    for pid in pids_running(exe1):
+        os.kill(pid, signal.SIGTERM)
+    wait("relaunched agent stops", lambda: not pids_running(exe1), 20)
+    start_agent("agent1new", exe1, UUID, work1)
     check(os.path.exists(cred_file) and (os.stat(cred_file).st_mode & 0o777) == 0o600,
           "C: secret stored in the agent's protected credential file (0600)")
     stored = json.load(open(cred_file))
@@ -287,6 +365,89 @@ def main():
     check(bool(wait("original agent locked out and re-requests",
                     lambda: db("SELECT COUNT(*) FROM agent_credential_request WHERE machine_id=? AND status='pending'", (mid,))[0][0] >= 1, 60)),
           "F: the original agent's secret stops working; it asks for approval again (single holder)")
+
+    # ---- G. approve all pending ------------------------------------------
+    print("== G. approve all pending (portal bulk approval)")
+    stop("intruder")
+    obtained = logtext("agent1new").count("agent.credential.obtained")
+    pend = db("SELECT COUNT(*) FROM agent_credential_request WHERE status='pending'")[0][0]
+    code, body = admin("GET", "/portal/machines")
+    check(code == 200 and "Approve all pending" in body, "G: machine list offers Approve all pending")
+    shot("machines-approve-all.png", "/portal/machines", "#credential-pending-banner")
+    shot("machine-credential-pending.png", f"/portal/machines/{mid}", "#agent-credential-panel")
+    code, _ = portal_post("/portal/machines/credential/approve-all")
+    check(code in (200, 302, 303), f"G: operator approves all pending requests ({pend})")
+    check(db("SELECT COUNT(*) FROM agent_credential_request WHERE status='pending'")[0][0] == 0,
+          "G: no requests left pending")
+    check(bool(wait("original agent obtains secret again",
+                    lambda: logtext("agent1new").count("agent.credential.obtained") > obtained, 60)),
+          "G: the original agent obtains its secret again")
+    j = queue_script_job(mid, "phase-g")
+    check(wait("job G", lambda: job_status(j) in ("ok", "failed")) and job_status(j) == "ok",
+          "G: original agent works over the secured channel again")
+    shot("machine-credential-secured.png", f"/portal/machines/{mid}", "#agent-credential-panel")
+
+    # ---- H. clones ----------------------------------------------------------
+    print("== H. clones (legacy agent authentication OFF)")
+    stop("server")
+    start_server("server-new", {"AUTODEPLOY_AGENT_LEGACY_AUTH": "false"})
+    login()
+    orig = json.load(open(cred_file))
+
+    # H1. Disk copied with the credential file, booted on other hardware.
+    c1 = os.path.join(RUN, "clone1")
+    shutil.copytree(os.path.join(RUN, "machine1"), c1, ignore=shutil.ignore_patterns("bin"))
+    start_agent("clone1", "agent-new", "E2E-CLONE-0001", os.path.join(c1, "work"), extra=["--agent-id", agent_id])
+    cm1 = wait("clone 1 enrols as itself", lambda: (db("SELECT id FROM machine_record WHERE system_uuid='E2E-CLONE-0001'") or [[None]])[0][0], 60)
+    check(bool(cm1) and cm1 != mid, "H1: copied-disk clone enrolled as a new machine")
+    check("agent.clone.detected" in logtext("clone1"), "H1: clone detected from the copied credential (hardware differs)")
+    r = wait("clone 1 secret", lambda: db("SELECT issued_via FROM agent_credential WHERE machine_id=? AND secret_hash!=''", (cm1,)), 60) if cm1 else None
+    check(bool(r) and r[0][0] == "new-machine", "H1: clone got its own secret automatically (new machine)")
+    cc1 = wait("clone 1 credential", lambda: os.path.exists(os.path.join(c1, "identity", "credential.json")) and
+               json.load(open(os.path.join(c1, "identity", "credential.json"))), 30) or {}
+    check(cc1.get("agent_id") not in ("", None, agent_id) and cc1.get("secret") != orig["secret"],
+          "H1: clone's credential file now holds its own identity, not the original's")
+
+    # H2. Golden image captured before secrets: agent id, no credential file.
+    c2 = os.path.join(RUN, "clone2")
+    start_agent("clone2", "agent-new", "E2E-CLONE-0002", os.path.join(c2, "work"), extra=["--agent-id", agent_id])
+    cm2 = wait("clone 2 enrols as itself", lambda: (db("SELECT id FROM machine_record WHERE system_uuid='E2E-CLONE-0002'") or [[None]])[0][0], 60)
+    check(bool(cm2) and cm2 != mid, "H2: golden-image clone (no credential) found out via whoami and enrolled as itself")
+    r = wait("clone 2 secret", lambda: db("SELECT issued_via FROM agent_credential WHERE machine_id=? AND secret_hash!=''", (cm2,)), 60) if cm2 else None
+    check(bool(r) and r[0][0] == "new-machine", "H2: golden-image clone got its own secret automatically")
+
+    # H3. Server backstop: the original's secret from foreign hardware.
+    code, _ = call("GET", "/api/v1/agent/self?id=" + agent_id, headers={
+        "X-AutoDeploy-Agent-ID": agent_id, "X-AutoDeploy-Agent-Secret": json.load(open(cred_file))["secret"],
+        "X-AutoDeploy-Machine-UUID": "E2E-SOMEWHERE-ELSE"})
+    check(code == 409, "H3: server refuses the original's secret presented from other hardware (409 cloned)")
+    code, _ = call("GET", "/api/v1/agent/whoami?id=" + agent_id, headers={"X-AutoDeploy-Machine-UUID": UUID.lower()})
+    check(code == 200, "H3: whoami answers without a secret")
+
+    # The original is untouched.
+    cur = json.load(open(cred_file))
+    check(cur["agent_id"] == agent_id, "H: original keeps its agent id")
+    code, _ = call("GET", "/api/v1/agent/self?id=" + agent_id, headers={
+        "X-AutoDeploy-Agent-ID": agent_id, "X-AutoDeploy-Agent-Secret": cur["secret"], "X-AutoDeploy-Machine-UUID": UUID.lower()})
+    check(code == 200, "H: original's own secret still works from its own hardware")
+    check(db("SELECT COUNT(*) FROM agent_credential_request WHERE machine_id=? AND status='pending'", (mid,))[0][0] == 0,
+          "H: clones raised no approval request against the original")
+    j = queue_script_job(mid, "phase-h")
+    check(wait("job H", lambda: job_status(j) in ("ok", "failed")) and job_status(j) == "ok",
+          "H: original agent still works")
+
+    # ---- I. media enrolment card -------------------------------------------
+    print("== I. media enrolment (USB/ISO) on the image page")
+    # Exporting an ISO needs Windows media; stand in for the export by
+    # recording the token it would create (token issuance is unit-tested).
+    db_exec("INSERT INTO image_enroll_token(image_id, token_hash, expires_at) VALUES(?, 'e2e', '9999-12-31 00:00:00')", (img,))
+    code, body = admin("GET", f"/portal/images/{img}/resolved")
+    check(code == 200 and "Revoke media enrolment" in body and "Nothing expires" in body,
+          "I: image page shows the non-expiring media enrolment with a revoke button")
+    shot("image-media-enrolment.png", f"/portal/images/{img}/resolved", "#media-enrolment")
+    code, _ = portal_post(f"/portal/images/{img}/media-enrolment/revoke")
+    check(code in (200, 302, 303) and db("SELECT COUNT(*) FROM image_enroll_token WHERE image_id=?", (img,))[0][0] == 0,
+          "I: operator revokes the image's media enrolment")
 
     for n in list(procs):
         stop(n)

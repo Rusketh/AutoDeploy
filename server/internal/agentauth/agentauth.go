@@ -39,6 +39,10 @@ var (
 	ErrForbidden       = errors.New("forbidden")
 	// ErrUnknownAgent: no machine has that agent id (HTTP 404, as before).
 	ErrUnknownAgent = errors.New("unknown agent")
+	// ErrCloned: a valid secret presented from hardware with a different
+	// SMBIOS UUID -- a clone of the machine (golden image, copied disk).
+	// HTTP 409; the agent re-enrols as the machine it really is.
+	ErrCloned = errors.New("cloned identity: this agent's secret belongs to another machine")
 )
 
 // Authenticator checks agent requests.
@@ -65,6 +69,8 @@ type Caller struct {
 // StatusCode maps an authentication error to its HTTP status.
 func StatusCode(err error) int {
 	switch {
+	case errors.Is(err, ErrCloned):
+		return http.StatusConflict
 	case errors.Is(err, ErrUnauthenticated):
 		return http.StatusUnauthorized
 	case errors.Is(err, ErrUnknownAgent):
@@ -145,6 +151,13 @@ func (a *Authenticator) Check(req *http.Request, m model.MachineRecord) (Caller,
 			a.fail(req, m, "secret missing")
 			return Caller{}, ErrUnauthenticated
 		}
+		// A clone carries the original's id and secret but its own
+		// hardware: refuse before the secret is used (it would otherwise
+		// confirm rotations on the original's behalf).
+		if hw := req.Header.Get(HeaderUUID); hw != "" && m.SystemUUID != "" && !SameUUID(hw, m.SystemUUID) {
+			a.fail(req, m, "secret presented from different hardware (clone)")
+			return Caller{}, ErrCloned
+		}
 		ok, err := a.Creds.Verify(req.Context(), m.ID, secret)
 		if err != nil || !ok {
 			a.fail(req, m, "secret did not match")
@@ -177,4 +190,42 @@ func (a *Authenticator) Legacy(ctx context.Context, machineID model.ID) bool {
 	}
 	c, err := a.Creds.Get(ctx, machineID)
 	return err == nil && c.Status == model.CredLegacy
+}
+
+// SameUUID compares two SMBIOS UUIDs as the same hardware: case, braces and
+// hyphens are ignored, and the mixed-endian form some firmware and tools
+// report (first three fields byte-swapped) is treated as equal. Anything that
+// isn't 32 hex digits compares as a plain case-insensitive string.
+func SameUUID(a, b string) bool {
+	na, nb := normUUID(a), normUUID(b)
+	if na == "" || nb == "" {
+		return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	}
+	return na == nb || na == swapUUID(nb)
+}
+
+func normUUID(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.NewReplacer("{", "", "}", "", "-", "").Replace(s)
+	if len(s) != 32 {
+		return ""
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return ""
+		}
+	}
+	return s
+}
+
+// swapUUID byte-swaps the first three fields of a normalised UUID.
+func swapUUID(s string) string {
+	rev := func(h string) string {
+		out := make([]byte, 0, len(h))
+		for i := len(h) - 2; i >= 0; i -= 2 {
+			out = append(out, h[i], h[i+1])
+		}
+		return string(out)
+	}
+	return rev(s[0:8]) + rev(s[8:12]) + rev(s[12:16]) + s[16:]
 }

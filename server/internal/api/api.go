@@ -91,6 +91,9 @@ type Repos struct {
 	Credentials *model.AgentCredentialRepo
 	// AgentSecretRotation is how often agents should rotate their secret.
 	AgentSecretRotation time.Duration
+	// AgentAutoEnrollNew issues a secret to a machine first seen within the
+	// last hour on its first request, even with legacy auth off.
+	AgentAutoEnrollNew bool
 	// Toolkits stores Tool Kits and per-operation Run As overrides; the
 	// agent fetches a toolkit job's steps and credential through it.
 	Toolkits *model.ToolkitRepo

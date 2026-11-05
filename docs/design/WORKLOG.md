@@ -3639,3 +3639,38 @@ This resolves the OPEN item above: `agent_id` could be obtained from a machine's
   7. a new agent against the release server.
 
   All checks pass.
+
+## 2026-11-05 — Agent secrets: non-expiring media, existing inventory, clones
+
+The user raised three concerns: refreshing USB sticks every 90 days isn't friendly; how does
+existing inventory get a secret; and what about golden-image clones.
+
+- **Media enrolment doesn't expire.** The token is stored encrypted (`token_cipher`, migration
+  0038), and every export reuses it, so existing sticks keep working. **Revoke media enrolment**
+  on the image's Resolved view kills every stick made so far. A secured machine that is still
+  unbound may bind to an image only if its secret came from that image's media
+  (`issued_image_id`).
+- **Existing inventory.** Self-update (`update-info` and download) needs no secret. An old agent
+  updates as usual, and the new agent gets its secret on first contact. The e2e now proves this
+  with a real self-update: the release agent is stamped `v1.0.0`, the new agent `v9.9.9` is
+  published in `downloads/`, and the release agent downloads it, swaps itself and relaunches.
+  **Approve all pending** (Machines banner) handles stragglers in bulk. It skips machines with
+  competing requests.
+- **Clones.**
+  - The agent records the hardware UUID with its credential.
+  - At startup it checks that the credential file names this hardware, and asks
+    `GET /agent/whoami` (no secret, yes/no only) for golden images captured before secrets.
+  - On a mismatch it drops the identity and enrols as a new machine.
+  - New machines (first seen under an hour ago) get a secret automatically
+    (`AUTODEPLOY_AGENT_AUTO_ENROLL_NEW`, default on), even with legacy auth off.
+  - Server backstop: a secret presented with another machine's UUID is refused with `409`
+    before it is checked. This means a clone can't confirm a rotation for the original. A `409`
+    mid-run makes the agent re-identify. UUID comparison tolerates case, braces and the
+    mixed-endian form.
+- **Tests:**
+  - **Unit:** model (token reuse, replace and revoke; approve-all), agentauth (`SameUUID`, `409`),
+    API (whoami, clone `409`, auto-enrol of new and old machines, media-only binding), portal
+    (approve-all, revoke media), agent (clone from a copied credential and from whoami).
+  - **End to end:** phase C is now a real self-update. New phases cover approve-all, clones with
+    legacy auth off (copied disk, golden image, server backstop, original untouched), and the
+    media enrolment card. Screenshots go to `docs/images` (`E2E_SHOTS`).

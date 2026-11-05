@@ -317,6 +317,8 @@ every request; see [Agent secrets](../operations/security.md#agent-secrets).
 - A machine that has never had a secret is accepted the old way while `AUTODEPLOY_AGENT_LEGACY_AUTH`
   is on.
 - An unknown agent id gets `404`.
+- A valid secret sent with an `X-AutoDeploy-Machine-UUID` header for other hardware gets `409`.
+  This means a clone; the agent re-enrols as itself.
 
 Two endpoints manage the secret:
 
@@ -324,6 +326,9 @@ Two endpoints manage the secret:
   `{"agent_id" | "system_uuid", "nonce", "image_id"?, "enroll_token"?}`. The response is
   `{"status":"issued","secret":…}`, or `202 {"status":"pending"}` when an operator must approve,
   or `403 {"status":"denied"}`.
+- `GET /api/v1/agent/whoami?id=<agent_id>`, with the `X-AutoDeploy-Machine-UUID` header, returns
+  `{"same_hardware": bool}`: whether that agent id belongs to this hardware. It needs no secret and
+  reveals nothing else. Agents use it to detect that they were cloned.
 - `POST /api/v1/agent/credential/rotate` replaces the secret. The body is `{"new_secret"}`, and
   the request is authenticated with the current secret. Repeating it is safe.
 

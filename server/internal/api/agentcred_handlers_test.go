@@ -14,6 +14,7 @@ import (
 	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -25,9 +26,24 @@ type credFixture struct {
 	images *model.ImageRepo
 	dj     *model.DomainJoinRepo
 	auth   *agentauth.Authenticator
+	db     *storage.DB
 }
 
 func newCredFixture(t *testing.T, allowLegacy bool) credFixture {
+	t.Helper()
+	return newCredFixtureOpts(t, allowLegacy, false)
+}
+
+// backdate makes a machine look first seen `ago` in the past.
+func (f credFixture) backdate(t *testing.T, id model.ID, ago time.Duration) {
+	t.Helper()
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE machine_record SET first_seen=? WHERE id=?`, time.Now().UTC().Add(-ago), int64(id)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newCredFixtureOpts(t *testing.T, allowLegacy, autoNew bool) credFixture {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.Open(ctx, ":memory:")
@@ -38,12 +54,14 @@ func newCredFixture(t *testing.T, allowLegacy bool) credFixture {
 	bx, _ := secrets.Open("", filepath.Join(t.TempDir(), "k.bin"))
 	inv := model.NewInventoryRepo(db)
 	f := credFixture{inv: inv, creds: model.NewAgentCredentialRepo(db), images: model.NewImageRepo(db),
-		dj: model.NewDomainJoinRepo(db, bx)}
+		dj: model.NewDomainJoinRepo(db, bx), db: db}
 	f.auth = &agentauth.Authenticator{Inventory: inv, Creds: f.creds, AllowLegacy: allowLegacy}
 	mux := http.NewServeMux()
 	Register(mux, Repos{
 		Inventory: inv, Images: f.images, Bulk: model.NewBulkRepo(db, inv), DomainJoin: f.dj,
 		AgentAuth: f.auth, Credentials: f.creds, AgentSecretRotation: 720 * time.Hour,
+		AgentAutoEnrollNew: autoNew, Software: model.NewSoftwarePackageRepo(db),
+		Resolver: resolve.New(f.images, model.NewISORepo(db), model.NewUnattendRepo(db)),
 	})
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -205,7 +223,7 @@ func TestAgentCredentialGrantsAndLegacyOff(t *testing.T) {
 	// (the media is the deploy authorisation), but only for its image.
 	img, _ := f.images.Create(ctx, model.Image{Name: "usb"})
 	other, _ := f.images.Create(ctx, model.Image{Name: "other"})
-	tok, _ := f.creds.NewImageEnrollToken(ctx, img.ID, time.Hour)
+	tok, _ := f.creds.EnsureImageEnrollToken(ctx, img.ID)
 	bad := `{"system_uuid":"OFF-1","nonce":"` + nonceA + `x","image_id":` + itoa64(int64(other.ID)) + `,"enroll_token":"` + tok + `"}`
 	if code, _ := f.call(t, "POST", "/api/v1/agent/credential", bad, nil); code != http.StatusAccepted {
 		t.Fatalf("token for another image: %d", code)

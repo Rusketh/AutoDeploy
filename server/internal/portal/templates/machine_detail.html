@@ -178,6 +178,7 @@
 {{end}}
 
 {{with .Data.Credential}}
+<section id="agent-credential-panel">
 <div class="section-head" id="agent-credential"><h3>Agent secret</h3><div class="line"></div></div>
 <dl class="kv">
   <dt>Status</dt>
@@ -218,6 +219,7 @@
   <button type="submit" class="ghost sm danger"><svg><use href="#i-lock"/></svg>Revoke secret</button>
 </form>
 {{end}}
+</section>
 {{end}}
 
 <div class="section-head"><h3>Identity &amp; hardware</h3><div class="line"></div></div>

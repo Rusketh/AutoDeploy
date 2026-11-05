@@ -71,6 +71,7 @@ func main() {
 	flag.StringVar(&f.workDir, "work", defaultWorkDir(), "Scratch directory for downloaded payloads")
 	flag.BoolVar(&f.dryRun, "dry-run", false, "Log steps without executing them")
 	flag.DurationVar(&f.checkInInterval, "check-in", 0, "Resident-mode check-in interval, e.g. 5m. Zero = one-shot.")
+	flag.StringVar(&f.agentID, "agent-id", "", "Server-minted agent id (normally read from the registry; for manual setups and testing)")
 	flag.BoolVar(&f.noSelfUpdate, "no-self-update", false, "Don't apply self-updates even if the server advertises a newer version. Useful for testing or pinning.")
 	flag.Parse()
 
@@ -151,6 +152,13 @@ func main() {
 	// The agent's secret: load it (or import the one the deployment staged)
 	// before any authenticated request.
 	agentCreds = newCredManager(log, f)
+
+	// A golden image captured with the agent already enrolled boots every
+	// clone with the original's identity. Detect that (hardware UUID
+	// mismatch) and enrol as this machine instead.
+	if f.server != "" && f.agentID != "" && isCloned(context.Background(), log, f) {
+		reidentify(context.Background(), log, &f)
+	}
 
 	// New model: identify by the server-minted agent_id and poll
 	// /api/v1/agent/self for desired state. This is how the deployed agent
@@ -388,6 +396,13 @@ func runSelfOnce(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	var resp selfResponse
 	// agent_id is a UUID (URL-safe), so no escaping needed.
 	err := c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
+	if httpc.IsStatus(err, 409) {
+		// The server says this secret belongs to other hardware: we are a
+		// clone. The resident loop re-identifies before the next poll.
+		cloneDetected.Store(true)
+		log.Warn("self.fetch", slog.String("error", err.Error()))
+		return 0
+	}
 	if httpc.IsUnauthorized(err) && agentCreds != nil && agentCreds.Unauthorized(ctx, c) {
 		// Switched to (or obtained) a secret the server accepts: retry.
 		err = c.GetJSON(ctx, "/api/v1/agent/self?id="+f.agentID, &resp)
@@ -963,6 +978,11 @@ func runSelfLoop(ctx context.Context, log *slog.Logger, c *httpc.Client, f agent
 	// restarted mid-job). Reported, never re-run -- see jobjournal.go.
 	reportInterruptedJobs(ctx, log, c, f)
 	pollLoop(ctx, log, interval, func(ctx context.Context) pollLoopResult {
+		if cloneDetected.Swap(false) {
+			reidentify(ctx, log, &f)
+			c.AgentID = f.agentID
+			c.Credentials = agentCreds.Credentials
+		}
 		suggested := runSelfOnce(ctx, log, c, f)
 		shipLogs(log, shipper, f.server, f.insecureTLS)
 		if !f.noSelfUpdate && maybeSelfUpdate(ctx, log, c, f, svc) {

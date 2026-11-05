@@ -72,6 +72,8 @@ var auditRoutes = map[string]auditSpec{
 	"/portal/machines/{id}/delete":                            {Action: "machine.delete"},
 	"/portal/machines/{id}/credential/requests/{rid}/approve": {Action: "agent.credential.approved"},
 	"/portal/machines/{id}/credential/requests/{rid}/deny":    {Action: "agent.credential.denied"},
+	"/portal/machines/credential/approve-all":                 {Action: "agent.credential.approved_all"},
+	"/portal/images/{id}/media-enrolment/revoke":              {Action: "agent.media_enrolment.revoked"},
 	"/portal/machines/{id}/credential/revoke":                 {Action: "agent.credential.revoked"},
 	"/portal/machines/{id}/reimage/cancel":                    {Action: "machine.reimage.cancel"},
 	"/portal/mirrors":                                         {Action: "mirror.create", NameField: "name"},

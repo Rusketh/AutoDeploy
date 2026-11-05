@@ -36,8 +36,12 @@
   </div>
 </div>
 {{if .Data.PendingSecrets}}
-<div class="flash warn"><svg class="icon-inline"><use href="#i-lock"/></svg>
-  {{.Data.PendingSecrets}} request{{if ne .Data.PendingSecrets 1}}s{{end}} for an agent secret need{{if eq .Data.PendingSecrets 1}}s{{end}} your approval. Open the machine and look at <strong>Agent secret</strong>. Approve only machines you just re-imaged or re-installed.
+<div class="flash warn" id="credential-pending-banner"><svg class="icon-inline"><use href="#i-lock"/></svg>
+  <span style="flex:1">{{.Data.PendingSecrets}} request{{if ne .Data.PendingSecrets 1}}s{{end}} for an agent secret need{{if eq .Data.PendingSecrets 1}}s{{end}} your approval. Open the machine and look at <strong>Agent secret</strong>. Approve only machines you just re-imaged or re-installed, or that missed the move to agent secrets.</span>
+  <form method="post" action="/portal/machines/credential/approve-all" class="inline-form"
+        data-confirm="Approve every pending agent secret request? Each requester gets its machine's identity. Machines with more than one competing request are skipped.">
+    <button type="submit" class="sm secondary"><svg><use href="#i-check"/></svg>Approve all pending</button>
+  </form>
 </div>
 {{end}}
 {{if .Data.LegacyAgents}}

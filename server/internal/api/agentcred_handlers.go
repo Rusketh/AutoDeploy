@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rusketh/autodeploy/server/internal/agentauth"
 	"github.com/rusketh/autodeploy/server/internal/model"
@@ -16,6 +17,7 @@ import (
 func RegisterAgentCredentials(mux *http.ServeMux, r Repos) {
 	mux.HandleFunc("POST /api/v1/agent/credential", handleAgentCredentialRequest(r))
 	mux.HandleFunc("POST /api/v1/agent/credential/rotate", handleAgentCredentialRotate(r))
+	mux.HandleFunc("GET /api/v1/agent/whoami", handleAgentWhoami(r))
 }
 
 type agentCredentialReq struct {
@@ -97,6 +99,11 @@ func handleAgentCredentialRequest(r Repos) http.HandlerFunc {
 			via = "deploy"
 		case state.Status == model.CredLegacy && auth.AllowLegacy && strings.TrimSpace(in.AgentID) == m.AgentID:
 			via = "first-contact"
+		case state.Status == model.CredLegacy && r.AgentAutoEnrollNew && time.Since(m.FirstSeen) < NewMachineWindow &&
+			strings.TrimSpace(in.AgentID) == m.AgentID:
+			// A machine the server has only just met (new install, fresh
+			// clone): there is no existing identity to take over.
+			via = "new-machine"
 		}
 		reason := "this machine already has a secret"
 		switch state.Status {
@@ -137,6 +144,9 @@ func handleAgentCredentialRequest(r Repos) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		if via == "media" {
+			_ = r.Credentials.SetIssuedImage(ctx, m.ID, in.ImageID)
+		}
 		recordEvent(req, r, model.LogEvent{
 			Actor:     m.SystemUUID,
 			Action:    "agent.credential.issued",
@@ -170,6 +180,36 @@ func announceCredentialRequest(req *http.Request, r Repos, m model.MachineRecord
 		Link:     machineLink(m.ID) + "#agent-credential",
 		Actor:    m.SystemUUID,
 	})
+}
+
+// NewMachineWindow is how recently a machine must have been first seen to
+// count as new for AgentAutoEnrollNew.
+const NewMachineWindow = time.Hour
+
+// handleAgentWhoami lets an agent check that its agent id belongs to the
+// hardware it is running on, so a clone -- e.g. of a golden image captured
+// with the agent already enrolled -- notices and re-enrols as itself. It
+// needs no secret (a clone of a machine that never had one, or whose secret
+// it can't use, must still find out) and reveals nothing beyond a yes/no
+// about the caller's own claim: same_hardware compares the caller's
+// X-AutoDeploy-Machine-UUID with the machine the id belongs to.
+func handleAgentWhoami(r Repos) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id := strings.TrimSpace(req.URL.Query().Get("id"))
+		hw := strings.TrimSpace(req.Header.Get(agentauth.HeaderUUID))
+		if id == "" || hw == "" {
+			http.Error(w, "id and machine UUID header required", http.StatusBadRequest)
+			return
+		}
+		m, err := r.Inventory.GetByAgentID(req.Context(), id)
+		if err != nil {
+			agentauth.Write(w, agentauth.ErrUnknownAgent)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{
+			"same_hardware": m.SystemUUID == "" || agentauth.SameUUID(hw, m.SystemUUID),
+		})
+	}
 }
 
 type agentRotateReq struct {

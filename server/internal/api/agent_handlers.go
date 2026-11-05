@@ -206,6 +206,16 @@ func handleAgentSoftware(r Repos) http.HandlerFunc {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+			// A secured machine may bind itself only to the image whose
+			// exported media issued its secret (a legacy agent keeps the
+			// old behaviour while legacy auth is on).
+			if !caller.Legacy && r.Credentials != nil {
+				if c, cerr := r.Credentials.Get(req.Context(), m.ID); cerr != nil ||
+					c.IssuedVia != "media" || c.IssuedImageID != in.ImageID {
+					http.Error(w, "forbidden: this machine isn't bound to an image; bind it in the portal", http.StatusForbidden)
+					return
+				}
+			}
 			b.MachineID = m.ID
 			img := in.ImageID
 			b.ImageID = &img

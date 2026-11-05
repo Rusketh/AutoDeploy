@@ -143,9 +143,11 @@ automatically) and closes several gaps in what machines on the network can read 
   1. **Update the boot image** (`autodeploy-boot`). Network deploys then hand the new
      installation its secret directly. An older boot image still works, through a one-time deploy
      grant.
-  2. **Re-export** any USB/ISO media you keep for re-imaging, so they carry an enrollment token.
-     Older media still work for machines that have never had a secret. For other machines, the
-     new installation's request appears on the machine's page for your approval.
+  2. **Export** USB/ISO media you keep for re-imaging **once more**, so they carry a media
+     enrolment. It doesn't expire, so you won't need to do this again. Sticks made before this
+     version still work for machines that have never had a secret. For other machines, the new
+     installation's request appears for your approval; **Approve all pending** on the Machines
+     page handles a whole room at once.
   3. When the **Machines** page no longer says machines use legacy agent authentication, set
      `AUTODEPLOY_AGENT_LEGACY_AUTH=false` in `/etc/default/autodeploy` and restart the service.
 - **On Windows, the agent's work folder** (`C:\ProgramData\AutoDeploy\work`) is restricted to

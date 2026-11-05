@@ -110,10 +110,20 @@ endpoints return them. On every request the agent sends its agent id and secret 
     keeps working.
   - **Older boot images** can't carry the secret. They leave a one-time *deploy grant* (valid
     for 24 hours) that the new installation's agent redeems.
-  - **Exported USB/ISO media** carry an enrollment token for their image, valid for 90 days.
-    Exporting the image again replaces it, so older media stop being able to enrol machines.
+  - **Exported USB/ISO media** carry a media enrolment for their image. It doesn't expire, and
+    every export of the image carries the same one, so sticks you made earlier keep working and
+    you never need to refresh them. If a stick is lost, use **Revoke media enrolment** on the
+    image's Resolved view: every stick exported so far stops enrolling machines, and the next
+    export carries a new enrolment. A machine that enrols from a stick may be bound only to that
+    stick's image.
   - **First contact.** A machine that has never had a secret gets one the first time its agent
-    asks. This covers agents upgrading from before secrets, and brand-new manual installs.
+    asks, while `AUTODEPLOY_AGENT_LEGACY_AUTH` is on. This is how existing machines pick up a
+    secret: their old agent updates itself as usual (self-update needs no secret), and the new
+    agent asks for one on its next check-in.
+  - **New machines.** A machine the server first saw less than an hour ago gets its secret
+    automatically, even with legacy authentication off. It has no identity yet that anyone could
+    take over. This covers new manual installs and clones (below). Set
+    `AUTODEPLOY_AGENT_AUTO_ENROLL_NEW=false` to require approval instead.
   - **Anything else needs your approval.** That includes a second agent claiming a machine that
     already has a secret, or a machine whose secret was revoked. The request appears on the
     machine's page under **Agent secret**, a *Agent secret needs approval* notification is
@@ -121,6 +131,22 @@ endpoints return them. On every request the agent sends its agent id and secret 
     or re-installed. Approving gives the requester a new secret, and any earlier secret stops
     working. **Revoke secret** on the machine's page locks the agent out until you approve a new
     request.
+  - **Approve all pending** on the Machines page approves every waiting request at once, for
+    example after re-imaging a room from older media. A machine with more than one competing
+    request is skipped and left for you to decide on its own page.
+- **Clones and golden images.** An image captured from a machine whose agent had already enrolled
+  boots every clone with that machine's identity. The agent records the hardware UUID it enrolled
+  on and detects a clone at startup in two ways:
+  - **Its credential file names other hardware.** The disk was copied with the secret.
+  - **The server says its agent id belongs to other hardware.** The image was captured before
+    secrets, so the agent has an id but no credential file.
+
+  In either case the clone discards the inherited identity and enrols as itself: a new machine
+  record, its own agent id and, as a new machine, its own secret. The original machine is not
+  touched and no approval request is raised against it. As a backstop, the server refuses a secret
+  presented from hardware other than the machine it belongs to (`409`), so a clone can never act
+  as the original or rotate its secret. Firmware that reports the UUID in mixed-endian form is
+  recognised as the same hardware.
 - **Upgrade path.** Machines that have never been issued a secret keep the old protocol while
   `AUTODEPLOY_AGENT_LEGACY_AUTH` is on (the default), so existing sites keep working through the
   upgrade. Once a machine holds a secret, requests for it without the secret are refused. When the

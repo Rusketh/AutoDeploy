@@ -10,6 +10,7 @@ import (
 
 	"github.com/rusketh/autodeploy/server/internal/match"
 	"github.com/rusketh/autodeploy/server/internal/model"
+	"github.com/rusketh/autodeploy/server/internal/resolve"
 	"github.com/rusketh/autodeploy/server/internal/secrets"
 	"github.com/rusketh/autodeploy/server/internal/storage"
 )
@@ -63,5 +64,44 @@ func TestMachineAgentSecretPanelAndApproval(t *testing.T) {
 	}
 	if page := tp.get("/portal/machines/" + mid); !strings.Contains(page, "Approval required") {
 		t.Fatal("panel doesn't show approval required")
+	}
+}
+
+func TestApproveAllPendingAndMediaEnrolment(t *testing.T) {
+	ctx := context.Background()
+	tp := newTestPortal(t, func(r *Repos, db *storage.DB, bx *secrets.Box) {
+		r.Credentials = model.NewAgentCredentialRepo(db).WithSecretsBox(bx)
+		r.Resolver = resolve.New(r.Images, r.ISOs, r.Unattend)
+	})
+	a, _ := tp.r.Inventory.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "APPROVE-A"})
+	b, _ := tp.r.Inventory.UpsertFromIdentity(ctx, match.Identity{SystemUUID: "APPROVE-B"})
+	_, _, _ = tp.r.Credentials.RequestCredential(ctx, a.ID, "nonce-pa-00000000000000000000000000000", "", "10.0.0.1")
+	_, _, _ = tp.r.Credentials.RequestCredential(ctx, b.ID, "nonce-pb-00000000000000000000000000000", "", "10.0.0.2")
+	_, _, _ = tp.r.Credentials.RequestCredential(ctx, b.ID, "nonce-pb-11111111111111111111111111111", "", "10.0.0.3")
+	if list := tp.get("/portal/machines"); !strings.Contains(list, "/portal/machines/credential/approve-all") {
+		t.Fatal("no Approve all pending button")
+	}
+	rec := tp.do("POST", "/portal/machines/credential/approve-all", url.Values{}, nil)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("approve all: %d", rec.Code)
+	}
+	if n, _ := tp.r.Credentials.PendingRequestCount(ctx); n != 2 {
+		t.Fatalf("pending after approve-all = %d (the competing pair must remain)", n)
+	}
+
+	// Media enrolment on the image page.
+	img, _ := tp.r.Images.Create(ctx, model.Image{Name: "USB image"})
+	page := tp.get("/portal/images/" + strconv.FormatInt(int64(img.ID), 10) + "/resolved")
+	if !strings.Contains(page, "Media enrolment") || strings.Contains(page, "Revoke media enrolment") {
+		t.Fatal("image without exports should offer no revoke")
+	}
+	tok, _ := tp.r.Credentials.EnsureImageEnrollToken(ctx, img.ID)
+	page = tp.get("/portal/images/" + strconv.FormatInt(int64(img.ID), 10) + "/resolved")
+	if !strings.Contains(page, "Revoke media enrolment") || strings.Contains(page, tok) {
+		t.Fatal("media card missing revoke (or leaked the token)")
+	}
+	rec = tp.do("POST", "/portal/images/"+strconv.FormatInt(int64(img.ID), 10)+"/media-enrolment/revoke", url.Values{}, nil)
+	if rec.Code != http.StatusFound || tp.r.Credentials.ValidImageEnrollToken(ctx, img.ID, tok) {
+		t.Fatalf("revoke: %d", rec.Code)
 	}
 }
