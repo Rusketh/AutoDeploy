@@ -136,6 +136,18 @@ automatically) and closes several gaps in what machines on the network can read 
 - **Job results are accepted only from the machine the job belongs to**, and a bulk job only while
   it is running. A script that posted results to `/api/v1/agent/jobs/{id}/result` must identify the
   machine; see the [API reference](../reference/api.md#client--agent-endpoints).
+- **Agents now authenticate with a secret** ([details](security.md#agent-secrets)). Nothing
+  changes at upgrade time: machines without a secret keep the old protocol. Each agent obtains a
+  secret on its own the first time it checks in after updating, and rotates it every 30 days.
+  Afterwards:
+  1. **Update the boot image** (`autodeploy-boot`). Network deploys then hand the new
+     installation its secret directly. An older boot image still works, through a one-time deploy
+     grant.
+  2. **Re-export** any USB/ISO media you keep for re-imaging, so they carry an enrollment token.
+     Older media still work for machines that have never had a secret. For other machines, the
+     new installation's request appears on the machine's page for your approval.
+  3. When the **Machines** page no longer says machines use legacy agent authentication, set
+     `AUTODEPLOY_AGENT_LEGACY_AUTH=false` in `/etc/default/autodeploy` and restart the service.
 - **On Windows, the agent's work folder** (`C:\ProgramData\AutoDeploy\work`) is restricted to
   SYSTEM and Administrators.
 

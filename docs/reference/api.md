@@ -308,6 +308,28 @@ installs to acquire the machine's agent id, check-in, hardware reports, job resu
 state, self-update, and `domain-join`). These are not intended for
 operator scripting and are listed here only for completeness.
 
+**Agent authentication.** Agents send `X-AutoDeploy-Agent-ID` and `X-AutoDeploy-Agent-Secret` on
+every request; see [Agent secrets](../operations/security.md#agent-secrets).
+
+- A machine that holds a secret gets `401` on any agent endpoint without it. This includes the old
+  ways of identifying the machine: `agent_id` in the body or query, or the
+  `X-AutoDeploy-Machine-UUID` header.
+- A machine that has never had a secret is accepted the old way while `AUTODEPLOY_AGENT_LEGACY_AUTH`
+  is on.
+- An unknown agent id gets `404`.
+
+Two endpoints manage the secret:
+
+- `POST /api/v1/agent/credential` requests one. The body is
+  `{"agent_id" | "system_uuid", "nonce", "image_id"?, "enroll_token"?}`. The response is
+  `{"status":"issued","secret":…}`, or `202 {"status":"pending"}` when an operator must approve,
+  or `403 {"status":"denied"}`.
+- `POST /api/v1/agent/credential/rotate` replaces the secret. The body is `{"new_secret"}`, and
+  the request is authenticated with the current secret. Repeating it is safe.
+
+The image manifest returns `agent_secret` when the request carries `"want_credential": true` and
+the deploy is authorised.
+
 `POST /api/v1/agent/domain-join` returns the [agent-driven domain join](../operations/active-directory.md#agent-driven-join-recommended)
 configuration for the calling machine's bound image (domain, OU, join account and — only over this
 authenticated agent channel — the join password). It is the runtime source of join credentials, so

@@ -83,6 +83,51 @@ openssl rand -hex 32
 > webhook secrets become unrecoverable. Include it (or the key file) in your
 > [backup plan](backup-and-retention.md).
 
+## Agent secrets
+
+Each machine's agent proves its identity with a **secret**, not just its agent id. A machine's
+agent id and hardware UUID are not secret: they appear in the portal and in logs, and some
+endpoints return them. On every request the agent sends its agent id and secret in the
+`X-AutoDeploy-Agent-ID` and `X-AutoDeploy-Agent-Secret` headers.
+
+- **Storage.** The server stores only a SHA-256 hash of each secret, so the secret itself can't
+  be read back. The agent keeps its secret in
+  `C:\ProgramData\AutoDeploy\identity\credential.json`, which only SYSTEM and Administrators
+  can read. The secret is never logged, written to the registry, or put in `SetupComplete.cmd`.
+- **Rotation without losing sync.** The agent replaces its secret every
+  `AUTODEPLOY_AGENT_SECRET_ROTATION` (30 days by default):
+  1. It saves the next secret to disk **before** asking the server to switch.
+  2. The server keeps the old secret valid until the agent first uses the new one.
+  3. The switch is safe to repeat.
+
+  So a lost response, a crash or a restart part-way through never leaves the agent and server
+  without a shared secret; the agent simply finishes the rotation on its next check-in.
+- **How a machine gets its secret:**
+  - **Network (PXE) deploy.** The boot client receives the new installation's secret in the
+    deployment manifest. When an [access PIN](#the-pxe-access-pin) is set, this happens only
+    after the PIN was entered for that machine. It is staged as a one-time file the agent imports
+    and deletes. If imaging fails and the machine boots back into its old Windows, that agent
+    keeps working.
+  - **Older boot images** can't carry the secret. They leave a one-time *deploy grant* (valid
+    for 24 hours) that the new installation's agent redeems.
+  - **Exported USB/ISO media** carry an enrollment token for their image, valid for 90 days.
+    Exporting the image again replaces it, so older media stop being able to enrol machines.
+  - **First contact.** A machine that has never had a secret gets one the first time its agent
+    asks. This covers agents upgrading from before secrets, and brand-new manual installs.
+  - **Anything else needs your approval.** That includes a second agent claiming a machine that
+    already has a secret, or a machine whose secret was revoked. The request appears on the
+    machine's page under **Agent secret**, a *Agent secret needs approval* notification is
+    raised, and the machine list shows a banner. Approve only machines you have just re-imaged
+    or re-installed. Approving gives the requester a new secret, and any earlier secret stops
+    working. **Revoke secret** on the machine's page locks the agent out until you approve a new
+    request.
+- **Upgrade path.** Machines that have never been issued a secret keep the old protocol while
+  `AUTODEPLOY_AGENT_LEGACY_AUTH` is on (the default), so existing sites keep working through the
+  upgrade. Once a machine holds a secret, requests for it without the secret are refused. When the
+  Machines page no longer reports machines on legacy authentication, set
+  `AUTODEPLOY_AGENT_LEGACY_AUTH=false`. From then on, knowing a machine's agent id or UUID is
+  never enough to act as it.
+
 ### Tool kit Run As passwords
 
 A [tool kit's](../portal/toolkits.md) Run As password, and any password an operator enters when

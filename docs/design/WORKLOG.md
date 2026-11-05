@@ -3591,3 +3591,51 @@ is not secret: it is shown in the portal, used as the log actor, and readable on
 agent also logs its `agent_id` at start-up, and that log is shipped to the server. A real
 per-machine secret needs a protocol change across the server, the boot client and deployed
 agents; see the conversation for the options.
+
+### Follow-up 4: agents authenticate with rotating secrets
+
+This resolves the OPEN item above: `agent_id` could be obtained from a machine's SMBIOS UUID.
+
+- **Server**
+  - **Credential store** (migration `0037`, `model/agentcred.go`): the current and previous
+    secret hash, approval requests keyed by nonce, deploy grants, PIN deploy authorisations and
+    media enrollment tokens.
+  - **`internal/agentauth`** is the one gate for every agent endpoint: `/self`, domain-join,
+    hardware, identity, check-in, report, deploy-progress, update-status, job and update-job
+    results, Tool Kit, package-items, `/agent/software`, and software and Tool Kit downloads. A
+    secured machine must present its secret. A legacy machine passes while
+    `AUTODEPLOY_AGENT_LEGACY_AUTH` is on. A revoked machine is refused. An unknown id keeps its
+    old `404`.
+  - **`POST /agent/credential`** issues a secret for: a media token, a deploy grant, first
+    contact of a legacy machine, or an approved nonce. Anything else becomes a pending request
+    with a notification.
+  - **`POST /agent/credential/rotate`** is idempotent, using the cur/prev scheme.
+  - **Manifest** issues the secret when the boot client sends `want_credential` and the deploy is
+    authorised (no PIN configured, or `validate-pin` passed within 30 minutes). It uses
+    keep-previous, so an aborted deploy doesn't lock out the old OS. Otherwise it creates a deploy
+    grant.
+  - **ISO export** bakes `enroll.json` with a 90-day token.
+- **Portal:** an Agent secret panel with approve, deny and revoke, and machine list banners.
+- **Boot client:** asks for the secret and stages `agent-credential.json` next to the agent.
+- **Agent** (`credentials.go`):
+  - keeps the secret in a protected store and imports the staged file;
+  - follows the upgrade path when `/self` says `legacy`;
+  - rotates with a persisted pending secret;
+  - on a 401, recovers onto the pending secret or asks again;
+  - stops asking a server that has no `/agent/credential` endpoint.
+- **Tests:**
+  - **Unit:** model rotation, including lost responses, a lost pending secret and keep-previous;
+    API (upgrade path, every refusal, approvals, grants, media, legacy off); manifest; portal;
+    agent (a fault-injecting fake server for lost responses, crash mid-rotation, recovery,
+    approval across restart, revocation, staged import, media, old server).
+- **End to end** (`scripts/e2e/run-agent-secrets.sh`): builds the release (`origin/main`) and new
+  binaries, then runs:
+  1. a release site;
+  2. an in-place server upgrade, with the release agent still working;
+  3. an agent upgrade, which obtains a secret so the old protocol is refused;
+  4. rotation, during which the agent is never refused;
+  5. deploy-time issuance and the old boot client grant;
+  6. a takeover attempt that is held for approval and then leaves a single holder;
+  7. a new agent against the release server.
+
+  All checks pass.

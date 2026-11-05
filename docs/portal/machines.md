@@ -126,6 +126,22 @@ next check-in, typically within a few minutes):
 
 The same actions across many machines at once are [bulk operations](bulk-operations.md).
 
+### Agent secret
+
+Shows how the machine's agent proves its identity:
+
+| Status | Meaning |
+|--------|---------|
+| **Secured** | The agent has a secret. The panel shows when the secret was last replaced (agents rotate it automatically). |
+| **Legacy** | The agent hasn't been issued a secret yet. It obtains one by itself after it updates. |
+| **Approval required** | The secret was revoked, or another agent asked for one. The agent is refused until you approve a request. |
+
+Requests for a secret that need approval are listed with when they were made, the IP address they
+came from and why they need approval. Each has **Approve** and **Deny**. Approve only when you have
+just re-imaged or re-installed the machine: whoever made the request gets the machine's identity, and
+any previous secret stops working. **Revoke secret** locks the current agent out until you approve a
+new request. See [Agent secrets](../operations/security.md#agent-secrets).
+
 ### History and detected software
 
 Further down, the page lists the machine's **deployment history** (start/finish, image, outcome,

@@ -29,6 +29,8 @@ sudo systemctl restart autodeploy
 | `AUTODEPLOY_LOG_RETENTION_DAYS` | `0` | Delete audit-log entries older than this many days. `0` keeps everything. |
 | `AUTODEPLOY_SESSION_IDLE_TIMEOUT` | `12h` | Portal sign-in sessions end after this long without activity (a page view or form submit). The portal warns about five minutes beforehand and offers **Stay signed in**. Go duration syntax, e.g. `90m`, `8h`. |
 | `AUTODEPLOY_SESSION_MAX_LIFETIME` | `168h` | Hard limit on a sign-in session, however active: after this long since sign-in the operator must sign in again. Never shorter than the idle timeout. |
+| `AUTODEPLOY_AGENT_LEGACY_AUTH` | `true` | Lets a machine that has **never been issued an agent secret** keep using the old agent protocol, identified only by its agent id or hardware UUID. Leave this on while your agents update and pick up their secrets. Turn it off once the Machines page no longer reports any machines on legacy authentication. Machines that already hold a secret must always present it. See [Agent secrets](../operations/security.md#agent-secrets). |
+| `AUTODEPLOY_AGENT_SECRET_ROTATION` | `720h` | How often each agent replaces its secret (default 30 days; minimum `1m`). |
 
 The Active Directory, payload-throttle, log-retention, and network values seed portal settings on
 first boot and can then be managed from **[Settings](../portal/settings.md)**. Network changes
