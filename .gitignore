@@ -24,3 +24,4 @@ coverage.*
 # Local scratch / extracted artifacts (e.g. the .docx design doc
 # unpacked to markdown for in-session review).
 .design-extracted.md
+__pycache__/

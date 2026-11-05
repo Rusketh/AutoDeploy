@@ -27,5 +27,5 @@ git -C "$ROOT" worktree add -q "$TMP/release" "$REF"
 for t in agent_secrets_upgrade agent_secrets_compat; do
   rm -rf "$E2E_RUN" && mkdir -p "$E2E_RUN"
   echo "### $t"
-  python3 "$ROOT/scripts/e2e/$t.py"
+  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/e2e/$t.py"
 done
