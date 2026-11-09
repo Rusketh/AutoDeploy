@@ -1,10 +1,14 @@
 package portal
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +37,10 @@ type downloadEntry struct {
 	GroupIcon   string
 	Description string
 	Filename    string
+	// Unreadable is set when the server process can't open the file
+	// (typically a binary copied in by hand as root with 0600 perms). The
+	// page flags it instead of offering a download that would fail.
+	Unreadable bool
 }
 
 // downloadGroup is a presentation-layer grouping the template iterates.
@@ -91,8 +99,16 @@ func downloadsList(r Repos) http.HandlerFunc {
 					if err != nil {
 						continue
 					}
-					entries = append(entries, classifyDownload(it.Name(), info))
+					e := classifyDownload(it.Name(), info)
+					e.Unreadable = !downloadReadable(filepath.Join(dir, it.Name()))
+					entries = append(entries, e)
 				}
+			}
+		}
+		var unreadable []string
+		for _, e := range entries {
+			if e.Unreadable {
+				unreadable = append(unreadable, e.Filename)
 			}
 		}
 		sort.Slice(entries, func(i, j int) bool {
@@ -115,6 +131,11 @@ func downloadsList(r Repos) http.HandlerFunc {
 			"Dir":    dir,
 			"DirErr": dirErr,
 			"Any":    len(entries) > 0,
+			// Files listed but not readable by the server, plus the
+			// account it runs as and a fix command for the banner.
+			"Unreadable":    unreadable,
+			"ServiceUser":   serviceUser(),
+			"PermissionFix": permissionFix(dir, unreadable),
 		})
 	}
 }
@@ -195,7 +216,30 @@ func downloadsServe(r Repos) http.HandlerFunc {
 				"Invalid filename", "Path resolves outside the downloads directory.", "")
 			return
 		}
-		info, err := os.Stat(full)
+		// Open before committing any download headers, so a failure renders
+		// an explanatory page rather than a bare status the browser reports
+		// only as "Failed - Forbidden".
+		f, err := openDownload(full)
+		if err != nil {
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				renderPortalError(w, req, r, http.StatusNotFound,
+					"Download not found",
+					fmt.Sprintf("There is no file named %q in the downloads directory. Drop one into %s and try again.", name, dir),
+					"")
+			case errors.Is(err, fs.ErrPermission):
+				renderPortalError(w, req, r, http.StatusInternalServerError,
+					"The server can't read this file",
+					fmt.Sprintf("%s is in the downloads directory, but the AutoDeploy server (running as %s) doesn't have permission to read it. This usually means it was copied in by hand as another user. Fix its ownership on the server, then try again.", name, serviceUser()),
+					permissionFix(dir, []string{name}))
+			default:
+				renderPortalError(w, req, r, http.StatusInternalServerError,
+					"Couldn't open download", fmt.Sprintf("Opening %s failed.", name), err.Error())
+			}
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
 		if err != nil || info.IsDir() {
 			renderPortalError(w, req, r, http.StatusNotFound,
 				"Download not found",
@@ -205,6 +249,61 @@ func downloadsServe(r Repos) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeFile(w, req, full)
+		http.ServeContent(w, req, name, info.ModTime(), f)
 	}
+}
+
+// openDownload opens a file for serving. A package var so tests can
+// simulate a permission failure (tests usually run as root, which can
+// read anything).
+var openDownload = func(path string) (*os.File, error) { return os.Open(path) }
+
+// downloadReadable reports whether the server can open path for reading.
+func downloadReadable(path string) bool {
+	f, err := openDownload(path)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
+// serviceUser names the account the server runs as, for error messages.
+func serviceUser() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return "the AutoDeploy service account"
+}
+
+// permissionFix is the command an operator can run on the server to make
+// the named downloads readable again. Empty when nothing needs fixing or
+// on Windows, where ownership is fixed through the file's Security tab.
+func permissionFix(dir string, names []string) string {
+	if len(names) == 0 || runtime.GOOS == "windows" {
+		return ""
+	}
+	u := serviceUser()
+	paths := make([]string, len(names))
+	for i, n := range names {
+		paths[i] = shellQuote(filepath.Join(dir, n))
+	}
+	list := strings.Join(paths, " ")
+	return fmt.Sprintf("sudo chown %s %s && sudo chmod 0644 %s", shellQuote(u), list, list)
+}
+
+// shellQuote single-quotes s for a POSIX shell when it contains anything
+// beyond a conservative safe set.
+func shellQuote(s string) string {
+	safe := true
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("/._-+:@", c)) {
+			safe = false
+			break
+		}
+	}
+	if safe && s != "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }

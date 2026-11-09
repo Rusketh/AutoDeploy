@@ -19,6 +19,21 @@ standard release filenames so it can group and label them, for example:
 
 If the directory is empty, the page tells you where to drop files and which names to use.
 
+### "Not readable" files
+
+The server serves these files as its own service account (`autodeploy` on a standard Linux
+install). A file copied into the directory by hand as another user, for example with `sudo cp`
+and restrictive permissions, still appears in the list, but the server can't open it. Such files
+are marked **Not readable**, and a banner names the account the server runs as and gives the
+command that fixes them, typically:
+
+```bash
+sudo chown autodeploy /var/lib/autodeploy/downloads/<file> && sudo chmod 0644 /var/lib/autodeploy/downloads/<file>
+```
+
+Until it's fixed, the file can't be downloaded here, and agents can't self-update from it either.
+Clicking **Download** on it opens a page explaining the problem instead of a failed download.
+
 ## When you'd use it
 
 The Windows agent is normally installed automatically during a PXE deploy, so you don't usually
