@@ -389,8 +389,16 @@ func (s LogSearch) where() ([]string, []any) {
 	}
 	if s.DeploymentID > 0 {
 		if s.Window != nil {
+			// Two indexed lookups rather than one OR. Written as a single OR,
+			// SQLite answered "deployment_id IS NULL" (or "machine_id IS
+			// NULL") from an index holding nearly every row, reading the
+			// whole log once per run and making the machine page take
+			// seconds on a large log. The run's time window is always the
+			// narrow part, so the second lookup is pinned to the time index.
 			mq, ma := machineClause(s.Window.Machine)
-			where = append(where, "(deployment_id=? OR (deployment_id IS NULL AND occurred_at>=? AND occurred_at<=? AND "+mq+"))")
+			where = append(where, "id IN (SELECT id FROM log_event WHERE deployment_id=?"+
+				" UNION ALL SELECT id FROM log_event INDEXED BY idx_log_event_time"+
+				" WHERE occurred_at>=? AND occurred_at<=? AND deployment_id IS NULL AND "+mq+")")
 			args = append(args, int64(s.DeploymentID), s.Window.From, s.Window.To)
 			args = append(args, ma...)
 		} else {

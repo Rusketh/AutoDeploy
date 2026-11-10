@@ -227,3 +227,43 @@ func TestLogSearchFilters(t *testing.T) {
 		t.Errorf("round trip: %+v", got)
 	}
 }
+
+// TestDeploymentWindowSearchUsesIndexes guards the machine page's speed: a
+// deployment timeline search must find the run's untagged rows through the
+// time index, never by walking the rows with no deployment_id (nearly all
+// of them), which made the page take seconds on a large log.
+func TestDeploymentWindowSearchUsesIndexes(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	s := LogSearch{DeploymentID: 9, ByID: true, Window: &LogWindow{
+		From: now.Add(-time.Hour), To: now, Machine: LogMachine{ID: 1, Actors: []string{"UUID-1"}}}}
+	where, args := s.where()
+	rows, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT id FROM log_event WHERE `+
+		strings.Join(where, " AND ")+` ORDER BY id DESC LIMIT 2000`, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	got := strings.Join(plan, "\n")
+	for _, want := range []string{
+		"idx_log_event_deployment (deployment_id=?)",
+		"idx_log_event_time (occurred_at>? AND occurred_at<?)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "SCAN log_event") {
+		t.Errorf("plan scans the whole log:\n%s", got)
+	}
+}
