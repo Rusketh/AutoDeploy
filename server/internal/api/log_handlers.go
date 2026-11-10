@@ -75,7 +75,19 @@ func handleLogIngest(r Repos, lim *ingestLimiter, mc *ingestMachineCache) http.H
 			}
 		}
 		prepareIngestedEvents(req, r, mc, in.Events)
-		if err := r.Logs.AppendBatch(req.Context(), in.Events); err != nil {
+		// Drop agents' per-poll "nothing changed" lines (older agents still
+		// send them); they would otherwise be most of the stored log.
+		keep := in.Events[:0]
+		for _, ev := range in.Events {
+			if !model.RoutineAgentLog(ev) {
+				keep = append(keep, ev)
+			}
+		}
+		if len(keep) == 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if err := r.Logs.AppendBatch(req.Context(), keep); err != nil {
 			writeError(w, err)
 			return
 		}

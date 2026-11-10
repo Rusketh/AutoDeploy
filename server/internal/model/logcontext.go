@@ -52,6 +52,30 @@ func ApplyLogDescription(ev *LogEvent, names LogNames) {
 	ev.Level = d.Level
 }
 
+// RoutineAgentLog reports whether an ingested event is an agent's
+// steady-state "nothing to do" line, repeated on every poll, that ingest
+// drops rather than stores. On a large fleet these were most of the log
+// (e.g. one "already installed" row per package per machine every poll).
+// Events that belong to a deployment are always kept (they make up its
+// timeline), as are a newer agent's state changes (fields.changed).
+// Call after PrepareIngestedLog, which fills DeploymentID.
+func RoutineAgentLog(ev LogEvent) bool {
+	if ev.DeploymentID != 0 || !strings.EqualFold(ev.Level, "INFO") {
+		return false
+	}
+	switch ev.Action {
+	case "logs.ship.ok", "domainjoin.skip":
+		return true
+	case "package.skip":
+		changed, _ := parseLogFields(ev.Fields)["changed"].(bool)
+		return !changed
+	case "domainjoin.response":
+		join, _ := parseLogFields(ev.Fields)["join"].(bool)
+		return !join
+	}
+	return false
+}
+
 // PrepareIngestedLog derives the 0035 columns for an event a client just
 // shipped: deployment_id and error from its fields, then the catalogue
 // message / hint / outcome. Target names are resolved through l for every

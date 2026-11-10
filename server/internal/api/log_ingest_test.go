@@ -138,3 +138,38 @@ func TestDeployStatusWritesLogRows(t *testing.T) {
 		t.Errorf("message %q", evs[0].Message)
 	}
 }
+
+// Agents' per-poll "nothing changed" lines are dropped at ingest; the same
+// actions are kept when they belong to a deployment (its timeline), when a
+// newer agent marks a real change, or when they aren't routine INFO lines.
+func TestLogIngestDropsRoutineAgentLines(t *testing.T) {
+	ctx := context.Background()
+	srv, r := logTestServer(t)
+	ev := func(level, action, fields string) map[string]any {
+		return map[string]any{"component": "agent", "level": level, "actor": "uuid-1", "action": action, "fields": fields}
+	}
+	postIngest(t, srv.URL, "", []map[string]any{
+		ev("INFO", "package.skip", `{"target":"Chrome"}`),                   // dropped
+		ev("INFO", "logs.ship.ok", `{"events":3}`),                          // dropped
+		ev("INFO", "domainjoin.skip", `{"already_joined":true}`),            // dropped
+		ev("INFO", "domainjoin.response", `{"join":false}`),                 // dropped
+		ev("INFO", "package.skip", `{"target":"Chrome","deployment_id":7}`), // kept: deployment
+		ev("INFO", "package.skip", `{"target":"Zoom","changed":true}`),      // kept: a change
+		ev("INFO", "domainjoin.response", `{"join":true,"domain":"corp"}`),  // kept: joining
+		ev("WARN", "logs.ship.ok", `{}`),                                    // kept: not INFO
+		ev("INFO", "package.install.ok", `{"target":"Chrome"}`),             // kept
+	})
+	// A batch of nothing but routine lines is accepted and stores nothing.
+	postIngest(t, srv.URL, "", []map[string]any{ev("INFO", "logs.ship.ok", `{"events":1}`)})
+
+	evs, err := r.Logs.Search(ctx, model.LogSearch{ByID: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 5 {
+		for _, e := range evs {
+			t.Logf("stored %s %s %s", e.Level, e.Action, e.Fields)
+		}
+		t.Fatalf("stored %d events, want 5", len(evs))
+	}
+}

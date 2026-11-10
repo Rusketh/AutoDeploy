@@ -689,7 +689,8 @@ var adJoinLastError string
 // per-call and NEVER logged; failures are logged and retried on the next poll.
 func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f agentFlags) bool {
 	if domainJoined || f.agentID == "" {
-		log.Info("domainjoin.skip",
+		// Repeats every poll once joined: not worth shipping.
+		log.Debug("domainjoin.skip",
 			slog.Bool("already_joined", domainJoined),
 			slog.Bool("no_agent_id", f.agentID == ""))
 		return false
@@ -706,7 +707,13 @@ func maybeDomainJoin(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 		log.Warn("domainjoin.fetch", slog.String("error", err.Error()))
 		return false
 	}
-	log.Info("domainjoin.response",
+	// Images without a join configured get join=false on every poll; only
+	// a join that is about to happen is worth shipping.
+	lvl := slog.LevelDebug
+	if resp.Join {
+		lvl = slog.LevelInfo
+	}
+	log.Log(ctx, lvl, "domainjoin.response",
 		slog.Bool("join", resp.Join),
 		slog.String("domain", resp.Domain),
 		slog.Bool("has_user", resp.User != ""),
@@ -1095,6 +1102,25 @@ func installPackages(ctx context.Context, log *slog.Logger, c *httpc.Client, f a
 	return packageReports, failed
 }
 
+// packagesInstalled remembers which packages the last poll found installed,
+// so the resident loop logs a package's "already installed" only when that
+// changes rather than for every package on every poll.
+var (
+	packagesInstalledMu sync.Mutex
+	packagesInstalled   = map[int64]bool{}
+)
+
+// markPackageInstalled records a package's detection result and reports
+// whether it differs from the previous one (a first check counts as a
+// change).
+func markPackageInstalled(id int64, installed bool) bool {
+	packagesInstalledMu.Lock()
+	defer packagesInstalledMu.Unlock()
+	prev, seen := packagesInstalled[id]
+	packagesInstalled[id] = installed
+	return !seen || prev != installed
+}
+
 // installOnePackage evaluates detection for pkg, downloads its payload, runs
 // its install steps and returns the report to post back -- or nil when the
 // package was neither installed nor skipped (e.g. a download error) -- plus
@@ -1118,11 +1144,21 @@ func installOnePackage(ctx context.Context, log *slog.Logger, c *httpc.Client, f
 			slog.String("error", err.Error()))
 	}
 	if installed {
-		log.Info("package.skip",
+		// Every poll re-checks every package; only a change (first check
+		// this run, or newly installed) is worth a shipped log line.
+		lvl := slog.LevelDebug
+		attrs := []slog.Attr{
 			slog.String("target", pkg.Name),
-			slog.String("reason", "detection rules report already installed"))
+			slog.String("reason", "detection rules report already installed"),
+		}
+		if markPackageInstalled(pkg.PackageID, true) {
+			lvl = slog.LevelInfo
+			attrs = append(attrs, slog.Bool("changed", true))
+		}
+		log.LogAttrs(ctx, lvl, "package.skip", attrs...)
 		return &pkgReport{PackageID: pkg.PackageID, Detected: true, Skipped: true}, false
 	}
+	markPackageInstalled(pkg.PackageID, false)
 	if len(pkg.DetectionRules) == 0 {
 		log.Warn("package.no_detection",
 			slog.String("package", pkg.Name),
@@ -1469,7 +1505,9 @@ func shipLogs(log *slog.Logger, shipper *logging.Shipper, server string, insecur
 		return
 	}
 	if n > 0 {
-		log.Info("logs.ship.ok", slog.Int("events", n))
+		// Debug, not shipped: at Info each upload's own success line was
+		// the next upload's content, one row per machine per poll forever.
+		log.Debug("logs.ship.ok", slog.Int("events", n))
 	}
 }
 
