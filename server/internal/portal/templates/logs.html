@@ -82,7 +82,7 @@
 </section>
 
 <div class="section-head">
-  <h3>{{if $d.Total}}Showing {{$d.Start}}–{{$d.End}} of {{$d.Total}}{{else}}No events{{end}}</h3>
+  <h3>{{if $d.Total}}Showing {{$d.Start}}–{{$d.End}} of {{$d.Total}}{{if $d.TotalCapped}}+{{end}}{{else}}No events{{end}}</h3>
   <div class="line"></div>
   <nav class="log-pager" aria-label="Pages">
     {{with $d.NewestURL}}<a class="btn ghost sm" href="{{.}}">« Newest</a>{{end}}

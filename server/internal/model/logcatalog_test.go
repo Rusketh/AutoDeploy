@@ -267,3 +267,23 @@ func TestDeploymentWindowSearchUsesIndexes(t *testing.T) {
 		t.Errorf("plan scans the whole log:\n%s", got)
 	}
 }
+
+func TestLogCountUpTo(t *testing.T) {
+	db := openTestDB(t)
+	r := NewLogRepo(db)
+	ctx := context.Background()
+	for i := 0; i < 7; i++ {
+		if _, err := db.ExecContext(ctx, `INSERT INTO log_event(component, action) VALUES ('agent', 'agent.checkin')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, capped, err := r.CountUpTo(ctx, LogSearch{}, 5); err != nil || n != 5 || !capped {
+		t.Errorf("cap 5 = %d, %v, %v", n, capped, err)
+	}
+	if n, capped, err := r.CountUpTo(ctx, LogSearch{}, 7); err != nil || n != 7 || capped {
+		t.Errorf("cap 7 = %d, %v, %v", n, capped, err)
+	}
+	if n, capped, _ := r.CountUpTo(ctx, LogSearch{Text: "nothing-like-this"}, 5); n != 0 || capped {
+		t.Errorf("no match = %d, %v", n, capped)
+	}
+}

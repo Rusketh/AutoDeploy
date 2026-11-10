@@ -514,6 +514,22 @@ func (r *LogRepo) Count(ctx context.Context, s LogSearch) (int, error) {
 	return n, err
 }
 
+// CountUpTo is Count that stops after max matches: capped reports that
+// there are at least max. A broad filter (free text, a level) over a large
+// log otherwise reads every row just to print the total.
+func (r *LogRepo) CountUpTo(ctx context.Context, s LogSearch, max int) (n int, capped bool, err error) {
+	where, args := s.where()
+	q := `SELECT 1 FROM log_event`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+q+` LIMIT ?)`, append(args, max+1)...).Scan(&n)
+	if n > max {
+		return max, true, err
+	}
+	return n, false, err
+}
+
 // CountNewer returns how many matching events are newer than id — the
 // position of a page in the whole result ("Showing 201–400 of N").
 func (r *LogRepo) CountNewer(ctx context.Context, s LogSearch, id ID) (int, error) {

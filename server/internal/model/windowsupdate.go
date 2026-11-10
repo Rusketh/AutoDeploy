@@ -331,29 +331,89 @@ func (r *WindowsUpdateRepo) ComplianceForUpdate(ctx context.Context, updateID ID
 	if err != nil {
 		return ComplianceSummary{}, err
 	}
-	machines, err := r.matchMachines(ctx, BulkTarget{}, u.OSFilter)
+	sums, err := r.complianceSummaries(ctx, []WindowsUpdate{u})
 	if err != nil {
 		return ComplianceSummary{}, err
 	}
-	var s ComplianceSummary
-	s.Total = len(machines)
-	for _, m := range machines {
-		var status sql.NullString
-		_ = r.db.QueryRowContext(ctx, `
-			SELECT status FROM machine_update_status
-			WHERE machine_id = ? AND kb_number = ?`, m.ID, u.KBNumber).Scan(&status)
-		switch status.String {
-		case "installed":
-			s.Installed++
-		case "pending":
-			s.Pending++
-		case "failed":
-			s.Failed++
-		default:
-			s.Unknown++
-		}
+	return sums[u.ID], nil
+}
+
+// complianceSummaries counts each update's install state over the machines
+// its OS filter targets. It reads the machines, their OS captions and the
+// reported statuses once each (not per machine per update), so the Windows
+// Updates page stays fast on a large fleet with many tracked KBs.
+func (r *WindowsUpdateRepo) complianceSummaries(ctx context.Context, updates []WindowsUpdate) (map[ID]ComplianceSummary, error) {
+	out := make(map[ID]ComplianceSummary, len(updates))
+	if len(updates) == 0 {
+		return out, nil
 	}
-	return s, nil
+	machines, err := r.Inventory.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	captions, err := r.Inventory.ListOSCaptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	kb := ""
+	if len(updates) == 1 {
+		kb = updates[0].KBNumber
+	}
+	status, err := r.statusesByKB(ctx, kb)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range updates {
+		var s ComplianceSummary
+		byMachine := status[u.KBNumber]
+		for _, m := range machines {
+			if !osFilterMatches(captions[m.ID], u.OSFilter) {
+				continue
+			}
+			s.Total++
+			switch byMachine[m.ID] {
+			case "installed":
+				s.Installed++
+			case "pending":
+				s.Pending++
+			case "failed":
+				s.Failed++
+			default:
+				s.Unknown++
+			}
+		}
+		out[u.ID] = s
+	}
+	return out, nil
+}
+
+// statusesByKB reads reported update statuses in one query as
+// kb -> machine -> status; kb != "" limits it to that KB.
+func (r *WindowsUpdateRepo) statusesByKB(ctx context.Context, kb string) (map[string]map[ID]string, error) {
+	q := `SELECT machine_id, kb_number, status FROM machine_update_status`
+	var args []any
+	if kb != "" {
+		q += ` WHERE kb_number = ?`
+		args = append(args, kb)
+	}
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[ID]string{}
+	for rows.Next() {
+		var mid ID
+		var k, st string
+		if err := rows.Scan(&mid, &k, &st); err != nil {
+			return nil, err
+		}
+		if out[k] == nil {
+			out[k] = map[ID]string{}
+		}
+		out[k][mid] = st
+	}
+	return out, rows.Err()
 }
 
 // CreateDeployment creates a deployment and queues one job per targeted machine
@@ -761,16 +821,16 @@ func (r *WindowsUpdateRepo) FleetUpdateSummary(ctx context.Context) (FleetUpdate
 	for i, u := range updates {
 		kbs[i] = u.KBNumber
 	}
+	// Every status in one query, not one query per machine.
+	status, err := r.statusesByKB(ctx, "")
+	if err != nil {
+		return s, err
+	}
 	for _, m := range machines {
-		statuses, _ := r.ListMachineStatuses(ctx, m.ID)
-		statusMap := map[string]string{}
-		for _, st := range statuses {
-			statusMap[st.KBNumber] = st.Status
-		}
 		allInstalled := true
 		hasPending := false
 		for _, kb := range kbs {
-			switch statusMap[kb] {
+			switch status[kb][m.ID] {
 			case "installed":
 			case "pending":
 				hasPending = true
@@ -796,15 +856,7 @@ func (r *WindowsUpdateRepo) AllComplianceSummaries(ctx context.Context) (map[ID]
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[ID]ComplianceSummary, len(updates))
-	for _, u := range updates {
-		c, err := r.ComplianceForUpdate(ctx, u.ID)
-		if err != nil {
-			continue
-		}
-		out[u.ID] = c
-	}
-	return out, nil
+	return r.complianceSummaries(ctx, updates)
 }
 
 // osFilterMatches reports whether a machine's reported OS caption
@@ -858,6 +910,14 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 			}
 		}
 	}
+	// OS captions in one query rather than a full Get per machine.
+	var captions map[ID]string
+	if strings.TrimSpace(osFilter) != "" {
+		if captions, err = r.Inventory.ListOSCaptions(ctx); err != nil {
+			return nil, err
+		}
+	}
+	needBinding := re != nil || t.OU != "" || t.Group != ""
 	out := make([]MachineRecord, 0, len(all))
 	for _, m := range all {
 		if len(idSet) > 0 && !idSet[m.ID] {
@@ -866,25 +926,14 @@ func (r *WindowsUpdateRepo) matchMachines(ctx context.Context, t BulkTarget, osF
 		if groupSet != nil && !groupSet[m.ID] {
 			continue
 		}
-		if strings.TrimSpace(osFilter) != "" {
-			// List doesn't load hardware_json; fetch the full record for
-			// the caption. A machine with no reported hardware has an
-			// unknown OS and never matches an explicit filter.
-			full := m
-			if full.Hardware == nil {
-				var gerr error
-				full, gerr = r.Inventory.Get(ctx, m.ID)
-				if gerr != nil {
-					continue
-				}
-			}
-			caption := ""
-			if full.Hardware != nil {
-				caption = full.Hardware.OSCaption
-			}
-			if !osFilterMatches(caption, osFilter) {
-				continue
-			}
+		// A machine with no reported hardware has an unknown OS and never
+		// matches an explicit filter.
+		if captions != nil && !osFilterMatches(captions[m.ID], osFilter) {
+			continue
+		}
+		if !needBinding {
+			out = append(out, m)
+			continue
 		}
 		bind, _ := r.Inventory.GetBinding(ctx, m.ID)
 		if re != nil && !re.MatchString(bind.MachineName) {
