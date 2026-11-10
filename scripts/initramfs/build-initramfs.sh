@@ -570,6 +570,31 @@ exec /bin/sh
 INIT
 chmod 0755 "$ROOTFS/init"
 
+# CPU baseline guard. The image boots on whatever x86-64 hardware shows up,
+# so every bundled program and library must run on a baseline x86-64 CPU. A
+# build host whose libraries target a higher level (Ubuntu 26.04 builds glibc
+# for x86-64-v3 / AVX2) produces an image whose /init dies with SIGILL --
+# "Attempted to kill init! exitcode=0x00000004" -- on any CPU without AVX2.
+# Fail the BUILD instead of shipping that. Kernel modules are skipped (they
+# are not userspace ELF executables).
+if command -v readelf >/dev/null 2>&1; then
+    isa_bad=""
+    while IFS= read -r -d '' f; do
+        [ "$(head -c4 "$f" 2>/dev/null)" = "$(printf '\177ELF')" ] || continue
+        lv="$(readelf -n "$f" 2>/dev/null | grep -i 'ISA needed' | grep -oE 'x86-64-v[234]' | sort -u | tr '\n' ' ' || true)"
+        [ -n "$lv" ] && isa_bad="$isa_bad
+  ${f#"$ROOTFS"/}: needs $lv"
+    done < <(find "$ROOTFS" -type f -not -path "$ROOTFS/lib/modules/*" -print0)
+    if [ -n "$isa_bad" ]; then
+        echo "FATAL: bundled binaries need a newer CPU than baseline x86-64:$isa_bad" >&2
+        echo "       The image would crash at boot (SIGILL) on CPUs without these" >&2
+        echo "       features. Build on a host with baseline libraries (e.g. Ubuntu 24.04)." >&2
+        exit 1
+    fi
+else
+    echo "  WARN: readelf not found; skipped the CPU baseline check" >&2
+fi
+
 # Pack.
 cd "$ROOTFS"
 find . -print0 | cpio --null --create --format=newc 2>/dev/null | gzip -9 > "$OUT"
