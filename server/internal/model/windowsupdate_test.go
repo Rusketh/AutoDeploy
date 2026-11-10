@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // newUpdateTestEnv creates a machine (with optional OS caption) and returns
@@ -395,5 +396,74 @@ func TestMatchMachinesOSFilter(t *testing.T) {
 	}
 	if g := ids(got); len(got) != 4 || !g[win11] || !g[noHW] {
 		t.Errorf("no filter matched %v, want all 4", got)
+	}
+}
+
+// Compliance, the fleet summary and the OS breakdown are computed from bulk
+// reads (not per machine); their counts must match the per-machine rules:
+// only OS-matching machines are targets, an unreported KB is "unknown".
+func TestUpdateComplianceCounts(t *testing.T) {
+	ctx := context.Background()
+	repo, inv, addMachine := newUpdateTestEnv(t)
+	w10a := addMachine("uuid-10a", "Microsoft Windows 10 Pro")
+	w10b := addMachine("uuid-10b", "Microsoft Windows 10 Pro")
+	w11 := addMachine("uuid-11", "Microsoft Windows 11 Pro")
+	addMachine("uuid-nohw", "")
+
+	u10, err := repo.Create(ctx, WindowsUpdate{KBNumber: "KB1", Title: "w10 only", OSFilter: "windows-10", SupersedesJSON: "[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uAll, err := repo.Create(ctx, WindowsUpdate{KBNumber: "KB2", Title: "all", SupersedesJSON: "[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(m ID, kb, st string) {
+		t.Helper()
+		if err := repo.UpsertMachineStatuses(ctx, m, []MachineUpdateStatus{{MachineID: m, KBNumber: kb, Status: st, ReportedAt: time.Now()}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(w10a, "KB1", "installed")
+	set(w10b, "KB1", "failed")
+	set(w11, "KB1", "installed") // not a target: wrong OS
+	set(w10a, "KB2", "installed")
+	set(w10b, "KB2", "pending")
+	set(w11, "KB2", "installed")
+
+	want := map[ID]ComplianceSummary{
+		u10.ID:  {Installed: 1, Failed: 1, Total: 2},
+		uAll.ID: {Installed: 2, Pending: 1, Unknown: 1, Total: 4},
+	}
+	all, err := repo.AllComplianceSummaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, w := range want {
+		if all[id] != w {
+			t.Errorf("AllComplianceSummaries[%d] = %+v, want %+v", id, all[id], w)
+		}
+		one, err := repo.ComplianceForUpdate(ctx, id)
+		if err != nil || one != w {
+			t.Errorf("ComplianceForUpdate(%d) = %+v, %v; want %+v", id, one, err, w)
+		}
+	}
+
+	fs, err := repo.FleetUpdateSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fully patched = every tracked KB reported installed (the summary has
+	// never applied OS filters): w10a and w11.
+	if fs.TotalUpdates != 2 || fs.TotalMachines != 4 || fs.FullyPatched != 2 || fs.WithPending != 1 {
+		t.Errorf("FleetUpdateSummary = %+v", fs)
+	}
+
+	osb, err := inv.OSBreakdown(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(osb) != 2 || osb[0] != (OSCount{OS: "Microsoft Windows 10 Pro", Count: 2}) || osb[1] != (OSCount{OS: "Microsoft Windows 11 Pro", Count: 1}) {
+		t.Errorf("OSBreakdown = %+v", osb)
 	}
 }

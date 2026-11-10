@@ -44,6 +44,10 @@ type logDetail struct {
 	Pre   bool // multi-line text (stderr tail)
 }
 
+// logCountCap is how many matches the log page counts before showing
+// "N+" instead of an exact total.
+const logCountCap = 10000
+
 func logsView(r Repos) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		v := req.URL.Query()
@@ -84,12 +88,27 @@ func logsView(r Repos) http.HandlerFunc {
 		}
 		count := s
 		count.BeforeID, count.AfterID = 0, 0
-		total, _ := r.Logs.Count(req.Context(), count)
-		start := 0
-		if len(ev) > 0 {
-			start, _ = r.Logs.CountNewer(req.Context(), count, ev[0].ID)
+		// The total is capped: counting every match of a broad search on a
+		// large log took longer than the search itself.
+		// A short first page is the whole result, so a rare match (which
+		// has to read the whole log once to search) isn't read twice more.
+		var total, start int
+		var capped bool
+		if s.BeforeID == 0 && s.AfterID == 0 && len(ev) < s.Limit {
+			total = len(ev)
+			if total > 0 {
+				start = 1
+			}
+		} else {
+			total, capped, _ = r.Logs.CountUpTo(req.Context(), count, logCountCap)
+			if len(ev) > 0 {
+				start, _ = r.Logs.CountNewer(req.Context(), count, ev[0].ID)
+			}
 		}
 		end := start + len(ev) - 1
+		if capped && end > total {
+			total = end // paged past the cap: there are at least this many
+		}
 
 		// The Raw view shows the row as stored, before read-time defaults.
 		raws := make(map[model.ID]string, len(ev))
@@ -112,19 +131,20 @@ func logsView(r Repos) http.HandlerFunc {
 			return "/portal/logs?" + u.Encode()
 		}
 		data := map[string]any{
-			"Rows":       rows,
-			"Query":      lq,
-			"Search":     s,
-			"Total":      total,
-			"Start":      start,
-			"End":        end,
-			"Groups":     nil,
-			"GroupID":    model.ID(groupID),
-			"Categories": model.LogCategories,
-			"Levels":     model.LogLevelChoices,
-			"Zone":       loc.String(),
-			"Presets":    logPresets(base, loc),
-			"ClearURL":   "/portal/logs",
+			"Rows":        rows,
+			"Query":       lq,
+			"Search":      s,
+			"Total":       total,
+			"TotalCapped": capped,
+			"Start":       start,
+			"End":         end,
+			"Groups":      nil,
+			"GroupID":     model.ID(groupID),
+			"Categories":  model.LogCategories,
+			"Levels":      model.LogLevelChoices,
+			"Zone":        loc.String(),
+			"Presets":     logPresets(base, loc),
+			"ClearURL":    "/portal/logs",
 			// Old-style filters with no field of their own on the form are
 			// kept as removable chips so old bookmarks stay meaningful.
 			"Legacy": legacyLogChips(base),
@@ -134,7 +154,7 @@ func logsView(r Repos) http.HandlerFunc {
 				data["NewerURL"] = page("after", ev[0].ID)
 				data["NewestURL"] = page("", 0)
 			}
-			if end < total {
+			if end < total || (capped && len(ev) >= s.Limit) {
 				data["OlderURL"] = page("before", ev[len(ev)-1].ID)
 			}
 			tail := cloneValues(base)

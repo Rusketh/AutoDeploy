@@ -169,8 +169,17 @@ func reportKBScan(ctx context.Context, log *slog.Logger, c *httpc.Client, f agen
 		log.Warn("kbscan.report", slog.String("error", err.Error()))
 		return
 	}
-	log.Info("kbscan.reported", slog.Int("count", len(kbs)))
+	// Logged when the installed count changes, not on every scan.
+	lvl := slog.LevelDebug
+	if len(kbs) != lastKBScanCount {
+		lvl = slog.LevelInfo
+		lastKBScanCount = len(kbs)
+	}
+	log.Log(ctx, lvl, "kbscan.reported", slog.Int("count", len(kbs)))
 }
+
+// lastKBScanCount is the KB count the previous scan reported (-1: none yet).
+var lastKBScanCount = -1
 
 // scheduleUpdateReboot restarts the machine so reboot-required updates
 // finalize. Only called when the operator opted in via the update's

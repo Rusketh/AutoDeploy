@@ -1052,18 +1052,14 @@ type OSCount struct {
 // OSBreakdown groups machines by reported OS caption and returns counts
 // sorted by count descending. Machines without hardware data are skipped.
 func (r *InventoryRepo) OSBreakdown(ctx context.Context) ([]OSCount, error) {
-	machines, err := r.List(ctx)
+	// One query for every caption, not a full Get per machine.
+	captions, err := r.ListOSCaptions(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// List doesn't load hardware_json; fetch each machine for its Hardware.
 	counts := map[string]int{}
-	for _, m := range machines {
-		full, err := r.Get(ctx, m.ID)
-		if err != nil || full.Hardware == nil || full.Hardware.OSCaption == "" {
-			continue
-		}
-		counts[full.Hardware.OSCaption]++
+	for _, c := range captions {
+		counts[c]++
 	}
 	out := make([]OSCount, 0, len(counts))
 	for os, n := range counts {
