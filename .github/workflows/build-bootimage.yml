@@ -55,7 +55,13 @@ permissions:
 jobs:
   build:
     name: Build kernel + initramfs
-    runs-on: ubuntu-latest
+    # Pinned, NOT ubuntu-latest: the image bundles the runner's own
+    # glibc/userland and kernel. ubuntu-latest moved to 26.04, whose libraries
+    # need x86-64-v3 (AVX2); the boot image then died with "Attempted to kill
+    # init! exitcode=0x00000004" (SIGILL) on any CPU without AVX2. Move to a
+    # newer runner only after a boot test on older hardware; the
+    # build-initramfs.sh ISA check fails the build if this regresses.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
