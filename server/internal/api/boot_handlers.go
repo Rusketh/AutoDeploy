@@ -114,6 +114,14 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 			} else {
 				recordDeployEvent(req, r, m, id, in.ImageID, "deploy.started", nil)
 			}
+			// An operator-queued re-image runs unattended: the boot client
+			// skips the access PIN. The operator's request authorises the
+			// deploy instead, so the manifest (fetched next) issues the new
+			// OS its agent secret just as a PIN entry would. Without this the
+			// new agent waited for approval and the deploy never finished.
+			if reimageSource == model.ReimageSourceRemoteFlag {
+				authorizeOperatorReimage(req.Context(), r, m.ID, in.ImageID, in.Identity.SystemUUID)
+			}
 			// Clear any remote-reimage flag now the deploy has begun, so it
 			// fires exactly once and the machine doesn't re-image on every
 			// subsequent network boot.
@@ -187,6 +195,27 @@ func handleDeployStatus(r Repos) http.HandlerFunc {
 		default:
 			http.Error(w, "status must be staging|staged|specialize|first-logon|failed", http.StatusBadRequest)
 		}
+	}
+}
+
+// authorizeOperatorReimage records a deploy authorisation (as an access-PIN
+// entry does) for a re-image an operator queued, when the image being
+// deployed is the flagged one (or the bound image when the flag names none).
+func authorizeOperatorReimage(ctx context.Context, r Repos, machineID model.ID, imageID *model.ID, uuid string) {
+	if r.Credentials == nil || imageID == nil || uuid == "" {
+		return
+	}
+	pending, flagged, err := r.Inventory.ReimagePendingByID(ctx, machineID)
+	if err != nil || !pending {
+		return
+	}
+	if flagged == 0 {
+		if b, berr := r.Inventory.GetBinding(ctx, machineID); berr == nil && b.ImageID != nil {
+			flagged = *b.ImageID
+		}
+	}
+	if flagged != 0 && flagged == *imageID {
+		_ = r.Credentials.AuthorizeDeploy(ctx, uuid)
 	}
 }
 
